@@ -19,6 +19,7 @@ ordered log, every read served from local SQLite.
 |---|---|
 | [`docs/DESIGN.md`](docs/DESIGN.md) | **Design of record.** Architecture, schema, sync protocol, invariants. |
 | [`docs/STACK.md`](docs/STACK.md) | Technology choices and why, the local dev stack, library docs and context7 IDs. |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | How builds reach users, code signing, forward compatibility across versions. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
@@ -95,6 +96,8 @@ it prevents. The ones most easily broken by a reasonable-looking change:
 | `last_read_ord` is a **max**-register | Not LWW — a stale device would un-read a chat (§4) |
 | Message IDs are **client**-generated | Offline compose, edit and react are otherwise impossible (§10.1) |
 | Auth failure **never** clears local data | A token expiring is not a sign-out (§13.1) |
+| An **unknown event type still advances the cursor** | Old clients exist — updates are opt-in. The frontier stalls forever otherwise (§9.10) |
+| Inbound frames parse **permissively**, never `.strict()` | One added server-side field breaks every older client in the field (§9.10) |
 | No native SQLite binding | `node:sqlite` is chosen to avoid `electron-rebuild` (§13.5) |
 
 ## Conventions

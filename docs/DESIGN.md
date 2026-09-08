@@ -1515,6 +1515,58 @@ encourages. Two things follow:
 
 ---
 
+### 9.10 Forward compatibility
+
+Old clients are not an edge case. Updates are opt-in (see
+[`RELEASE.md`](RELEASE.md)), so a client from three months ago will be talking
+to today's server. The protocol has to tolerate that from the first release
+shipped to anyone — it cannot be added later, because the clients that need it
+are precisely the ones running old code.
+
+Three rules, all cheap now and impossible to retrofit.
+
+**1. An unknown event type must still advance the cursor.**
+
+This is the severe one. When a new `op` is added — say `op: 'pin'` — a client
+that predates it has two options:
+
+| Behaviour | Result |
+|---|---|
+| Ignore the event entirely | `synced_through_rev` **stalls at that rev forever.** The client silently stops receiving anything in that chat. |
+| Record the rev in `pending_revs`, skip applying | Cursor advances; the client is merely missing a feature. |
+
+Only the second is survivable. The rule: **`pending_revs` is written for every
+received rev, before and independently of whether the event can be applied**
+(§8.1). Parsing failure must never block the frontier.
+
+The failure mode is nasty because it is delayed and silent — it appears months
+after launch, in old clients, the first time a new op type ships.
+
+**2. Unknown fields are ignored, never rejected.**
+
+The server will add fields to `welcome`, `ev` and `ack` over time. Clients must
+ignore what they do not recognise rather than failing validation. In practice
+this means schemas that strip or pass through unknown keys — **never a strict
+schema on an inbound frame.** One `.strict()` added for tidiness breaks every
+older client in the field.
+
+**3. `hello` carries a protocol version, and the server can demand an upgrade.**
+
+```
+client → server   { "t": "hello", "protocol": 3, ... }
+server → client   { "t": "too_old", "min_protocol": 4, "message": "..." }
+```
+
+Build the path even if it is never used. The moment it is needed is the moment
+it cannot be shipped, because the clients requiring it are the old ones. It is
+also the only backstop in a model where updates cannot be forced.
+
+**Direction matters.** These rules make *old clients tolerate new servers*. The
+reverse — a new client against an old server — is not solved by tolerance and
+must be gated by version, not absorbed silently.
+
+---
+
 ## 10. The write path
 
 ### 10.1 Client-generated IDs are mandatory
@@ -2103,6 +2155,10 @@ clients as normal live events. No streaming; any future partial output will be
 batched into discrete messages. Attribution rides on `author_id` (always the
 agent) plus `on_behalf_of_actor_id` (whose authority was spent).
 
+**Client versions in the wild.** Updates are opt-in, so old clients persist for
+months — see [`RELEASE.md`](RELEASE.md) for the distribution model and §9.10 for
+the protocol rules that keep them working.
+
 **Delivery guarantees may diverge later.** Humans tolerate gaps; an agent
 missing a mention it was meant to act on is a correctness bug. Since agents read
 server-side rather than through gap-marked client sync, this is currently a
@@ -2242,6 +2298,9 @@ test.
 | 29 | Heartbeat interval **< 30s**, with a read deadline | Proxies close the socket at 60s (ALB, nginx) or 100s (Cloudflare); without a deadline a dead socket looks alive |
 | 30 | Reconnect on `powerMonitor` **`resume`**, do not wait for TCP | A post-sleep zombie socket reports healthy while delivering nothing |
 | 31 | Reconnect backoff carries **full jitter** | Synchronized catch-up bursts; ~180 MB of `welcome` generation in one instant at 10k clients |
+| 32 | An **unknown event type still advances the cursor** | The frontier stalls forever; the client silently stops receiving that chat (§9.10) |
+| 33 | Inbound frames are parsed **permissively** — never a strict schema | A field added server-side breaks every older client in the field (§9.10) |
+| 34 | `hello` carries a **protocol version**, server can demand an upgrade | Updates cannot be forced; without this there is no backstop for a stale client (§9.10) |
 
 ### Scenarios to test explicitly
 
@@ -2268,6 +2327,10 @@ test.
 - Post into a dormant room → it wakes; no explicit unarchive needed.
 - Attempt to delete a room's default chat → rejected by the unique index.
 - Every `spaces` CHECK, exercised with NULL in the guarded column (invariant 27).
+- Deliver an **unrecognised `op`** to a client → cursor advances past it, and a
+  later known event still applies (invariant 32). This is the test that protects
+  every future client from a silent stall.
+- Add an unknown field to `welcome` → older client parses it without error.
 - Sleep the machine for 10 minutes, wake → reconnect is prompt, no zombie socket.
 - Kill the network mid-session → heartbeat deadline fires, backoff begins.
 - Restart the server with N clients attached → reconnects spread across the

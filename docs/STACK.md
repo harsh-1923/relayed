@@ -4,6 +4,8 @@ Technology choices, why they were made, and how to run everything locally.
 
 Deployment and tooling only — the architecture lives in
 [`DESIGN.md`](DESIGN.md), which deliberately says nothing about hosting.
+How builds reach users — packaging, signing, update channels — is
+[`RELEASE.md`](RELEASE.md).
 
 **Last updated:** 2026-09-08
 
@@ -19,7 +21,7 @@ Deployment and tooling only — the architecture lives in
 | Query layer | **Kysely** | A SQL-forward schema wants a builder, not an abstraction |
 | Fanout / presence | **Redis pub/sub** | At-most-once is sufficient — cursors self-heal (§9.3) |
 | Client database | **`node:sqlite`** | No native module, no `electron-rebuild` (§13.5) |
-| Client shell | **Electron** + electron-vite + electron-builder | §5 process architecture |
+| Client shell | **Electron** + electron-vite + electron-builder | §5 process architecture; distribution in [`RELEASE.md`](RELEASE.md) |
 | Client UI | **React**, TanStack Query, TanStack Virtual | Query's invalidation model matches §11.2 exactly |
 | Blobs | **S3-compatible** — R2 in production, MinIO locally | Egress cost dominates for a media-heavy chat client |
 | Auth | **WorkOS** | AuthKit for humans, M2M for agents, Pipes + Relay for third-party access (§6.2) |
@@ -163,6 +165,7 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | Electron | https://electronjs.org/docs/latest | `/electron/electron` |
 | electron-builder | https://electron.build | `/electron-userland/electron-builder` |
 | electron-vite | https://electron-vite.org | resolve |
+| electron-updater | https://www.electron.build/auto-update | `/electron-userland/electron-builder` |
 | React | https://react.dev | resolve |
 | TanStack Query | https://tanstack.com/query/latest | resolve |
 | TanStack Virtual | https://tanstack.com/virtual/latest | resolve |
@@ -188,7 +191,8 @@ in §8.3 stays the artifact rather than becoming generated output.
 
 ## 6. Open decisions
 
-1. **Hosting** — deferred; see §4.
+1. **Hosting** — deferred; see §4. Release and distribution decisions are
+   settled separately in [`RELEASE.md`](RELEASE.md).
 2. **Retention and dormancy sweeps** — in-process interval, or a sidecar? A
    Redis leader lock once there is more than one instance.
 3. **Agent service boundary** — a module inside `apps/server` first, or its own
