@@ -16,6 +16,24 @@ export interface OurSession {
   /** Epoch ms. */
   expiresAt: number;
   actor: Actor | null;
+  /**
+   * EVERY workspace this identity belongs to (STORAGE.md §10.1). Populated by
+   * /auth/session, /auth/workspace and /auth/refresh; empty from /auth/switch,
+   * which is scoped to one workspace and says nothing new about the others.
+   */
+  memberships: Membership[];
+}
+
+/** One row of the switcher, cached in account.db (STORAGE.md §6). */
+export interface Membership {
+  workspaceId: string;
+  orgId: string;
+  name: string;
+  slug: string;
+  actorId: string;
+  handle: string;
+  displayName: string;
+  avatarUrl: string | null;
 }
 
 /** Returned when the identity has no organization yet (§9 decision 1). */
@@ -38,12 +56,15 @@ export class ServerError extends Error {
 
 const baseUrl = () => process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787';
 
-async function post<T>(path: string, body: unknown): Promise<T> {
+async function post<T>(path: string, body: unknown, bearer?: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${baseUrl()}${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+      },
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -71,7 +92,19 @@ interface RawSession {
   refresh_token?: string;
   expires_in?: number;
   actor?: { actorId: string; orgId: string; workspaceId: string };
+  memberships?: RawMembership[];
 }
+
+interface RawMembership {
+  workspace_id: string; org_id: string; name: string; slug: string;
+  actor_id: string; handle: string; display_name: string; avatar_url: string | null;
+}
+
+const toMembership = (m: RawMembership): Membership => ({
+  workspaceId: m.workspace_id, orgId: m.org_id, name: m.name, slug: m.slug,
+  actorId: m.actor_id, handle: m.handle, displayName: m.display_name,
+  avatarUrl: m.avatar_url ?? null,
+});
 
 const toSession = (raw: RawSession): OurSession => ({
   accessToken: raw.access_token ?? '',
@@ -81,14 +114,18 @@ const toSession = (raw: RawSession): OurSession => ({
     ? { id: raw.actor.actorId, handle: '', displayName: '', avatarUrl: null,
         orgId: raw.actor.orgId, workspaceId: raw.actor.workspaceId }
     : null,
+  memberships: (raw.memberships ?? []).map(toMembership),
 });
 
 /** Trade a verified WorkOS token for our session. */
 export async function exchangeForSession(
-  workosAccessToken: string, deviceId: string,
+  workosAccessToken: string, deviceId: string, preferredWorkspaceId?: string,
 ): Promise<OurSession | NeedsWorkspace> {
   const raw = await post<RawSession>('/auth/session', {
     workos_access_token: workosAccessToken, device_id: deviceId,
+    // The workspace this install had open. Omitted on a fresh install, which
+    // gets the oldest membership rather than an arbitrary one (§10.1).
+    ...(preferredWorkspaceId ? { workspace_id: preferredWorkspaceId } : {}),
   });
   if (raw.needs_workspace) {
     return {
@@ -109,8 +146,37 @@ export const createWorkspace = async (
     workspace_name: workspaceName, handle,
   }));
 
+/**
+ * An ADDITIONAL workspace, for someone already signed in.
+ *
+ * Authenticated with our own token, so clicking "new workspace" does not send
+ * the user back through the browser for an identity the server can already see
+ * (STORAGE.md §10.4).
+ */
+export const createWorkspaceAuthed = async (
+  accessToken: string, deviceId: string, workspaceName: string, handle: string,
+): Promise<OurSession> =>
+  toSession(await post<RawSession>('/auth/workspace', {
+    device_id: deviceId, workspace_name: workspaceName, handle,
+  }, accessToken));
+
 export const refreshSession = async (refreshToken: string): Promise<OurSession> =>
   toSession(await post<RawSession>('/auth/refresh', { refresh_token: refreshToken }));
+
+/**
+ * A session for a DIFFERENT workspace of the same identity (STORAGE.md §10.2).
+ *
+ * Called ONCE per workspace, ever — the first time it is opened on this device.
+ * Afterwards that workspace has its own refresh token on disk and refreshes
+ * like any other. The source session is not revoked, so the workspace being
+ * left stays drainable and returnable-to offline.
+ */
+export const switchSession = async (
+  refreshToken: string, workspaceId: string,
+): Promise<OurSession> =>
+  toSession(await post<RawSession>('/auth/switch', {
+    refresh_token: refreshToken, workspace_id: workspaceId,
+  }));
 
 export const signOutSession = (refreshToken: string): Promise<unknown> =>
   post('/auth/signout', { refresh_token: refreshToken });

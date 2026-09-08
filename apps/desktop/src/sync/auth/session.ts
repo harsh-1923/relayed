@@ -1,4 +1,4 @@
-// The auth state machine (PHASE-1-IDENTITY.md §7).
+// The auth state machine (PHASE-1-IDENTITY.md §7, STORAGE.md §9).
 //
 // WorkOS appears on the SIGN-IN path only. Its token is traded for one of ours
 // immediately and then discarded, so refresh — and therefore steady-state sync —
@@ -9,12 +9,19 @@
 // The property this exists to protect: an auth failure must NEVER close the
 // read path. Local data stays readable in every state except explicit sign-out,
 // because "the token expired" and "the user signed out" are different events.
+//
+// Credentials are per (account, workspace): one vault slot each, because a
+// session is per-actor and an actor is per-workspace. Switching away from a
+// workspace drops its socket and its in-memory access token, and keeps its
+// refresh token — which is what makes the workspace you left still drainable
+// and still returnable-to offline (STORAGE.md §9).
 import { emit } from '@relayed/telemetry';
 import { createPkce } from './pkce.ts';
 import { listenForCallback } from './loopback.ts';
 import { buildAuthorizeUrl, exchangeCode, type WorkOSConfig } from './workos.ts';
 import {
-  exchangeForSession, createWorkspace, refreshSession, signOutSession, fetchMe,
+  exchangeForSession, createWorkspace, createWorkspaceAuthed, refreshSession,
+  switchSession, signOutSession, fetchMe,
   ServerError, type Actor, type OurSession,
 } from './relayed.ts';
 
@@ -29,14 +36,29 @@ export type AuthState =
 
 export interface SessionDeps {
   config: WorkOSConfig;
-  deviceId: string;
+  /**
+   * Resolved per call, not captured. device_id lives in account.db (STORAGE.md
+   * §8), which on a first sign-in does not exist yet — a value captured at
+   * construction would be the provisional one forever.
+   */
+  deviceId(): string;
   /** Opens the SYSTEM browser. Never a BrowserWindow — providers refuse embedded webviews. */
   openBrowser(url: string): void | Promise<void>;
+  /** One slot per workspace. The account is bound by the caller (STORAGE.md §9). */
   vault: {
-    read(): Promise<string | null>;
-    store(token: string): Promise<void>;
-    clear(): Promise<void>;
+    read(workspaceId: string): Promise<string | null>;
+    store(workspaceId: string, token: string): Promise<void>;
+    clear(workspaceId: string): Promise<void>;
   };
+  /**
+   * Called with a freshly minted session BEFORE its refresh token is persisted.
+   *
+   * The ordering is load-bearing: the vault slot path is
+   * accounts/<acc>/auth/refresh-<wsp>.bin, so storage must have matched or
+   * created the account directory and opened the workspace before anything can
+   * be written into it.
+   */
+  onSession?(session: OurSession): void | Promise<void>;
   now?: () => number;
 }
 
@@ -46,6 +68,8 @@ const REFRESH_SKEW_MS = 60_000;
 export class Session {
   #state: AuthState = { status: 'signed_out' };
   #session: OurSession | null = null;
+  /** Which workspace the held credential belongs to. */
+  #workspaceId: string | null = null;
   /** Held only between the WorkOS exchange and onboarding completing. */
   #pendingWorkosToken: string | null = null;
   #listeners = new Set<(s: AuthState) => void>();
@@ -60,6 +84,7 @@ export class Session {
   get state(): AuthState { return this.#state; }
   /** In-memory only. Never persisted, never sent to the renderer. */
   get accessToken(): string | null { return this.#session?.accessToken ?? null; }
+  get workspaceId(): string | null { return this.#workspaceId; }
 
   onChange(fn: (s: AuthState) => void): () => void {
     this.#listeners.add(fn);
@@ -72,7 +97,7 @@ export class Session {
   }
 
   /** Full interactive sign-in: system browser, PKCE, loopback, then our server. */
-  async signIn(): Promise<AuthState> {
+  async signIn(preferredWorkspaceId?: string): Promise<AuthState> {
     this.#set({ status: 'authenticating' });
     const pkce = createPkce();
     const listener = await listenForCallback({ state: pkce.state });
@@ -81,7 +106,8 @@ export class Session {
       const { code } = await listener.result;
       const workos = await exchangeCode(this.#deps.config, { code, verifier: pkce.verifier });
 
-      const result = await exchangeForSession(workos.accessToken, this.#deps.deviceId);
+      const result = await exchangeForSession(
+        workos.accessToken, this.#deps.deviceId(), preferredWorkspaceId);
       if ('needsWorkspace' in result) {
         // Onboarding needs the WorkOS token again to prove identity to
         // /auth/workspace. Held in memory only, and dropped either way.
@@ -99,31 +125,72 @@ export class Session {
     }
   }
 
-  /** Onboarding: create the org, workspace and founding actor. */
+  /**
+   * Create an org, workspace and actor.
+   *
+   * Both onboarding and — once signed in — the way an additional workspace is
+   * made, which before invitations exist is the only route to a
+   * multi-workspace account (STORAGE.md §10.4).
+   */
   async createWorkspace(workspaceName: string, handle: string): Promise<AuthState> {
     if (!this.#pendingWorkosToken) throw new Error('no pending sign-in — start again');
     const session = await createWorkspace(
-      this.#pendingWorkosToken, this.#deps.deviceId, workspaceName, handle);
+      this.#pendingWorkosToken, this.#deps.deviceId(), workspaceName, handle);
     this.#pendingWorkosToken = null;
     await this.#adopt(session);
     return this.#state;
   }
 
+  /** True once a WorkOS token is held and onboarding can proceed. */
+  get canCreateWorkspace(): boolean { return this.#pendingWorkosToken !== null; }
+
   /**
-   * Restore at boot from the stored refresh token.
-   * Never throws — a failed restore is a degraded sync engine, not a failed boot.
+   * An additional workspace, for someone already signed in. Authenticated with
+   * our own token — no browser round trip for an identity we already hold.
    */
-  async restore(): Promise<AuthState> {
-    const stored = await this.#deps.vault.read();
-    if (!stored) { this.#set({ status: 'signed_out' }); return this.#state; }
+  async createAnotherWorkspace(workspaceName: string, handle: string): Promise<AuthState> {
+    const token = await this.ensureFresh();
+    if (!token) throw new Error('not authenticated');
+    await this.#adopt(await createWorkspaceAuthed(
+      token, this.#deps.deviceId(), workspaceName, handle));
+    return this.#state;
+  }
+
+  /**
+   * Establish credentials for a workspace. Boot and switch both land here.
+   *
+   * At boot there is no held session, so a missing slot means signed out.
+   * Mid-switch there is one, so a missing slot means this workspace has never
+   * been opened on this device and is bootstrapped through /auth/switch —
+   * once, ever (STORAGE.md §9).
+   *
+   * Never throws. A failure here is a degraded sync engine, not a failed boot
+   * and not a failed switch: the replica is already open and already rendering.
+   */
+  async activate(workspaceId: string): Promise<AuthState> {
+    const stored = await this.#deps.vault.read(workspaceId);
+    const source = this.#session?.refreshToken ?? null;
+
+    if (!stored && !source) {
+      this.#session = null;
+      this.#workspaceId = null;
+      this.#set({ status: 'signed_out' });
+      return this.#state;
+    }
+
     try {
-      await this.#adopt(await refreshSession(stored));
+      const next = stored
+        ? await refreshSession(stored)
+        : await switchSession(source!, workspaceId);
+      await this.#adopt(next, workspaceId);
+      emit('ws.reauth', { ok: true });
     } catch (err) {
       const e = err as ServerError;
       // 401/403 means the session is genuinely gone; anything else (offline,
       // server down) is temporary. Both leave local data untouched — the
       // difference is only what the banner offers.
-      this.#set({ status: 'stale', actor: null, reason: e.code ?? 'refresh_failed' });
+      this.#workspaceId = workspaceId;
+      this.#set({ status: 'stale', actor: null, reason: e.code ?? 'activate_failed' });
       emit('ws.reauth', { ok: false });
     }
     return this.#state;
@@ -135,10 +202,12 @@ export class Session {
         && this.#session.expiresAt - this.#now() > REFRESH_SKEW_MS) {
       return this.#session.accessToken;
     }
-    const refreshToken = this.#session?.refreshToken ?? await this.#deps.vault.read();
+    const workspaceId = this.#workspaceId;
+    if (!workspaceId) return null;
+    const refreshToken = this.#session?.refreshToken ?? await this.#deps.vault.read(workspaceId);
     if (!refreshToken) return null;
     try {
-      await this.#adopt(await refreshSession(refreshToken));
+      await this.#adopt(await refreshSession(refreshToken), workspaceId);
       emit('ws.reauth', { ok: true });
       return this.#session?.accessToken ?? null;
     } catch (err) {
@@ -152,21 +221,41 @@ export class Session {
   /**
    * The ONLY path that clears local credentials. A token expiring must never
    * end up here (invariant: auth failure never clears local data).
+   *
+   * Every workspace of the account is revoked and cleared, not just the active
+   * one: signing out of an account means signing out of all of it.
    */
-  async signOut(): Promise<void> {
-    const refreshToken = this.#session?.refreshToken ?? await this.#deps.vault.read();
-    // Best effort: revoking server-side is desirable but must not block a
-    // local sign-out when offline.
-    if (refreshToken) await signOutSession(refreshToken).catch(() => {});
+  async signOut(workspaceIds: readonly string[]): Promise<void> {
+    const ids = new Set(workspaceIds);
+    if (this.#workspaceId) ids.add(this.#workspaceId);
+
+    for (const id of ids) {
+      const token = id === this.#workspaceId
+        ? this.#session?.refreshToken ?? await this.#deps.vault.read(id)
+        : await this.#deps.vault.read(id);
+      // Best effort: revoking server-side is desirable but must not block a
+      // local sign-out when offline.
+      if (token) await signOutSession(token).catch(() => {});
+      await this.#deps.vault.clear(id);
+    }
+
     this.#session = null;
+    this.#workspaceId = null;
     this.#pendingWorkosToken = null;
-    await this.#deps.vault.clear();
     this.#set({ status: 'signed_out' });
   }
 
-  async #adopt(session: OurSession): Promise<void> {
+  async #adopt(session: OurSession, workspaceId?: string): Promise<void> {
     this.#session = session;
-    if (session.refreshToken) await this.#deps.vault.store(session.refreshToken);
+    this.#workspaceId = workspaceId ?? session.actor?.workspaceId ?? this.#workspaceId;
+
+    // Storage first: the vault slot lives under the account directory, which
+    // may not exist yet on a first sign-in.
+    await this.#deps.onSession?.(session);
+
+    if (session.refreshToken && this.#workspaceId) {
+      await this.#deps.vault.store(this.#workspaceId, session.refreshToken);
+    }
     // Enrich with handle and display name; failure here must not undo a
     // successful sign-in.
     let actor = session.actor;

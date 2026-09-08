@@ -41,7 +41,9 @@ let syncProcess: Electron.UtilityProcess | null = null;
 
 function startSyncEngine(): Electron.UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'sync.js'), [], {
-    env: { ...process.env, RELAYED_DB: join(app.getPath('userData'), 'relayed.db') },
+    // A DIRECTORY, not a file. The sync engine owns the layout beneath it and
+    // decides which account and workspace to open (STORAGE.md §5, §11).
+    env: { ...process.env, RELAYED_DATA: app.getPath('userData') },
     stdio: 'inherit',
   });
   child.on('exit', (code) => {
@@ -140,13 +142,22 @@ app.whenReady().then(() => {
   // utilityProcess (see vault.ts). The sync engine owns the auth logic and
   // asks main only to persist and retrieve the refresh token.
   syncProcess.on('message', (m: unknown) => {
-    const msg = m as { type?: string; rid?: number; token?: string; url?: string };
+    const msg = m as {
+      type?: string; rid?: number; token?: string; url?: string;
+      accountId?: string; workspaceId?: string;
+    };
     const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
+    // A vault slot is per (account, workspace) — STORAGE.md §9.
+    const slot = (): [string, string] => {
+      if (!msg.accountId || !msg.workspaceId) throw new Error('vault call without a slot');
+      return [msg.accountId, msg.workspaceId];
+    };
 
+    try {
     switch (msg?.type) {
-      case 'vault:read':  reply(readRefreshToken()); break;
-      case 'vault:store': if (msg.token) storeRefreshToken(msg.token); reply(null); break;
-      case 'vault:clear': clearRefreshToken(); reply(null); break;
+      case 'vault:read':  reply(readRefreshToken(...slot())); break;
+      case 'vault:store': if (msg.token) storeRefreshToken(...slot(), msg.token); reply(null); break;
+      case 'vault:clear': clearRefreshToken(...slot()); reply(null); break;
       case 'browser:open':
         // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
         // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).
@@ -154,6 +165,12 @@ app.whenReady().then(() => {
         reply(null);
         break;
       default: break;
+    }
+    } catch (e) {
+      // A vault failure must not leave the sync engine waiting forever on a
+      // reply that never comes — it degrades the session, it does not hang it.
+      console.warn('[main] bridge call failed:', (e as Error).message);
+      reply(null);
     }
   });
 

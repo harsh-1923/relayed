@@ -331,8 +331,7 @@ no actors at all                               → needs_workspace   (unchanged)
 
 ```jsonc
 // request
-{ "refresh_token": "<the CURRENT workspace's>",
-  "workspace_id": "wsp_…KVX1R", "device_id": "dev_A" }
+{ "refresh_token": "<the CURRENT workspace's>", "workspace_id": "wsp_…KVX1R" }
 
 // response — identical shape to /auth/session
 { "access_token": "…", "refresh_token": "…", "expires_in": 900, "actor": { … } }
@@ -340,7 +339,8 @@ no actors at all                               → needs_workspace   (unchanged)
 
 Takes the **refresh** token rather than the access token, because the access
 token has usually expired by switch time and requiring a fresh one would make
-this two round trips.
+this two round trips. `device_id` is not in the request: it comes from the
+source session, because the credential is what says which install this is.
 
 ```
 1. look up session by refresh_hash                → actor X → identity_id

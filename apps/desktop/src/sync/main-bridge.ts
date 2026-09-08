@@ -20,10 +20,18 @@ export function callMain<T>(type: string, payload: Record<string, unknown> = {})
   });
 }
 
+/**
+ * One slot per (account, workspace) — STORAGE.md §9. The ids travel with every
+ * call rather than being bound once, because the active workspace changes
+ * underneath this and a stale binding would read the wrong slot.
+ */
 export const vault = {
-  read:  () => callMain<string | null>('vault:read'),
-  store: (token: string) => callMain<void>('vault:store', { token }),
-  clear: () => callMain<void>('vault:clear'),
+  read:  (accountId: string, workspaceId: string) =>
+    callMain<string | null>('vault:read', { accountId, workspaceId }),
+  store: (accountId: string, workspaceId: string, token: string) =>
+    callMain<void>('vault:store', { accountId, workspaceId, token }),
+  clear: (accountId: string, workspaceId: string) =>
+    callMain<void>('vault:clear', { accountId, workspaceId }),
 };
 
 export const openBrowser = (url: string) => callMain<void>('browser:open', { url });

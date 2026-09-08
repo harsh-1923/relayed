@@ -25,17 +25,78 @@ export interface Resolved {
   handleSuggestions: string[];
 }
 
+/** One workspace this identity belongs to. The client caches these (STORAGE.md §6). */
+export interface Membership {
+  actorId: string;
+  orgId: string;
+  workspaceId: string;
+  name: string;
+  slug: string;
+  handle: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+/**
+ * EVERY workspace this identity belongs to, oldest first.
+ *
+ * One WorkOS user can hold several OrganizationMemberships — accepting an
+ * invite on an email that already has an org is the ordinary way it happens —
+ * and our unique index is (workspace_id, identity_kind, identity_id), so two
+ * actors for one identity is a correct state, not a conflict.
+ *
+ * The ordering is load-bearing. This previously took the first row of an
+ * unordered query, which returns an arbitrary actor once there are two:
+ * repeatable in testing, undefined by contract, and free to change after a
+ * vacuum or an index change (STORAGE.md §10.1).
+ */
+export async function resolveMemberships(
+  db: Kysely<DB>, workosUserId: string,
+): Promise<Membership[]> {
+  const rows = await db.selectFrom('actors')
+    .innerJoin('workspaces', 'workspaces.id', 'actors.workspace_id')
+    .select([
+      'actors.id as actor_id', 'actors.org_id', 'actors.workspace_id',
+      'actors.handle', 'actors.display_name', 'actors.avatar_url',
+      'workspaces.name', 'workspaces.slug',
+    ])
+    .where('actors.identity_kind', '=', 'workos_user')
+    .where('actors.identity_id', '=', workosUserId)
+    .where('actors.state', 'not in', ['deactivated', 'suspended'])
+    // ULIDs break a same-transaction timestamp tie deterministically.
+    .orderBy('actors.created_at', 'asc')
+    .orderBy('actors.id', 'asc')
+    .execute();
+
+  return rows.map(r => ({
+    actorId: r.actor_id, orgId: r.org_id, workspaceId: r.workspace_id,
+    name: r.name, slug: r.slug, handle: r.handle,
+    displayName: r.display_name, avatarUrl: r.avatar_url,
+  }));
+}
+
+/**
+ * Which membership a new session is scoped to.
+ *
+ * `preferred` is the workspace the client had open (STORAGE.md §10.1); a fresh
+ * install sends none and gets the oldest. A `preferred` that is not ours is an
+ * error, never a silent fallback — quietly signing someone into a different
+ * workspace than they asked for is worse than failing.
+ */
+export function selectMembership(
+  memberships: readonly Membership[], preferred?: string,
+): Membership | 'not_a_member' | null {
+  if (memberships.length === 0) return null;
+  if (!preferred) return memberships[0]!;
+  return memberships.find(m => m.workspaceId === preferred) ?? 'not_a_member';
+}
+
 /** Find the existing actor for a WorkOS identity, or report that none exists. */
 export async function resolveActor(db: Kysely<DB>, id: Identity): Promise<Resolved | null> {
-  const actor = await db.selectFrom('actors')
-    .select(['id', 'org_id', 'workspace_id'])
-    .where('identity_kind', '=', 'workos_user')
-    .where('identity_id', '=', id.workosUserId)
-    .where('state', '!=', 'deactivated')
-    .executeTakeFirst();
-  if (!actor) return null;
+  const first = (await resolveMemberships(db, id.workosUserId))[0];
+  if (!first) return null;
   return {
-    actorId: actor.id, orgId: actor.org_id, workspaceId: actor.workspace_id,
+    actorId: first.actorId, orgId: first.orgId, workspaceId: first.workspaceId,
     needsWorkspace: false, handleSuggestions: [],
   };
 }

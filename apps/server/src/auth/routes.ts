@@ -8,13 +8,28 @@ import { env } from '../env.ts';
 import { verifyWorkOSToken } from './workos-verify.ts';
 import { fetchProfile } from './workos-profile.ts';
 import { signAccessToken, newRefreshToken, hashRefreshToken, verifyAccessToken } from './tokens.ts';
-import { resolveActor, createWorkspace, suggestHandles, type Identity } from '../provisioning/provision.ts';
+import {
+  resolveMemberships, selectMembership, createWorkspace, suggestHandles,
+  type Identity, type Membership,
+} from '../provisioning/provision.ts';
 import { validateHandle } from '../provisioning/handle.ts';
 
 interface ExchangeBody {
   workos_access_token: string;
   device_id: string;
+  /**
+   * The workspace the client had open (STORAGE.md §10.1). Omitted by a fresh
+   * install, which gets the oldest membership.
+   */
+  workspace_id?: string;
 }
+
+/** Wire shape of a membership. snake_case, like every other field we return. */
+const wire = (m: Membership) => ({
+  workspace_id: m.workspaceId, org_id: m.orgId, name: m.name, slug: m.slug,
+  actor_id: m.actorId, handle: m.handle, display_name: m.displayName,
+  avatar_url: m.avatarUrl,
+});
 
 async function issue(actorId: string, orgId: string, workspaceId: string, deviceId: string) {
   const sessionId = ulid('ses');
@@ -34,28 +49,33 @@ async function issue(actorId: string, orgId: string, workspaceId: string, device
   };
 }
 
+async function identityFrom(workosAccessToken: string): Promise<Identity> {
+  const claims = await verifyWorkOSToken(workosAccessToken);
+  const profile = await fetchProfile(claims.userId);
+  return { workosUserId: claims.userId, ...profile };
+}
+
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   /** Trade a WorkOS access token for one of ours. */
   app.post<{ Body: ExchangeBody }>('/auth/session', async (req, reply) => {
-    const { workos_access_token, device_id } = req.body ?? {};
+    const { workos_access_token, device_id, workspace_id } = req.body ?? {};
     if (!workos_access_token || !device_id) {
       return reply.code(400).send({ error: 'workos_access_token and device_id are required' });
     }
 
-    let claims;
-    try { claims = await verifyWorkOSToken(workos_access_token); }
-    catch (e) { return reply.code(401).send({ error: 'invalid_token', detail: (e as Error).message }); }
-
     let identity: Identity;
-    try {
-      const profile = await fetchProfile(claims.userId);
-      identity = { workosUserId: claims.userId, ...profile };
-    } catch (e) {
-      return reply.code(502).send({ error: 'profile_unavailable', detail: (e as Error).message });
+    try { identity = await identityFrom(workos_access_token); }
+    catch (e) {
+      const msg = (e as Error).message;
+      return /profile/i.test(msg)
+        ? reply.code(502).send({ error: 'profile_unavailable', detail: msg })
+        : reply.code(401).send({ error: 'invalid_token', detail: msg });
     }
 
-    const existing = await resolveActor(db, identity);
-    if (!existing) {
+    const memberships = await resolveMemberships(db, identity.workosUserId);
+    const chosen = selectMembership(memberships, workspace_id);
+
+    if (chosen === null) {
       // No org for this identity. Per §9 decision 1 we do NOT create one here —
       // the client runs onboarding and calls /auth/workspace with a chosen name
       // and handle. Invited users never reach this branch.
@@ -65,44 +85,143 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         identity: { email: identity.email, displayName: identity.displayName },
       });
     }
+    if (chosen === 'not_a_member') {
+      return reply.code(403).send({ error: 'not_a_member', detail: 'no actor in that workspace' });
+    }
 
     return reply.send({
       needs_workspace: false,
-      actor: existing,
-      ...(await issue(existing.actorId, existing.orgId, existing.workspaceId, device_id)),
+      actor: { actorId: chosen.actorId, orgId: chosen.orgId, workspaceId: chosen.workspaceId },
+      // ALL of them, so the client can populate account.db and draw the
+      // switcher without a second call (STORAGE.md §6).
+      memberships: memberships.map(wire),
+      ...(await issue(chosen.actorId, chosen.orgId, chosen.workspaceId, device_id)),
     });
   });
 
-  /** Onboarding: create the org, workspace and founding actor. */
-  app.post<{ Body: ExchangeBody & { workspace_name: string; handle: string } }>(
+  /**
+   * Onboarding, and the ordinary path to an additional workspace.
+   *
+   * There is deliberately no `already_provisioned` guard: an identity holding
+   * one workspace creating another is the same operation, and before
+   * invitations exist it is the only way to reach a multi-workspace account at
+   * all (STORAGE.md §10.4).
+   */
+  app.post<{ Body: Partial<ExchangeBody> & { workspace_name: string; handle: string } }>(
     '/auth/workspace', async (req, reply) => {
       const { workos_access_token, device_id, workspace_name, handle } = req.body ?? {};
-      if (!workos_access_token || !device_id || !workspace_name || !handle) {
+      if (!workspace_name || !handle) {
         return reply.code(400).send({ error: 'missing required fields' });
       }
       const bad = validateHandle(handle);
       if (bad) return reply.code(400).send({ error: 'invalid_handle', reason: bad });
 
-      let claims;
-      try { claims = await verifyWorkOSToken(workos_access_token); }
-      catch { return reply.code(401).send({ error: 'invalid_token' }); }
-
+      // Two ways to prove identity here, because there are two callers.
+      //
+      // Onboarding holds a WorkOS token and no session yet. A signed-in user
+      // creating an ADDITIONAL workspace holds one of our tokens — and sending
+      // them back through the browser for a token they already effectively have
+      // would be an absurd way to click "new workspace".
       let identity: Identity;
-      try {
-        const profile = await fetchProfile(claims.userId);
-        identity = { workosUserId: claims.userId, ...profile };
-      } catch (e) {
-        return reply.code(502).send({ error: 'profile_unavailable', detail: (e as Error).message });
+      let deviceId = device_id;
+      const bearer = (req.headers.authorization ?? '').startsWith('Bearer ')
+        ? (req.headers.authorization ?? '').slice(7)
+        : '';
+
+      if (workos_access_token) {
+        try { identity = await identityFrom(workos_access_token); }
+        catch (e) {
+          const msg = (e as Error).message;
+          return /profile/i.test(msg)
+            ? reply.code(502).send({ error: 'profile_unavailable', detail: msg })
+            : reply.code(401).send({ error: 'invalid_token', detail: msg });
+        }
+      } else if (bearer) {
+        let claims;
+        try { claims = await verifyAccessToken(bearer); }
+        catch (e) { return reply.code(401).send({ error: 'invalid_token', detail: (e as Error).message }); }
+
+        const actor = await db.selectFrom('actors')
+          .select(['identity_kind', 'identity_id', 'display_name', 'avatar_url'])
+          .where('id', '=', claims.actorId).executeTakeFirst();
+        if (!actor?.identity_id || actor.identity_kind !== 'workos_user') {
+          return reply.code(403).send({ error: 'not_a_human_actor' });
+        }
+        // Email is absent by design (§6.2 — never a join key) and is only ever
+        // used to seed handle suggestions, which this caller does not need:
+        // they are typing a handle for the new workspace.
+        identity = {
+          workosUserId: actor.identity_id, email: '',
+          displayName: actor.display_name, avatarUrl: actor.avatar_url,
+        };
+        deviceId ??= claims.deviceId;
+      } else {
+        return reply.code(401).send({ error: 'no_credential' });
       }
 
-      if (await resolveActor(db, identity)) {
-        return reply.code(409).send({ error: 'already_provisioned' });
-      }
+      if (!deviceId) return reply.code(400).send({ error: 'device_id required' });
 
       const created = await createWorkspace(db, identity, { workspaceName: workspace_name, handle });
+      const memberships = await resolveMemberships(db, identity.workosUserId);
       return reply.send({
-        needs_workspace: false, actor: created,
-        ...(await issue(created.actorId, created.orgId, created.workspaceId, device_id)),
+        needs_workspace: false,
+        actor: created,
+        memberships: memberships.map(wire),
+        ...(await issue(created.actorId, created.orgId, created.workspaceId, deviceId)),
+      });
+    });
+
+  /**
+   * A session for a DIFFERENT workspace of the same identity.
+   *
+   * Takes the refresh token rather than the access token: by switch time the
+   * access token has usually expired, and requiring a fresh one would make this
+   * two round trips for no gain.
+   *
+   * Called ONCE per workspace, ever — the first time it is opened on this
+   * device. Afterwards that workspace has its own refresh token on disk and
+   * uses /auth/refresh like any other (STORAGE.md §9).
+   */
+  app.post<{ Body: { refresh_token: string; workspace_id: string } }>(
+    '/auth/switch', async (req, reply) => {
+      const { refresh_token, workspace_id } = req.body ?? {};
+      if (!refresh_token || !workspace_id) {
+        return reply.code(400).send({ error: 'refresh_token and workspace_id are required' });
+      }
+
+      const source = await db.selectFrom('sessions')
+        .innerJoin('actors', 'actors.id', 'sessions.actor_id')
+        .select(['sessions.device_id', 'sessions.expires_at', 'sessions.revoked_at',
+                 'actors.identity_kind', 'actors.identity_id', 'actors.state'])
+        .where('sessions.refresh_hash', '=', hashRefreshToken(refresh_token))
+        .executeTakeFirst();
+
+      if (!source || source.revoked_at || new Date(source.expires_at) < new Date()) {
+        return reply.code(401).send({ error: 'invalid_refresh_token' });
+      }
+      if (source.state !== 'active') return reply.code(403).send({ error: 'actor_' + source.state });
+      if (!source.identity_id) return reply.code(403).send({ error: 'no_identity' });
+
+      const target = await db.selectFrom('actors')
+        .select(['id', 'org_id', 'workspace_id'])
+        .where('workspace_id', '=', workspace_id)
+        .where('identity_kind', '=', source.identity_kind)
+        .where('identity_id', '=', source.identity_id)
+        .where('state', '=', 'active')
+        .executeTakeFirst();
+
+      if (!target) return reply.code(403).send({ error: 'not_a_member' });
+
+      // The source session is deliberately NOT revoked and NOT rotated
+      // (invariant 44). The workspace being switched away from must stay
+      // drainable and returnable-to without a network round trip.
+      //
+      // device_id comes from the session, not the request body: the credential
+      // is what says which install this is.
+      return reply.send({
+        needs_workspace: false,
+        actor: { actorId: target.id, orgId: target.org_id, workspaceId: target.workspace_id },
+        ...(await issue(target.id, target.org_id, target.workspace_id, source.device_id)),
       });
     });
 
@@ -115,7 +234,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       .innerJoin('actors', 'actors.id', 'sessions.actor_id')
       .select(['sessions.id as sid', 'sessions.actor_id', 'sessions.device_id',
                'sessions.expires_at', 'sessions.revoked_at',
-               'actors.org_id', 'actors.workspace_id', 'actors.state'])
+               'actors.org_id', 'actors.workspace_id', 'actors.state',
+               'actors.identity_id'])
       .where('sessions.refresh_hash', '=', hashRefreshToken(token))
       .executeTakeFirst();
 
@@ -133,7 +253,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     await db.updateTable('sessions').set({ revoked_at: new Date() })
       .where('id', '=', row.sid).execute();
 
-    return reply.send(await issue(row.actor_id, row.org_id, row.workspace_id, row.device_id));
+    // Memberships ride along, so a workspace added server-side reaches the
+    // client on its next boot without a separate poll (STORAGE.md §10.3).
+    const memberships = row.identity_id
+      ? await resolveMemberships(db, row.identity_id)
+      : [];
+
+    return reply.send({
+      memberships: memberships.map(wire),
+      ...(await issue(row.actor_id, row.org_id, row.workspace_id, row.device_id)),
+    });
   });
 
   /** Sign out this device only. */
