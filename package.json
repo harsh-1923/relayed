@@ -25,6 +25,7 @@
     "otel:smoke": "node scripts/otel-smoke.mjs",
     "spike:sync": "node spikes/sync-tests.mjs",
     "verify:sqlite": "npm --prefix spikes/electron-verify run sqlite",
-    "verify:timer": "npm --prefix spikes/electron-verify run timer"
+    "verify:timer": "npm --prefix spikes/electron-verify run timer",
+    "test": "pnpm -r test"
   }
 }

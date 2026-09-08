@@ -9,6 +9,9 @@
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
+    // Node runs .ts directly (no build step for tests), and its ESM resolver
+    // requires explicit extensions — so test files import "./pkce.ts".
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
 
     "strict": true,
@@ -19,7 +22,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
 
-    "declaration": true,
+    "declaration": false,
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true
   },

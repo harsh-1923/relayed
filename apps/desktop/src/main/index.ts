@@ -1,11 +1,42 @@
 // Main process: windows, lifecycle, and brokering the renderer <-> sync-engine
 // handshake. Deliberately thin — it does NOT own the database or the socket
 // (DESIGN.md §5).
-import { app, BrowserWindow, ipcMain, utilityProcess, MessageChannelMain } from 'electron';
-import { join } from 'node:path';
-import { emit } from '@relayed/telemetry';
+import { app, BrowserWindow, ipcMain, nativeTheme, shell, utilityProcess, MessageChannelMain } from 'electron';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
+import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
+import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
+
+// MUST run before anything reads app.getPath('userData').
+//
+// userData is derived from app.getName(), which defaults to "Electron" for an
+// unpackaged launch but to the package name under electron-vite — so the
+// database path silently CHANGED depending on how the app was started, and we
+// ended up with two of them. Pinning the name makes it deterministic.
+//
+// RELEASE.md §6: this name is permanent. Changing it orphans every existing
+// user's local database — recoverable, since it is a replica, but
+// indistinguishable from data loss to them.
+app.setName('Relayed');
 
 const bootStarted = Date.now();
+
+// Development only: load repo-root .env so WORKOS_CLIENT_ID reaches the sync
+// process. Packaged builds get configuration from the build, never from a file
+// next to the app — a .env shipped beside a binary is a credential leak.
+if (!app.isPackaged) {
+  // Walk up looking for the repo-root .env. Counting `..` is fragile here:
+  // app.getAppPath() resolves differently depending on how Electron was
+  // launched (out/main when given a script path, the package root under
+  // electron-vite dev).
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, '.env');
+    if (existsSync(candidate)) { process.loadEnvFile(candidate); break; }
+    dir = dirname(dir);
+  }
+}
 let syncProcess: Electron.UtilityProcess | null = null;
 
 function startSyncEngine(): Electron.UtilityProcess {
@@ -24,6 +55,8 @@ function startSyncEngine(): Electron.UtilityProcess {
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1000, height: 700, show: false,
+    // Paints before the renderer loads, so launch does not flash white.
+    backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,   // non-negotiable (§13.2)
@@ -49,6 +82,10 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+// Main emits its own events (app.boot), so it needs its own sink. Set up after
+// the .env walk above, since the endpoint comes from there.
+useOtlpIfConfigured('desktop');
+
 // Exactly one instance. Without this a second launch starts a second app —
 // two dock icons, two sync engines, and two writers against the same SQLite
 // file, which is the part that actually corrupts things.
@@ -69,12 +106,61 @@ app.on('second-instance', (_event, _argv) => {
   win.focus();
 });
 
+// Registered before whenReady so a cold start launched BY a relayed:// URL
+// still buffers the callback instead of dropping it.
+const protocolOk = registerProtocol();
+
 app.whenReady().then(() => {
+  // Match the renderer default so native chrome — the window frame, menus and
+  // any OS-drawn control — is dark too, rather than a light frame around a
+  // dark app.
+  nativeTheme.themeSource = 'dark';
+
   syncProcess = startSyncEngine();
+
+  onDeepLink((url) => {
+    // Phase 1: the OAuth callback. Forwarded to the sync process, which owns
+    // the PKCE verifier and does the token exchange — tokens never enter main
+    // or the renderer (§6).
+    if (url.host === 'auth' || url.pathname.startsWith('/auth')) {
+      syncProcess?.postMessage({ type: 'auth:callback', url: url.toString() });
+    }
+    const [win] = BrowserWindow.getAllWindows();
+    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+  });
+
+  if (process.env['RELAYED_VERIFY_DEEPLINK']) {
+    console.log(JSON.stringify({ phase1: 'deeplink', registered: isRegistered(), setOk: protocolOk }));
+  }
 
   // The handshake. A MessagePort does NOT survive a renderer reload, so the
   // renderer asks for one on every load and main mints a fresh channel. Main
   // brokers this once and is then out of the hot path entirely (§5).
+  // The vault lives here because safeStorage is unavailable in a
+  // utilityProcess (see vault.ts). The sync engine owns the auth logic and
+  // asks main only to persist and retrieve the refresh token.
+  syncProcess.on('message', (m: unknown) => {
+    const msg = m as { type?: string; rid?: number; token?: string; url?: string };
+    const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
+
+    switch (msg?.type) {
+      case 'vault:read':  reply(readRefreshToken()); break;
+      case 'vault:store': if (msg.token) storeRefreshToken(msg.token); reply(null); break;
+      case 'vault:clear': clearRefreshToken(); reply(null); break;
+      case 'browser:open':
+        // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
+        // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).
+        if (msg.url) void shell.openExternal(msg.url);
+        reply(null);
+        break;
+      default: break;
+    }
+  });
+
+  if (!isEncryptionAvailable()) {
+    console.warn('[main] OS keychain unavailable — sessions will not persist across restarts');
+  }
+
   ipcMain.on('sync:attach', (event) => {
     if (!syncProcess) return;
     const { port1, port2 } = new MessageChannelMain();
@@ -91,6 +177,22 @@ app.whenReady().then(() => {
   // cleanly across renderer reloads, or does it leak ports in the sync engine?
   // Env-gated so it never runs in a real session.
   //   RELAYED_VERIFY_RELOAD=12 pnpm start
+  if (process.env['RELAYED_VERIFY_AUTH']) {
+    void (async () => {
+      const ask = (op: string) => new Promise((resolve) => {
+        const { port1, port2 } = new MessageChannelMain();
+        syncProcess!.postMessage({ type: 'attach' }, [port2]);
+        port1.on('message', (e) => { port1.close(); resolve((e.data as { data: unknown }).data); });
+        port1.start();
+        port1.postMessage({ id: 1, op });
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+      console.log(JSON.stringify({ phase1: 'configured', ...(await ask('auth.configured') as object) }));
+      console.log(JSON.stringify({ phase1: 'state', ...(await ask('auth.state') as object) }));
+      app.exit(0);
+    })();
+  }
+
   if (process.env['RELAYED_VERIFY_RELOAD']) {
     const rounds = Number(process.env['RELAYED_VERIFY_RELOAD']);
     void (async () => {

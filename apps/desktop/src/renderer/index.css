@@ -127,4 +127,40 @@
   html {
     @apply font-sans;
     }
+
+  /* ─── Squircles, everywhere ────────────────────────────────────────────
+     Real superellipse corners, not a large border-radius. Chromium 139+
+     ships `corner-shape`; Electron 44 runs Chromium 152, so this is native
+     with no SVG masks or clip-paths.
+
+     Applied to the universal selector deliberately: `corner-shape` has no
+     effect without a `border-radius`, so this rounds nothing extra — it only
+     changes the CURVE of corners that are already rounded. Every shadcn
+     component then gets squircles without touching a single component file,
+     which matters because `shadcn add --overwrite` would discard such edits.
+     ------------------------------------------------------------------- */
+  *,
+  *::before,
+  *::after {
+    corner-shape: squircle;
+  }
+
+  /* ─── Scrollbars: thin bar, transparent rail ───────────────────────────
+     Standard properties rather than ::-webkit-scrollbar. Both work in
+     Chromium, but the standard ones cannot be half-styled into an
+     inconsistent state, and `scrollbar-color` takes the rail as its second
+     value — `transparent` is what removes the rail entirely rather than
+     painting it a background colour that drifts from the theme.
+     ------------------------------------------------------------------- */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  /* Dark is the default (see index.html). Declaring it here as well tells
+     the engine to paint form controls, the canvas behind the document and
+     the scrollbar thumb for dark, which a class alone does not do. */
+  html {
+    color-scheme: dark;
+  }
 }

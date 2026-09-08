@@ -1,0 +1,26 @@
+{
+  "name": "@relayed/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env --watch src/index.ts",
+    "start": "node --env-file-if-exists=../../.env src/index.ts",
+    "migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
+    "keygen": "node src/auth/keygen.ts",
+    "test": "node --env-file-if-exists=../../.env --test src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@relayed/telemetry": "workspace:*",
+    "fastify": "^5.2.0",
+    "jose": "^6.0.0",
+    "kysely": "^0.28.3",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1114,6 +1114,10 @@ CREATE TABLE messages (
   ord         INTEGER,               -- NULL while pending; set on ack
   rev         INTEGER,               -- last rev that touched this row
   author_id   TEXT NOT NULL,
+  -- Mentions are stored as `<@actor_id>` markup, never as a handle
+  -- (PHASE-1-IDENTITY.md §10). A handle rename would otherwise orphan every
+  -- historical mention, and a reused handle would silently redirect one —
+  -- which for an agent mention means work done in the wrong context.
   body        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,      -- server time on ack; client time while pending
   edited_at   INTEGER,               -- LWW clock for body
@@ -1983,6 +1987,13 @@ VALUES('integrity-check')` in debug builds.
 
 - Search must exclude tombstones (`deleted = 0`) and respect eviction — the
   triggers handle eviction automatically, since eviction is a `DELETE`.
+- **Index a rendered body, not the raw stored one.** Mentions are stored as
+  `<@actor_01J…>` markup (§8.3), so indexing `body` verbatim makes the actor id
+  searchable and the person's name invisible — searching "harsh" would miss
+  every message that mentions Harsh. The trigger must write display text.
+  Resolving names at *write* time also means a renamed actor's old messages stay
+  findable under the name they had, which is the behaviour people expect from
+  search.
 - Index size runs roughly 30–50% of the indexed body text. Factor into disk
   budgeting alongside blobs.
 - `unicode61 remove_diacritics 2` is the sane default. If CJK or substring
@@ -2324,6 +2335,8 @@ test.
 | 32 | An **unknown event type still advances the cursor** | The frontier stalls forever; the client silently stops receiving that chat (§9.10) |
 | 33 | Inbound frames are parsed **permissively** — never a strict schema | A field added server-side breaks every older client in the field (§9.10) |
 | 34 | `hello` carries a **protocol version**, server can demand an upgrade | Updates cannot be forced; without this there is no backstop for a stale client (§9.10) |
+| 35 | Mentions store **`actor_id`**, never a handle | A rename orphans every historical mention; a reused handle silently redirects one |
+| 36 | FTS indexes a **rendered** body, not raw mention markup | Searching a person's name would miss every message that mentions them |
 
 ### Scenarios to test explicitly
 
@@ -2392,7 +2405,11 @@ expensive to discover late — so they come **before** anything is built on top.
    (`OBSERVABILITY.md` §8).
 
 **Phase 1 — Identity** ← a prerequisite: the socket cannot authenticate without it
-8. WorkOS org + AuthKit; system-browser flow with PKCE and `relayed://` callback.
+Scoped and expanded in [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md).
+**Social login only** for now — SSO, SCIM and MFA are deferred, and the actor
+model is deliberately shaped so they arrive without a migration.
+8. WorkOS org + AuthKit **social providers**; system-browser flow with PKCE and
+   the `relayed://` callback.
 9. Token storage in `safeStorage`; `reauth` refresh path (§9.7).
 10. `actors` table, org/workspace scoping, handle namespace.
 11. *Spike:* M2M Applications vs Agent Registration for agent identity (§16, item 6).

@@ -14,11 +14,21 @@ ipcRenderer.on('sync:port', (event) => {
   port = event.ports[0] ?? null;
   if (!port) return;
   port.onmessage = (e: MessageEvent) => {
-    const reply = e.data as { id: number; ok: boolean; data?: unknown; error?: string };
-    const waiter = pending.get(reply.id);
+    const msg = e.data as {
+      id?: number; ok?: boolean; data?: unknown; error?: string;
+      push?: string;
+    };
+    // Server-initiated pushes (auth state, and later invalidations) carry a
+    // `push` name instead of a request id.
+    if (msg.push) {
+      for (const fn of subscribers.get(msg.push) ?? []) fn(msg.data);
+      return;
+    }
+    if (typeof msg.id !== 'number') return;
+    const waiter = pending.get(msg.id);
     if (!waiter) return;
-    pending.delete(reply.id);
-    reply.ok ? waiter.resolve(reply.data) : waiter.reject(new Error(reply.error ?? 'sync error'));
+    pending.delete(msg.id);
+    msg.ok ? waiter.resolve(msg.data) : waiter.reject(new Error(msg.error ?? 'sync error'));
   };
   port.start();
   markReady();
@@ -27,6 +37,8 @@ ipcRenderer.on('sync:port', (event) => {
 // Re-attach on every load: this file re-runs on reload, and the previous port
 // is already dead by then.
 ipcRenderer.send('sync:attach');
+
+const subscribers = new Map<string, Set<(data: unknown) => void>>();
 
 const query = async (op: string, params?: unknown): Promise<unknown> => {
   await ready;
@@ -38,4 +50,12 @@ const query = async (op: string, params?: unknown): Promise<unknown> => {
   });
 };
 
-contextBridge.exposeInMainWorld('relayed', { query });
+function subscribe(channel: string, fn: (data: unknown) => void): () => void {
+  const set = subscribers.get(channel) ?? new Set();
+  set.add(fn);
+  subscribers.set(channel, set);
+  return () => { set.delete(fn); };
+}
+
+// Narrow surface only: no port, no tokens, no arbitrary SQL (§13.2).
+contextBridge.exposeInMainWorld('relayed', { query, subscribe });
