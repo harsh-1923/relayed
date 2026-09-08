@@ -1,0 +1,109 @@
+# Local development stack for Relayed.
+#
+#   pnpm stack:up      start   (waits until everything is actually healthy)
+#   pnpm stack:down    stop, keep data
+#   pnpm stack:reset   stop and DESTROY all volumes
+#
+# Deliberately host-agnostic: plain Postgres, Redis and an S3-compatible store,
+# no managed services. What runs here is what runs in production (docs/DESIGN.md
+# §13.9 — the deploy artifact is a long-running container, everywhere).
+
+name: relayed
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: relayed-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: relayed
+      POSTGRES_PASSWORD: relayed
+      POSTGRES_DB: relayed
+      # Deterministic collation. Text index ordering must not depend on the
+      # host's locale, or a laptop and a server can disagree about sort order.
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=und-x-icu --encoding=UTF8"
+    command:
+      - postgres
+      # Surface slow queries in dev. The welcome query touches ~150 chats
+      # (§9.9); we want to see it the moment it regresses.
+      - -c
+      - log_min_duration_statement=200
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18+ wants a single mount at /var/lib/postgresql, NOT at
+      # .../data — the image places the cluster in a version-specific
+      # subdirectory so `pg_upgrade --link` can work across a major version
+      # without crossing a mount boundary. Mounting .../data on 18 fails to
+      # start with a confusing "unused mount/volume" message.
+      - postgres-data:/var/lib/postgresql
+      # *.sql here runs once, on first init only (empty data dir).
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relayed -d relayed"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:8-alpine
+    container_name: relayed-redis
+    restart: unless-stopped
+    # No persistence, on purpose. Redis holds only fanout, presence and rate
+    # limiting — all of it reconstructible. Losing it costs nothing, because
+    # clients recover missed events through cursors and gap markers
+    # (docs/DESIGN.md §9.3). If Redis ever holds durable state, that is a bug.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: relayed-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: relayed
+      MINIO_ROOT_PASSWORD: relayedsecret
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "${MINIO_PORT:-9000}:9000"       # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # One-shot: creates the blob bucket, then exits. `stack:up` does not wait on it.
+  minio-init:
+    image: minio/mc:latest
+    container_name: relayed-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 relayed relayedsecret &&
+        mc mb --ignore-existing local/relayed-blobs &&
+        mc anonymous set none local/relayed-blobs &&
+        echo "bucket relayed-blobs ready"
+
+volumes:
+  postgres-data:
+  minio-data:

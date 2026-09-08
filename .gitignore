@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+build/
+coverage/
+*.tsbuildinfo
+
+# local runtime state
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+*.log
