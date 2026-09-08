@@ -8,17 +8,23 @@
     "node": ">=24"
   },
   "scripts": {
-    "obs:down": "docker compose --profile observability stop lgtm",
-    "obs:open": "open http://localhost:3000",
-    "obs:smoke": "node scripts/otel-smoke.mjs",
-    "obs:up": "docker compose --profile observability up -d --wait lgtm",
+    "services": "docker compose up -d --wait postgres redis minio lgtm && docker compose up -d minio-init",
+    "services:down": "docker compose down",
+    "dev": "pnpm -r --parallel dev",
+    "services:reset": "docker compose down -v && pnpm services",
+    "services:lite": "docker compose up -d --wait postgres redis minio && docker compose up -d minio-init",
+    "services:logs": "docker compose logs -f",
+    "services:ps": "docker compose ps",
+    "build": "pnpm --filter @relayed/desktop build",
+    "preview": "pnpm --filter @relayed/desktop start",
+    "ui": "pnpm --filter @relayed/desktop exec vite",
+    "typecheck": "pnpm -r typecheck",
     "psql": "docker compose exec postgres psql -U relayed -d relayed",
     "redis-cli": "docker compose exec redis redis-cli",
+    "grafana": "open http://localhost:3000",
+    "otel:smoke": "node scripts/otel-smoke.mjs",
     "spike:sync": "node spikes/sync-tests.mjs",
-    "stack:down": "docker compose down",
-    "stack:logs": "docker compose logs -f",
-    "stack:ps": "docker compose ps",
-    "stack:reset": "docker compose down -v && docker compose up -d --wait postgres redis minio && docker compose up minio-init",
-    "stack:up": "docker compose up -d --wait postgres redis minio && docker compose up minio-init"
+    "verify:sqlite": "npm --prefix spikes/electron-verify run sqlite",
+    "verify:timer": "npm --prefix spikes/electron-verify run timer"
   }
 }

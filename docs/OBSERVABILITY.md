@@ -282,14 +282,14 @@ Instead the whole backend runs locally from Grafana's all-in-one image, behind
 an opt-in compose profile:
 
 ```bash
-pnpm obs:up       # start the local LGTM stack (~1 GB, hence opt-in)
-pnpm obs:smoke    # send one trace + metric + log, read each back
-pnpm obs:open     # Grafana at :3000, anonymous admin, no login
-pnpm obs:down     # stop it
+pnpm services     # brings it up with Postgres, Redis and MinIO
+pnpm otel:smoke   # send one trace + metric + log, read each back
+pnpm grafana      # open :3000, anonymous admin, no login
+pnpm services:down
 ```
 
-`pnpm stack:up` deliberately does **not** start it — most work does not need
-observability running, and it is the heaviest thing in the stack.
+It comes up with everything else so the stack is one command. It is the heavy
+container (~1 GB idle); `pnpm services:lite` omits it when that matters.
 
 ### It is the same software as production
 
@@ -308,7 +308,7 @@ behaviour is representative rather than an approximation:
 Point an exporter at `localhost:4317` and it behaves as Cloud will. Switching
 environments is one environment variable, because everything speaks OTLP (§1).
 
-### `pnpm obs:smoke`
+### `pnpm otel:smoke`
 
 `scripts/otel-smoke.mjs` posts one span, one counter and one log record as raw
 OTLP JSON — **no SDK** — then reads each back from Tempo, Prometheus and

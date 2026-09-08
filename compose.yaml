@@ -1,8 +1,9 @@
 # Local development stack for Relayed.
 #
-#   pnpm stack:up      start   (waits until everything is actually healthy)
-#   pnpm stack:down    stop, keep data
-#   pnpm stack:reset   stop and DESTROY all volumes
+#   pnpm services       start everything, wait until healthy
+#   pnpm services:down  stop, keep data
+#   pnpm services:reset stop and DESTROY all volumes
+#   pnpm services:lite  everything except Grafana (~1 GB lighter)
 #
 # Deliberately host-agnostic: plain Postgres, Redis and an S3-compatible store,
 # no managed services. What runs here is what runs in production (docs/DESIGN.md
@@ -87,7 +88,10 @@ services:
       retries: 20
       start_period: 5s
 
-  # One-shot: creates the blob bucket, then exits. `stack:up` does not wait on it.
+  # One-shot: creates the blob bucket, then exits.
+  # `pnpm services` waits on the long-lived containers BY NAME and starts this
+  # afterwards — `--wait` can observe a one-shot exiting before slower
+  # containers report healthy and treat that as a failure.
   minio-init:
     image: minio/mc:latest
     container_name: relayed-minio-init
@@ -110,14 +114,18 @@ services:
   # OTel Collector. Local dev is therefore representative, and no dev noise
   # burns the Cloud free tier or pollutes production dashboards.
   #
-  # Behind a profile because it is heavy (~1 GB) and most work does not need it:
-  #   pnpm obs:up     start it
-  #   pnpm obs:smoke  send one trace + metric + log, then read them back
-  #   Grafana         http://localhost:3000  (anonymous admin, no login)
+  # In the default profile so `pnpm services` brings the whole stack up in one
+  # command. It is the heavy one (~1 GB idle) — `pnpm services:lite` omits it.
+  #
+  # NOT behind a compose profile, deliberately: a profiled service is skipped by
+  # a plain `docker compose down`, which silently leaves a 1 GB container running
+  # and blocks network teardown ("Resource is still in use"). Verified.
+  #
+  #   Grafana      http://localhost:3000   (anonymous admin, no login)
+  #   OTLP         :4317 gRPC / :4318 HTTP
   lgtm:
     image: grafana/otel-lgtm:latest
     container_name: relayed-lgtm
-    profiles: ["observability"]
     restart: unless-stopped
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"

@@ -69,17 +69,24 @@ managed services, so what runs locally is what runs in production.
 ```bash
 cp .env.example .env
 
-pnpm stack:up        # start, wait until healthy, create the blob bucket
-pnpm stack:down      # stop, keep data
-pnpm stack:reset     # stop and DESTROY volumes
-pnpm stack:ps        # what is running
-pnpm stack:logs      # follow logs
+pnpm services        # start everything, wait until healthy, create the bucket
+pnpm services:down   # stop, keep data
+pnpm services:reset  # stop and DESTROY volumes
+pnpm services:lite   # everything except Grafana (~1 GB lighter)
+pnpm services:ps     # what is running
+pnpm services:logs   # follow logs
 pnpm psql            # psql into the local database
 pnpm redis-cli       # redis-cli into the local Redis
 ```
 
-Observability runs separately behind an opt-in profile (`pnpm obs:up`) — see
-[`OBSERVABILITY.md`](OBSERVABILITY.md) §10.
+Grafana/Tempo/Loki/Prometheus comes up with everything else — see
+[`OBSERVABILITY.md`](OBSERVABILITY.md) §10. It is the heavy container (~1 GB
+idle); `pnpm services:lite` omits it.
+
+**No compose profiles, deliberately.** A profiled service is skipped by a plain
+`docker compose down`, which silently leaves a 1 GB container running and blocks
+network teardown with "Resource is still in use". One profile-free stack is
+worth more than a lighter default.
 
 | Service | Version | Port | Credentials |
 |---|---|---|---|
@@ -121,7 +128,7 @@ The following were executed against local Postgres 18.6, not assumed:
 - Partial unique index — a second `default` chat per space is rejected
 - **The CHECK/NULL trap behaves identically to SQLite** — invariant 27 is
   portable across both engines, not a SQLite quirk
-- Data survives `stack:down` → `stack:up`
+- Data survives `services:down` → `services`
 
 `docker/postgres/init/*.sql` runs **once**, on first cluster init only. Reserve
 it for things that must exist before migrations (extensions, roles) — not for
@@ -188,6 +195,13 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | pino | https://getpino.io | resolve |
 | Grafana Cloud / OTLP | https://grafana.com/docs/grafana-cloud/send-data/otlp/ | resolve |
 | node:sqlite | https://nodejs.org/api/sqlite.html | resolve |
+
+**Workspace packages must be bundled, not externalized.** `electron-vite`'s
+`externalizeDepsPlugin()` treats every `dependency` as external, including
+workspace packages — so Electron tries to load `@relayed/telemetry`'s raw
+TypeScript at runtime and fails to resolve it. Pass
+`externalizeDepsPlugin({ exclude: ['@relayed/telemetry'] })`. The build succeeds
+either way; only the run fails, which makes it easy to miss.
 
 **Migration strategy.** `kysely-codegen` generates TypeScript types from a live
 database, which supports the decision to keep hand-written SQL as the source of
