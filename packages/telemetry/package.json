@@ -8,6 +8,7 @@
     "./events": "./src/events.ts"
   },
   "scripts": {
+    "test": "node --test src/",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

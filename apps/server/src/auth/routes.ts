@@ -2,6 +2,7 @@
 // talks to WorkOS again until the next interactive sign-in — which is what
 // keeps steady-state sync independent of WorkOS availability.
 import type { FastifyInstance } from 'fastify';
+import { histogram } from '@relayed/telemetry';
 import { db } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { env } from '../env.ts';
@@ -80,6 +81,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const memberships = await resolveMemberships(db, identity.workosUserId);
+    // Workspaces per identity — the distribution multi-workspace was built for.
+    // Sampled here because every sign-in passes through, and unrecoverable
+    // later: logs holding it are gone in 14 days (OBSERVABILITY.md §5).
+    histogram('identity.memberships', memberships.length);
     const chosen = selectMembership(memberships, workspace_id);
 
     if (chosen === null) {

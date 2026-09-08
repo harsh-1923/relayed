@@ -250,9 +250,74 @@ Four properties follow:
    well as compile time — a modified client cannot flood us with arbitrary
    fields.
 
+### 8a. The metric catalogue, as built
+
+Two catalogues, because metrics and events answer different questions under
+different constraints. `packages/telemetry/src/metrics.ts` mirrors `events.ts`:
+every metric declares its `kind`, its `unit`, and **exactly which closed-set
+labels it accepts**.
+
+```ts
+count('identity.provisioned', { via: 'invite' })   // ✅
+count('identity.provisioned', { actor_id })        // ✗ compile error
+count('made.up.metric')                            // ✗ compile error
+```
+
+Verified as a compile error, with a negative control confirming the check
+itself fires — a type test that silently passes is worse than none.
+
+`metrics.test.ts` guards what types cannot: every declared label has a known
+cardinality, the whole catalogue costs **~500 of the 10,000 series** with
+ambient `service` × `env` applied, no label is an entity or ends in `_id`, and
+`client_version` is rejected by name (§5's specific trap).
+
+One rule fell out of writing it: **a metric's doc must say what the number
+means**, because nobody reading a dashboard in six months has the file open.
+Events are held to a shape rather than a length — several Phase 2 entries are
+one honest line, and padding them to clear a threshold would make the catalogue
+worse.
+
+### 8b. Where the ids live
+
+Metrics cannot carry them, so events do:
+
+```
+account.opened      account, device, workspaces, epoch
+workspace.switched  account, from, to, local_ms, epoch
+auth.signed_in      account, device, actor, workspace, outcome, duration
+auth.activated      account, workspace, path, ok
+identity.provisioned  actor, org, workspace, via   (server)
+blob.served         blob, result
+```
+
+This is the layer that answers "why did **this** user's switch hang", and it is
+gone in 14 days — which is the whole reason the aggregate has to be decided in
+`metrics.ts` up front rather than queried later.
+
 ---
 
 ## 9. Instrument the invariants
+
+Three are wired, and all three were **silent** before — each one only became
+visible when a user noticed a symptom:
+
+| Invariant | Metric | Healthy |
+|---|---|---|
+| R3 — no network before first paint | `boot.network_calls_before_paint` | **exactly 0** |
+| 41 — the workspace epoch | `ipc.stale_dropped` | small spikes at switches only |
+| 45 — the blob handler is scoped | `blob.serve{serve=rejected}` | **0** |
+
+`blob.serve{serve=miss}` is worth watching alongside: a miss is a grey circle
+somebody actually saw, and it is invisible from the prefetch side because the
+prefetch believes it succeeded.
+
+Note that a counter at zero emits nothing, so for these three **absence is
+health** and the alert is `> 0` rather than a threshold.
+
+The R3 counter is deliberately always on, not behind the verify flag. An
+invariant checked only when someone remembers to check it is not instrumented;
+`RELAYED_VERIFY_BOOT=1` now only adds the URL list, which is a debugging aid
+rather than a signal.
 
 §14 lists invariants, each paired with the failure it prevents. That pairing is
 most of a metrics catalogue already: an invariant violation is by definition an

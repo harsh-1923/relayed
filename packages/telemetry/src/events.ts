@@ -54,11 +54,51 @@ export const events = {
   'ws.zombie.detected':  { fields: { last_pong: 'ms' }, doc: 'Heartbeat deadline missed (invariant 30).' },
   'ws.reauth':           { fields: { ok: 'bool' }, doc: 'In-band token refresh (DESIGN §9.7).' },
 
+  // ── identity and storage ─────────────────────────────────────────────────
+  // These carry ids on purpose. Metrics cannot (§5), so this is the only layer
+  // that can answer "why did THIS user's switch hang" — at the cost of a
+  // 14-day window, which is why the aggregate lives in metrics.ts as well.
+  'auth.signed_in': {
+    fields: { account: 'id', device: 'id', actor: 'id', workspace: 'id',
+              outcome: 'enum', duration: 'ms' },
+    doc: 'An interactive sign-in resolved. outcome=needs_workspace means '
+       + 'authenticated but not yet onboarded (PHASE-1-IDENTITY §9).',
+  },
+  'auth.activated': {
+    fields: { account: 'id', workspace: 'id', path: 'enum', ok: 'bool' },
+    doc: 'Credentials established for a workspace. path=switch is the '
+       + 'first-ever open on this device and should happen once (STORAGE §9).',
+  },
+  'auth.signed_out': {
+    fields: { account: 'id', workspaces: 'int' },
+    doc: 'Sign-out completing: every workspace revoked, then one directory '
+       + 'delete taking replicas, blobs and vault together (STORAGE §13).',
+  },
+  'identity.provisioned': {
+    fields: { actor: 'id', org: 'id', workspace: 'id', via: 'enum' },
+    doc: 'An actor row was created. Server-side counterpart of auth.signed_in.',
+  },
+  'account.opened': {
+    fields: { account: 'id', device: 'id', workspaces: 'int', epoch: 'int' },
+    doc: 'An account.db was opened at boot or on an account switch.',
+  },
+  'workspace.switched': {
+    fields: { account: 'id', from: 'id', to: 'id', local: 'ms', epoch: 'int' },
+    doc: 'A workspace switch completed its LOCAL phase — the part the user '
+       + 'waits on. Token and socket work follows and is timed separately.',
+  },
+  'blob.served': {
+    fields: { blob: 'id', result: 'enum' },
+    doc: 'The relayed-blob handler resolved. result=miss is a grey circle a '
+       + 'user saw; result=rejected means invariant 45 fired.',
+  },
+
   // ── lifecycle ────────────────────────────────────────────────────────────
   'app.boot':            { fields: { to_first_render: 'ms', from_local: 'bool' },
                            doc: 'Boot completed. from_local=false would violate R3.' },
-  'db.migrated':         { fields: { from: 'int', to: 'int', duration: 'ms' },
-                           doc: 'Schema migration applied at boot.' },
+  'db.migrated':         { fields: { tier: 'enum', from: 'int', to: 'int', duration: 'ms' },
+                           doc: 'Schema migration applied. The account and workspace '
+                              + 'databases advance on independent version lines.' },
   'sync.port.attached':  { fields: { live_ports: 'int' },
                            doc: 'A renderer attached a MessagePort (DESIGN §13.2).' },
   'blob.prefetched':     { fields: { kind: 'enum', count: 'int' },

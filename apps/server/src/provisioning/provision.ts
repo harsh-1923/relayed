@@ -4,6 +4,7 @@
 // invite lands in that workspace and gets no personal org at all. Auto-creating
 // one would make multi-org the default state and, worse, drop invited users
 // into an empty workspace of their own — which reads as a broken invite.
+import { emit, count } from '@relayed/telemetry';
 import type { Kysely } from 'kysely';
 import { ulid } from '../db/ulid.ts';
 import type { DB } from '../db/schema.ts';
@@ -158,6 +159,13 @@ export async function createWorkspace(
       owner_actor_id: null, provisioned_by: 'self_signup', state: 'active',
     }).execute();
 
+    // `via` separates people who signed themselves up from people who were
+    // invited — two very different growth stories, and the distinction is
+    // unrecoverable once the row exists.
+    count('identity.provisioned', { via: 'self_signup' });
+    emit('identity.provisioned', {
+      actor: actorId, org: orgId, workspace: workspaceId, via: 'self_signup',
+    });
     return { actorId, orgId, workspaceId, needsWorkspace: false, handleSuggestions: [] };
   });
 }

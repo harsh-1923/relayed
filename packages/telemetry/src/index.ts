@@ -2,24 +2,22 @@
 // import `@opentelemetry/*` or `pino` directly (OBSERVABILITY.md §8, enforced
 // by lint). Swapping the backend is then one file, not a codebase sweep.
 import { events, type EventName, type EventFields } from './events.ts';
+import { metrics, type MetricName, type MetricLabelsFor } from './metrics.ts';
 import { OtlpSink } from './otlp.ts';
 
 export { events, type EventName, type EventFields };
+export { metrics, type MetricName, type MetricLabelsFor, type LabelValues } from './metrics.ts';
 export { OtlpSink } from './otlp.ts';
 
 // ── Metrics ────────────────────────────────────────────────────────────────
-// Labels are CLOSED SETS by construction. The 10k active-series cap on the
-// Grafana free tier is a cardinality limit, so an unbounded id here would blow
-// it instantly (OBSERVABILITY.md §5). These types make that a compile error.
+// Labels are CLOSED SETS by construction, declared per metric in metrics.ts.
+// The 10k active-series cap is a cardinality limit, so an unbounded id here
+// would blow it instantly (OBSERVABILITY.md §5) — these types make passing one
+// a compile error rather than a surprise on the bill.
 export type Service = 'desktop' | 'server' | 'agents';
-export type Result  = 'ok' | 'error';
-export type OpKind  = 'send' | 'edit' | 'react' | 'delete' | 'read';
 
-export interface MetricLabels {
-  service?: Service;
-  result?: Result;
-  op?: OpKind;
-}
+/** Loose shape for the transport. Call sites go through the typed helpers. */
+export type MetricLabels = Record<string, string | number | boolean>;
 
 export interface Sink {
   event<N extends EventName>(name: N, fields: EventFields<N>): void;
@@ -104,7 +102,45 @@ export function useOtlpIfConfigured(service: 'desktop' | 'server' | 'agents'): O
  * be passed. That is the privacy control, not a guideline (OBSERVABILITY.md §6).
  */
 export const emit = <N extends EventName>(name: N, fields: EventFields<N>) => sink.event(name, fields);
-export const count     = (m: string, l?: MetricLabels, by?: number) => sink.count(m, l, by);
-export const gauge     = (m: string, v: number, l?: MetricLabels) => sink.gauge(m, v, l);
-export const histogram = (m: string, v: number, l?: MetricLabels) => sink.histogram(m, v, l);
-export const span      = <T>(n: string, fn: () => Promise<T> | T) => sink.span(n, fn);
+/**
+ * Record a catalogued metric. The name must exist in `metrics`, and the labels
+ * must be exactly the closed set it declares — so `actor_id` cannot be passed
+ * at any argument position, and a cardinality explosion is a compile error
+ * rather than something discovered on the bill (OBSERVABILITY.md §5).
+ *
+ * A metric with no labels takes none: `count('auth.stale')`.
+ */
+export function count<N extends MetricName>(
+  metric: N, ...rest: MetricLabelsFor<N> extends Record<string, never>
+    ? [by?: number] : [labels: MetricLabelsFor<N>, by?: number]
+): void {
+  const [a, b] = rest as [unknown, number | undefined];
+  if (typeof a === 'number' || a === undefined) sink.count(metric, undefined, a ?? 1);
+  else sink.count(metric, a as MetricLabels, b ?? 1);
+}
+
+export function histogram<N extends MetricName>(
+  metric: N, value: number,
+  ...rest: MetricLabelsFor<N> extends Record<string, never>
+    ? [] : [labels: MetricLabelsFor<N>]
+): void {
+  sink.histogram(metric, value, rest[0] as MetricLabels | undefined);
+}
+
+export function gauge<N extends MetricName>(
+  metric: N, value: number,
+  ...rest: MetricLabelsFor<N> extends Record<string, never>
+    ? [] : [labels: MetricLabelsFor<N>]
+): void {
+  sink.gauge(metric, value, rest[0] as MetricLabels | undefined);
+}
+
+/**
+ * Time an operation as a span. Ids are permitted on spans and events — they are
+ * indexed differently from metric labels — which is what makes "why did THIS
+ * user's switch hang" answerable at all (§5).
+ */
+export const span = <T>(n: string, fn: () => Promise<T> | T) => sink.span(n, fn);
+
+/** Metric names, for anything that needs to enumerate them (dashboards, tests). */
+export const metricNames = Object.keys(metrics) as MetricName[];

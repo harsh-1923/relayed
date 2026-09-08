@@ -49,6 +49,10 @@ ipcRenderer.on('sync:port', (event) => {
         // caller's `finally` still has to run or the UI keeps a spinner up.
         pending.delete(msg.id);
         waiter.resolve({ [STALE]: true });
+        // Invariant 41. The preload is the only place that knows a reply was
+        // superseded, so it reports it rather than counting it — the telemetry
+        // SDK lives in the sync process (OBSERVABILITY.md §3).
+        port?.postMessage({ id: -1, op: 'telemetry.staleDropped' });
         return;
       }
     }

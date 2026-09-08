@@ -8,7 +8,7 @@
 //
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
-import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
+import { emit, count, histogram, span, useOtlpIfConfigured } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
 import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
@@ -24,31 +24,40 @@ type Reply =
 useOtlpIfConfigured('desktop');
 
 /**
- * R3, asserted rather than observed (STORAGE.md §17.4).
+ * R3, asserted rather than observed (STORAGE.md §17.4, OBSERVABILITY.md §9).
  *
  * "It rendered on a plane" is a story; a count of network calls made before the
  * renderer could paint is a fact. Counting here, in the process that owns every
  * outbound request, is the only place the number can be trusted.
  *
- *   RELAYED_VERIFY_BOOT=1 pnpm start
+ * Always on, not behind the verify flag: an invariant that is only checked when
+ * someone remembers to check it is not instrumented. The URL list stays behind
+ * `RELAYED_VERIFY_BOOT=1`, because that is a debugging aid rather than a signal.
  */
-const bootProbe = process.env['RELAYED_VERIFY_BOOT'] ? { calls: [] as string[] } : null;
-if (bootProbe) {
+let paintable = false;
+const bootCalls: string[] = [];
+const traceCalls = Boolean(process.env['RELAYED_VERIFY_BOOT']);
+{
   const real = globalThis.fetch;
   globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-    const [input] = args;
-    bootProbe.calls.push(input instanceof Request ? input.url : String(input));
+    if (!paintable) {
+      count('boot.network_calls_before_paint');
+      if (traceCalls) {
+        const [input] = args;
+        bootCalls.push(input instanceof Request ? input.url : String(input));
+      }
+    }
     return real(...args);
   }) as typeof fetch;
 }
 
-const t0 = performance.now();
 const storage = new Storage(process.env['RELAYED_DATA'] ?? process.cwd());
 const boot = storage.boot();
-emit('db.migrated', {
-  from: 0, to: 0,
-  duration: Math.round(performance.now() - t0),
-});
+
+// What multi-account and multi-workspace were built on assumptions about.
+// Sampled at boot because that is when both are known without extra work.
+histogram('boot.accounts', boot.accounts.length);
+histogram('boot.workspaces', storage.accountId ? storage.workspaces().length : 0);
 
 /**
  * Used only until we know which account this sign-in lands in.
@@ -231,19 +240,49 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   /** Everything on disk. Debug only — see Storage.debug(). */
   'debug.snapshot': () => storage.debug(),
 
+  /**
+   * Invariant 41, reported from the preload — the only place that knows a reply
+   * was superseded. A small spike per switch is correct; a sustained rate means
+   * the epoch is wrong and the UI is discarding work it should have shown.
+   */
+  'telemetry.staleDropped': () => { count('ipc.stale_dropped'); return null; },
+
   // ── workspaces (STORAGE.md §12.2) ──────────────────────────────────────
   'workspace.switch': (params) => {
     const { workspaceId } = params as { workspaceId: string };
     if (workspaceId === storage.workspaceId) return view();
 
-    // Step 3 closes the socket — none exists until Phase 2. Steps 2, 4 and 5
-    // are storage's, and commit `last_workspace` before touching a handle.
-    storage.switchWorkspace(workspaceId);
+    // Two phases, timed separately and deliberately (STORAGE.md §12.2).
+    //
+    // `local` is everything the user waits on: the durable write, closing one
+    // replica, opening the next, and the repaint. It must stay flat.
+    // `authorized` is the token and socket work that follows, is allowed to be
+    // slow, and is unbounded when offline. One number covering both would hide
+    // a regression in the half that matters.
+    const t0 = performance.now();
+    let result: 'ok' | 'error' = 'ok';
+    try {
+      // Step 3 closes the socket — none exists until Phase 2. Steps 2, 4 and 5
+      // are storage's, and commit `last_workspace` before touching a handle.
+      storage.switchWorkspace(workspaceId);
+    } catch (e) {
+      result = 'error';
+      histogram('workspace.switch', Math.round(performance.now() - t0),
+                { phase: 'local', result });
+      throw e;
+    }
+    histogram('workspace.switch', Math.round(performance.now() - t0),
+              { phase: 'local', result });
 
-    // Step 6: the renderer repaints from LOCAL data here. Step 7 is
-    // deliberately not awaited — a switch must complete offline, and activate()
-    // resolves to `stale` rather than throwing when it cannot reach the server.
-    void session.activate(workspaceId);
+    // Step 7 is deliberately not awaited — a switch must complete offline, and
+    // activate() resolves to `stale` rather than throwing when it cannot reach
+    // the server.
+    const t1 = performance.now();
+    void span('workspace.authorize', () => session.activate(workspaceId))
+      .then((state) => {
+        histogram('workspace.switch', Math.round(performance.now() - t1),
+                  { phase: 'authorized', result: state.status === 'stale' ? 'error' : 'ok' });
+      });
     return view();
   },
 };
@@ -274,12 +313,14 @@ function attach(port: Electron.MessagePortMain) {
   emit('sync.port.attached', { live_ports: ports.size });
 
   if (ports.size === 1) {
-    if (bootProbe) {
-      // The renderer can paint the moment it holds a port, and syncing has not
-      // been allowed to start yet — so this number is the real one.
+    // The renderer can paint the moment it holds a port, and syncing has not
+    // been allowed to start yet — so anything counted before now is a real R3
+    // violation. Closing the window here stops counting ordinary sync traffic.
+    paintable = true;
+    if (traceCalls) {
       console.log(JSON.stringify({
-        verify: 'boot', networkCallsBeforeFirstPaint: bootProbe.calls.length,
-        calls: bootProbe.calls,
+        verify: 'boot', networkCallsBeforeFirstPaint: bootCalls.length,
+        calls: bootCalls,
         accountId: storage.accountId, workspaceId: storage.workspaceId,
         workspaces: storage.accountId ? storage.workspaces().length : 0,
       }));

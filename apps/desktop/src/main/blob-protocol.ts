@@ -8,6 +8,7 @@
 // The point of a custom scheme rather than file:// is that `webSecurity` stays
 // on and no absolute filesystem path ever reaches the DOM.
 import { app, net, protocol } from 'electron';
+import { emit, count } from '@relayed/telemetry';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -37,11 +38,24 @@ export function registerBlobScheme(): void {
 export function handleBlobProtocol(): void {
   protocol.handle(BLOB_SCHEME, (request) => {
     const id = new URL(request.url).hostname;
-    if (!ID.test(id) || !activeAccount) return new Response(null, { status: 404 });
+    // `rejected` MUST stay 0. Anything else means an id reached the handler
+    // that was not a sha256 — invariant 45 firing.
+    if (!ID.test(id) || !activeAccount) {
+      count('blob.serve', { serve: 'rejected' });
+      emit('blob.served', { blob: id.slice(0, 16), result: 'rejected' });
+      return new Response(null, { status: 404 });
+    }
 
     const file = join(app.getPath('userData'), 'accounts', activeAccount,
                       'blobs', id.slice(0, 2), id);
-    if (!existsSync(file)) return new Response(null, { status: 404 });
+    // A miss is a grey circle somebody actually saw — the prefetch either has
+    // not run yet or failed, and neither is visible from the prefetch side.
+    if (!existsSync(file)) {
+      count('blob.serve', { serve: 'miss' });
+      emit('blob.served', { blob: id, result: 'miss' });
+      return new Response(null, { status: 404 });
+    }
+    count('blob.serve', { serve: 'hit' });
 
     // §13.3's resolution order is local → remote → placeholder. Only the local
     // leg exists here, deliberately: reaching out to the network from the

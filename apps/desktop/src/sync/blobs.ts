@@ -8,7 +8,7 @@
 // that already owns the network, and served back over a custom scheme so that
 // `webSecurity` stays on and no filesystem path reaches the DOM.
 import { createHash } from 'node:crypto';
-import { emit } from '@relayed/telemetry';
+import { emit, count } from '@relayed/telemetry';
 import type { Storage } from './storage.ts';
 
 /** An avatar that will not fit in a cache line is not an avatar. */
@@ -40,12 +40,15 @@ export async function prefetchAvatars(storage: Storage): Promise<number> {
       if (!url || (held && storage.hasBlob(held))) continue;
       try {
         const id = await fetchBlob(storage, url);
-        if (!id) continue;
+        if (!id) { count('blob.prefetch', { kind: 'avatar', stored: 'skipped' }); continue; }
         storage.setAvatarBlob(w.workspaceId, which, id);
+        count('blob.prefetch', { kind: 'avatar', stored: 'stored' });
         stored += 1;
       } catch {
         // Offline, 404, a CDN hiccup — all the same to us, and all recoverable
-        // on the next pass.
+        // on the next pass. A PERSISTENT failure rate is the interesting
+        // signal: that is a bad URL or a broken CDN, not a plane.
+        count('blob.prefetch', { kind: 'avatar', stored: 'failed' });
       }
     }
   }

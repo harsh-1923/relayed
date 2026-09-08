@@ -15,7 +15,7 @@
 // workspace drops its socket and its in-memory access token, and keeps its
 // refresh token — which is what makes the workspace you left still drainable
 // and still returnable-to offline (STORAGE.md §9).
-import { emit } from '@relayed/telemetry';
+import { emit, count, histogram } from '@relayed/telemetry';
 import { createPkce } from './pkce.ts';
 import { listenForCallback } from './loopback.ts';
 import { buildAuthorizeUrl, exchangeCode, type WorkOSConfig } from './workos.ts';
@@ -98,6 +98,7 @@ export class Session {
 
   /** Full interactive sign-in: system browser, PKCE, loopback, then our server. */
   async signIn(preferredWorkspaceId?: string): Promise<AuthState> {
+    const t0 = this.#now();
     this.#set({ status: 'authenticating' });
     const pkce = createPkce();
     const listener = await listenForCallback({ state: pkce.state });
@@ -114,13 +115,16 @@ export class Session {
         this.#pendingWorkosToken = workos.accessToken;
         this.#set({ status: 'needs_workspace', identity: result.identity,
                     handleSuggestions: result.handleSuggestions });
+        this.#signedIn('needs_workspace', this.#now() - t0);
         return this.#state;
       }
       await this.#adopt(result);
+      this.#signedIn('authenticated', this.#now() - t0);
       return this.#state;
     } catch (err) {
       listener.close();
       this.#set({ status: 'signed_out' });
+      this.#signedIn('failed', this.#now() - t0);
       throw err;
     }
   }
@@ -139,6 +143,22 @@ export class Session {
     this.#pendingWorkosToken = null;
     await this.#adopt(session);
     return this.#state;
+  }
+
+  /**
+   * The onboarding funnel. `needs_workspace` is someone who authenticated and
+   * has not finished — a rising share means onboarding is losing people, which
+   * is invisible from a success/failure count alone.
+   */
+  #signedIn(outcome: 'authenticated' | 'needs_workspace' | 'failed', ms: number): void {
+    count('auth.signin', { outcome });
+    histogram('auth.signin.duration', Math.round(ms), { outcome });
+    const actor = this.#state.status === 'authenticated' ? this.#state.actor : null;
+    emit('auth.signed_in', {
+      account: '', device: this.#deps.deviceId(),
+      actor: actor?.id ?? '', workspace: this.#workspaceId ?? '',
+      outcome, duration: Math.round(ms),
+    });
   }
 
   /** True once a WorkOS token is held and onboarding can proceed. */
@@ -178,11 +198,17 @@ export class Session {
       return this.#state;
     }
 
+    // `switch` is the first-ever open of this workspace on this device and
+    // should happen once, ever. A high switch:refresh ratio means vault slots
+    // are being lost and every visit re-mints a session (STORAGE.md §9).
+    const path = stored ? 'refresh' as const : 'switch' as const;
     try {
       const next = stored
         ? await refreshSession(stored)
         : await switchSession(source!, workspaceId);
       await this.#adopt(next, workspaceId);
+      count('auth.activate', { path, result: 'ok' });
+      emit('auth.activated', { account: '', workspace: workspaceId, path, ok: true });
       emit('ws.reauth', { ok: true });
     } catch (err) {
       const e = err as ServerError;
@@ -191,6 +217,11 @@ export class Session {
       // difference is only what the banner offers.
       this.#workspaceId = workspaceId;
       this.#set({ status: 'stale', actor: null, reason: e.code ?? 'activate_failed' });
+      count('auth.activate', { path, result: 'error' });
+      // Local data still works, so users often do not report this state. That
+      // is exactly why it needs a counter of its own.
+      count('auth.stale');
+      emit('auth.activated', { account: '', workspace: workspaceId, path, ok: false });
       emit('ws.reauth', { ok: false });
     }
     return this.#state;
@@ -239,6 +270,7 @@ export class Session {
       await this.#deps.vault.clear(id);
     }
 
+    emit('auth.signed_out', { account: '', workspaces: ids.size });
     this.#session = null;
     this.#workspaceId = null;
     this.#pendingWorkosToken = null;

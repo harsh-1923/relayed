@@ -10,6 +10,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { emit, count, histogram } from '@relayed/telemetry';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -251,9 +252,15 @@ export class Storage {
     this.closeWorkspace();
     this.#account?.close();
     this.#account = openDatabase(p.accountDb(this.root, accountId));
-    migrate(this.#account, accountMigrations);
+    migrateTimed(this.#account, accountMigrations, 'account');
     this.#accountId = accountId;
     setMeta(this.#account, 'last_active_at', String(Date.now()));
+
+    const rows = this.workspaces();
+    emit('account.opened', {
+      account: accountId, device: this.deviceId,
+      workspaces: rows.length, epoch: this.#epoch,
+    });
   }
 
   /**
@@ -287,6 +294,7 @@ export class Storage {
       // otherwise reject every reply that follows the next sign-in.
     }
     rmSync(p.accountDir(this.root, accountId), { recursive: true, force: true });
+    count('account.deleted');
   }
 
   // ── memberships ─────────────────────────────────────────────────────────
@@ -372,6 +380,7 @@ export class Storage {
    * one they just left.
    */
   switchWorkspace(workspaceId: string): number {
+    const t0 = performance.now();
     const row = this.workspaceRow(workspaceId);
     if (!row) throw new Error(`unknown workspace: ${workspaceId}`);
     if (row.state !== 'active') throw new Error(`workspace is ${row.state}: ${workspaceId}`);
@@ -391,8 +400,14 @@ export class Storage {
     // cannot wind it back.
     this.#epoch = bumpEpoch(this.root, this.#epoch);
 
+    const from = this.#workspaceId;
     this.closeWorkspace();
     this.#openWorkspace(workspaceId);
+
+    emit('workspace.switched', {
+      account: this.#accountId ?? '', from: from ?? '', to: workspaceId,
+      local: Math.round(performance.now() - t0), epoch: this.#epoch,
+    });
     return this.#epoch;
   }
 
@@ -401,7 +416,7 @@ export class Storage {
     if (!acc) throw new Error('no account is open');
     mkdirSync(p.blobsDir(this.root, acc, workspaceId), { recursive: true });
     const db = openDatabase(p.workspaceDb(this.root, acc, workspaceId));
-    migrate(db, workspaceMigrations);
+    migrateTimed(db, workspaceMigrations, 'workspace');
     this.#workspace = db;
     this.#workspaceId = workspaceId;
   }
@@ -423,7 +438,9 @@ export class Storage {
           .run(pending, wsp);
       }
       // Fold the WAL back in, or every workspace leaves a -wal and -shm behind.
+      const t0 = performance.now();
       db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      histogram('workspace.close', Math.round(performance.now() - t0));
     } catch { /* a close must not fail a switch */ }
     db.close();
     this.#workspace = null;
@@ -445,12 +462,13 @@ export class Storage {
     return acc !== null && existsSync(p.accountBlob(this.root, acc, id));
   }
 
-  putBlob(id: string, bytes: Uint8Array): void {
+  putBlob(id: string, bytes: Uint8Array, kind: 'avatar' | 'attachment' = 'avatar'): void {
     const acc = this.#accountId;
     if (!acc) throw new Error('no account is open');
     const file = p.accountBlob(this.root, acc, id);
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, bytes, { mode: 0o600 });
+    histogram('blob.bytes', bytes.byteLength, { kind });
   }
 
   /** `which` names the subject, so the two images cannot be crossed. */
@@ -571,6 +589,24 @@ function countFiles(dir: string): number {
     return readdirSync(dir, { withFileTypes: true })
       .reduce((n, e) => n + (e.isDirectory() ? countFiles(join(dir, e.name)) : 1), 0);
   } catch { return 0; }
+}
+
+/**
+ * Migration cost is paid on the path to first paint, and the two databases
+ * advance on independent version lines — so the tier label is what makes the
+ * number actionable rather than an average of two unrelated things.
+ */
+function migrateTimed(db: DatabaseSync, list: Parameters<typeof migrate>[1],
+                      tier: 'account' | 'workspace'): void {
+  const t0 = performance.now();
+  const result = migrate(db, list);
+  const duration = Math.round(performance.now() - t0);
+  histogram('db.migrate', duration, { tier });
+  // Only when something actually ran: a no-op migration on every boot would
+  // drown the signal that a real one is slow.
+  if (result.applied.length > 0) {
+    emit('db.migrated', { tier, from: result.from, to: result.to, duration });
+  }
 }
 
 /** Zero until the Phase 2 write path creates the table (§16.1). */
