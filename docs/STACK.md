@@ -205,8 +205,9 @@ in §8.3 stays the artifact rather than becoming generated output.
 3. **Agent service boundary** — a module inside `apps/server` first, or its own
    deployable immediately? §6.5 requires a separate *service* for the delivery
    guarantee, which does not necessarily mean a separate *process* on day one.
-4. **TypeScript config** — shared `tsconfig.base.json` with per-package extends.
-   Worth settling before the second package exists.
+4. ~~**TypeScript config**~~ — settled: shared `tsconfig.base.json` with
+   per-package `extends`, scheduled as Phase 0 item 3 (§15), ahead of the first
+   package rather than after the second.
 5. **Observability** — settled in [`OBSERVABILITY.md`](OBSERVABILITY.md):
    Grafana Cloud, OTel for traces and metrics, pino for logs, client telemetry
    routed through our own server. Product analytics remains a separate question

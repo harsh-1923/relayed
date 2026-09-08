@@ -2345,61 +2345,80 @@ test.
 Sequenced so each step de-risks the next. Do not reorder — the early items are
 the ones that are expensive to change later.
 
-**Phase 0 — Skeleton**
-1. Electron app: main + `utilityProcess` + one renderer.
-2. `MessageChannelMain` handshake, including re-attach on renderer reload.
-3. `node:sqlite` open, pragmas (auto_vacuum **first**), migration runner.
-4. *Verify:* `node:sqlite` behaves identically under Electron's bundled Node.
-4b. *Verify:* a `utilityProcess` timer is **not** subject to Chromium renderer
-    throttling, and survives macOS App Nap, by holding a 30s heartbeat with the
-    window hidden and backgrounded for an hour (§13.9).
+**Phase 0 — De-risk, then skeleton**
 
-**Phase 1 — Identity** ← now a prerequisite: the socket cannot authenticate without it
-5. WorkOS org + AuthKit; system-browser flow with PKCE and `relayed://` callback.
-6. Token storage in `safeStorage`; `reauth` refresh path (§9.7).
-7. `actors` table, org/workspace scoping, handle namespace.
-8. *Spike:* M2M Applications vs Agent Registration for agent identity (§16, item 6).
-9. *Milestone:* sign in via a real IdP; tokens never touch the renderer.
+Two of the first items are verifications rather than features. Both guard
+assumptions the rest of the design rests on, and both are cheap now and
+expensive to discover late — so they come **before** anything is built on top.
+
+1. *Verify:* `node:sqlite` behaves identically under Electron's bundled Node.
+   **If this fails**, we are back to `better-sqlite3` + `electron-rebuild`,
+   which reverses a `STACK.md` decision and reintroduces native-module builds on
+   every machine and CI runner.
+2. *Verify:* a `utilityProcess` timer is **not** subject to Chromium renderer
+   throttling and survives macOS App Nap — hold a 30s heartbeat with the window
+   hidden and backgrounded for an hour (§13.9). **If this fails**, the heartbeat
+   stretches past every proxy timeout, sockets are dropped, and it presents as a
+   network bug rather than a throttling one.
+3. `tsconfig.base.json` with per-package `extends`. First, because everything
+   else inherits it and it is awkward to impose once several packages exist.
+4. Electron app: main + `utilityProcess` + one renderer.
+5. `MessageChannelMain` handshake, including re-attach on renderer reload.
+6. `node:sqlite` open, pragmas (`auto_vacuum` **first**, invariant 11), migration
+   runner asserting `pragma_auto_vacuum() = 2` at boot.
+7. `packages/telemetry`: typed event catalogue, logger/span/metric wrappers, and
+   the lint rules — no direct `@opentelemetry/*` or `pino` imports, no
+   `console.*`, no template-literal log messages. Built before the subsystems
+   that emit signals, because these rules are far easier to establish than to
+   retrofit (`OBSERVABILITY.md` §8).
+
+**Phase 1 — Identity** ← a prerequisite: the socket cannot authenticate without it
+8. WorkOS org + AuthKit; system-browser flow with PKCE and `relayed://` callback.
+9. Token storage in `safeStorage`; `reauth` refresh path (§9.7).
+10. `actors` table, org/workspace scoping, handle namespace.
+11. *Spike:* M2M Applications vs Agent Registration for agent identity (§16, item 6).
+12. *Milestone:* sign in via a real IdP; tokens never touch the renderer.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
-10. Server: channels, messages, atomic `ord`/`rev`, idempotent ops.
-11. Protocol: `hello`/`welcome`, live events, `catchup`, `gap`.
-12. Client cursors + **contiguity logic** incl. `pending_revs` (invariant 1).
+13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops.
+14. Protocol: `hello`/`welcome`, live events, `catchup`, `gap`, `traceparent`
+    in the frame envelope (`OBSERVABILITY.md` §4).
+15. Client cursors + **contiguity logic** incl. `pending_revs` (invariant 1).
     `spikes/sync-model.mjs` is the executable reference; `spikes/sync-tests.mjs`
     is the acceptance suite — port it rather than rewriting it.
-13. Outbox with coalescing (invariant 6) and in-order replay (invariant 7).
-14. *Milestone:* two clients exchange messages; kill the server, keep reading;
+16. Outbox with coalescing (invariant 6) and in-order replay (invariant 7).
+17. *Milestone:* two clients exchange messages; kill the server, keep reading;
     compose offline, reconnect, converge.
 
 **Phase 3 — R2 and R3, provably**
-15. Server counter service; `counters` events.
-16. Sidebar badges for every chat from `welcome` alone.
-17. Boot-from-local ordering (invariant 9); auth degradation without data loss.
-18. *Milestone:* badges climb on channels never opened; airplane mode is
+18. Server counter service; `counters` events.
+19. Sidebar badges for every chat from `welcome` alone.
+20. Boot-from-local ordering (invariant 9); auth degradation without data loss.
+21. *Milestone:* badges climb on chats never opened; airplane mode is
     indistinguishable from online for reads.
 
 **Phase 4 — Product surface**
-19. Threads (shared `ord`, parent-keyed backfill).
-20. Reactions (LWW-set, tombstones).
-21. Edits and deletes.
-22. FTS5 + triggers + integrity check.
+22. Threads (shared `ord`, parent-keyed backfill).
+23. Reactions (LWW-set, tombstones).
+24. Edits and deletes.
+25. FTS5 + triggers + integrity check.
 
-**Phase 5 — Agents and delegation**
-23. Agent actors; server-side agent service consuming the committed stream.
-24. Delegation minting, intersection checks, `on_behalf_of` attribution.
-25. WorkOS Pipes connections; Relay-backed third-party calls.
+**Phase 5 — Rooms** (§7) ← immediately after threads, since both touch containment
+26. `spaces` (kind-discriminated), `chats`, two-level `memberships`.
+27. Access predicate; space membership as the leading conjunct.
+28. Visibility transitions; join-as-gap; the online-only room directory.
+29. Lifecycle: `dormant` (UI filter) and `archived` (frozen cursor).
 
-**Phase 6 — The long tail**
-26. Blob store, prefetch, `blob://` protocol handler.
-27. Two-phase offline upload with resumability.
-28. Retention, eviction, incremental vacuum.
-29. Notifications, tray.
+**Phase 6 — Agents and delegation**
+30. Agent actors; server-side agent service consuming the committed stream.
+31. Delegation minting, intersection checks, `on_behalf_of` attribution.
+32. WorkOS Pipes connections; Relay-backed third-party calls.
 
-**Phase 4b — Rooms** (§7), immediately after threads, since both touch containment
-19a. `spaces` (kind-discriminated), `chats`, two-level `memberships`.
-19b. Access predicate; room membership as precondition.
-19c. Visibility transitions; join-as-gap; the online-only room directory.
-19d. Lifecycle: `dormant` (UI filter) and `archived` (frozen cursor).
+**Phase 7 — The long tail**
+33. Blob store, prefetch, `blob://` protocol handler.
+34. Two-phase offline upload with resumability.
+35. Retention, eviction, incremental vacuum.
+36. Notifications, tray.
 
 ---
 
