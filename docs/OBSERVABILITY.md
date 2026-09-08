@@ -272,7 +272,67 @@ of a design limit rather than reporting it after users hit it.
 
 ---
 
-## 10. Open decisions
+## 10. Local development
+
+Nothing is tested against Grafana Cloud. Dev noise would burn the free tier,
+pollute production dashboards, require credentials on every machine, and not
+work offline.
+
+Instead the whole backend runs locally from Grafana's all-in-one image, behind
+an opt-in compose profile:
+
+```bash
+pnpm obs:up       # start the local LGTM stack (~1 GB, hence opt-in)
+pnpm obs:smoke    # send one trace + metric + log, read each back
+pnpm obs:open     # Grafana at :3000, anonymous admin, no login
+pnpm obs:down     # stop it
+```
+
+`pnpm stack:up` deliberately does **not** start it — most work does not need
+observability running, and it is the heaviest thing in the stack.
+
+### It is the same software as production
+
+`grafana/otel-lgtm` bundles the components Grafana Cloud runs, so local
+behaviour is representative rather than an approximation:
+
+| Local | Cloud | Port |
+|---|---|---|
+| Grafana 13.2 | Grafana | 3000 |
+| Prometheus 3.14 | Mimir (Prometheus-compatible) | 9090 |
+| Tempo 3.0 | Tempo | 3200 |
+| Loki 3.7 | Loki | *(via Grafana proxy)* |
+| Pyroscope 2.3 | Pyroscope | 4040 |
+| OTel Collector 0.159 | — | 4317 gRPC / 4318 HTTP |
+
+Point an exporter at `localhost:4317` and it behaves as Cloud will. Switching
+environments is one environment variable, because everything speaks OTLP (§1).
+
+### `pnpm obs:smoke`
+
+`scripts/otel-smoke.mjs` posts one span, one counter and one log record as raw
+OTLP JSON — **no SDK** — then reads each back from Tempo, Prometheus and
+Grafana's Loki proxy.
+
+Because it bypasses our instrumentation entirely, it isolates the question:
+
+> **If the smoke test passes, the backend is fine and the problem is in the
+> application. If it fails, stop debugging the app.**
+
+Worth knowing when reading results:
+
+- **Backends index asynchronously.** The script retries for ~30s. A trace that
+  is not instantly queryable is normal, not a failure.
+- **Prometheus rewrites metric names.** `sync.op` arrives as `sync_op` — dots
+  become underscores. Query by the translated name.
+- **Loki is not port-mapped** by the image; the script queries it through
+  Grafana's datasource proxy. Same route a dashboard uses.
+- The log record carries `traceId`/`spanId`, which is what makes logs and traces
+  correlate in Explore — the property pino must reproduce in real code (§6).
+
+---
+
+## 11. Open decisions
 
 1. **Alerting thresholds.** Which of the above page someone, and at what level.
    Needs production baselines first.

@@ -8,13 +8,17 @@
     "node": ">=24"
   },
   "scripts": {
-    "stack:up": "docker compose up -d --wait postgres redis minio && docker compose up minio-init",
-    "stack:down": "docker compose down",
-    "stack:reset": "docker compose down -v && docker compose up -d --wait postgres redis minio && docker compose up minio-init",
-    "stack:logs": "docker compose logs -f",
-    "stack:ps": "docker compose ps",
+    "obs:down": "docker compose --profile observability stop lgtm",
+    "obs:open": "open http://localhost:3000",
+    "obs:smoke": "node scripts/otel-smoke.mjs",
+    "obs:up": "docker compose --profile observability up -d --wait lgtm",
     "psql": "docker compose exec postgres psql -U relayed -d relayed",
     "redis-cli": "docker compose exec redis redis-cli",
-    "spike:sync": "node spikes/sync-tests.mjs"
+    "spike:sync": "node spikes/sync-tests.mjs",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f",
+    "stack:ps": "docker compose ps",
+    "stack:reset": "docker compose down -v && docker compose up -d --wait postgres redis minio && docker compose up minio-init",
+    "stack:up": "docker compose up -d --wait postgres redis minio && docker compose up minio-init"
   }
 }

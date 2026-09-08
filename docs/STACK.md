@@ -78,6 +78,9 @@ pnpm psql            # psql into the local database
 pnpm redis-cli       # redis-cli into the local Redis
 ```
 
+Observability runs separately behind an opt-in profile (`pnpm obs:up`) — see
+[`OBSERVABILITY.md`](OBSERVABILITY.md) §10.
+
 | Service | Version | Port | Credentials |
 |---|---|---|---|
 | Postgres | 18 | 5432 | `relayed` / `relayed`, db `relayed` |

@@ -79,6 +79,8 @@ This codebase is early; the risk is over-building. Workspace members under
 ```bash
 pnpm install         # pnpm 11, Node >=24 (engine-strict is on)
 pnpm stack:up        # Postgres + Redis + MinIO — see docs/STACK.md §3
+pnpm obs:up          # local Grafana/Tempo/Loki/Prometheus (opt-in, heavy)
+pnpm obs:smoke       # prove the telemetry loop works before debugging the app
 pnpm spike:sync      # sync-protocol model tests — must stay green
 ```
 

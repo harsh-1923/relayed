@@ -104,6 +104,43 @@ services:
         mc anonymous set none local/relayed-blobs &&
         echo "bucket relayed-blobs ready"
 
+  # ─── Observability (opt-in) ────────────────────────────────────────────────
+  # Grafana's all-in-one LGTM image: the SAME components as Grafana Cloud —
+  # Grafana, Prometheus (stands in for Mimir), Tempo, Loki, Pyroscope, and an
+  # OTel Collector. Local dev is therefore representative, and no dev noise
+  # burns the Cloud free tier or pollutes production dashboards.
+  #
+  # Behind a profile because it is heavy (~1 GB) and most work does not need it:
+  #   pnpm obs:up     start it
+  #   pnpm obs:smoke  send one trace + metric + log, then read them back
+  #   Grafana         http://localhost:3000  (anonymous admin, no login)
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: relayed-lgtm
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"    # Grafana UI
+      - "${OTLP_GRPC_PORT:-4317}:4317"  # OTLP gRPC   <- SDK exporters
+      - "${OTLP_HTTP_PORT:-4318}:4318"  # OTLP HTTP
+      - "${TEMPO_PORT:-3200}:3200"      # Tempo query API
+      - "${PROM_PORT:-9090}:9090"       # Prometheus query API
+    volumes:
+      - lgtm-data:/data
+    healthcheck:
+      # curl, not wget — the image has curl only, and a missing probe binary
+      # means the healthcheck never passes and `--wait` hangs until timeout.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
 volumes:
   postgres-data:
   minio-data:
+  lgtm-data:
