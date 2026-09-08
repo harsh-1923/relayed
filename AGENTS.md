@@ -21,6 +21,8 @@ ordered log, every read served from local SQLite.
 | [`docs/STACK.md`](docs/STACK.md) | Technology choices and why, the local dev stack, library docs and context7 IDs. |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | How builds reach users, code signing, forward compatibility across versions. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | What we collect and how. Read before adding any log, metric or span. |
+| [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
+| [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Current phase: tenancy, social login, the actor model. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
@@ -87,7 +89,7 @@ pnpm spike:sync      # sync-protocol model tests — must stay green
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 31 invariants, each paired with the failure
+Full list in `docs/DESIGN.md` §14 — 36 invariants, plus 37–45 in `docs/STORAGE.md` §18, each paired with the failure
 it prevents. The ones most easily broken by a reasonable-looking change:
 
 | | |
@@ -109,6 +111,12 @@ it prevents. The ones most easily broken by a reasonable-looking change:
 ## Conventions
 
 - ESM, Node >=24, TypeScript.
+- **No TypeScript syntax that emits code.** Tests run via `node --test` on `.ts`
+  directly, which is strip-only — it removes types but cannot generate code. So
+  no constructor parameter properties, `enum`, `namespace`, or decorators.
+  Declare and assign fields explicitly instead.
+- Imports inside packages use explicit `.ts` extensions, for the same reason:
+  Node's ESM resolver has no extension inference.
 - Comments explain **why**, not what, and point at the doc (`§8.1`) rather than
   restating it.
 - Work off the default branch. Commit only when asked.
