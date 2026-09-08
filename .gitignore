@@ -20,3 +20,6 @@ coverage/
 !.vscode/extensions.json
 
 *.log
+
+# generated from docs/DESIGN.md by extract-schema.mjs
+schema.sql

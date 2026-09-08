@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>throttle control</title>
+<body><p>renderer timer control</p><script>
+  const INTERVAL = 5000;
+  let last = Date.now(), n = 0;
+  setInterval(() => {
+    const now = Date.now();
+    console.log(JSON.stringify({ src: 'renderer', n: ++n, dt: now - last }));
+    last = now;
+  }, INTERVAL);
+  console.log(JSON.stringify({ src: 'renderer', ready: true }));
+</script></body>

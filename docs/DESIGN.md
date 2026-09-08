@@ -1875,8 +1875,12 @@ Concrete handshake, since it is easy to get subtly wrong:
 
 Rules:
 
-- **Re-handshake on every renderer load.** Ports do not survive reload. Hook
-  `did-finish-load`, not just first creation.
+- **Re-handshake on every renderer load.** Ports do not survive reload. The
+  preload re-runs on load and asks for a fresh port, so no `did-finish-load`
+  hook in main is required — the renderer drives it.
+- **Reaping on `close` is sufficient.** Verified over 12 reloads including rapid
+  cycles: live port count stayed flat at 1 (§16 item 2). No timeout-based
+  cleanup needed.
 - **The sync engine tracks N ports.** Multiple windows are normal. Detect closed
   ports and clean up their subscriptions, or you leak.
 - **Invalidations broadcast to all live ports.**
@@ -2251,14 +2255,31 @@ stretch a 30s heartbeat past every timeout in the table above, and the symptom
 would look like a mysterious network bug rather than a throttling one.
 
 The socket lives in a `utilityProcess` (§5) — a Node/libuv environment with no
-renderer page — so renderer throttling should not apply. That is a real dividend
-from a decision made for entirely different reasons. **Verify it in Phase 0**
-rather than assuming: it is exactly the kind of platform behavior that is easy
-to be confidently wrong about.
+renderer page — so renderer throttling does not apply.
+
+**Measured, not assumed** (`spikes/electron-verify`, Electron 44.2.0, macOS,
+window and dock hidden, 16 minutes, 5s interval in both places):
+
+| | Ticks | Median interval | Max |
+|---|---|---|---|
+| `utilityProcess` | **191** (192 expected) | **5001 ms** | 5011 ms |
+| Renderer *(control)* | **27** | **59958 ms** | 60049 ms |
+
+The renderer was clamped to roughly one tick per minute; the utility process
+drifted 11 ms over sixteen minutes. The renderer median climbed progressively —
+5000 → 5008 → 5465 → 58007 → 59958 ms — which is intensive throttling engaging
+after the hidden-page threshold.
+
+The control is what makes this conclusive. Had neither been throttled, the run
+would only have shown that throttling never engaged. **Re-run this on every
+Electron major upgrade** — it is platform behaviour, not a guarantee.
 
 macOS App Nap applies at app level and can coalesce timers even outside a
-renderer. Worth measuring in the same spike. `powerSaveBlocker` can suppress it
-but costs battery, and should not be held by a chat app as a matter of course.
+renderer. The same run hid the dock icon for 16 minutes and saw no coalescing of
+the utility timer — but that is weaker evidence than the throttling result,
+because nothing confirms App Nap actually engaged. Treat it as "not observed"
+rather than "cannot happen". `powerSaveBlocker` can suppress it but costs
+battery, and should not be held by a chat app as a matter of course.
 
 ---
 
@@ -2351,26 +2372,24 @@ Two of the first items are verifications rather than features. Both guard
 assumptions the rest of the design rests on, and both are cheap now and
 expensive to discover late — so they come **before** anything is built on top.
 
-1. *Verify:* `node:sqlite` behaves identically under Electron's bundled Node.
-   **If this fails**, we are back to `better-sqlite3` + `electron-rebuild`,
-   which reverses a `STACK.md` decision and reintroduces native-module builds on
-   every machine and CI runner.
-2. *Verify:* a `utilityProcess` timer is **not** subject to Chromium renderer
-   throttling and survives macOS App Nap — hold a 30s heartbeat with the window
-   hidden and backgrounded for an hour (§13.9). **If this fails**, the heartbeat
-   stretches past every proxy timeout, sockets are dropped, and it presents as a
-   network bug rather than a throttling one.
-3. `tsconfig.base.json` with per-package `extends`. First, because everything
-   else inherits it and it is awkward to impose once several packages exist.
-4. Electron app: main + `utilityProcess` + one renderer.
-5. `MessageChannelMain` handshake, including re-attach on renderer reload.
-6. `node:sqlite` open, pragmas (`auto_vacuum` **first**, invariant 11), migration
-   runner asserting `pragma_auto_vacuum() = 2` at boot.
-7. `packages/telemetry`: typed event catalogue, logger/span/metric wrappers, and
-   the lint rules — no direct `@opentelemetry/*` or `pino` imports, no
-   `console.*`, no template-literal log messages. Built before the subsystems
-   that emit signals, because these rules are far easier to establish than to
-   retrofit (`OBSERVABILITY.md` §8).
+1. ✅ *Verify:* `node:sqlite` behaves identically under Electron's bundled Node.
+   **Done** — 12/12, same SQLite build as standalone Node (§16 item 1).
+2. ✅ *Verify:* a `utilityProcess` timer is not subject to Chromium renderer
+   throttling. **Done** — utility 5001 ms median vs renderer 59958 ms over
+   16 minutes hidden (§13.9). Re-run on every Electron major.
+3. ✅ `tsconfig.base.json` with per-package `extends`. **Done** — plus separate
+   node / preload / web configs, since the preload straddles both worlds.
+4. ✅ Electron app: main + `utilityProcess` + one renderer. **Done** —
+   electron-vite, two main-process entries (app and sync engine).
+5. ✅ `MessageChannelMain` handshake with re-attach on reload. **Done**, and it
+   answers §16 item 2: no port leak across 12 reloads.
+6. ✅ `node:sqlite` open, pragmas (`auto_vacuum` **first**, invariant 11),
+   migration runner. **Done** — boot asserts `pragma_auto_vacuum() = 2` and
+   throws rather than running on a database that will never reclaim disk.
+7. ✅ `packages/telemetry`: typed event catalogue, wrappers, lint rules.
+   **Done** — the types reject an unknown event, a wrong field type, a `body`
+   field, and an unbounded id used as a metric label, all at compile time
+   (`OBSERVABILITY.md` §8).
 
 **Phase 1 — Identity** ← a prerequisite: the socket cannot authenticate without it
 8. WorkOS org + AuthKit; system-browser flow with PKCE and `relayed://` callback.
@@ -2427,15 +2446,25 @@ expensive to discover late — so they come **before** anything is built on top.
 Things this document deliberately does not resolve. Resolve them with a spike,
 not with more design.
 
-1. **`node:sqlite` under Electron.** Verified on Node 26 standalone: SQLite
-   3.53.4, all required features present, and **the full §8.3 schema plus the
-   §13.4 FTS triggers execute clean (28 statements, 0 failures)** with
-   insert/edit/delete round-tripping correctly through the search index and
-   `integrity-check` passing. Electron bundles its own Node build — almost
-   certainly fine, but this is load-bearing enough to re-confirm in Phase 0
-   before anything is built on it.
-2. **`MessagePort` lifecycle across renderer reload.** Does a clean re-handshake
-   suffice, or is there a leak/race on rapid reloads? Spike in Phase 0.
+1. ~~**`node:sqlite` under Electron.**~~ **Resolved.** Verified inside an
+   Electron `utilityProcess` (`spikes/electron-verify`, Electron 44.2.0 /
+   Node 24.20.0): 39 schema statements clean, `auto_vacuum = 2`, WAL, FTS5 with
+   external content and its round-trip, the CHECK/NULL rejection, and the
+   singleton partial index — **12/12 checks pass**. Electron bundles **SQLite
+   3.53.4, the same build as standalone Node**, so there is no behavioural gap.
+   Also confirms `engines: node >= 24` is correct rather than incidental.
+2. ~~**`MessagePort` lifecycle across renderer reload.**~~ **Resolved.** A clean
+   re-handshake suffices. Measured over 12 reloads mixing rapid (350 ms) and
+   settled (1200 ms) cycles: live ports in the sync engine stayed flat at **1**,
+   never growing. `MessagePortMain`'s `close` event fires reliably on reload, so
+   reaping on `close` is sufficient and no timeout-based cleanup is needed
+   (§13.2).
+
+   Worth recording how nearly this went the other way: the first run showed
+   ports growing 1→14, which looked exactly like the leak being tested for. The
+   growth was entirely the *probe* — it opened a port each round and never
+   closed it. **Instrumentation that participates in what it measures will
+   happily manufacture the bug you went looking for.**
 3. **Gap threshold.** ~500 revs is an educated guess. Tune against real traffic.
 4. **Live fanout ceiling.** At what channel count does "receive everything" stop
    being free? Believed to be far above 50; worth measuring before it matters.

@@ -1,0 +1,15 @@
+{
+  "name": "electron-verify",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Phase 0 verifications (DESIGN.md \u00a715) \u2014 standalone, not a workspace member",
+  "main": "main.js",
+  "scripts": {
+    "extract": "node extract-schema.mjs",
+    "sqlite": "npm run extract && electron . --check=sqlite",
+    "timer": "electron . --check=timer"
+  },
+  "dependencies": {
+    "electron": "^44.2.0"
+  }
+}
