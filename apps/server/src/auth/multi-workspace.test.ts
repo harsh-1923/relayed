@@ -72,7 +72,7 @@ test('one identity resolves to EVERY workspace it belongs to', opts, async () =>
   assert.equal(found[0]?.name, 'First Workspace');
   assert.equal(found[1]?.name, 'Acme Inc');
   // Handles differ per workspace by design, and both are carried.
-  assert.notEqual(found[0]?.handle, found[1]?.handle);
+  assert.notEqual(found[0]?.actorHandle, found[1]?.actorHandle);
 });
 
 test('resolution is deterministic, not merely repeatable', opts, async () => {

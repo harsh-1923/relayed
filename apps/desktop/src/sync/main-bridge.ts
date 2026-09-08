@@ -35,3 +35,7 @@ export const vault = {
 };
 
 export const openBrowser = (url: string) => callMain<void>('browser:open', { url });
+
+/** Scopes the relayed-blob: handler to one account (DESIGN.md §13.3). */
+export const setBlobAccount = (accountId: string | null) =>
+  callMain<void>('blob:account', { accountId });

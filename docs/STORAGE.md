@@ -139,28 +139,40 @@ remaining actor, and the missing one is marked `state='removed'`.
 
 ```sql
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
--- device_id, last_workspace, last_active_at, epoch
+-- device_id, last_workspace, last_active_at
 
 CREATE TABLE workspaces (
-  workspace_id   TEXT PRIMARY KEY,
-  org_id         TEXT NOT NULL,
-  name           TEXT NOT NULL,
-  slug           TEXT NOT NULL,
+  -- ── the workspace ───────────────────────────────────────────────────────
+  workspace_id           TEXT PRIMARY KEY,
+  org_id                 TEXT NOT NULL,
+  name                   TEXT NOT NULL,
+  slug                   TEXT NOT NULL,
+  workspace_avatar_url   TEXT,        -- its own image, or its org's (§14)
+  workspace_avatar_blob  TEXT,        -- sha256 of the bytes we hold
 
-  actor_id       TEXT NOT NULL,   -- MY actor here
-  handle         TEXT NOT NULL,   -- MY handle here — differs per workspace by design (§10)
-  display_name   TEXT NOT NULL,
-  avatar_blob    TEXT,
+  -- ── me, in this workspace ───────────────────────────────────────────────
+  actor_id               TEXT NOT NULL,
+  actor_handle           TEXT NOT NULL,   -- differs per workspace by design (§10)
+  actor_display_name     TEXT NOT NULL,
+  actor_avatar_url       TEXT,
+  actor_avatar_blob      TEXT,
 
-  last_opened_at INTEGER,
-  unread_hint    INTEGER NOT NULL DEFAULT 0,   -- reserved: §16.2
-  mention_hint   INTEGER NOT NULL DEFAULT 0,   -- reserved: §16.2
-  outbox_hint    INTEGER NOT NULL DEFAULT 0,   -- written at close, §15.2
+  last_opened_at         INTEGER,
+  unread_hint            INTEGER NOT NULL DEFAULT 0,   -- reserved: §16.2
+  mention_hint           INTEGER NOT NULL DEFAULT 0,   -- reserved: §16.2
+  outbox_hint            INTEGER NOT NULL DEFAULT 0,   -- written at close, §15.2
 
-  state          TEXT NOT NULL,
+  state                  TEXT NOT NULL,
   CHECK (state IN ('active','removed'))
 );
 ```
+
+**Every field says whose it is, and that is not cosmetic.** The row has two
+subjects, and while it did not, an unqualified `avatar_url` — the member's
+WorkOS picture — was rendered as the workspace's icon, painting the same face on
+every entry in the switcher. It was type-correct and the tests passed; only
+looking at the screen caught it. The same shape as the earlier column named for
+a blob that held a URL.
 
 This is what renders the switcher **offline, before auth, without opening a
 single replica**. It is a local cache of `/auth/session`'s `memberships` array.
@@ -519,14 +531,64 @@ cannot be half-completed.
 
 ## 14. Blobs
 
-`accounts/<acc>/workspaces/<wsp>/blobs/<2-char shard>/<id>` — per workspace, not
-per account, because eviction follows message eviction (§13.6), which is
-per-workspace, and workspace removal must take its blobs with it.
+Two tiers, and the split is forced by the switcher.
 
-`protocol.handle('blob', …)` in main is the one place the renderer names
-something path-shaped. It **must resolve against the active workspace directory
-only** and reject anything escaping it. With one workspace the question does not
-arise; with N it does.
+| Class | Location | Why |
+|---|---|---|
+| **Avatars** | `accounts/<acc>/blobs/<2-char>/<id>` | the rail draws one per workspace, including the ones you are not in |
+| Message attachments | `accounts/<acc>/workspaces/<wsp>/blobs/…` | eviction follows message eviction (§13.6), which is per-workspace |
+
+DESIGN.md §13.3 predates this document and says `userData/blobs/`. Per-workspace
+is the natural translation of that, and it is wrong for avatars: the handler
+resolves only within what is active, so an avatar for an inactive workspace
+could never be served. Account tier is the only placement where both hold. This
+settles §20 open question 1, which had been recorded as "cheap either way" — it
+is not; the switcher decides it.
+
+**§13.3's scheme name cannot be used.** It specifies `protocol.handle('blob', …)`,
+but `blob:` is reserved in Chromium — it is how `URL.createObjectURL` works, and
+our CSP already lists it for that. The scheme is **`relayed-blob:`**, registered
+privileged before `whenReady()` (Electron ignores it afterwards) and added to
+`img-src`.
+
+The handler is the one place a renderer names something path-shaped, so:
+
+- ids are **sha256 hex and nothing else**, which makes traversal impossible
+  rather than merely guarded against;
+- resolution is scoped to the **active account**, pushed from the sync process
+  which owns storage — main never derives it, so a signed-out account's ids
+  resolve to nothing;
+- there is **no remote fallback**. §13.3 describes local → remote → placeholder;
+  only the local leg is built, deliberately, because reaching the network from
+  the handler puts a fetch back in the render path, which is what the prefetch
+  exists to remove.
+
+Content-addressing is load-bearing beyond deduplication: the same human in two
+workspaces yields one file, and the id cannot be chosen by whatever produced the
+URL.
+
+### 14.1 Three subjects can have an image
+
+| Subject | Source | Shown in |
+|---|---|---|
+| Actor | `actors.avatar_url` — the WorkOS profile picture | the identity card |
+| Workspace | `workspaces.avatar_url` | the switcher rail |
+| Organization | `organizations.avatar_url` | inherited by its workspaces |
+
+`resolveMemberships` returns `coalesce(workspace.avatar_url, org.avatar_url)` as
+one `workspace_avatar_url`, so the **client never needs an organizations table**
+to render the rail. v1 ships one workspace per org (§6.1), so in practice they
+are the same picture — the columns are separate because the layer that owns the
+brand is the org, and the layer a member looks at is the workspace.
+
+**No image is the ordinary case**, and it is not a degraded one: the rail draws
+the workspace's initials on a colour derived from its id. Derived rather than
+stored, so it needs no schema and cannot disagree between devices.
+
+**Setting an image is deliberately unbuilt.** Upload, or a pasted URL, or
+inheriting the WorkOS organization's — undecided. The columns exist now so that
+whenever it is decided, no migration has to reach every installed client before
+anyone can see a logo.
 
 ---
 
@@ -592,6 +654,10 @@ having been revoked → 401 → rows to `failed`, which §10.5 already requires 
 affordance for.
 
 **Unblocked by:** Phase 2 write path.
+
+Note that the **blob store itself now exists** (§14), built for avatars. Message
+attachments reuse it at the workspace tier; the two-phase offline upload
+(§13.3) is what remains.
 
 ### 16.2 Cross-workspace activity — blocked on the socket
 
@@ -705,7 +771,8 @@ To fold into DESIGN.md §14 at the end of Phase 1. Numbering continues from 36.
 | 42 | `last_workspace` is committed **before** any handle or socket work | A crash mid-switch reopens the workspace the user just left |
 | 43 | An unknown top-level frame `t` is **ignored**, never fatal | Adding `wsp_activity` breaks every older client in the field (§15.1) |
 | 44 | `/auth/switch` **never** revokes or rotates the source session | The workspace you just left becomes undrainable and un-returnable-to offline |
-| 45 | The blob protocol handler resolves **only** within the active workspace | A renderer-supplied id reaches another workspace's, or another account's, files |
+| 45 | The blob handler resolves **only** within the active account, and only ids matching `^[0-9a-f]{64}$` | A renderer-supplied id reaches another account's files, or escapes the blob directory entirely |
+| 46 | Avatars are fetched into the blob store, **never rendered from a remote URL** | The CSP blocks it (correctly), and avatars go blank offline — §13.3's most visible failure |
 
 ---
 

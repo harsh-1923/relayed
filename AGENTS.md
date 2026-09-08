@@ -89,7 +89,7 @@ pnpm spike:sync      # sync-protocol model tests — must stay green
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 36 invariants, plus 37–45 in `docs/STORAGE.md` §18, each paired with the failure
+Full list in `docs/DESIGN.md` §14 — 36 invariants, plus 37–46 in `docs/STORAGE.md` §18, each paired with the failure
 it prevents. The ones most easily broken by a reasonable-looking change:
 
 | | |

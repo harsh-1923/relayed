@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
+import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
 
 // MUST run before anything reads app.getPath('userData').
@@ -19,6 +20,10 @@ import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAva
 // user's local database — recoverable, since it is a replica, but
 // indistinguishable from data loss to them.
 app.setName('Relayed');
+
+// Both MUST precede app.whenReady(); Electron ignores a privileged-scheme
+// registration made after it (DESIGN.md §13.3).
+registerBlobScheme();
 
 const bootStarted = Date.now();
 
@@ -118,6 +123,7 @@ app.whenReady().then(() => {
   // dark app.
   nativeTheme.themeSource = 'dark';
 
+  handleBlobProtocol();
   syncProcess = startSyncEngine();
 
   onDeepLink((url) => {
@@ -158,6 +164,9 @@ app.whenReady().then(() => {
       case 'vault:read':  reply(readRefreshToken(...slot())); break;
       case 'vault:store': if (msg.token) storeRefreshToken(...slot(), msg.token); reply(null); break;
       case 'vault:clear': clearRefreshToken(...slot()); reply(null); break;
+      // Which account's blobs may be served. Storage lives in the sync
+      // process, so main is told rather than deriving it.
+      case 'blob:account': setBlobAccount(msg.accountId ?? null); reply(null); break;
       case 'browser:open':
         // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
         // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).

@@ -61,6 +61,8 @@ export const events = {
                            doc: 'Schema migration applied at boot.' },
   'sync.port.attached':  { fields: { live_ports: 'int' },
                            doc: 'A renderer attached a MessagePort (DESIGN §13.2).' },
+  'blob.prefetched':     { fields: { kind: 'enum', count: 'int' },
+                           doc: 'Blobs fetched eagerly. Avatars are the pinned class (DESIGN §13.3).' },
 } as const satisfies Record<string, EventSpec>;
 
 export type EventName = keyof typeof events;

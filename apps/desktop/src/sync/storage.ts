@@ -9,7 +9,7 @@
 // outbox drainer (§16.1) an addition rather than an untangling.
 import type { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -17,15 +17,24 @@ import { workspaceMigrations } from './migrations/workspace.ts';
 import { newId } from './ids.ts';
 import * as p from './paths.ts';
 
+/**
+ * Two subjects in one row — the workspace, and me in it — so every field says
+ * whose it is. See account migration v4 for what unqualified names cost.
+ */
 export interface WorkspaceRow {
   workspaceId: string;
   orgId: string;
   name: string;
   slug: string;
+  /** The workspace's own image. Null is ordinary: the UI derives a colour. */
+  workspaceAvatarUrl: string | null;
+  workspaceAvatarBlob: string | null;
   actorId: string;
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
+  actorHandle: string;
+  actorDisplayName: string;
+  actorAvatarUrl: string | null;
+  /** sha256 of the bytes we hold locally. null until fetched (§13.3). */
+  actorAvatarBlob: string | null;
   lastOpenedAt: number | null;
   unreadHint: number;
   mentionHint: number;
@@ -47,10 +56,11 @@ export interface Membership {
   orgId: string;
   name: string;
   slug: string;
+  workspaceAvatarUrl: string | null;
   actorId: string;
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
+  actorHandle: string;
+  actorDisplayName: string;
+  actorAvatarUrl: string | null;
 }
 
 const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
@@ -58,10 +68,13 @@ const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
   orgId: String(r['org_id']),
   name: String(r['name']),
   slug: String(r['slug']),
+  workspaceAvatarUrl: (r['workspace_avatar_url'] as string | null) ?? null,
+  workspaceAvatarBlob: (r['workspace_avatar_blob'] as string | null) ?? null,
   actorId: String(r['actor_id']),
-  handle: String(r['handle']),
-  displayName: String(r['display_name']),
-  avatarUrl: (r['avatar_url'] as string | null) ?? null,
+  actorHandle: String(r['actor_handle']),
+  actorDisplayName: String(r['actor_display_name']),
+  actorAvatarUrl: (r['actor_avatar_url'] as string | null) ?? null,
+  actorAvatarBlob: (r['actor_avatar_blob'] as string | null) ?? null,
   lastOpenedAt: (r['last_opened_at'] as number | null) ?? null,
   unreadHint: Number(r['unread_hint'] ?? 0),
   mentionHint: Number(r['mention_hint'] ?? 0),
@@ -224,6 +237,7 @@ export class Storage {
     const id = newId('acc');
     mkdirSync(p.workspacesDir(this.root, id), { recursive: true });
     mkdirSync(p.authDir(this.root, id), { recursive: true });
+    mkdirSync(p.accountBlobsDir(this.root, id), { recursive: true });
     const db = openDatabase(p.accountDb(this.root, id));
     migrate(db, accountMigrations);
     setMeta(db, 'device_id', deviceId);
@@ -287,18 +301,30 @@ export class Storage {
     db.exec('BEGIN');
     try {
       const upsert = db.prepare(`
-        INSERT INTO workspaces (workspace_id, org_id, name, slug, actor_id, handle,
-                                display_name, avatar_url, state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        INSERT INTO workspaces (workspace_id, org_id, name, slug,
+                                workspace_avatar_url,
+                                actor_id, actor_handle, actor_display_name,
+                                actor_avatar_url, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(workspace_id) DO UPDATE SET
           org_id = excluded.org_id, name = excluded.name, slug = excluded.slug,
-          actor_id = excluded.actor_id, handle = excluded.handle,
-          display_name = excluded.display_name, avatar_url = excluded.avatar_url,
+          workspace_avatar_url = excluded.workspace_avatar_url,
+          actor_id = excluded.actor_id, actor_handle = excluded.actor_handle,
+          actor_display_name = excluded.actor_display_name,
+          actor_avatar_url = excluded.actor_avatar_url,
+          -- Drop a local blob only when its source URL actually changed;
+          -- otherwise every membership refresh re-downloads every image.
+          actor_avatar_blob = CASE
+            WHEN workspaces.actor_avatar_url IS NOT DISTINCT FROM excluded.actor_avatar_url
+            THEN workspaces.actor_avatar_blob ELSE NULL END,
+          workspace_avatar_blob = CASE
+            WHEN workspaces.workspace_avatar_url IS NOT DISTINCT FROM excluded.workspace_avatar_url
+            THEN workspaces.workspace_avatar_blob ELSE NULL END,
           state = 'active'
       `);
       for (const m of memberships) {
-        upsert.run(m.workspaceId, m.orgId, m.name, m.slug, m.actorId, m.handle,
-                   m.displayName, m.avatarUrl);
+        upsert.run(m.workspaceId, m.orgId, m.name, m.slug, m.workspaceAvatarUrl,
+                   m.actorId, m.actorHandle, m.actorDisplayName, m.actorAvatarUrl);
       }
       if (memberships.length > 0) {
         const keep = memberships.map(() => '?').join(',');
@@ -409,6 +435,29 @@ export class Storage {
     this.#account?.close();
     this.#account = null;
     this.#accountId = null;
+  }
+
+  // ── blobs (§13.3) ───────────────────────────────────────────────────────
+
+  /** Content-addressed, so the same bytes are stored once however they arrive. */
+  hasBlob(id: string): boolean {
+    const acc = this.#accountId;
+    return acc !== null && existsSync(p.accountBlob(this.root, acc, id));
+  }
+
+  putBlob(id: string, bytes: Uint8Array): void {
+    const acc = this.#accountId;
+    if (!acc) throw new Error('no account is open');
+    const file = p.accountBlob(this.root, acc, id);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, bytes, { mode: 0o600 });
+  }
+
+  /** `which` names the subject, so the two images cannot be crossed. */
+  setAvatarBlob(workspaceId: string, which: 'actor' | 'workspace', blobId: string): void {
+    const column = which === 'actor' ? 'actor_avatar_blob' : 'workspace_avatar_blob';
+    this.account.prepare(`UPDATE workspaces SET ${column} = ? WHERE workspace_id = ?`)
+      .run(blobId, workspaceId);
   }
 
   /** See DebugSnapshot. Never used by the app itself. */

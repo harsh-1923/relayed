@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,8 +28,29 @@ async function call<T>(fn: () => Promise<T>): Promise<T | null> {
   return v;
 }
 
+/**
+ * Local bytes only — never the remote URL the server gave us. Served by main
+ * over a custom scheme so `webSecurity` stays on and no filesystem path reaches
+ * the DOM (DESIGN.md §13.3). Absent until the prefetch lands, which is what the
+ * initials fallback is for.
+ */
+const blobSrc = (id: string | null) => (id ? `relayed-blob://${id}` : undefined);
+
 const initials = (s: string) =>
   s.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+
+/**
+ * A stable colour per workspace, derived from its id.
+ *
+ * The rail exists to tell workspaces apart at a glance, and initials alone stop
+ * doing that the moment two of them start with the same letter. Derived rather
+ * than stored so it needs no schema and never disagrees between devices.
+ */
+function hueFor(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+  return h;
+}
 
 /** §9 decision 1: an org is created here, on demand — never at signup. */
 function WorkspaceForm(props: {
@@ -106,14 +127,23 @@ function Switcher(props: { state: AppState; onCreate: () => void; creating: bool
          aria-label="Workspaces">
       {workspaces.map((w: WorkspaceRow) => {
         const active = w.workspaceId === workspaceId;
+        // The WORKSPACE's identity, never the member's — the field names now
+        // make that hard to get wrong. A workspace image is optional and
+        // usually absent; initials on a derived colour are the fallback, and a
+        // perfectly good one.
         return (
           <button key={w.workspaceId} onClick={() => void pick(w.workspaceId)}
-                  title={`${w.name} · @${w.handle}`} aria-current={active}
-                  className={`relative grid size-10 place-items-center rounded-xl text-sm font-medium
-                    transition-colors ${active
+                  title={`${w.name} · @${w.actorHandle}`} aria-current={active}
+                  style={{ backgroundColor: active || w.workspaceAvatarBlob ? undefined
+                    : `oklch(0.34 0.07 ${hueFor(w.workspaceId)})` }}
+                  className={`relative grid size-10 place-items-center overflow-hidden rounded-xl
+                    text-sm font-medium transition-[opacity,box-shadow] ${active
                       ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}>
-            {initials(w.name)}
+                      : 'text-foreground/85 opacity-80 hover:opacity-100'}`}>
+            {w.workspaceAvatarBlob
+              ? <img src={blobSrc(w.workspaceAvatarBlob)} alt=""
+                     className="size-full object-cover" />
+              : initials(w.name)}
             {w.mentionHint > 0 && (
               <span className="absolute -right-0.5 -top-0.5 grid size-4 place-items-center
                                rounded-full bg-destructive text-[10px] text-white">
@@ -199,18 +229,14 @@ function Identity(props: {
         ) : auth.status === 'authenticated' || active ? (
           <div className="flex items-center gap-3">
             <Avatar>
-              {/* No <AvatarImage> deliberately. `avatarUrl` is a remote
-                  workoscdn.com URL, and rendering it would (a) trip the CSP,
-                  which is correct to block it, and (b) leave avatars blank
-                  offline — the exact failure R3 exists to prevent. Initials
-                  until the blob store lands (DESIGN.md §13.3). */}
-              <AvatarFallback>{initials(active?.displayName ?? '??')}</AvatarFallback>
+              <AvatarImage src={blobSrc(active?.actorAvatarBlob ?? null)} />
+              <AvatarFallback>{initials(active?.actorDisplayName ?? '??')}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <div className="font-medium">{active?.displayName ?? 'Signed in'}</div>
+              <div className="font-medium">{active?.actorDisplayName ?? 'Signed in'}</div>
               <div className="text-sm text-muted-foreground">
                 {/* The handle is per workspace, so it comes from the row, not the actor. */}
-                {active?.handle ? `@${active.handle}` : ''}
+                {active?.actorHandle ? `@${active.actorHandle}` : ''}
               </div>
             </div>
             {/* Account-level, not workspace-level: one identity holds every
@@ -247,7 +273,7 @@ function Replica(props: { state: AppState }) {
       </CardHeader>
       <CardContent className="space-y-1 font-mono text-xs text-muted-foreground">
         <div>account   {props.state.accountId ?? '—'}</div>
-        <div>workspace {active ? `${active.name} · @${active.handle}` : '—'}</div>
+        <div>workspace {active ? `${active.name} · @${active.actorHandle}` : '—'}</div>
         <div>replicas  {props.state.workspaces.length} known · epoch {props.state.epoch}</div>
       </CardContent>
     </Card>

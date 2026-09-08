@@ -10,7 +10,8 @@
 // per workspace beneath it, exactly one workspace active at a time.
 import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, openBrowser } from './main-bridge.ts';
+import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
+import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import { newId } from './ids.ts';
 import type { OurSession } from './auth/relayed.ts';
@@ -118,6 +119,16 @@ function adoptSession(s: OurSession): void {
   }
 
   if (storage.workspaceId !== workspaceId) storage.switchWorkspace(workspaceId);
+
+  // Scope the blob handler to whatever account is now open, then fill the
+  // avatar cache. Fire-and-forget: a grey circle is not a failed sign-in.
+  void setBlobAccount(storage.accountId);
+  void fillAvatars();
+}
+
+/** §13.3: avatars are fetched eagerly, always. Failures are silent and retried. */
+async function fillAvatars(): Promise<void> {
+  if (await prefetchAvatars(storage) > 0) push();
 }
 
 // ── the view the renderer renders ───────────────────────────────────────────
@@ -197,6 +208,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // §13: sign-out wipes the database and blob directory. With this layout
     // that is one directory delete, which cannot be half-completed.
     if (accountId) storage.deleteAccount(accountId);
+    void setBlobAccount(storage.accountId);
 
     // Another account may still be signed in on this device; boot picks it up.
     const next = storage.boot();
@@ -291,7 +303,11 @@ let syncStarted = false;
 function startSyncing(): void {
   if (syncStarted) return;
   syncStarted = true;
+  void setBlobAccount(storage.accountId);
   if (boot.workspaceId) void session.activate(boot.workspaceId);
+  // Boot may already hold everything but the bytes — an install whose blobs
+  // were evicted, or a fetch that failed while offline last run.
+  void fillAvatars();
 }
 setTimeout(startSyncing, 5_000).unref?.();
 

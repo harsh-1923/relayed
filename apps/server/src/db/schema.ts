@@ -9,6 +9,7 @@ export interface OrganizationsTable {
   id: string;
   workos_org_id: string;
   name: string;
+  avatar_url: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -18,6 +19,7 @@ export interface WorkspacesTable {
   org_id: string;
   name: string;
   slug: string;
+  avatar_url: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }

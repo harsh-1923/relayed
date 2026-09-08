@@ -67,4 +67,38 @@ export const accountMigrations: readonly Migration[] = [
     // blob store is Phase 2 work, and this is the column that will feed it.
     up: `ALTER TABLE workspaces RENAME COLUMN avatar_blob TO avatar_url;`,
   },
+  {
+    version: 3,
+    name: 'avatar-blob',
+    // Both columns, deliberately. `avatar_url` is what the server said;
+    // `avatar_blob` is the sha256 of the bytes we actually hold. Keeping the
+    // source URL is what lets a changed avatar be noticed and re-fetched, and
+    // what makes the blob re-derivable if the file is ever lost.
+    up: `ALTER TABLE workspaces ADD COLUMN avatar_blob TEXT;`,
+  },
+  {
+    version: 4,
+    name: 'name-the-subject',
+    // A membership row has TWO subjects: the workspace, and me in it. Nothing
+    // in the old names said which was which, so `avatar_url` — the member's
+    // WorkOS picture — got rendered as the workspace's icon, painting the same
+    // face on every entry in the switcher.
+    //
+    // Same class of defect as v2's column named for a blob that held a URL, and
+    // in both cases the code was type-correct and the tests passed. Names are
+    // the only thing that would have caught either.
+    up: `
+      ALTER TABLE workspaces RENAME COLUMN handle       TO actor_handle;
+      ALTER TABLE workspaces RENAME COLUMN display_name TO actor_display_name;
+      ALTER TABLE workspaces RENAME COLUMN avatar_url   TO actor_avatar_url;
+      ALTER TABLE workspaces RENAME COLUMN avatar_blob  TO actor_avatar_blob;
+
+      -- The workspace's OWN image, resolved server-side from the workspace or
+      -- its organization. Null is the ordinary case and renders as initials on
+      -- a colour derived from the workspace id — no schema, and it cannot
+      -- disagree between devices.
+      ALTER TABLE workspaces ADD COLUMN workspace_avatar_url  TEXT;
+      ALTER TABLE workspaces ADD COLUMN workspace_avatar_blob TEXT;
+    `,
+  },
 ];

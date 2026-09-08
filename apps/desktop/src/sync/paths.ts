@@ -9,6 +9,7 @@ import { join } from 'node:path';
  *     accounts/<acc>/
  *       account.db                     device_id, workspace index
  *       auth/refresh-<wsp>.bin         one vault slot per workspace (§9)
+ *       blobs/<2-char shard>/<id>      avatars — account tier, see below
  *       workspaces/<wsp>/
  *         relayed.db                   the replica — cursors, messages, outbox
  *         blobs/<2-char shard>/<id>
@@ -33,6 +34,22 @@ export const accountDb    = (root: string, acc: string) => join(accountDir(root,
 export const authDir      = (root: string, acc: string) => join(accountDir(root, acc), 'auth');
 export const vaultFile    = (root: string, acc: string, wsp: string) =>
   join(authDir(root, acc), `refresh-${wsp}.bin`);
+
+/**
+ * Avatars live at the ACCOUNT tier, not per workspace.
+ *
+ * DESIGN.md §13.3 predates the storage split and says `userData/blobs/`. Per
+ * workspace would be the natural translation, except that the switcher draws an
+ * avatar for every workspace including the ones you are not in — and the blob
+ * handler resolves only within what is active (invariant 45). Account-tier is
+ * the only placement where both hold. Message attachments stay per workspace,
+ * where eviction follows the messages.
+ */
+export const accountBlobsDir = (root: string, acc: string) =>
+  join(accountDir(root, acc), 'blobs');
+/** Two-character shard: keeps directory entry counts sane on every filesystem. */
+export const accountBlob = (root: string, acc: string, id: string) =>
+  join(accountBlobsDir(root, acc), id.slice(0, 2), id);
 
 export const workspacesDir = (root: string, acc: string) => join(accountDir(root, acc), 'workspaces');
 export const workspaceDir  = (root: string, acc: string, wsp: string) =>

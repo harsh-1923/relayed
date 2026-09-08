@@ -26,15 +26,28 @@ export interface Resolved {
 }
 
 /** One workspace this identity belongs to. The client caches these (STORAGE.md §6). */
+/**
+ * One workspace this identity belongs to. The client caches these
+ * (STORAGE.md §6).
+ *
+ * Two subjects in one shape, so every field says whose it is. An unqualified
+ * `avatarUrl` here once got rendered as the workspace's icon when it is the
+ * member's face — the same class of mistake as a column named for a blob that
+ * held a URL.
+ */
 export interface Membership {
-  actorId: string;
-  orgId: string;
   workspaceId: string;
+  orgId: string;
+  /** The workspace. */
   name: string;
   slug: string;
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
+  /** Its own image, falling back to its organization's. */
+  workspaceAvatarUrl: string | null;
+  /** Me, in this workspace. */
+  actorId: string;
+  actorHandle: string;
+  actorDisplayName: string;
+  actorAvatarUrl: string | null;
 }
 
 /**
@@ -55,10 +68,15 @@ export async function resolveMemberships(
 ): Promise<Membership[]> {
   const rows = await db.selectFrom('actors')
     .innerJoin('workspaces', 'workspaces.id', 'actors.workspace_id')
-    .select([
+    .innerJoin('organizations', 'organizations.id', 'actors.org_id')
+    .select((eb) => [
       'actors.id as actor_id', 'actors.org_id', 'actors.workspace_id',
       'actors.handle', 'actors.display_name', 'actors.avatar_url',
       'workspaces.name', 'workspaces.slug',
+      // A workspace with no image of its own shows its organization's. Resolved
+      // HERE so the client never needs an organizations table of its own.
+      eb.fn.coalesce('workspaces.avatar_url', 'organizations.avatar_url')
+        .as('workspace_avatar_url'),
     ])
     .where('actors.identity_kind', '=', 'workos_user')
     .where('actors.identity_id', '=', workosUserId)
@@ -69,9 +87,10 @@ export async function resolveMemberships(
     .execute();
 
   return rows.map(r => ({
-    actorId: r.actor_id, orgId: r.org_id, workspaceId: r.workspace_id,
-    name: r.name, slug: r.slug, handle: r.handle,
-    displayName: r.display_name, avatarUrl: r.avatar_url,
+    workspaceId: r.workspace_id, orgId: r.org_id,
+    name: r.name, slug: r.slug, workspaceAvatarUrl: r.workspace_avatar_url,
+    actorId: r.actor_id, actorHandle: r.handle,
+    actorDisplayName: r.display_name, actorAvatarUrl: r.avatar_url,
   }));
 }
 

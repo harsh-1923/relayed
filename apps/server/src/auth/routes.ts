@@ -24,11 +24,18 @@ interface ExchangeBody {
   workspace_id?: string;
 }
 
-/** Wire shape of a membership. snake_case, like every other field we return. */
+/**
+ * Wire shape of a membership. snake_case, like every other field we return.
+ *
+ * Every avatar field says whose it is: the workspace has one, and so does the
+ * member. An unqualified name here is what let the member's face be painted on
+ * every workspace icon.
+ */
 const wire = (m: Membership) => ({
   workspace_id: m.workspaceId, org_id: m.orgId, name: m.name, slug: m.slug,
-  actor_id: m.actorId, handle: m.handle, display_name: m.displayName,
-  avatar_url: m.avatarUrl,
+  workspace_avatar_url: m.workspaceAvatarUrl,
+  actor_id: m.actorId, actor_handle: m.actorHandle,
+  actor_display_name: m.actorDisplayName, actor_avatar_url: m.actorAvatarUrl,
 });
 
 async function issue(actorId: string, orgId: string, workspaceId: string, deviceId: string) {

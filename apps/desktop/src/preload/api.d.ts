@@ -16,10 +16,17 @@ export type AuthState =
   | { status: 'authenticated'; actor: Actor | null; expiresAt: number }
   | { status: 'stale'; actor: Actor | null; reason: string };
 
-/** A row of the switcher. Cached in account.db, so it renders offline (STORAGE.md §6). */
+/**
+ * A row of the switcher. Cached in account.db, so it renders offline
+ * (STORAGE.md §6).
+ *
+ * Two subjects — the workspace, and me in it — so every field says whose it is.
+ */
 export interface WorkspaceRow {
   workspaceId: string; orgId: string; name: string; slug: string;
-  actorId: string; handle: string; displayName: string; avatarUrl: string | null;
+  workspaceAvatarUrl: string | null; workspaceAvatarBlob: string | null;
+  actorId: string; actorHandle: string; actorDisplayName: string;
+  actorAvatarUrl: string | null; actorAvatarBlob: string | null;
   lastOpenedAt: number | null;
   unreadHint: number; mentionHint: number; outboxHint: number;
   state: 'active' | 'removed';

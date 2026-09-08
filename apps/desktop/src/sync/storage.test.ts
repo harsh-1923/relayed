@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -11,8 +11,8 @@ import { workspaceMigrations } from './migrations/workspace.ts';
 const root = () => mkdtempSync(join(tmpdir(), 'relayed-storage-'));
 
 const member = (over: Partial<Membership> & { workspaceId: string; actorId: string }): Membership => ({
-  orgId: 'org_1', name: 'Workspace', slug: 'workspace',
-  handle: 'harsh', displayName: 'Harsh Sharma', avatarUrl: null,
+  orgId: 'org_1', name: 'Workspace', slug: 'workspace', workspaceAvatarUrl: null,
+  actorHandle: 'harsh', actorDisplayName: 'Harsh Sharma', actorAvatarUrl: null,
   ...over,
 });
 
@@ -122,11 +122,11 @@ test('a membership that comes back is reactivated', () => {
 
 test('handles differ per workspace and are stored per workspace', () => {
   const { storage } = seeded(root(), [
-    member({ workspaceId: 'wsp_a', actorId: 'act_a', handle: 'harsh' }),
-    member({ workspaceId: 'wsp_b', actorId: 'act_b', handle: 'harsh.s', name: 'Acme Inc' }),
+    member({ workspaceId: 'wsp_a', actorId: 'act_a', actorHandle: 'harsh' }),
+    member({ workspaceId: 'wsp_b', actorId: 'act_b', actorHandle: 'harsh.s', name: 'Acme Inc' }),
   ]);
-  assert.equal(storage.workspaceRow('wsp_a')?.handle, 'harsh');
-  assert.equal(storage.workspaceRow('wsp_b')?.handle, 'harsh.s');
+  assert.equal(storage.workspaceRow('wsp_a')?.actorHandle, 'harsh');
+  assert.equal(storage.workspaceRow('wsp_b')?.actorHandle, 'harsh.s');
 });
 
 test('each database carries its own user_version', () => {
@@ -289,24 +289,87 @@ test('forgetting a workspace removes only that workspace', () => {
   assert.equal(storage.workspaceRow('wsp_a'), null);
 });
 
-test('an existing v1 account.db migrates its avatar column in place', () => {
+test('an existing v1 account.db migrates its avatar columns in place', () => {
   const dir = root();
   const { storage, accountId } = seeded(dir, [
-    member({ workspaceId: 'wsp_a', actorId: 'act_a', avatarUrl: 'https://example.test/a.png' }),
+    member({ workspaceId: 'wsp_a', actorId: 'act_a', actorAvatarUrl: 'https://example.test/a.png' }),
   ]);
   storage.close();
 
-  // Wind it back to v1 with the old column name, as a real install would be.
+  // Wind it back to the real v1 shape: one column, named avatar_blob, holding
+  // what the server returned — which was a URL all along.
   const file = join(dir, 'accounts', accountId, 'account.db');
-  let db = new DatabaseSync(file);
-  db.exec('ALTER TABLE workspaces RENAME COLUMN avatar_url TO avatar_blob');
+  const db = new DatabaseSync(file);
+  db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_url');
+  db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_blob');
+  db.exec('ALTER TABLE workspaces DROP COLUMN actor_avatar_blob');
+  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_handle       TO handle');
+  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_display_name TO display_name');
+  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_avatar_url   TO avatar_blob');
   db.exec('PRAGMA user_version = 1');
   db.close();
 
   const reopened = new Storage(dir);
   reopened.openAccount(accountId);
-  assert.equal(reopened.workspaceRow('wsp_a')?.avatarUrl, 'https://example.test/a.png',
-    'the value survives the rename');
+  const row = reopened.workspaceRow('wsp_a');
+  // v2 renames the column to what it actually holds, v3 adds the genuinely
+  // local blob, v4 says whose each field is. The value survives all three.
+  assert.equal(row?.actorAvatarUrl, 'https://example.test/a.png');
+  assert.equal(row?.actorAvatarBlob, null);
+  assert.equal(row?.actorHandle, 'harsh');
+  assert.equal(row?.workspaceAvatarUrl, null, 'a workspace image is simply absent');
+});
+
+test('blobs are content-addressed, sharded, and account-tier', () => {
+  const dir = root();
+  const { storage, accountId } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  const id = 'a'.repeat(64);
+  assert.equal(storage.hasBlob(id), false);
+
+  storage.putBlob(id, new TextEncoder().encode('PNGDATA'));
+  assert.ok(storage.hasBlob(id));
+  // Two-character shard, and under the ACCOUNT — not the workspace, because
+  // the switcher draws avatars for workspaces that are not active (§13.3).
+  const file = join(dir, 'accounts', accountId, 'blobs', 'aa', id);
+  assert.ok(existsSync(file));
+  assert.equal(readFileSync(file, 'utf8'), 'PNGDATA');
+
+  storage.setAvatarBlob('wsp_a', 'actor', id);
+  assert.equal(storage.workspaceRow('wsp_a')?.actorAvatarBlob, id);
+  // The two subjects are separate columns and cannot be crossed.
+  assert.equal(storage.workspaceRow('wsp_a')?.workspaceAvatarBlob, null);
+});
+
+test('a membership refresh keeps each blob unless ITS source URL changed', () => {
+  const dir = root();
+  const both = (actor: string, workspace: string) => member({
+    workspaceId: 'wsp_a', actorId: 'act_a',
+    actorAvatarUrl: actor, workspaceAvatarUrl: workspace,
+  });
+  const { storage } = seeded(dir, [both('https://cdn.test/me.png', 'https://cdn.test/ws.png')]);
+  storage.setAvatarBlob('wsp_a', 'actor', 'b'.repeat(64));
+  storage.setAvatarBlob('wsp_a', 'workspace', 'c'.repeat(64));
+
+  // Same URLs: the bytes cannot have changed, so re-downloading on every
+  // membership refresh would be pure waste.
+  storage.syncMemberships([both('https://cdn.test/me.png', 'https://cdn.test/ws.png')]);
+  assert.equal(storage.workspaceRow('wsp_a')?.actorAvatarBlob, 'b'.repeat(64));
+  assert.equal(storage.workspaceRow('wsp_a')?.workspaceAvatarBlob, 'c'.repeat(64));
+
+  // One changed: only that blob is dropped. The other is still the right image,
+  // and re-fetching it would be work for nothing.
+  storage.syncMemberships([both('https://cdn.test/NEW.png', 'https://cdn.test/ws.png')]);
+  assert.equal(storage.workspaceRow('wsp_a')?.actorAvatarBlob, null);
+  assert.equal(storage.workspaceRow('wsp_a')?.workspaceAvatarBlob, 'c'.repeat(64));
+});
+
+test('signing out takes the blobs with it', () => {
+  const dir = root();
+  const { storage, accountId } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  storage.putBlob('c'.repeat(64), new TextEncoder().encode('bytes'));
+  storage.deleteAccount(accountId);
+  // §13: one directory delete takes replicas, vault AND blobs.
+  assert.ok(!existsSync(join(dir, 'accounts', accountId)));
 });
 
 test('the debug tree shows our layout and hides Chromium runtime files', () => {

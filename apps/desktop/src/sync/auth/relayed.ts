@@ -24,16 +24,21 @@ export interface OurSession {
   memberships: Membership[];
 }
 
-/** One row of the switcher, cached in account.db (STORAGE.md §6). */
+/**
+ * One row of the switcher, cached in account.db (STORAGE.md §6).
+ *
+ * Two subjects, so every field says whose it is — see account migration v4.
+ */
 export interface Membership {
   workspaceId: string;
   orgId: string;
   name: string;
   slug: string;
+  workspaceAvatarUrl: string | null;
   actorId: string;
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
+  actorHandle: string;
+  actorDisplayName: string;
+  actorAvatarUrl: string | null;
 }
 
 /** Returned when the identity has no organization yet (§9 decision 1). */
@@ -97,13 +102,16 @@ interface RawSession {
 
 interface RawMembership {
   workspace_id: string; org_id: string; name: string; slug: string;
-  actor_id: string; handle: string; display_name: string; avatar_url: string | null;
+  workspace_avatar_url: string | null;
+  actor_id: string; actor_handle: string; actor_display_name: string;
+  actor_avatar_url: string | null;
 }
 
 const toMembership = (m: RawMembership): Membership => ({
   workspaceId: m.workspace_id, orgId: m.org_id, name: m.name, slug: m.slug,
-  actorId: m.actor_id, handle: m.handle, displayName: m.display_name,
-  avatarUrl: m.avatar_url ?? null,
+  workspaceAvatarUrl: m.workspace_avatar_url ?? null,
+  actorId: m.actor_id, actorHandle: m.actor_handle,
+  actorDisplayName: m.actor_display_name, actorAvatarUrl: m.actor_avatar_url ?? null,
 });
 
 const toSession = (raw: RawSession): OurSession => ({
