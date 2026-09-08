@@ -340,7 +340,7 @@ flow produces when it declines to ask.
 
 ## 11. Done criteria
 
-**Client half — done**
+**Client — done**
 
 - [x] Sign in with a social provider in the **system browser**; the loopback
       callback returns to the app. Verified end to end against WorkOS staging.
@@ -348,25 +348,45 @@ flow produces when it declines to ask.
       the renderer's only auth surface is the pushed state object.
 - [x] Token refresh failure shows a banner and leaves local data untouched;
       `signOut` is the only path that clears the vault (tested).
-- [x] `actors` and `workspaces` tables exist (migration v2), with the handle
-      uniqueness index and the CHECK constraints.
+- [x] `actors` and `workspaces` tables exist, with the handle uniqueness index
+      and the CHECK constraints.
+- [x] One replica per `(account, workspace)`, one `account.db` per account,
+      switching between them ([`STORAGE.md`](STORAGE.md)).
+- [x] Explicit sign-out wipes the database **and** the blob directory — one
+      directory delete, verified against a real install.
+- [x] Avatars are fetched into a content-addressed blob store and served over a
+      custom scheme; nothing remote is ever in the render path (§13.3).
 
-**Server half — not started** (needs the Management API, hence the secret)
+**Server — done**
 
-- [ ] An `actors` row is written on first sign-in
-- [ ] Org / workspace creation on demand (§9 decision 1)
-- [ ] Invitations
-- [ ] Handle assignment UI — pre-filled, editable, never auto-suffixed (§10)
+- [x] An `actors` row is written on first sign-in
+- [x] Org / workspace creation on demand (§9 decision 1), and the same endpoint
+      creates additional workspaces for a signed-in identity
+- [x] Handle assignment UI — pre-filled, editable, never auto-suffixed (§10)
+- [x] `/auth/session` returns every membership; `/auth/switch` mints a session
+      for a sibling actor without revoking the source
 
-**Still to wire**
+**Remaining**
 
-- [ ] `hello` carries the access token; `reauth` refreshes in band without
-      dropping the socket (§9.7) — needs the socket, which is Phase 2
-- [ ] **Airplane-mode boot renders the full UI from local data** with no login
-      screen and no network call before first paint. `restore()` is already
-      deliberately un-awaited at startup, but the test does not exist yet.
-- [ ] Explicit sign-out wipes the database and blob directory (currently clears
-      the vault only)
+- [ ] **WorkOS organizations are not real.** `organizations.workos_org_id` holds
+      `pending_org_<our id>`, because nothing calls the Management API. Nothing
+      depends on it yet — and invitations do, so this comes first.
+- [ ] **Invitations.** §9 decision 2 makes invite the only way into someone
+      else's org, and it is the only path that gives a second person an account.
+      Everything multi-workspace has so far been exercised by one identity
+      creating two workspaces, which is not the case the model exists for.
+- [ ] **Actors are never replicated to the client.** The workspace replica has
+      the table and zero rows. Message authors cannot render offline without it,
+      so Phase 2 blocks on this rather than Phase 1 needing it.
+- [ ] **The airplane-mode test does not exist.** `RELAYED_VERIFY_BOOT=1` reports
+      `networkCallsBeforeFirstPaint: 0` by counting them in the process that
+      makes them, but nothing runs it with the network actually down and nothing
+      fails a build if it regresses.
+- [ ] **Deactivation webhook.** The accepted cost of minting our own tokens
+      (§7). The state check on every refresh is the backstop, so access ends
+      within one access-token TTL rather than immediately.
+- [ ] Sync [`DESIGN.md`](DESIGN.md) — deferred to the end of this phase by
+      decision, since §9's protocol text and §13.1's storage layout both moved.
 
 ## 11a. Learnings
 

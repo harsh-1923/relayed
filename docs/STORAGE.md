@@ -759,7 +759,8 @@ not infer them from a passing render.
 
 ## 18. Invariants
 
-To fold into DESIGN.md §14 at the end of Phase 1. Numbering continues from 36.
+**Folded into DESIGN.md §14**, which is the canonical list; kept here because
+this is where the reasoning lives. Numbering continues from 36.
 
 | # | Invariant | What breaks without it |
 |---|---|---|
@@ -773,6 +774,7 @@ To fold into DESIGN.md §14 at the end of Phase 1. Numbering continues from 36.
 | 44 | `/auth/switch` **never** revokes or rotates the source session | The workspace you just left becomes undrainable and un-returnable-to offline |
 | 45 | The blob handler resolves **only** within the active account, and only ids matching `^[0-9a-f]{64}$` | A renderer-supplied id reaches another account's files, or escapes the blob directory entirely |
 | 46 | Avatars are fetched into the blob store, **never rendered from a remote URL** | The CSP blocks it (correctly), and avatars go blank offline — §13.3's most visible failure |
+| 47 | A field naming an image, handle or name says **whose it is** | An actor's picture gets painted as the workspace's icon. Type-correct, tests green, wrong on screen — twice |
 
 ---
 

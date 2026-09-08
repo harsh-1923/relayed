@@ -223,12 +223,20 @@ The mechanism that keeps this from being bolted on. A single typed catalogue in
 
 ```ts
 export const events = {
-  'sync.gap.entered':    { chat_id: 'id', head_rev: 'int', cursor_rev: 'int' },
-  'sync.event.unknown':  { op: 'string', rev: 'int' },
-  'outbox.op.failed':    { kind: 'string', attempts: 'int', code: 'string' },
-  'ws.zombie.detected':  { last_pong_ms: 'int' },
-} as const
+  'sync.gap.entered':   { fields: { chat_id: 'id', head_rev: 'int', cursor_rev: 'int' }, doc: '…' },
+  'sync.event.unknown': { fields: { op: 'enum', rev: 'int' },                            doc: '…' },
+  'outbox.op.failed':   { fields: { kind: 'enum', attempts: 'int', code: 'enum' },       doc: '…' },
+  'blob.prefetched':    { fields: { kind: 'enum', count: 'int' },                        doc: '…' },
+} as const satisfies Record<string, EventSpec>
 ```
+
+**Note the absent type.** `FieldType` is `'id' | 'int' | 'ms' | 'bool' | 'enum'`
+— there is no `'string'`. A free string is exactly the unbounded value §5 says
+will exhaust the active-series budget, so the catalogue refuses to express one:
+anything with a closed set of values is an `enum`, and anything without one has
+no business being a label. `blob.prefetched` above wanted `kind: 'string'` and
+had to become an enum, which is the constraint working rather than getting in
+the way.
 
 Four properties follow:
 

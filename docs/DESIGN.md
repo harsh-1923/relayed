@@ -9,6 +9,11 @@
 
 ---
 
+> **Companion documents.** [`STORAGE.md`](STORAGE.md) owns the local storage
+> layout, multi-workspace and multi-account, and switching — it is the design of
+> record for everything under `userData`, and §6.1, §13.1 and §13.3 here defer to
+> it. [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) tracks the current phase.
+
 ## Table of contents
 
 1. [Product](#1-product)
@@ -280,7 +285,7 @@ process brokers the initial handshake and then gets out of the way.
   ┌─────────────────────────────────────────────────────────────┐
   │  main process                                               │
   │   windows, tray, native notifications, auth/keychain,       │
-  │   protocol handler for blob://, auto-update                 │
+  │   protocol handler for relayed-blob://, auto-update         │
   └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -367,6 +372,16 @@ cost buys nothing until a customer actually needs two workspaces.
 
 This also resolves what was previously an open question about multi-account: the
 unit of local storage is one database file per `(account, workspace)` pair.
+
+**Built, and with one tier more than that sentence implies.** A replica per
+`(account, workspace)`, an `account.db` above it holding what outlives any
+single workspace, and a device tier above that for the install id and the switch
+epoch. Exactly one workspace is *active* at a time; the others are rows in
+`account.db` costing nothing until opened. Layout, switching, sessions and
+cursor placement are in [`STORAGE.md`](STORAGE.md).
+
+The sentence above still holds where it matters: **the workspace is the sync
+boundary**, and no cursor crosses it.
 
 ### 6.2 What WorkOS owns, and where the line is
 
@@ -1241,8 +1256,11 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(
 );
 
 -- ─── Local key/value ─────────────────────────────────────────────────────────
+-- Per WORKSPACE. Anything that outlives a workspace — device_id, the workspace
+-- index, the last active one — belongs to account.db instead (STORAGE.md §6),
+-- because signing out of one workspace must not take them with it.
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
--- device_id, schema_version, local_session, last_sync_at, ...
+-- schema_origin, last_sync_at, ...
 
 CREATE TABLE drafts (
   chat_id TEXT PRIMARY KEY,
@@ -1321,7 +1339,7 @@ WebSocket, JSON frames. Binary/CBOR is a later optimization; do not start there.
 ```
 client → server
 { "t": "hello",
-  "access_token": "eyJ...",          -- WorkOS access token (§13.1)
+  "access_token": "eyJ...",          -- OUR session token, not WorkOS's (§13.1)
   "workspace_id": "ws_01J...",
   "device_id": "dev_01J...",
   "cursors": [ { "c": "chat_eng",  "rev": 8134 },
@@ -1458,7 +1476,7 @@ Server applies `max(existing, incoming)` — never a blind overwrite. See §4.
 
 ### 9.7 Staying authenticated
 
-WorkOS access tokens are short-lived; the sync socket lives for hours. Dropping
+Our access tokens are short-lived; the sync socket lives for hours. Dropping
 and reconnecting on every refresh would cause constant catch-up churn and a
 visible stutter, so the connection is refreshed **in band**:
 
@@ -1467,9 +1485,17 @@ client → server   { "t": "reauth", "access_token": "eyJ..." }
 server → client   { "t": "reauth_ok", "expires_at": 1757283600000 }
 ```
 
-The client refreshes ahead of expiry (the WorkOS refresh itself happens over
-HTTPS, out of band) and pushes the new token down the existing socket. The
-server closes the connection only if a token lapses without replacement.
+The client refreshes ahead of expiry — `POST /auth/refresh` against **our**
+server, out of band over HTTPS — and pushes the new token down the existing
+socket. The server closes the connection only if a token lapses without
+replacement.
+
+WorkOS is not involved. Its token is traded for ours once, at interactive
+sign-in, and discarded; steady-state sync therefore depends on our server alone
+rather than on two systems that can disagree about whether you are signed in
+(PHASE-1-IDENTITY.md §7). The cost of that choice is a deactivation webhook:
+until it exists, a revoked WorkOS user keeps access for at most one access-token
+TTL, because the actor's state is re-checked on every refresh.
 
 **Auth failure never closes the read path.** On refresh failure the sync engine
 enters `unauthenticated` and the socket drops; local reads continue untouched.
@@ -1792,25 +1818,32 @@ webviews**. Since the whole point of adopting WorkOS is enterprise SSO through
 Google Workspace and Entra ID, an embedded flow fails exactly the customers the
 choice was made to serve.
 
-The correct shape:
+The correct shape, **as built**:
 
 ```
 1. shell.openExternal(authkit_authorize_url)   ← system browser, PKCE challenge
 2. user authenticates with their IdP
-3. redirect → relayed://auth/callback?code=...
-4. OS hands the URL back to the app
+3. redirect → http://127.0.0.1:<ephemeral>/auth/callback?code=...
+4. the loopback listener in the sync process resolves
 5. exchange code + PKCE verifier for tokens (in the sync process, never renderer)
 ```
 
 - **PKCE is mandatory.** A desktop app is a public client; a client secret
   shipped in an Electron bundle is trivially extractable from the asar.
-- `app.setAsDefaultProtocolClient('relayed')` plus
-  `app.requestSingleInstanceLock()`.
-- macOS delivers the callback via the `open-url` event; Windows and Linux via
-  `second-instance` with argv parsing. Protocol registration also behaves
-  differently unpackaged, so dev mode needs its own path.
-- Loopback (`http://127.0.0.1:<port>/callback`) as a fallback where protocol
-  registration is unreliable.
+- **Loopback is the primary path, not the fallback.** This is the reverse of
+  what this section first said. `relayed://` does not resolve for an unpackaged
+  app on macOS — and `isDefaultProtocolClient()` returns `true` anyway, while
+  `lsregister` shows the handler as `unknown: relayed`. An API reporting success
+  for a capability that does nothing is worse than one that fails
+  (`PHASE-1-IDENTITY.md` §6).
+- `app.setAsDefaultProtocolClient('relayed')` and `app.requestSingleInstanceLock()`
+  are still registered, for packaged builds where the protocol does work.
+- macOS delivers a protocol callback via `open-url`; Windows and Linux via
+  `second-instance` with argv parsing.
+- The loopback listener binds `127.0.0.1` on an **ephemeral** port, validates
+  `state`, and its result promise has a handler attached at construction — a
+  forged `state` rejects, and an unhandled rejection would terminate the sync
+  process.
 - **Tokens never reach the renderer.** The refresh token lives in `safeStorage`
   (OS keychain: Keychain / DPAPI / libsecret); the access token stays in memory
   in the sync process.
@@ -1819,25 +1852,38 @@ The correct shape:
 
 | Session | Purpose | Storage | On expiry |
 |---|---|---|---|
-| **Local session** | Unlocks the local DB and the UI | `meta` table | Long-lived. Cleared **only** on explicit sign-out. |
-| **WorkOS session** | Authenticates the sync socket | Refresh token in `safeStorage`; access token in memory | Degrades **sync only**. |
+| **Local session** | Unlocks the local DB and the UI | `account.db` | Long-lived. Cleared **only** on explicit sign-out. |
+| **Our session** | Authenticates the sync socket | Refresh token in `safeStorage`, one slot per `(account, workspace)`; access token in memory | Degrades **sync only**. |
 
 Keeping these separate is what makes R3 hold. The local session is not a
-security boundary — it is the thing that lets the app open when WorkOS is
+security boundary — it is the thing that lets the app open when the network is
 unreachable.
+
+The second row says *our* session, not WorkOS's. The WorkOS token is traded for
+one of ours at sign-in and discarded (§9.7), so nothing in steady state depends
+on WorkOS being reachable.
 
 #### Boot sequence — the network appears nowhere before render
 
 ```
-1. Open SQLite, run migrations.
-2. Read local session from meta.
+1. Discover accounts, open the last active one's account.db.
+2. Open the replica for its last workspace, run migrations.
 3. Render the full UI from local data.        ← user is productive HERE
 4. THEN start the sync engine.
 5. Sync authenticates; on failure, show a non-blocking banner.
 ```
 
-If step 3 ever comes to depend on step 4, R3 is broken. This ordering deserves
-a dedicated test that runs with the network disabled.
+If step 3 ever comes to depend on step 4, R3 is broken.
+
+**Deferred, not merely un-awaited.** An un-awaited restore at module load still
+opens a token request while the window is being created — which makes "no
+network before first render" true by accident and unprovable by measurement.
+Step 4 begins when the first renderer port attaches, so the ordering belongs to
+the code rather than to the scheduler.
+
+Asserted by counting, in the process that makes the calls:
+`RELAYED_VERIFY_BOOT=1` reports `networkCallsBeforeFirstPaint`. The full layout
+and the switch flows are in [`STORAGE.md`](STORAGE.md) §11–§12.
 
 #### Failure behavior
 
@@ -1848,7 +1894,9 @@ a dedicated test that runs with the network disabled.
   re-authentication. **Never clear local data** — a token expiring is not a
   sign-out, and treating it as one is catastrophic, silent data loss.
 - **Explicit sign-out:** wipe the database and the blob directory. Shared
-  devices are real.
+  devices are real. With the account-tier layout this is a single directory
+  delete covering replicas, blobs and vault slots together, which is what makes
+  it impossible to half-complete (STORAGE.md §13).
 
 #### Directory Sync
 
@@ -1862,8 +1910,16 @@ recall data already on disk. That is an accepted exposure, recorded in §6.6.
 
 #### Device identity
 
-Each install generates a `device_id` at first run, stored in `meta`. Used to
-scope outbox dedupe and to reason about multi-device read state.
+A `device_id` per **`(install, account)`**, stored in `account.db`. Used to scope
+outbox dedupe, to reason about multi-device read state, and to make "sign out
+this device" mean something.
+
+Not per install and not per workspace. Every use of it is already
+account-scoped, so an install-wide value would buy nothing and would let a
+server correlate two accounts on one machine. Per workspace is worse still — two
+workspaces would mint two device identities for one laptop. A separate
+`install-id` exists for telemetry and crash reports, and never enters a token.
+See [`STORAGE.md`](STORAGE.md) §8.
 
 ### 13.2 The IPC contract
 
@@ -1899,14 +1955,22 @@ A perfectly synced chat full of broken image icons does not feel offline-
 capable, whatever the message table says.
 
 **Bytes go on the filesystem, not in SQLite.** Multi-MB rows bloat the database,
-slow vacuum and backup, and make eviction expensive. Layout:
+slow vacuum and backup, and make eviction expensive. Layout, in two tiers:
 
 ```
-userData/blobs/<first-2-chars-of-id>/<id>
+accounts/<acc>/blobs/<2-char>/<id>                  avatars
+accounts/<acc>/workspaces/<wsp>/blobs/<2-char>/<id> attachments
 ```
 
 The two-character shard keeps directory entry counts sane on every filesystem.
-SQLite holds metadata only (§8.3).
+SQLite holds metadata only (§8.3). **Ids are the sha256 of the bytes**, so the
+same picture arriving twice is stored once and an id can never be chosen by
+whatever produced the URL.
+
+Avatars sit at the **account** tier, not the workspace tier, because the
+switcher rail draws one for workspaces you are not currently in and the handler
+resolves only within what is active. Attachments stay per workspace, where
+eviction follows the messages. See [`STORAGE.md`](STORAGE.md) §14.
 
 **Prefetch policy, in priority order:**
 
@@ -1916,14 +1980,25 @@ SQLite holds metadata only (§8.3).
 | Image thumbnails in synced chats | Eagerly, capped by total bytes | Makes scrollback look correct offline. |
 | Full-size images, files | On demand; cached after first view | Unbounded otherwise. |
 
-**Serving to the renderer:** register a custom scheme in main —
-`protocol.handle('blob', ...)` — not `file://` paths. This keeps `webSecurity`
-enabled and stops absolute filesystem paths leaking into the DOM. Register the
-scheme as privileged **before** `app.whenReady()`.
+**Serving to the renderer:** register a custom scheme in main — not `file://`
+paths. This keeps `webSecurity` enabled and stops absolute filesystem paths
+leaking into the DOM. Register the scheme as privileged **before**
+`app.whenReady()`; Electron ignores a registration made after it.
 
-Resolution order in the handler: local file → remote URL (if online) →
-placeholder. That fallback chain is what makes the offline experience degrade
-gracefully instead of showing broken-image glyphs.
+**The scheme is `relayed-blob:`, not `blob:`.** `blob:` is reserved in Chromium
+— it is how `URL.createObjectURL` works, and the CSP already lists it for that —
+so a custom handler under that name collides. Add `relayed-blob:` to `img-src`.
+
+The handler must be scoped, because it is the one place a renderer names
+something path-shaped: ids match `^[0-9a-f]{64}$` and nothing else, which makes
+traversal impossible rather than guarded against, and resolution is confined to
+the active account, pushed from the sync process rather than derived in main.
+
+**No remote fallback.** The obvious chain is local → remote → placeholder, and
+the middle leg is a mistake: fetching from the handler puts a network call back
+into the render path, which is precisely what eager prefetch exists to remove.
+Local or placeholder — and for avatars the placeholder is a monogram on a colour
+derived from the id, which is a legitimate rendering rather than a broken one.
 
 **Offline upload is the most complex op in the system.** Two-phase:
 
@@ -2338,6 +2413,23 @@ test.
 | 35 | Mentions store **`actor_id`**, never a handle | A rename orphans every historical mention; a reused handle silently redirects one |
 | 36 | FTS indexes a **rendered** body, not raw mention markup | Searching a person's name would miss every message that mentions them |
 
+**Storage and identity** — added in Phase 1, detailed in
+[`STORAGE.md`](STORAGE.md) §18.
+
+| # | Invariant | What breaks without it |
+|---|---|---|
+| 37 | `device_id` is per `(install, account)`, in `account.db` | Two workspaces mint two device identities for one machine; "sign out this device" stops meaning anything |
+| 38 | `install-id` never enters a session token | Two accounts on one machine become correlatable server-side |
+| 39 | Exactly **one** workspace is active; others may be open **drain-only** | Two cursor spaces interleave, and the renderer paints across workspaces |
+| 40 | The outbox lives in the **workspace replica**, transactional with its echo | A crash between the row and the echo yields a message that looks sent and never sends |
+| 41 | Every IPC envelope carries a **workspace epoch**, monotonic across sign-out | A slow reply from the previous workspace paints under the new one's chrome; a counter that resets makes every later reply look stale |
+| 42 | `last_workspace` is committed **before** any handle or socket work | A crash mid-switch reopens the workspace the user just left |
+| 43 | An unknown top-level frame `t` is **ignored**, never fatal | Adding a frame type breaks every older client in the field (§9.10) |
+| 44 | `/auth/switch` **never** revokes or rotates the source session | The workspace you just left becomes undrainable and un-returnable-to offline |
+| 45 | The blob handler resolves **only** within the active account, ids `^[0-9a-f]{64}$` | A renderer-supplied id reaches another account's files, or escapes the directory |
+| 46 | Avatars are fetched into the blob store, **never rendered from a remote URL** | The CSP blocks it, correctly — and avatars go blank offline, §13.3's most visible failure |
+| 47 | A field naming an image, handle or name says **whose it is** | An actor's picture gets painted as the workspace's icon; type-correct, tests green, wrong on screen |
+
 ### Scenarios to test explicitly
 
 - Out-of-order live events arriving during catch-up → cursor must not skip.
@@ -2408,12 +2500,23 @@ expensive to discover late — so they come **before** anything is built on top.
 Scoped and expanded in [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md).
 **Social login only** for now — SSO, SCIM and MFA are deferred, and the actor
 model is deliberately shaped so they arrive without a migration.
-8. WorkOS org + AuthKit **social providers**; system-browser flow with PKCE and
-   the `relayed://` callback.
-9. Token storage in `safeStorage`; `reauth` refresh path (§9.7).
-10. `actors` table, org/workspace scoping, handle namespace.
+8. ✅ WorkOS AuthKit **social providers**; system-browser flow with PKCE.
+   **Done** — over a **loopback** redirect, not `relayed://`: the protocol does
+   not resolve unpackaged on macOS while `isDefaultProtocolClient()` still
+   reports `true`. The handler is kept for packaged builds
+   (`PHASE-1-IDENTITY.md` §6).
+9. ✅ Token storage in `safeStorage`, one slot per `(account, workspace)`.
+   **Done** — the vault lives in main, because `safeStorage` is not exposed to a
+   `utilityProcess`. The in-band `reauth` path needs the socket and waits for
+   Phase 2.
+10. ✅ `actors` table, org/workspace scoping, handle namespace. **Done**, plus
+    the storage split it forced: [`STORAGE.md`](STORAGE.md).
 11. *Spike:* M2M Applications vs Agent Registration for agent identity (§16, item 6).
-12. *Milestone:* sign in via a real IdP; tokens never touch the renderer.
+12. ✅ *Milestone:* sign in via a real IdP; tokens never touch the renderer.
+    **Done** — verified end to end against WorkOS staging.
+**Still open in Phase 1:** real WorkOS organizations via the Management API,
+then invitations — the first case with two humans in it. Tracked in
+[`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) §11.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
 13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops.
@@ -2451,7 +2554,8 @@ model is deliberately shaped so they arrive without a migration.
 32. WorkOS Pipes connections; Relay-backed third-party calls.
 
 **Phase 7 — The long tail**
-33. Blob store, prefetch, `blob://` protocol handler.
+33. Blob store, prefetch, `relayed-blob://` protocol handler. **Done early** —
+    avatars needed it in Phase 1 (§13.3).
 34. Two-phase offline upload with resumability.
 35. Retention, eviction, incremental vacuum.
 36. Notifications, tray.
@@ -2519,6 +2623,12 @@ op idempotency, unread correctness while holding zero messages, max-register
 read state, reorder-on-ack, threads sharing the ord space, outbox coalescing,
 and removal-freeze / re-add-as-gap. The model found one design gap —
 `pending_revs` (§8.1) — which is now in the schema.
+
+**Resolved in Phase 1**, and recorded in [`STORAGE.md`](STORAGE.md) rather than
+here: whether one identity in two organizations is a supported state (yes — the
+data model always allowed it; the client now does too), where `device_id`
+belongs, whether blobs are per workspace or per account, and what the scheme
+for serving them is called.
 
 **Resolved since the first draft:** multi-account storage (one database per
 `(account, workspace)` pair, §6.1); whether agents run client- or server-side
