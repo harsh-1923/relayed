@@ -5,7 +5,8 @@ Technology choices, why they were made, and how to run everything locally.
 Deployment and tooling only — the architecture lives in
 [`DESIGN.md`](DESIGN.md), which deliberately says nothing about hosting.
 How builds reach users — packaging, signing, update channels — is
-[`RELEASE.md`](RELEASE.md).
+[`RELEASE.md`](RELEASE.md); what we collect at runtime is
+[`OBSERVABILITY.md`](OBSERVABILITY.md).
 
 **Last updated:** 2026-09-08
 
@@ -180,6 +181,9 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | Redis | https://redis.io/docs/latest | resolve |
 | MinIO | https://min.io/docs/minio/linux/index.html | resolve |
 | WorkOS | https://workos.com/docs | `/websites/workos` |
+| OpenTelemetry JS | https://opentelemetry.io/docs/languages/js/ | resolve |
+| pino | https://getpino.io | resolve |
+| Grafana Cloud / OTLP | https://grafana.com/docs/grafana-cloud/send-data/otlp/ | resolve |
 | node:sqlite | https://nodejs.org/api/sqlite.html | resolve |
 
 **Migration strategy.** `kysely-codegen` generates TypeScript types from a live
@@ -200,7 +204,7 @@ in §8.3 stays the artifact rather than becoming generated output.
    guarantee, which does not necessarily mean a separate *process* on day one.
 4. **TypeScript config** — shared `tsconfig.base.json` with per-package extends.
    Worth settling before the second package exists.
-5. **Observability** — the metrics that matter are operational, not product:
-   chats-per-actor (§9.9), connection count, gap rate, catch-up burst size,
-   outbox depth. PostHog is an odd home for those; decide whether operational
-   telemetry lives separately.
+5. **Observability** — settled in [`OBSERVABILITY.md`](OBSERVABILITY.md):
+   Grafana Cloud, OTel for traces and metrics, pino for logs, client telemetry
+   routed through our own server. Product analytics remains a separate question
+   from operational telemetry.

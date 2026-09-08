@@ -828,7 +828,9 @@ inside it. The subtle, expensive machinery — cursors, contiguity, gap markers,
 catch-up, coalescing, eviction — is untouched.
 
 The one thing that *does* change is scale: **the cursor count grows with chats,
-not rooms**, and rooms multiply chats. See §9.9 for the ceiling.
+not rooms**, and rooms multiply chats. See §9.9 for the ceiling, and
+[`OBSERVABILITY.md`](OBSERVABILITY.md) §9 for the metric that warns before it
+is reached.
 
 ---
 

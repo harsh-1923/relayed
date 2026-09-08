@@ -1,0 +1,287 @@
+# Observability
+
+What we collect, how it leaves the machine, and the constraints that shape both.
+
+Architecture is [`DESIGN.md`](DESIGN.md); technology choices are
+[`STACK.md`](STACK.md); how builds reach users is [`RELEASE.md`](RELEASE.md).
+
+**Last updated:** 2026-09-08
+
+---
+
+## 1. Decisions
+
+| | Choice |
+|---|---|
+| **Backend** | Grafana Cloud free tier — Tempo (traces), Mimir (metrics), Loki (logs) |
+| **Traces / metrics** | OpenTelemetry SDK |
+| **Logs** | **pino**, with `trace_id` / `span_id` injected — *not* the OTel logs SDK (§6) |
+| **Client transport** | Client → **our server** → collector → Grafana. No ingest credential in the binary. |
+| **SDK owner** | The `utilityProcess`. One SDK, one exporter, one buffer. |
+| **Sampling** | 100% until traces approach the free-tier ceiling |
+| **Scope now** | `packages/telemetry` — catalogue, wrappers, lint rules. Signals wired per subsystem as written. |
+
+### On vendor lock-in
+
+OTLP everywhere means the collector can be re-pointed at any OTLP backend
+without touching a line of instrumentation. That is real portability, and it is
+why we accept a hosted backend at this stage.
+
+**It does not extend to dashboards and alert rules.** Those are Grafana-shaped,
+and the LogQL/PromQL queries inside them come with them. Keep dashboards as JSON
+in the repo so they are at least versioned and exportable, and treat "no lock-in"
+as true of the pipeline and only partly true of what is built on top.
+
+---
+
+## 2. What is different about observing this system
+
+Three properties make standard OTel guidance not quite fit.
+
+**The client is not our infrastructure.** It is a desktop app on someone's
+laptop, offline much of the time. Telemetry must be buffered locally and drained
+opportunistically — structurally the same problem as the outbox (§10). It needs
+the *opposite* failure behaviour, though, which is why they must not share a
+queue (§7).
+
+**There are no HTTP requests to trace.** One WebSocket carries thousands of
+frames over hours. Auto-instrumentation gives us almost nothing, and a
+span-per-connection would be an eight-hour span — which most backends handle
+badly. The unit of tracing here is a **logical operation**, not a connection
+(§4).
+
+**The failures that matter are stateful, not transactional.** "This client's
+cursor stalled at rev 400 three days ago" is not a trace; it is a state
+observation. Traces are the wrong instrument. This is what pushes weight onto
+metrics, and onto §9 in particular.
+
+---
+
+## 3. Signal architecture
+
+```
+  renderer ──MessagePort──┐
+                          ▼
+              utilityProcess  (owns the SDK, the buffer, the exporter)
+                          │
+                          │  authenticated POST, batched
+                          ▼
+   server ──────────▶  telemetry ingest  ──┐
+                       (validate + scrub)  │
+   agents ─────────────────────────────────┼──▶ Collector / Alloy ──▶ Grafana Cloud
+                                           │              └── swap target here
+                                           ┘
+```
+
+**One SDK, in the `utilityProcess`** — the same process that owns the socket and
+the database (§5). The renderer forwards events over the existing `MessagePort`
+rather than running a second SDK. One exporter, one buffer, one flush policy.
+
+**The client does not talk to Grafana directly.** A distributable binary cannot
+hold an ingest credential — it is trivially extractable — and direct export
+gives us no opportunity to scrub before data leaves the user's machine. Routing
+through our own server reuses the session that already exists, and makes
+redaction and rate limiting central.
+
+---
+
+## 4. Traces
+
+**A span is a logical operation, never a connection.**
+
+| Traced | Span |
+|---|---|
+| Sending a message | compose → outbox → `op` → `ack` |
+| Reconnect | `hello` → `welcome` → catch-up complete |
+| Opening a chat with a gap | open → backfill pages → rendered |
+| Agent invocation | delegation minted → provider call → reply committed |
+
+Connection lifecycle — connects, drops, zombie detection — is **events and
+metrics**, not spans.
+
+### `traceparent` belongs in the frame envelope
+
+OTel propagates context through HTTP headers automatically. A WebSocket provides
+nothing, so to link a client-side "user pressed send" span to the server span
+that assigned the `ord`, the frame must carry it explicitly:
+
+```json
+{ "t": "op", "op_id": "01J…", "traceparent": "00-<trace-id>-<span-id>-01", … }
+```
+
+This is a §9 protocol addition. Cheap now; a version-skew problem once old
+clients are in the field (§9.10), which given opt-in updates is soon.
+
+---
+
+## 5. Metrics — and the constraint that will actually bite
+
+| Metrics | Logs | Traces | Profiles | Retention | Users |
+|---|---|---|---|---|---|
+| **10,000 active series** | 50 GB | 50 GB | 50 GB | **14 days** | 3 |
+
+Logs and traces are generous. **The 10k series cap is the binding constraint**,
+and it is a cardinality problem, not a volume problem.
+
+A series is one unique combination of metric name and *every* label value. So:
+
+> **No unbounded identifier may ever be a metric label.**
+> `actor_id`, `chat_id`, `message_id`, `device_id`, `space_id` — all forbidden.
+> 100 actors × 150 chats is 15,000 series for a **single metric**.
+
+Identifiers belong in traces and logs, which are indexed differently.
+
+A workable budget: ~30 metrics × `service` (3) × `env` (2) × a low-cardinality
+dimension such as `op_type` (~8) × `result` (2) ≈ **2,900 series**. Comfortable.
+
+### The `client_version` trap
+
+Tempting, and specifically dangerous for us. Updates are opt-in (§`RELEASE.md`),
+so many versions run concurrently. Ten live versions multiplies **every** metric
+carrying that label by ten, and 2,900 becomes 29,000 — over the cap.
+
+**Put version on a single `client_info` gauge.** Get per-version attribution from
+traces and logs instead.
+
+### Enforce cardinality in the type system
+
+More reliable than remembering the rule:
+
+```ts
+type OpType = 'send' | 'edit' | 'react' | 'delete' | 'read'
+type Result = 'ok' | 'error'
+
+counter('sync.op', { op: OpType, result: Result })
+// actor_id cannot be passed — closed sets only. Cardinality explosion
+// becomes a compile error rather than a surprise on the bill.
+```
+
+### 14-day retention is a design constraint, not a setting
+
+Anything to be reasoned about over months must exist as a **metric**, because
+logs and traces are gone. "How many users hit a gap this quarter" is therefore a
+decision made when writing the catalogue — not a query that can be written later.
+
+---
+
+## 6. Logs
+
+**pino, not the OTel logs SDK.** Traces and metrics are stable in OTel JS; logs
+are not. Read the version lines:
+
+```
+@opentelemetry/api          1.x    stable
+@opentelemetry/sdk-metrics  2.x    stable
+@opentelemetry/sdk-logs     0.x    ← experimental
+@opentelemetry/exporter-*   0.x    ← experimental
+```
+
+We would be betting our highest-volume signal on an API still shipping breaking
+changes. pino is mature, fast and structured; a mixin injects the active
+`trace_id`/`span_id` into every record, and Loki ingests OTLP natively — so
+portability is preserved at the collector boundary.
+
+### Structured only — this is the privacy control
+
+**Message bodies must never enter telemetry.** For a chat product this is the
+most sensitive data we hold, and the mistake is a single careless line.
+
+```ts
+log.info('message.sent', { chat_id, byte_len })   // ✅ no field can hold a body
+log.info(`sending: ${body}`)                       // ❌ the product, in Loki
+```
+
+Banning `console.*` and template-literal log messages is therefore not style
+enforcement — it removes the place where user content could go. Enforce it with
+a lint rule, not a convention.
+
+The same applies to span attributes and metric labels.
+
+---
+
+## 7. The client buffer is not the outbox
+
+Both queue while offline and drain on reconnect, so the temptation is to reuse
+one mechanism. **They need opposite failure behaviour:**
+
+| | Outbox (§10) | Telemetry buffer |
+|---|---|---|
+| On overflow | **Never drops.** A queued message is user data. | **Drops oldest.** Bounded ring buffer. |
+| Ordering | Strict, per chat | Best effort |
+| Priority | User data first | Always lower |
+| Durability | Survives restart | May not |
+
+Sharing a queue means a backed-up outbox delays telemetry, or — far worse —
+telemetry volume delays somebody's message. Separate them from the start.
+
+---
+
+## 8. The event catalogue
+
+The mechanism that keeps this from being bolted on. A single typed catalogue in
+`packages/telemetry`, enumerating every event with its payload type.
+
+```ts
+export const events = {
+  'sync.gap.entered':    { chat_id: 'id', head_rev: 'int', cursor_rev: 'int' },
+  'sync.event.unknown':  { op: 'string', rev: 'int' },
+  'outbox.op.failed':    { kind: 'string', attempts: 'int', code: 'string' },
+  'ws.zombie.detected':  { last_pong_ms: 'int' },
+} as const
+```
+
+Four properties follow:
+
+1. **Ad-hoc events are impossible.** Adding one is a deliberate edit to a shared
+   file, so every addition appears in review.
+2. **Nothing else imports `@opentelemetry/*` or `pino`.** One wrapper package,
+   enforceable by lint rule.
+3. **It doubles as documentation** of what the system reports.
+4. **The server validates against the same catalogue.** Because the client posts
+   through our own ingest endpoint (§3), the catalogue is enforced at runtime as
+   well as compile time — a modified client cannot flood us with arbitrary
+   fields.
+
+---
+
+## 9. Instrument the invariants
+
+§14 lists invariants, each paired with the failure it prevents. That pairing is
+most of a metrics catalogue already: an invariant violation is by definition an
+observable condition.
+
+**The rule: adding an invariant means asking "what signal shows me this broke?"**
+If there is no answer, either it is untestable in production, or there is a gap.
+
+The mapping is **pending** — signals land with the subsystems that emit them.
+The pattern:
+
+| Invariant | Signal |
+|---|---|
+| 1 — cursor advances contiguously | `sync.cursor.lag` (`server_head_rev − synced_through_rev`); `sync.pending_revs.depth`, expected ≈ 0 |
+| 5 — op idempotency | `sync.op.duplicate.rate` |
+| 6 / 7 — outbox coalescing, in-order replay | `outbox.depth`, `outbox.oldest.age`, `outbox.failed.count` |
+| 25 — join uses the gap path | `sync.gap.count`, `sync.backfill.pages` |
+| 29 — heartbeat under 30s | `ws.heartbeat.missed`, `ws.reconnect.count` |
+| 30 — zombie socket detection | `ws.zombie.detected` |
+| **32 — unknown event advances cursor** | `sync.event.unknown` — tells us old clients are meeting new op types in the wild |
+| §9.9 — the `welcome` ceiling | `sync.chats_per_actor` histogram — the number that predicts when `welcome` must page |
+
+That last one is worth emphasising: it is the metric that gives advance warning
+of a design limit rather than reporting it after users hit it.
+
+---
+
+## 10. Open decisions
+
+1. **Alerting thresholds.** Which of the above page someone, and at what level.
+   Needs production baselines first.
+2. **Client sampling under growth.** 100% is right at this stage. The trigger for
+   head or tail sampling is traces approaching 50 GB.
+3. **Retention beyond 14 days.** If any question needs a longer window, it either
+   becomes a metric or needs a paid tier. Revisit when a real question appears.
+4. **Profiling.** The free tier includes 50 GB of Pyroscope profiles. Unused for
+   now; potentially useful for the renderer's message-list performance.
+5. **Agent observability.** Agents run server-side (§6.5) and get normal server
+   instrumentation, but delegated actions may deserve their own span shape —
+   settle alongside the agent runtime.
