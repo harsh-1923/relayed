@@ -1,13 +1,12 @@
 import './index.css';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AppState, DbInfo, RelayedApi, WorkspaceRow } from '../preload/api';
+import type { AppState, RelayedApi, WorkspaceRow } from '../preload/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -138,20 +137,27 @@ function Switcher(props: { state: AppState; onCreate: () => void; creating: bool
   );
 }
 
-function Identity(props: { state: AppState; onError: (m: string | null) => void }) {
+function Identity(props: {
+  state: AppState;
+  onError: (m: string | null) => void;
+  onState: (s: AppState | null) => void;
+}) {
   const auth = props.state.auth;
   const [busy, setBusy] = useState(false);
 
   const signIn = useCallback(async () => {
     setBusy(true); props.onError(null);
-    try { await call(() => window.relayed!.query('auth.signIn')); }
+    try { props.onState(await call(() => window.relayed!.query('auth.signIn'))); }
     catch (e) { props.onError((e as Error).message); }
     finally { setBusy(false); }
   }, [props]);
 
+  // The reply is the authoritative post-sign-out state. The push that fires
+  // partway through describes a half-finished sign-out, so discarding this and
+  // relying on the push alone leaves the UI showing a workspace that is gone.
   const signOut = useCallback(async () => {
-    await call(() => window.relayed!.query('auth.signOut'));
-  }, []);
+    props.onState(await call(() => window.relayed!.query('auth.signOut')));
+  }, [props]);
 
   const active = props.state.workspaces.find(w => w.workspaceId === props.state.workspaceId);
 
@@ -193,10 +199,11 @@ function Identity(props: { state: AppState; onError: (m: string | null) => void 
         ) : auth.status === 'authenticated' || active ? (
           <div className="flex items-center gap-3">
             <Avatar>
-              {/* From the workspace row, so it survives a boot with no session
-                  (STORAGE.md §6). Still a remote URL until the blob store
-                  arrives in Phase 2. */}
-              {active?.avatarUrl && <AvatarImage src={active.avatarUrl} />}
+              {/* No <AvatarImage> deliberately. `avatarUrl` is a remote
+                  workoscdn.com URL, and rendering it would (a) trip the CSP,
+                  which is correct to block it, and (b) leave avatars blank
+                  offline — the exact failure R3 exists to prevent. Initials
+                  until the blob store lands (DESIGN.md §13.3). */}
               <AvatarFallback>{initials(active?.displayName ?? '??')}</AvatarFallback>
             </Avatar>
             <div className="flex-1">
@@ -206,7 +213,12 @@ function Identity(props: { state: AppState; onError: (m: string | null) => void 
                 {active?.handle ? `@${active.handle}` : ''}
               </div>
             </div>
-            <Button variant="outline" onClick={signOut}>Sign out</Button>
+            {/* Account-level, not workspace-level: one identity holds every
+                workspace here, so the button says how many it affects. */}
+            <Button variant="outline" onClick={signOut}>
+              {props.state.workspaces.length > 1
+                ? `Sign out of all ${props.state.workspaces.length}` : 'Sign out'}
+            </Button>
           </div>
         ) : (
           <Button onClick={signIn} disabled={busy || auth.status === 'authenticating'}>
@@ -218,30 +230,25 @@ function Identity(props: { state: AppState; onError: (m: string | null) => void 
   );
 }
 
-function LocalState(props: { epoch: number }) {
-  const [info, setInfo] = useState<DbInfo | null>(null);
-  // Re-read on every switch: this describes the ACTIVE replica, which changed.
-  useEffect(() => {
-    void call(() => window.relayed!.query('db.info')).then(v => { if (v) setInfo(v); });
-  }, [props.epoch]);
-  if (!info) return null;
+/**
+ * A one-line statement of what the client is actually reading from.
+ *
+ * The full on-disk inspector this replaces did its job — it proved that
+ * sign-out cleanup was correct and that the UI, not the disk, was lying — and
+ * it is `debug.snapshot` away if it is needed again (Storage.debug()).
+ */
+function Replica(props: { state: AppState }) {
+  const active = props.state.workspaces.find(w => w.workspaceId === props.state.workspaceId);
   return (
     <Card className="max-w-xl">
       <CardHeader>
-        <CardTitle>Local replica</CardTitle>
+        <CardTitle className="text-base">Local replica</CardTitle>
         <CardDescription>renderer → MessagePort → utilityProcess → SQLite</CardDescription>
       </CardHeader>
-      <CardContent>
-        <Table>
-          <TableBody>
-            {Object.entries(info).map(([k, v]) => (
-              <TableRow key={k}>
-                <TableCell className="text-muted-foreground w-44">{k}</TableCell>
-                <TableCell className="font-mono text-sm">{String(v)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <CardContent className="space-y-1 font-mono text-xs text-muted-foreground">
+        <div>account   {props.state.accountId ?? '—'}</div>
+        <div>workspace {active ? `${active.name} · @${active.handle}` : '—'}</div>
+        <div>replicas  {props.state.workspaces.length} known · epoch {props.state.epoch}</div>
       </CardContent>
     </Card>
   );
@@ -300,11 +307,12 @@ function App() {
             </CardContent>
           </Card>
         ) : (
-          <Identity state={state} onError={setError} />
+          <Identity state={state} onError={setError}
+                    onState={(s) => { if (s) setState(s); }} />
         )}
 
         <Separator />
-        <LocalState epoch={state.epoch} />
+        <Replica state={state} />
       </main>
     </div>
   );

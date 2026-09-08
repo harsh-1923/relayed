@@ -58,15 +58,21 @@ emit('db.migrated', {
  * recognised before the memberships come back, so it adopts this provisional id
  * and leaves the account's previous device row stale. Rare, revocable, and the
  * alternative is an extra round trip on every sign-in.
+ *
+ * Regenerated once an account adopts it. Held as a process-wide constant it
+ * would be handed to the NEXT account created in the same run — so signing out
+ * and signing in as a different email would give two accounts one device
+ * identity, which is the correlation invariant 38 exists to prevent.
  */
-const provisionalDeviceId = newId('dev');
+let provisional: string | null = null;
+const provisionalDeviceId = (): string => (provisional ??= newId('dev'));
 
 /** Live renderer ports. Multiple windows are normal; dead ones must be reaped. */
 const ports = new Set<Electron.MessagePortMain>();
 
 const session = new Session({
   config: { clientId: process.env['WORKOS_CLIENT_ID'] ?? '' },
-  deviceId: () => (storage.accountId ? storage.deviceId : provisionalDeviceId),
+  deviceId: () => (storage.accountId ? storage.deviceId : provisionalDeviceId()),
   openBrowser,
   vault: {
     read: (wsp) => storage.accountId
@@ -96,7 +102,13 @@ function adoptSession(s: OurSession): void {
 
   if (s.memberships.length > 0) {
     const matched = storage.findAccountByActors(s.memberships.map(m => m.actorId));
-    storage.openAccount(matched ?? storage.createAccount(provisionalDeviceId));
+    if (matched) {
+      storage.openAccount(matched);
+    } else {
+      storage.openAccount(storage.createAccount(provisionalDeviceId()));
+      // Consumed. The next account created in this run gets its own.
+      provisional = null;
+    }
     storage.syncMemberships(s.memberships);
   } else if (!storage.accountId) {
     // /auth/switch returns no memberships — it is scoped to one workspace and
@@ -170,17 +182,27 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // Opens the SYSTEM browser and blocks on the loopback callback. The
     // renderer never sees a token — only the resulting state.
     await session.signIn(storage.workspaceId ?? undefined);
+    push();
     return view();
   },
   'auth.signOut': async () => {
     const accountId = storage.accountId;
     const ids = accountId ? storage.workspaces().map(w => w.workspaceId) : [];
+
+    // signOut() flips auth state, which pushes. That push necessarily describes
+    // a half-finished sign-out: credentials gone, storage still on disk. The
+    // authoritative push is the one at the end of this handler.
     await session.signOut(ids);
+
     // §13: sign-out wipes the database and blob directory. With this layout
     // that is one directory delete, which cannot be half-completed.
     if (accountId) storage.deleteAccount(accountId);
+
+    // Another account may still be signed in on this device; boot picks it up.
     const next = storage.boot();
     if (next.workspaceId) void session.activate(next.workspaceId);
+
+    push();
     return view();
   },
   'auth.createWorkspace': async (params) => {
@@ -189,9 +211,13 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // workspace does not, and does not need one (§10.4).
     if (session.canCreateWorkspace) await session.createWorkspace(p.workspaceName, p.handle);
     else await session.createAnotherWorkspace(p.workspaceName, p.handle);
+    push();
     return view();
   },
   'auth.configured': () => ({ clientId: (process.env['WORKOS_CLIENT_ID'] ?? '').slice(0, 14) || null }),
+
+  /** Everything on disk. Debug only — see Storage.debug(). */
+  'debug.snapshot': () => storage.debug(),
 
   // ── workspaces (STORAGE.md §12.2) ──────────────────────────────────────
   'workspace.switch': (params) => {

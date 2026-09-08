@@ -8,7 +8,8 @@
 // active one is a field, not a global — which is what keeps the deferred
 // outbox drainer (§16.1) an addition rather than an untangling.
 import type { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -87,6 +88,35 @@ function readSummary(db: DatabaseSync, accountId: string): AccountSummary {
     lastWorkspace: getMeta(db, 'last_workspace'),
     workspaces: rows.map(toRow),
   };
+}
+
+/**
+ * Everything on disk, for the debug inspector (§17.3).
+ *
+ * Reads EVERY replica, not just the active one, because the question it exists
+ * to answer is whether cleanup actually happened — and a workspace that should
+ * have been deleted is invisible from the active handle alone. Read-only and
+ * transient: the active-workspace rule (§7) is about who may write.
+ */
+export interface FileNode {
+  name: string;
+  /** null for a directory. */
+  bytes: number | null;
+  children: FileNode[];
+}
+
+export interface DebugSnapshot {
+  root: string;
+  installId: string;
+  epoch: number;
+  /** Our layout only, as a tree. See OURS. */
+  tree: FileNode[];
+  /** How many Chromium runtime files were left out, so the filter is visible. */
+  hiddenFiles: number;
+  databases: { name: string; path: string; userVersion: number; autoVacuum: number;
+               tables: { name: string; rows: Record<string, unknown>[]; total: number }[] }[];
+  /** Names only. A vault slot's contents are never read, let alone rendered. */
+  vaultSlots: string[];
 }
 
 export interface BootState {
@@ -381,6 +411,42 @@ export class Storage {
     this.#accountId = null;
   }
 
+  /** See DebugSnapshot. Never used by the app itself. */
+  debug(): DebugSnapshot {
+    const { tree, hidden } = ourTree(this.root);
+    const databases: DebugSnapshot['databases'] = [];
+
+    for (const acc of this.listAccountIds()) {
+      this.#withAccount(acc, db =>
+        databases.push(dump(`${acc}/account.db`, p.accountDb(this.root, acc), db)));
+
+      const wspRoot = p.workspacesDir(this.root, acc);
+      const dirs = existsSync(wspRoot)
+        ? readdirSync(wspRoot, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name)
+        : [];
+      for (const wsp of dirs) {
+        const file = p.workspaceDb(this.root, acc, wsp);
+        if (!existsSync(file)) continue;
+        if (wsp === this.#workspaceId && this.#workspace) {
+          databases.push(dump(`${acc}/${wsp} (active)`, file, this.#workspace));
+        } else {
+          const db = openDatabase(file);
+          try { databases.push(dump(`${acc}/${wsp}`, file, db)); } finally { db.close(); }
+        }
+      }
+    }
+
+    const vaultSlots: string[] = [];
+    for (const acc of this.listAccountIds()) {
+      const dir = p.authDir(this.root, acc);
+      if (!existsSync(dir)) continue;
+      for (const f of readdirSync(dir)) vaultSlots.push(`${acc}/${f}`);
+    }
+
+    return { root: this.root, installId: this.installId, epoch: this.#epoch,
+             tree, hiddenFiles: hidden, databases, vaultSlots };
+  }
+
   // ── internals ───────────────────────────────────────────────────────────
 
   #withAccount<T>(accountId: string, fn: (db: DatabaseSync) => T): T {
@@ -393,6 +459,69 @@ export class Storage {
       db.close();
     }
   }
+}
+
+const MAX_ROWS = 50;
+
+function dump(name: string, path: string, db: DatabaseSync) {
+  const uv = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+  const av = Object.values(db.prepare('SELECT * FROM pragma_auto_vacuum()')
+    .get() as Record<string, number>)[0] ?? -1;
+  const tables = (db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .all() as { name: string }[]).map(t => {
+      const total = (db.prepare(`SELECT count(*) c FROM "${t.name}"`).get() as { c: number }).c;
+      const rows = db.prepare(`SELECT * FROM "${t.name}" LIMIT ${MAX_ROWS}`)
+        .all() as Record<string, unknown>[];
+      // node:sqlite returns null-prototype objects, which do not survive
+      // structured cloning to the renderer intact.
+      return { name: t.name, total, rows: rows.map(r => ({ ...r })) };
+    });
+  return { name, path, userVersion: uv, autoVacuum: av, tables };
+}
+
+/**
+ * userData is shared with Chromium, which keeps a couple of hundred files there
+ * — Cache, Code Cache, GPUCache, Local Storage and friends. Listing them buries
+ * the six that are ours.
+ *
+ * Allow-listed rather than block-listed: the set below IS the layout in
+ * STORAGE.md §5, so anything Chromium adds later stays out by default, and
+ * anything WE add has to be named here deliberately.
+ */
+const OURS = new Set(['accounts', 'auth', 'install-id', 'epoch']);
+const isOurs = (name: string) => OURS.has(name) || name.endsWith('.pre-split');
+
+function ourTree(root: string): { tree: FileNode[]; hidden: number } {
+  let hidden = 0;
+  const entries = readdirSync(root, { withFileTypes: true });
+  const tree: FileNode[] = [];
+  for (const e of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
+    if (!isOurs(e.name)) { hidden += e.isDirectory() ? countFiles(join(root, e.name)) : 1; continue; }
+    const node = toNode(root, e.name);
+    if (node) tree.push(node);
+  }
+  return { tree, hidden };
+}
+
+function toNode(parent: string, name: string): FileNode | null {
+  const full = join(parent, name);
+  let st;
+  try { st = statSync(full); }
+  catch { return null; }   // raced with a delete — which is itself the answer
+  if (!st.isDirectory()) return { name, bytes: st.size, children: [] };
+  const children = readdirSync(full, { withFileTypes: true })
+    .toSorted((a, b) => a.name.localeCompare(b.name))
+    .map(e => toNode(full, e.name))
+    .filter((n): n is FileNode => n !== null);
+  return { name, bytes: null, children };
+}
+
+function countFiles(dir: string): number {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .reduce((n, e) => n + (e.isDirectory() ? countFiles(join(dir, e.name)) : 1), 0);
+  } catch { return 0; }
 }
 
 /** Zero until the Phase 2 write path creates the table (§16.1). */

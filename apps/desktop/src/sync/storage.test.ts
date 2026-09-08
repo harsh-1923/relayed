@@ -309,6 +309,51 @@ test('an existing v1 account.db migrates its avatar column in place', () => {
     'the value survives the rename');
 });
 
+test('the debug tree shows our layout and hides Chromium runtime files', () => {
+  const dir = root();
+  // userData is shared with Chromium, which keeps a couple of hundred files
+  // here. Listing them buries the handful that are ours.
+  mkdirSync(join(dir, 'Cache', 'Cache_Data'), { recursive: true });
+  writeFileSync(join(dir, 'Cache', 'Cache_Data', 'index'), 'x');
+  writeFileSync(join(dir, 'Cache', 'Cache_Data', 'data_0'), 'x');
+  writeFileSync(join(dir, 'Cookies'), 'x');
+
+  const { storage } = seeded(dir, [
+    member({ workspaceId: 'wsp_a', actorId: 'act_a' }),
+    member({ workspaceId: 'wsp_b', actorId: 'act_b' }),
+  ]);
+  const snap = storage.debug();
+
+  assert.deepEqual(snap.tree.map(n => n.name).toSorted(), ['accounts', 'epoch', 'install-id']);
+  assert.equal(snap.hiddenFiles, 3, 'and says how many it left out');
+
+  // A replica is created when its workspace is first OPENED, not when the
+  // membership arrives — so a workspace you have never visited costs nothing.
+  const wspsOf = (t: typeof snap) => {
+    const accounts = t.tree.find(n => n.name === 'accounts')!;
+    return accounts.children[0]!.children.find(n => n.name === 'workspaces')!
+      .children.map(n => n.name).toSorted();
+  };
+  assert.deepEqual(wspsOf(snap), ['wsp_a'], 'wsp_b has never been opened');
+
+  // Both are read once both exist, not just the active one — a workspace that
+  // should have been deleted is invisible from the active handle alone.
+  storage.switchWorkspace('wsp_b');
+  const after = storage.debug();
+  assert.deepEqual(wspsOf(after), ['wsp_a', 'wsp_b']);
+  assert.equal(after.databases.filter(d => d.name.includes('wsp_')).length, 2);
+  assert.ok(after.databases.every(d => d.autoVacuum === 2));
+});
+
+test('the debug snapshot lists vault slots by name and never their contents', () => {
+  const dir = root();
+  const { storage, accountId } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  writeFileSync(join(dir, 'accounts', accountId, 'auth', 'refresh-wsp_a.bin'), 'SECRET');
+  const snap = storage.debug();
+  assert.deepEqual(snap.vaultSlots, [`${accountId}/refresh-wsp_a.bin`]);
+  assert.ok(!JSON.stringify(snap).includes('SECRET'), 'a credential must never reach the renderer');
+});
+
 test('the pre-split layout is moved aside, not deleted', () => {
   const dir = root();
   // What Phase 1 left behind: one flat replica and one unkeyed vault slot.

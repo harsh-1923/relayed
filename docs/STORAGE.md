@@ -250,6 +250,35 @@ No server change: `sessions(actor_id, device_id)` already means "one session per
 (actor, device)", so signing out a laptop within an account revokes all of that
 account's workspace sessions via `WHERE actor_id IN (…) AND device_id = ?`.
 
+### 8.1 The provisional id, and its two gaps
+
+Sign-in has to send a `device_id` **before** it knows which account it will land
+in, so it sends a provisional one that the resulting account adopts. Two
+consequences, both accepted:
+
+**Re-authenticating a different account** than the one currently open cannot be
+recognised until the memberships come back, so it adopts the provisional id and
+leaves that account's previous device row stale. Rare — it needs a keychain
+reset — revocable, and the alternative is an extra round trip on every sign-in.
+
+**The provisional id must be regenerated once adopted.** Held as a process-wide
+constant it is handed to the *next* account created in the same run, so signing
+out and signing in as a different email gives two accounts one device identity —
+precisely the correlation invariant 38 exists to prevent. Found by reading the
+`sessions` table after a real session, not by testing.
+
+### 8.2 The pre-split migration orphans one session
+
+Moving the unkeyed `auth/refresh.bin` aside (§5) means no client can present
+that credential again — but the **server-side session stays live until it
+expires**, and no `account.db` records its `device_id`, so "sign out this
+device" can never reach it.
+
+Revoking it during the move would put a network call inside a boot path that
+must not touch the network (§11). The options are to revoke it after sync
+starts, or to let it expire. It affects only installs that predate the split,
+so it is recorded rather than built.
+
 ---
 
 ## 9. Sessions and tokens
