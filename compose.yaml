@@ -139,6 +139,10 @@ services:
       - "${PROM_PORT:-9090}:9090"       # Prometheus query API
     volumes:
       - lgtm-data:/data
+      # Dashboards ship with the stack. Read-only mounts: the container may not
+      # rewrite what is in git.
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./infra/grafana/provisioning/dashboards/relayed.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/relayed.yaml:ro
     healthcheck:
       # curl, not wget — the image has curl only, and a missing probe binary
       # means the healthcheck never passes and `--wait` hangs until timeout.

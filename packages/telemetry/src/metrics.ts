@@ -50,6 +50,13 @@ export interface MetricSpec {
   readonly unit?: 'ms' | 'bytes' | 'count';
   readonly labels: readonly LabelName[];
   readonly doc: string;
+  /**
+   * Declared ahead of the code that will record it. Must be deliberate: a
+   * metric with no call site is a panel that stays empty forever, and an empty
+   * panel reads as "healthy" rather than "never wired". `metrics.test.ts`
+   * fails any unmarked metric that nothing records.
+   */
+  readonly reserved?: true;
 }
 
 export const metrics = {
@@ -139,7 +146,7 @@ export const metrics = {
        + 'may not report it — which is exactly why it needs a counter.',
   },
   'handle.collision': {
-    kind: 'counter', labels: [],
+    kind: 'counter', labels: [], reserved: true,
     doc: 'A chosen handle was already taken. Measures whether the suggestion '
        + 'algorithm works or whether everyone has to retype (§10). NO CALL SITE '
        + 'YET, deliberately: a new workspace has an empty handle namespace, so '

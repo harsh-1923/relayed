@@ -149,6 +149,7 @@
   *::before,
   *::after {
     corner-shape: squircle;
+    user-select: none;
   }
 
   /* ─── Scrollbars: thin bar, transparent rail ───────────────────────────

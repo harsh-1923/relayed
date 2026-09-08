@@ -48,7 +48,16 @@ function startSyncEngine(): Electron.UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'sync.js'), [], {
     // A DIRECTORY, not a file. The sync engine owns the layout beneath it and
     // decides which account and workspace to open (STORAGE.md §5, §11).
-    env: { ...process.env, RELAYED_DATA: app.getPath('userData') },
+    //
+    // The boot clock travels with it: main knows when the app started, the sync
+    // engine knows whether there was local data to render. The R3 histogram
+    // needs both, so the earlier of the two timestamps is passed along rather
+    // than each process reporting half a number.
+    env: {
+      ...process.env,
+      RELAYED_DATA: app.getPath('userData'),
+      RELAYED_BOOT_T0: String(bootStarted),
+    },
     stdio: 'inherit',
   });
   child.on('exit', (code) => {

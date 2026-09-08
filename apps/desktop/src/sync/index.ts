@@ -35,6 +35,7 @@ useOtlpIfConfigured('desktop');
  * `RELAYED_VERIFY_BOOT=1`, because that is a debugging aid rather than a signal.
  */
 let paintable = false;
+const bootT0 = Number(process.env['RELAYED_BOOT_T0'] ?? 0);
 const bootCalls: string[] = [];
 const traceCalls = Boolean(process.env['RELAYED_VERIFY_BOOT']);
 {
@@ -317,6 +318,14 @@ function attach(port: Electron.MessagePortMain) {
     // been allowed to start yet — so anything counted before now is a real R3
     // violation. Closing the window here stops counting ordinary sync traffic.
     paintable = true;
+    // R3's headline number, from app start to the moment the renderer holds a
+    // port and can paint. Recorded HERE rather than in main because the label —
+    // whether there was local data at all — is only known on this side, and a
+    // cold install is a genuinely different number from a warm one.
+    if (bootT0 > 0) {
+      histogram('app.boot', Date.now() - bootT0,
+                { had_account: storage.accountId ? 'yes' : 'no' });
+    }
     if (traceCalls) {
       console.log(JSON.stringify({
         verify: 'boot', networkCallsBeforeFirstPaint: bootCalls.length,

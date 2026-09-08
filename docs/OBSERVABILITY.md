@@ -405,6 +405,61 @@ Worth knowing when reading results:
 
 ---
 
+## 10b. Where to look, locally
+
+```bash
+pnpm services      # Postgres, Redis, MinIO and the LGTM stack
+pnpm dev           # the app and the server, both exporting to :4318
+```
+
+Then **http://localhost:3000** — anonymous admin, no login — and the dashboard
+**Relayed → identity & storage**, provisioned with the stack from
+`infra/grafana/dashboards/`. A dashboard that has to be imported by hand is a
+dashboard nobody opens, so it ships in `compose.yaml` as a read-only mount.
+
+Five rows, in the order they are usually needed:
+
+| Row | Reads |
+|---|---|
+| **Invariants** | R3 violations, rejected blob ids, stale IPC replies — all should be **0** |
+| **Product** | actors created by route, workspaces per identity (p50/p95), sign-in outcomes |
+| **What the user waits on** | workspace switch split local vs authorized, boot to first paint, migration by tier |
+| **Session and blob health** | refresh vs switch ratio, degraded sessions, avatar hit/miss |
+| **Down to one user** | the raw event stream, with account, device, actor and workspace ids |
+
+A counter at zero emits nothing, so **an empty invariant panel is the healthy
+state** — the alert is `> 0`, not a threshold.
+
+### Everything is in Loki, including the metrics
+
+The sink posts to `/v1/logs` only. A metric is a log record carrying
+`metric_name`, `metric_kind` and `metric_value`, so the dashboard is LogQL
+rather than PromQL:
+
+```logql
+# a counter, split by a closed-set label
+sum by (path) (count_over_time({service_name="relayed-desktop"} | metric_name="auth.activate" [$__auto]))
+
+# a histogram
+quantile_over_time(0.95, {service_name="relayed-desktop"} | metric_name="workspace.switch"
+                   | phase="local" | unwrap metric_value [$__auto])
+```
+
+The attributes arrive as Loki **structured metadata**, not stream labels — only
+`service_name` is a label — so the ids on events do not multiply streams. That
+was worth checking rather than assuming, because putting an unbounded id in a
+Loki label is the same mistake §5 forbids for metrics, in a different store.
+
+**This is a dev-grade arrangement and it has two consequences.** Metrics
+inherit the 14-day log retention rather than being kept for months, which is
+precisely the distinction §5 draws — so "how many users did we create this
+quarter" is not yet answerable, even though the metric exists. And `span()`
+records a duration line rather than a real trace, so **Tempo is empty**: there
+is no waterfall to open when a switch is slow, only a number.
+
+Both are the same fix — emit OTLP metrics to `/v1/metrics` and spans to
+`/v1/traces` — and both are §3's ingest work, which Phase 2 needs anyway.
+
 ## 10a. The sink, as built
 
 `packages/telemetry` ships two sinks. `ConsoleSink` is the default and prints one

@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { metrics, type LabelValues, type MetricSpec } from './metrics.ts';
 import { events } from './events.ts';
+
+function walk(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+      e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]);
+  } catch { return []; }
+}
 
 /**
  * The 10k active-series cap is the binding constraint on the whole system
@@ -65,6 +74,35 @@ test('no metric carries an identifier-shaped label', () => {
       assert.notEqual(label, 'client_version', `${name} carries the version trap (§5)`);
     }
   }
+});
+
+test('every declared metric is actually recorded somewhere', () => {
+  // The bug this exists for: `app.boot` was declared as a histogram and only
+  // ever emitted as an event, so its dashboard panel returned zero series —
+  // and an empty panel reads as "healthy", not as "never wired". Found by
+  // querying the panel rather than by any test, which is why there is now one.
+  const root = join(import.meta.dirname, '..', '..', '..');
+  const sources = [
+    join(root, 'apps', 'desktop', 'src'),
+    join(root, 'apps', 'server', 'src'),
+    join(root, 'packages', 'telemetry', 'src'),
+  ].flatMap(d => walk(d));
+  const code = sources
+    .filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+    // The catalogue itself must be excluded, or every metric matches its own
+    // declaration and the test can never fail. A negative control caught this:
+    // a metric added with no call site passed. Instrumentation that measures
+    // itself is the same mistake as a port-leak probe that opens ports.
+    .filter(f => !f.endsWith('metrics.ts'))
+    .map(f => readFileSync(f, 'utf8')).join('\n');
+
+  const missing: string[] = [];
+  for (const [name, spec] of Object.entries(metrics) as [string, MetricSpec][]) {
+    if (spec.reserved) continue;
+    if (!code.includes(`'${name}'`)) missing.push(name);
+  }
+  assert.deepEqual(missing, [],
+    `declared but never recorded — mark as reserved:true if that is intended`);
 });
 
 test('every metric and event documents itself', () => {
