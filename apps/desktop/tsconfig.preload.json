@@ -1,0 +1,12 @@
+{
+  // The preload straddles both worlds: it imports from `electron` (Node-side)
+  // and handles MessagePort / MessageEvent (DOM-side). Neither the main nor the
+  // renderer config is correct for it, so it gets its own.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023", "DOM"],
+    "noEmit": true
+  },
+  "include": ["src/preload/**/*.ts"]
+}

@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/renderer/*"] },
+    "noEmit": true,
+
+    // Relaxed ONLY for the renderer, because src/renderer/components/ui is
+    // vendored shadcn source that the CLI overwrites on `add --overwrite`.
+    // Patching it would be undone by the next component update, so the flags
+    // are scoped instead. tsconfig.node.json and tsconfig.preload.json keep
+    // both enabled — we own every line there.
+    //
+    //   exactOptionalPropertyTypes: react-day-picker passes `locale: T | undefined`
+    //   noUnusedLocals:             scroll-area carries an unused React import
+    "exactOptionalPropertyTypes": false,
+    "noUnusedLocals": false
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/api.d.ts"]
+}

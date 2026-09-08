@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<!--
+  CSP for a bundled, local-first renderer.
+
+  style-src needs 'unsafe-inline' because every React UI library worth using
+  (Radix, and therefore shadcn) positions floating elements with inline style
+  attributes. Without it they silently fail to lay out — verified: the attribute
+  is dropped and CSP logs "Applying inline style violates...".
+
+  connect-src stays 'self' on purpose. The renderer never touches the network:
+  reads come from local SQLite over the MessagePort, and the socket lives in the
+  utilityProcess (DESIGN.md §3, §5). So a compromised renderer has nowhere to
+  exfiltrate to — a lockdown most web apps cannot afford.
+
+  font-src 'self' likewise: remote fonts would leave the UI unstyled offline,
+  which breaks R3 in the most visible way possible. Self-host them.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  font-src 'self';
+  connect-src 'self';
+  object-src 'none';
+  base-uri 'none';
+  frame-src 'none'" />
+<title>Relayed</title>
+</head>
+<body><div id="root"></div><script type="module" src="./main.tsx"></script></body>
+</html>

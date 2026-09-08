@@ -1,3 +1,13 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+allowBuilds:
+  esbuild: set this to true or false
+
+# pnpm blocks dependency build scripts by default. These two genuinely need
+# theirs: esbuild fetches its platform binary, electron downloads the runtime.
+# Kept as an explicit allowlist rather than disabling the protection.
+onlyBuiltDependencies:
+  - esbuild
+  - electron
