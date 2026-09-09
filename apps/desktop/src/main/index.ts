@@ -137,6 +137,16 @@ app.whenReady().then(() => {
   // dark app.
   nativeTheme.themeSource = 'dark';
 
+  // Dev only, macOS only: unpackaged Electron shows its own icon in the Dock,
+  // because the real one is baked into the .app bundle at package time. This
+  // puts our icon there so `dev` looks like the shipped product. Packaged
+  // builds must NOT take this path — the bundle's .icns is already correct and
+  // resources/ does not exist at this path inside the asar.
+  if (!app.isPackaged && process.platform === 'darwin') {
+    const devIcon = join(__dirname, '../../resources/icon.png');
+    if (existsSync(devIcon)) app.dock?.setIcon(devIcon);
+  }
+
   handleBlobProtocol();
   syncProcess = startSyncEngine();
 
