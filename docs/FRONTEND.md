@@ -5,11 +5,11 @@ Companion to [`DESIGN.md`](DESIGN.md) §5 (process architecture), §11 (the read
 path) and §13.2 (the IPC contract), which this document implements rather than
 revises.
 
-Written before the first route exists. The renderer today is a single
-`main.tsx` with five components and one `app:state` push — enough to prove
-identity works, and not enough to hold a message list. Everything below is
-about what replaces it, and about which decisions are expensive to reverse
-after the second surface is built rather than before the first.
+Written before the first route existed, and kept as the record of why each
+decision was made rather than rewritten once it was. The shell is now built —
+router, transition table, live-query client, renderer telemetry — so §14 is the
+place to see what landed and what it corrected. What remains unbuilt is the
+message list itself, which is what §5.4 exists to constrain in advance.
 
 ---
 
@@ -23,7 +23,7 @@ after the second surface is built rather than before the first.
 | What triggers a workspace switch? | **Navigation, and nothing else.** The rail navigates too | 4.5 |
 | What does a route address? | **The space**, not the chat — the space is the permission unit | 4.6 |
 | Where does pane state live? | **The query string.** Path = identity, query = view state | 4.7 |
-| How does the renderer read? | **Our own live-query client**, ~150 lines, implementing DESIGN §11 | 5 |
+| How does the renderer read? | **Our own live-query client**, 235 lines, implementing DESIGN §11. Built | 5 |
 | TanStack Query? | **No.** It is priced for a cost we do not pay | 5.2 |
 | A global state library? | **No.** The renderer holds no authoritative state, by design | 3 |
 | How are illegal transitions prevented? | **A declared transition table**, asserted in `#set()`. Built | 7.2 |
@@ -312,8 +312,8 @@ the main pane needs a chat. The schema already has the primitive —
 `CREATE UNIQUE INDEX chat_singleton ON chats(space_id) WHERE kind IN
 ('sole','default')` — so it is one indexed unique lookup, offline, and
 sub-millisecond. It becomes a hook, built once, because a route param is no
-longer directly a query key: the live-query client keys on `chat_id`, since
-that is what DESIGN §11.2 invalidations carry.
+longer directly a query key: the live-query client keys reads on a **topic**,
+and a chat is one kind of topic (§5.1).
 
 ### 4.7 Panes are query, not path
 
@@ -394,16 +394,55 @@ forces:
   renderer                    sync engine
      │ ── query {id, name, args} ──▶ │  SQLite (synchronous, indexed)
      │ ◀───── rows {id, payload} ─── │
-     │ ◀──── invalidate {chat} ───── │  push, after any write
+     │ ◀── invalidate {topics} ───── │  push, after any write
      │ ── refetch what is visible ─▶ │
 ```
 
 Two obligations fall on the client half:
 
-1. **A registry of mounted queries keyed by `chat_id`**, so an invalidation
+1. **A registry of mounted queries keyed by topic**, so an invalidation
    refetches what is on screen and nothing else.
 2. **Keyset pagination on `ord`** (DESIGN §11.3), bidirectional, because
    jumping to a message means loading older *and* newer around an anchor.
+
+#### The key is a topic, not a chat id — corrected while building
+
+This section said `chat_id`, and the surface it names as the first consumer has
+none: the directory reads the actors table. Rather than leave that case
+unrouted, a dependency is a **topic** — colon-separated segments, coarse to
+fine, of which a chat is one kind:
+
+```
+actors                     the whole directory
+actors:<actorId>           one actor
+chat:<chatId>              anything in one chat
+chat:<chatId>:messages     only its messages
+chat:<chatId>:unread       only its counters
+```
+
+**Two topics intersect when either is a prefix of the other**, and both
+directions carry weight:
+
+```
+write 'chat:c_eng:messages'  must wake a sidebar subscribed to 'chat'
+write 'actors'               must wake a card subscribed to 'actors:a_alice'
+```
+
+Drop the second direction and a full directory resync — which cannot say which
+actors changed — leaves every open profile card showing yesterday's name,
+silently. Sibling facets (`:messages` against `:meta`) never wake each other,
+which is what stops a new message refetching a member list; both are still woken
+by anything subscribed to `chat`.
+
+The comparison appends `':'` before testing the prefix. Without it a write to
+`chat:c_engineering` wakes everything subscribed to `chat:c_eng`, and the
+symptom is a pane refetching slightly too often — which nobody investigates.
+
+The vocabulary lives in `src/shared/topics.ts`, imported by **both** processes
+and constructed rather than typed as literals. Drift between the two sides fails
+silently: a topic nobody subscribes to invalidates nothing, so a typo has to be
+a compile error because it cannot be a runtime one. Same reason the push channel
+name is one `as const` there rather than a string literal at each end.
 
 ### 5.2 Why not TanStack Query
 
@@ -431,6 +470,16 @@ message list is not a thing to hand-roll.
 buying it is better than growing it. `STACK.md` §5 should record the decision
 either way.
 
+**Measured, now it is built:** the registry is **125 code lines** (206 with
+comments), so the trigger did not fire — though not by much, and the number is
+worth re-checking when anchored paging lands. The client as a whole is 235 code
+lines across four files: registry, hook, catalogue, topics.
+
+One TanStack feature we did rebuild: two components reading the same
+`(name, args)` share one entry and one fetch. That is request deduplication, and
+it is five lines of refcount rather than a subsystem — so it is named here as a
+partial hit on the trigger rather than left for someone to notice.
+
 ### 5.3 The hook
 
 ```ts
@@ -439,7 +488,17 @@ either way.
 const { rows, status } = useQuery('messages.page', { chatId, before: cursor });
 ```
 
-`status` is the three-state matrix of §6.2, not a boolean.
+`status` is the three-state matrix of §6.2, not a boolean — **plus a fourth
+value, `loading`**, added while building. The first local read is
+sub-millisecond but not free, and a surface rendering its empty copy for that
+millisecond tells the user "nothing here" about a directory that is about to
+appear. That is a wrong answer, not a slow one, and telling the two apart is the
+point of the matrix.
+
+A read that **fails** keeps the rows it already had and reports the error
+alongside them. Reporting a failed read as an empty result would paint "nothing
+here" over a populated replica, which is the one failure this architecture
+exists to prevent.
 
 ### 5.4 What must be true before the message list is built
 
@@ -447,8 +506,9 @@ Recorded here because it constrains the query contract, not the component:
 
 - Queries are **named and closed**, never SQL from the renderer (DESIGN §13.2).
 - A page is **50 rows, keyset on `ord`**, never `OFFSET`.
-- A query declares which `chat_id` it depends on, so the registry can route an
-  invalidation without inspecting arguments.
+- A query declares which **topics** it depends on, in the catalogue beside the
+  query rather than at the call site, so the registry can route an invalidation
+  without inspecting arguments and no surface can get its own dependencies wrong.
 - An anchored read takes `{ around: ord, before: n, after: n }` — one call, not
   two, so the pane never renders a half-loaded window. This is what §4.7's
   `?a=` and `?ta=` resolve into, one per pane.
@@ -514,11 +574,26 @@ authorities the design exists to avoid.
 Cross-verified in both directions — the rail calling the engine fails, a route
 naming the op fails, the gate passes.
 
-**`renderer/no-direct-query` — with the live-query client.** Components read
-through it, never `window.relayed.query` directly. Deferred only because the
-client is not built yet and a rule with nothing to point at is not enforceable.
-Allowed when it lands: `renderer/lib/query.ts`, and imperative command calls
-(`auth.signIn`, `invite.create`), which are writes rather than reads.
+**`renderer/no-direct-query` — built.** Components read through the live-query
+client, never `window.relayed.query` directly. Allowed: `renderer/lib/query/`,
+and imperative command calls (`auth.signIn`, `invite.create`), which are writes
+rather than reads.
+
+The rule takes its list of read ops **from `query/catalogue.ts` itself** and
+throws if it cannot parse it. A hand-copied list drifts, and drifting the wrong
+way silently stops covering a query — so adding a read to the catalogue is what
+makes the rule cover it, with nothing to remember. Verified by planting a direct
+read in a route: the build failed.
+
+**`renderer/no-telemetry-sdk` — built, with the transport (§10).** A value
+import of `@relayed/telemetry` from the renderer fails; a type-only import
+passes. A second SDK in the renderer means a second flush timer, and a renderer
+timer is the one place a timer cannot be trusted — Chromium throttles a hidden
+page to roughly one tick a minute (DESIGN §13.9), so telemetry would stop
+draining exactly when the window is in the background.
+
+That makes it three, not two — the count in this heading is deliberately not
+maintained; `tools/check-boundaries.mjs` is the list.
 
 ### 6.4 A shortcut registry — the seam, not the feature
 
@@ -1002,18 +1077,34 @@ go in a document with a light background.
 
 ## 10. Telemetry from the renderer
 
-`OBSERVABILITY.md` §3's client forwarding is still unbuilt. The router landing
-is the moment to build the transport, because route changes are the natural
-first client event and retrofitting is the same mistake as the nine unwired
-Phase 2 events.
+**Built.** `OBSERVABILITY.md` §3's client forwarding exists: `lib/telemetry.ts`
+forwards catalogued records over the port the renderer already holds, and the
+sync process emits them. The renderer holds no SDK and must not — a second one
+means a second flush timer, and Chromium throttles a hidden page to roughly one
+tick a minute (DESIGN §13.9), so it would stop draining exactly when the window
+is in the background. `renderer/no-telemetry-sdk` enforces it (§6.3).
 
-Minimum at the point the shell lands:
+The catalogue still binds the renderer at compile time, through a
+`@relayed/telemetry/catalogue` entry point that carries the types without the
+SDK. A type-only import of the main entry was not enough — TypeScript still
+checks the module, and it reaches for `process` and node timers.
+
+All three of the minimums this section originally named landed:
 
 - `ui.route.changed { from, to, workspace }` — an event, so it may carry ids.
-- `app.boot`'s `to_first_render` moves to the *router's* first paint rather
-  than the shell's, which is what R3 actually means.
-- The three-state matrix (§6.2) is worth a metric: a surface rendering *empty*
-  when the replica has rows is a bug class that is invisible in logs.
+- First paint is now reported **by the renderer**, after the frame commits, as
+  `ui.paint`. It did not replace `app.boot`: that one stops when the renderer
+  *could* paint, and the same moment closes R3's network-counting window. Moving
+  that window here would count ordinary sync traffic as a violation, so they are
+  two numbers and the dashboard shows the gap between them.
+- The three-state matrix (§6.2) is a metric, `ui.surface.state`, counted on
+  transition rather than per render.
+
+Beyond them, the read path reports whether it is working at all:
+`ui.query.duration` (is a local read still ~1 ms — the figure §4.3 and §5.2 both
+rest on), `sync.invalidate` against `ui.query.woken` (pushes emitted against
+reads actually woken), and a shared `invalidation` id that reassembles one loop
+across both processes in a single LogQL filter (`OBSERVABILITY.md` §10b).
 
 Ids stay in events and spans, never in metric labels (`OBSERVABILITY.md` §5).
 
@@ -1032,7 +1123,7 @@ What gets tested, given that no DOM testing exists today and none is proposed.
 | 5 | The same link **offline** says "cannot check", not "no access" | Airplane toggle plus a workspace id absent from `account.db`. Negative control — the online path must still say "no access" |
 | 6 | A link into a workspace that is local and active resolves **with no network at all** | `withoutNetwork()`; this is the property that makes a pasted link work on a plane |
 | 7 | Stripping the query from any URL still resolves | Generate every §4.7 shape, drop the query, assert each still names a real space and chat. This is the property that makes a shared link degrade rather than misfire |
-| 8 | An invalidation refetches only mounted queries | Register three, invalidate one chat, assert one refetch |
+| 8 | An invalidation refetches only mounted queries | **Written.** Register three, invalidate one topic, assert one refetch — with the negative control below, plus unmount, shared entries, out-of-order replies and a push that woke nothing |
 | 9 | Every surface renders in all three states of §6.2 | Airplane toggle + a fresh profile; manual for now, per surface |
 | 10 | R3 holds through the router | The existing `boot.test.ts` — `withoutNetwork()` removes `fetch` entirely — must still pass once the shell is routed |
 
@@ -1046,6 +1137,10 @@ when it can, and must refuse to guess when it cannot.
 Negative controls on 1, 5 and 8 specifically, because all three are the kind of
 test that passes for the wrong reason — the authz spike and the metric
 call-site test both did.
+
+Test 8's control turned out to matter exactly as predicted: "invalidate one,
+assert one refetch" also passes when nothing refetches at all. The paired test
+invalidates a topic all three reads depend on and asserts all three wake.
 
 ---
 
@@ -1068,6 +1163,9 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 | 65 | Every value crossing a process or a wire is **parsed**, not asserted | The type says `actor` is there, the wire disagrees, and the client drops data in silence |
 | 66 | An unknown **field** is dropped and an unknown **frame** is ignored — neither is fatal | Adding a field or a frame type breaks every client already in the field (invariant 43's client half) |
 | 67 | Every surface renders correctly **empty**, **offline-with-data**, and **live** | Offline correctness is asserted in a document and discovered false by a user on a plane |
+| 68 | The write side and the read side name dependencies from **one shared topic vocabulary** | They drift, a write announces a topic nobody subscribes to, and every open surface goes stale — with no error, no spinner and nothing in a log |
+| 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (DESIGN §13.9), so telemetry stops draining exactly when it is least observed |
+| 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
 
 ---
 
@@ -1133,11 +1231,29 @@ are referenced from four documents.
    and `AppState.awaitingBrowser` removed from the IPC contract. Two edges the
    sketch in this document had wrong — a boot goes straight from `signed_out` to
    `authenticated` or `stale`, never through `authenticating`.
-3. **Live-query client** (§5) with the invalidation registry, plus
-   `renderer/no-direct-query` (§6.3). `routes/People.tsx` is the first surface
-   waiting on it — it is a list an invalidation should refresh, and today
-   nothing refreshes it.
-4. **Renderer telemetry transport** (§10), while the router is fresh.
+3. ✅ **Live-query client** (§5) with the invalidation registry, plus
+   `renderer/no-direct-query` (§6.3). **Done.** `routes/People.tsx` was the
+   first surface waiting on it and now reads through it.
+
+   **The registry key is a topic, not a `chat_id`** — the correction §5.1
+   records, forced by the very surface this item named: the directory has no
+   chat. Two topics intersect when either is a prefix of the other, in both
+   directions.
+
+   Three things the sketch here did not anticipate, all in §5: a fourth
+   `status` value so "still reading" is not rendered as "nothing here"; a failed
+   read keeping its rows; and a generation counter, bumped by refetch *and*
+   teardown, without which two invalidations in quick succession resolve to
+   whichever reply the port happened to return last.
+
+   Verified in the app, not only in tests: edit a display name in Postgres,
+   toggle the aeroplane switch, and the directory updates in place. No
+   "Reading…" flash — which is what distinguishes an invalidation from an
+   accidental remount.
+
+4. ✅ **Renderer telemetry transport** (§10). **Done**, and the router was
+   indeed the right moment: `ui.route.changed` is the spine the other renderer
+   events hang off.
 5. Then Phase 2, where XState (§7.4) and Zod (§8.3) fire on their triggers.
 
 ### What is not yet built behind the routes

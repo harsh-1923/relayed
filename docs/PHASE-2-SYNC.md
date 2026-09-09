@@ -235,6 +235,14 @@ From `DESIGN.md` §16, the ones this phase can finally answer with data:
 
 And one this phase creates:
 
-- **Renderer telemetry has no transport** (`OBSERVABILITY.md` §3). The nine
-  events above are emitted in the sync process and reach the collector. Anything
-  the renderer wants to report still has nowhere to go — Phase 1½ item 12d.
+- ~~**Renderer telemetry has no transport.**~~ **Closed** by the renderer
+  telemetry transport (Phase 1½ item 12d). `lib/telemetry.ts` forwards
+  catalogued records over the port the renderer already holds and the sync
+  process emits them, so a renderer signal now reaches the collector the same
+  way a sync one does (`OBSERVABILITY.md` §3).
+
+  What that leaves for this phase is the frame envelope: `traceparent` on the
+  wire (`OBSERVABILITY.md` §4), so a client "user pressed send" span links to
+  the server span that assigned the `ord`. The read path uses a per-process
+  `invalidation` id to correlate its two halves today, which is enough within
+  one machine and is exactly what `traceparent` replaces once there is a socket.

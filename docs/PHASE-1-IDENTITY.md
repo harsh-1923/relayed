@@ -408,8 +408,10 @@ an access-token TTL. Reasoning in [`AUTHZ.md`](AUTHZ.md) §10.1.
       needed the network cannot merely be slow, it throws — which is a stronger
       claim than counting calls and finding zero.
 - [x] **The rules we write down are enforced.** `tools/check-boundaries.mjs`,
-      wired into `pnpm typecheck`: six rules, each naming the sentence in the
-      document it holds. §11a below is why it exists.
+      wired into `pnpm typecheck`: six rules at the close of this phase, each
+      naming the sentence in the document it holds. §11a below is why it
+      exists — and the count has grown since, so read the file rather than this
+      line for what it holds today.
 - [x] Sync [`DESIGN.md`](DESIGN.md) — invariants 37–67 folded in, and the shell
       slotted into §15 as Phase 1½.
 

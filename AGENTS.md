@@ -19,16 +19,24 @@ ordered log, every read served from local SQLite.
 |---|---|
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
-| **1½ — the shell** | **In progress.** Router ✅, transition table ✅, live-query client ✗, renderer telemetry ✗ |
-| 2 — the sync core | Next. [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) |
+| 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
+| **2 — the sync core** | **Next.** [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) |
 
-**Next task: Phase 1½ item 12c**, the live-query client — `DESIGN.md` §11's
-client half, specified in [`FRONTEND.md`](docs/FRONTEND.md) §5.
-`apps/desktop/src/renderer/routes/People.tsx` is the surface waiting on it: a
-list an invalidation should refresh, which nothing refreshes today.
+**Next task: the sync core** — the server's spaces/chats/messages tables with
+atomic `ord`/`rev` assignment, then the protocol and the client's contiguity
+logic (Phase 2, `DESIGN.md` §15 items 13–17, scoped in
+[`PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md)).
 
-Green as of the last commit: **125 tests**, 103 spike assertions, 6 boundary
-rules over 152 files, typecheck across four packages, production build.
+Two things there are easy to skim past and expensive to rediscover.
+`spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
+assertions, mutation-tested, and it disagrees with intuition in several places;
+port it rather than rewriting it. And the socket already has a seam:
+`guardConnect` exists, and the boundary rule `network/no-ungated-socket` permits
+`new WebSocket` only under `sync/transport/`, a directory that does not exist
+yet.
+
+Green as of the last commit: **161 tests**, 103 spike assertions, 8 boundary
+rules over 165 files, typecheck across four packages, production build.
 
 ## Documentation
 
@@ -96,19 +104,42 @@ than none, because it is trusted.
 This codebase is early; the risk is over-building. Workspace members under
 `apps/` and `packages/` are added when needed — do not scaffold speculatively.
 
-### 5. Name the thing, never just its number.
+### 5. A number is never a reference. Name the thing.
 
-When you write or say something, refer to a section, rule or invariant **by its
-title**. `§9.10` and "invariant 43" are locators, not meanings — the reader has
-to go and look one up before they can tell whether the point is even relevant to
-what they are doing, and a mis-typed number sends them somewhere unrelated with
-no sign that anything went wrong.
+A bare identifier is a locator, not a meaning. It forces the reader to stop, open
+a document and find the entry before they can tell whether the point even
+concerns them — and a mistyped one sends them somewhere unrelated with no sign
+that anything went wrong.
 
-Write "the contiguity invariant", "an unknown event type still advances the
-cursor", "chat is the sync unit". A number may **follow** the name as a pointer;
-it may never stand in for one.
+**The test: delete every number from what you wrote. If what remains no longer
+identifies what you meant, it was wrong.** Apply it before sending, not after
+being asked.
 
-This applies to replies, commit messages, comments and the docs themselves.
+| ✗ Wrong | ✓ Right |
+|---|---|
+| "Next is 12d." | "Next is the renderer telemetry transport — the renderer has no way to report anything today (Phase 1½ item 12d)." |
+| "specified in `FRONTEND.md` §5" | "specified in the frontend doc's read-path client section (`FRONTEND.md` §5)" |
+| "invariant 43" | "an unknown frame type is ignored rather than fatal (invariant 43)" |
+| "see §9.10" | "old clients must tolerate new servers — forward compatibility (`DESIGN.md` §9.10)" |
+| "this breaks R2" | "this breaks R2 — updates must arrive for every space, open on screen or not" |
+
+Three things that make it strict rather than aspirational:
+
+- **It covers every kind of identifier**, not just section numbers: build-order
+  and phase items (`12c`, `Phase 1½`), invariant numbers, rule numbers,
+  requirement codes (`R1`–`R3`), and a document name standing on its own.
+- **The name comes first and the number second**, in parentheses or after a dash.
+  Never the reverse, and never the number by itself.
+- **Every mention, not only the first.** Context does not carry: the reader may
+  be scanning, resuming days later, or reading on another device. A reply that
+  says "12d" three messages in is as opaque as one that opens with it.
+
+Applies to replies, commit messages, code comments and the docs themselves.
+
+And the corollary worth stating, because it is usually the real cause: **if you
+cannot name it, you have not read it.** Reaching for the number is what reaching
+for something you have not opened feels like. Go and read it, then write the
+name.
 
 ### 6. Descriptive names, including loop variables.
 
@@ -128,9 +159,14 @@ boundary; those keys must never travel further in.
 
 ### 7. Never commit until asked.
 
-Work off the default branch. Do not `git commit`, `git push`, create a branch or
-open a PR unless the ask was explicit — "make the change" is not "commit the
-change". Leave the work in the tree and say what is there.
+Do not `git commit`, `git push`, create a branch or open a PR unless the ask was
+explicit — "make the change" is not "commit the change". Leave the work in the
+tree and say what is there.
+
+When a commit *is* asked for, it goes on **`main`**. This repository does not use
+feature branches. (The previous wording here, "work off the default branch", read
+both ways and was taken as the opposite — which is the failure rule 5 is about,
+in a rule rather than a reference.)
 
 Approval is per-request and does not carry forward: being asked to commit once
 is not standing permission for the next change.
@@ -168,7 +204,7 @@ pnpm typecheck       # all packages, then the boundary checker
 pnpm test            # all packages
 pnpm spike:sync      # sync-protocol model tests — must stay green
 pnpm spike:authz     # authorization model tests
-pnpm check:boundaries # the six rules below, run by typecheck too
+pnpm check:boundaries # the rules below, run by typecheck too
 pnpm otel:smoke      # prove the telemetry loop works before debugging the app
 ```
 
@@ -179,9 +215,11 @@ confusion twice — check `ps` before concluding a change did not apply.
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 67 invariants; the reasoning for 37–47 lives in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, and for 55–67 in `docs/FRONTEND.md` §12, each paired with the failure
-it prevents. Six of them are enforced by `pnpm check:boundaries` rather than by
-being remembered. The ones most easily broken by a reasonable-looking change:
+Full list in `docs/DESIGN.md` §14 — 70 invariants; the reasoning for 37–47 lives
+in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, and for 55–70 in
+`docs/FRONTEND.md` §12, each paired with the failure it prevents. Eight are
+enforced by `pnpm check:boundaries` rather than by being remembered. The ones
+most easily broken by a reasonable-looking change:
 
 | | |
 |---|---|
@@ -198,6 +236,9 @@ being remembered. The ones most easily broken by a reasonable-looking change:
 | **No message body in telemetry**, ever | Structured events only — a template-literal log puts the product in Loki (OBSERVABILITY §6) |
 | No unbounded **id as a metric label** | 100 actors × 150 chats = 15k series for one metric; the free tier caps at 10k (OBSERVABILITY §5) |
 | No native SQLite binding | `node:sqlite` is chosen to avoid `electron-rebuild` (§13.5) |
+| Every renderer read goes through the **live-query client** | A read issued straight at the bridge is invisible to the invalidation registry, so nothing refreshes it (FRONTEND §5) |
+| The write and read sides share **one topic vocabulary** | They drift, a push wakes nobody, and every open surface goes stale in silence (§14, invariant 68) |
+| The renderer holds **no telemetry SDK** | A renderer flush timer is throttled to ~1 tick/minute when hidden, so telemetry stops draining when it is least observed (OBSERVABILITY §3) |
 
 ## Conventions
 

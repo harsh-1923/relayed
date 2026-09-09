@@ -19,7 +19,7 @@ Architecture is [`DESIGN.md`](DESIGN.md); technology choices are
 | **Client transport** | Client → **our server** → collector → Grafana. No ingest credential in the binary. |
 | **SDK owner** | The `utilityProcess`. One SDK, one exporter, one buffer. |
 | **Sampling** | 100% until traces approach the free-tier ceiling |
-| **Scope now** | `packages/telemetry` — catalogue, wrappers, lint rules, **and a working OTLP sink** (§10a). Signals wired per subsystem as written. |
+| **Scope now** | `packages/telemetry` — catalogue, wrappers, lint rules, **a working OTLP sink** (§10a) and **the renderer's forwarding path** (§3). Signals wired per subsystem as written. |
 
 ### On vendor lock-in
 
@@ -76,6 +76,21 @@ metrics, and onto §9 in particular.
 **One SDK, in the `utilityProcess`** — the same process that owns the socket and
 the database (§5). The renderer forwards events over the existing `MessagePort`
 rather than running a second SDK. One exporter, one buffer, one flush policy.
+
+**Built, and worth recording why it is not merely tidiness.** A second SDK in the
+renderer means a second flush timer, and a renderer timer is the one place a
+timer cannot be trusted: Chromium throttles a hidden page to roughly one tick a
+minute (`DESIGN.md` §13.9, measured). Telemetry would stop draining exactly when
+the window is in the background, which is most of the time. `check-boundaries`
+rule `renderer/no-telemetry-sdk` holds the line.
+
+The renderer is still bound by the catalogue at **compile** time, through a
+`@relayed/telemetry/catalogue` entry point carrying the types without the SDK —
+a type-only import of the main entry was not enough, because TypeScript still
+checks the module and it reaches for `process`. It is bound again at **runtime**
+by `sync/telemetry-relay.ts`, which drops anything uncatalogued: a catalogue
+enforced only by types is enforced only for callers who ran our compiler, which
+is the same argument §8 makes for the server validating client telemetry.
 
 **The client does not talk to Grafana directly.** A distributable binary cannot
 hold an ingest credential — it is trivially extractable — and direct export
@@ -288,6 +303,18 @@ worse.
 | `auth.signin{outcome}` | Now includes `cancelled`, so deliberately abandoning a sign-in does not pollute the failure rate |
 | `handle.collision` | Still `reserved`, now with a call site in the join path |
 
+### 8a3. Signals added with the read path
+
+| | |
+|---|---|
+| `ui.query.duration{trigger,result}` | Is a local read still about a millisecond? Two decisions rest on that figure — not adopting a server-state cache, and refetching coarsely instead of diffing (`FRONTEND.md` §5.2) — and both are correct at 1 ms and wrong at 40 ms. Nothing measured it before. `trigger` splits mount from invalidation because the latter competes with whatever just wrote |
+| `sync.invalidate` + `ui.query.woken` | Delivery, as a pair: pushes emitted against reads actually woken. Pushes climbing while woken stays flat means the write side is announcing topics nobody subscribes to, and every open surface is stale with no error anywhere (invariant 68) |
+| `ui.surface.state{surface}` | What people actually saw, counted on transition rather than per render. How often anyone is *offline-with-data* is the state the architecture exists to make ordinary, and nothing else can answer it |
+| `ui.paint{had_account}` | App start to the router actually painting. `app.boot` stops when the renderer *could* paint; R3 is a claim about the frame that committed. The R3 network counter deliberately still closes at port attach — moving it would count ordinary sync traffic as a violation |
+| `ui.telemetry.dropped` | The renderer's buffer discarded records (§7). Non-zero means the sync process stopped draining, so every other renderer signal in that window is incomplete rather than absent |
+
+Catalogue cost after these: **420 series of 10,000**, across 31 metrics.
+
 ### 8b. Where the ids live
 
 Metrics cannot carry them, so events do:
@@ -299,7 +326,30 @@ auth.signed_in      account, device, actor, workspace, outcome, duration
 auth.activated      account, workspace, path, ok
 identity.provisioned  actor, org, workspace, via   (server)
 blob.served         blob, result
+ui.route.changed    from, to, workspace
 ```
+
+**One correlation id, deliberately.** `sync.invalidated`,
+`ui.invalidation.received` and `ui.query.read` all carry the same
+per-process `invalidation` number, so one filter reassembles a loop that spans
+two processes:
+
+```
+sync.invalidated          { invalidation: 41, root: 'actors', ports: 1 }
+ui.invalidation.received  { invalidation: 41, mounted: 6, matched: 1 }
+ui.query.read             { invalidation: 41, query: 'actors.list', rows: 2 }
+```
+
+`matched` beside `mounted` is what answers "why did my surface not update"
+without reading code: 0 means the write and read sides disagree about the topic,
+everything-mounted means the topic is too coarse. It is reported even when
+nothing matched — especially then, since that case is otherwise silent.
+
+`sync.invalidated` is emitted per distinct topic **root** rather than carrying a
+list, because there is no free-text field type to hold one and a root is a
+closed set where a full topic is not. The constraint working, not getting in the
+way. Replaced by `traceparent` in the frame envelope (§4) once there is a socket
+to carry one.
 
 This is the layer that answers "why did **this** user's switch hang", and it is
 gone in 14 days — which is the whole reason the aggregate has to be decided in
@@ -309,7 +359,7 @@ gone in 14 days — which is the whole reason the aggregate has to be decided in
 
 ## 9. Instrument the invariants
 
-Three are wired, and all three were **silent** before — each one only became
+Five are wired, and every one of them was **silent** before — each only became
 visible when a user noticed a symptom:
 
 | Invariant | Metric | Healthy |
@@ -317,6 +367,15 @@ visible when a user noticed a symptom:
 | R3 — no network before first paint | `boot.network_calls_before_paint` | **exactly 0** |
 | 41 — the workspace epoch | `ipc.stale_dropped` | small spikes at switches only |
 | 45 — the blob handler is scoped | `blob.serve{serve=rejected}` | **0** |
+| 68 — one shared topic vocabulary | `sync.invalidate` against `ui.query.woken` | pushes and wakes move together |
+| 69 — telemetry leaves through the port | `ui.telemetry.dropped` | **0** |
+
+Invariant 68 is the one worth dwelling on, because it is the newest example of
+the pattern this section is about. If the write side announces a topic the read
+side does not subscribe to, nothing fails: no error, no rejected promise, no log
+line. Every open surface simply keeps rendering what it fetched on mount. The
+only trace of it is pushes climbing while wakes stay flat — which is why the two
+are a pair rather than two metrics that happen to be adjacent.
 
 `blob.serve{serve=miss}` is worth watching alongside: a miss is a grey circle
 somebody actually saw, and it is invisible from the prefetch side because the
@@ -484,7 +543,7 @@ Then **http://localhost:3000** — anonymous admin, no login — and the dashboa
 `infra/grafana/dashboards/`. A dashboard that has to be imported by hand is a
 dashboard nobody opens, so it ships in `compose.yaml` as a read-only mount.
 
-Five rows, in the order they are usually needed:
+Six rows, in the order they are usually needed:
 
 | Row | Reads |
 |---|---|
@@ -492,7 +551,13 @@ Five rows, in the order they are usually needed:
 | **Product** | actors created by route, workspaces per identity (p50/p95), sign-in outcomes |
 | **What the user waits on** | workspace switch split local vs authorized, boot to first paint, migration by tier |
 | **Session and blob health** | refresh vs switch ratio, degraded sessions, avatar hit/miss |
+| **The read path** | local read latency by trigger, pushes against wakes, what surfaces rendered, could-paint against did-paint, and one loop end to end |
 | **Down to one user** | the raw event stream, with account, device, actor and workspace ids |
+
+Panels ship **with** the metrics that feed them, deliberately. `app.boot` was
+once declared as a histogram and only ever emitted as an event, so its panel
+returned nothing — and an empty panel reads as healthy rather than as
+never-wired. A metric with no panel has the same problem from the other end.
 
 A counter at zero emits nothing, so **an empty invariant panel is the healthy
 state** — the alert is `> 0`, not a threshold.

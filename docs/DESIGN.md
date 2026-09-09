@@ -1724,7 +1724,7 @@ never disturbs scrollback the user is reading.
      │ ── query {id, sql-ish spec} ──▶ │  SQLite (synchronous, indexed)
      │ ◀───── rows {id, payload} ───── │
      │                                 │
-     │ ◀──── invalidate {chat} ─────── │  (push, after any write)
+     │ ◀─── invalidate {topics} ────── │  (push, after any write)
      │                                 │
      │ ── query (refetch visible) ──▶  │
 ```
@@ -1733,8 +1733,22 @@ Queries are request/response with a correlation ID. Invalidations are pushes.
 
 ### 11.2 Coarse invalidation, not diffing
 
-When the sync engine writes, it emits `{ type: 'invalidate', chat_id, reason }`.
-The renderer refetches whatever is currently visible.
+When the sync engine writes, it emits `{ push: 'invalidate', topics }`. The
+renderer refetches whatever is currently visible.
+
+**Topics rather than a bare `chat_id`**, settled while building the client half
+(`FRONTEND.md` §5.1). A dependency is a colon-separated path — `actors`,
+`chat:<id>`, `chat:<id>:messages` — and a subscription matches an invalidation
+when either is a prefix of the other. A chat is then one kind of topic rather
+than the only kind, which the first consumer required: the workspace directory
+depends on the actors table and names no chat at all.
+
+Both prefix directions matter. A narrow write must wake a broad reader (a
+message in one chat updates a sidebar watching every chat), and a broad write
+must wake a narrow reader (a full directory resync cannot say which actors
+changed, so it must still wake an open profile card). The vocabulary is one
+module imported by both processes, because drift between the two sides produces
+a surface that silently stops refreshing — no error, nothing in a log.
 
 Deliberately coarse. Fine-grained diffs pushed over IPC would mean the renderer
 maintains a mirror of the data, which reintroduces exactly the client-side
@@ -2481,6 +2495,9 @@ test.
 | 65 | Every value crossing a process or a wire is **parsed**, not asserted | The type says `actor` is there, the wire disagrees, and the client drops data in silence |
 | 66 | An unknown **field** is dropped and an unknown **frame** is ignored — neither is fatal | Adding a field or a frame type breaks every client already in the field (invariant 43's client half) |
 | 67 | Every surface renders correctly **empty**, **offline-with-data**, and **live** | Offline correctness is asserted in a document and discovered false by a user on a plane |
+| 68 | The write side and the read side name dependencies from **one shared topic vocabulary** | They drift, a write announces a topic nobody subscribes to, and every open surface goes stale — with no error, no spinner and nothing in a log |
+| 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (§13.9), so telemetry stops draining exactly when it is least observed |
+| 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
 
 ### Scenarios to test explicitly
 
@@ -2592,10 +2609,16 @@ after the second surface exists rather than before the first.
      at the one chokepoint, throwing in development and counted in production.
      An XState port was tried first and reverted; §7.4a records what it cost and
      what was kept.
-12c. Live-query client implementing §11, with the invalidation registry and the
-     `renderer/no-direct-query` rule (§5, §6.3).
-12d. Renderer telemetry transport (`OBSERVABILITY.md` §3), while the router is
-     fresh — route changes are the natural first client event.
+12c. ✅ Live-query client implementing §11, with the invalidation registry and
+     the `renderer/no-direct-query` rule (`FRONTEND.md` §5, §6.3). **Done** —
+     and the registry keys on a **topic** rather than a `chat_id`, because the
+     first surface to use it, the workspace directory, has no chat (§11.2).
+     The boundary rule reads its op list from the query catalogue itself, so
+     adding a read is what makes the rule cover it.
+12d. ✅ Renderer telemetry transport (`OBSERVABILITY.md` §3). **Done** — the
+     renderer forwards catalogued records over its existing port and holds no
+     SDK, enforced by `renderer/no-telemetry-sdk`. Route changes were indeed
+     the natural first client event.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
 Scoped and sequenced in [`PHASE-2-SYNC.md`](PHASE-2-SYNC.md), which also records
