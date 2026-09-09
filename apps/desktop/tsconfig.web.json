@@ -19,5 +19,14 @@
     "exactOptionalPropertyTypes": false,
     "noUnusedLocals": false
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/api.d.ts"]
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/shared/**/*.ts",
+    "src/preload/api.d.ts"
+  ],
+  // Tests run under `node --test` and import node:test, which this config
+  // deliberately has no types for — the renderer must not see node globals.
+  // tsconfig.node.json checks them instead.
+  "exclude": ["**/node_modules", "**/dist", "**/out", "**/*.test.ts"]
 }

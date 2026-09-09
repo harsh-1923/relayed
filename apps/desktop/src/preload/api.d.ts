@@ -175,6 +175,14 @@ export interface RelayedApi {
   ): Promise<AppState>;
   subscribe(channel: "app:state", fn: (s: AppState) => void): () => void;
   /**
+   * Something in the replica changed. Carries the topics affected and NOT
+   * the rows — the renderer re-reads what it holds (DESIGN.md §11.2).
+   */
+  subscribe(
+    channel: "invalidate",
+    fn: (change: { topics: string[] }) => void,
+  ): () => void;
+  /**
    * Property name marking a reply superseded by a workspace switch. Present on
    * the RESOLVED value — contextBridge drops custom properties from Errors.
    */

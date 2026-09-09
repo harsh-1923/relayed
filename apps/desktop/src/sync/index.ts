@@ -16,6 +16,8 @@ import { Storage, type WorkspaceRow } from './storage.ts';
 import { listInvitations, createInvite, revokeInvite, fetchActors } from './auth/relayed.ts';
 import { newId } from './ids.ts';
 import { installNetworkGate } from './network.ts';
+import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
+import { createInvalidator } from './invalidate.ts';
 import type { OurSession } from './auth/relayed.ts';
 
 interface Request { id: number; op: string; params?: unknown }
@@ -149,7 +151,12 @@ function adoptSession(s: OurSession): void {
 
 /** §13.3: avatars are fetched eagerly, always. Failures are silent and retried. */
 async function fillAvatars(): Promise<void> {
-  if (await prefetchAvatars(storage) > 0) push();
+  if (await prefetchAvatars(storage) === 0) return;
+  // Two subjects, two channels. The rail's account-tier avatars ride on
+  // AppState; the directory's live on `actors.avatar_blob`, which is a replica
+  // read and therefore an invalidation.
+  push();
+  invalidate([topic.actors()]);
 }
 
 /**
@@ -171,6 +178,7 @@ async function fillActors(): Promise<void> {
   try {
     const actors = await fetchActors(token);
     storage.syncActors(actors);
+    invalidate([topic.actors()]);
     count('directory.synced', { result: 'ok' });
     emit('directory.synced', {
       workspace: storage.workspaceId ?? '', actors: actors.length,
@@ -225,6 +233,18 @@ function push(): void {
   const data = view();
   for (const p of ports) p.postMessage({ push: 'app:state', data });
 }
+
+/**
+ * Tell every attached renderer that something it may be reading has changed.
+ *
+ * Dropped when nothing is attached: a renderer reads on mount anyway, so there
+ * is no one to miss it. Coalescing and the flush rule live in `invalidate.ts`.
+ */
+const invalidate = createInvalidator((topics) => {
+  if (ports.size === 0) return;
+  const data = { topics };
+  for (const p of ports) p.postMessage({ push: INVALIDATE_CHANNEL, data });
+});
 
 session.onChange((_state: AuthState) => push());
 

@@ -96,6 +96,67 @@ than none, because it is trusted.
 This codebase is early; the risk is over-building. Workspace members under
 `apps/` and `packages/` are added when needed — do not scaffold speculatively.
 
+### 5. Name the thing, never just its number.
+
+When you write or say something, refer to a section, rule or invariant **by its
+title**. `§9.10` and "invariant 43" are locators, not meanings — the reader has
+to go and look one up before they can tell whether the point is even relevant to
+what they are doing, and a mis-typed number sends them somewhere unrelated with
+no sign that anything went wrong.
+
+Write "the contiguity invariant", "an unknown event type still advances the
+cursor", "chat is the sync unit". A number may **follow** the name as a pointer;
+it may never stand in for one.
+
+This applies to replies, commit messages, comments and the docs themselves.
+
+### 6. Descriptive names, including loop variables.
+
+No single-letter or clipped bindings for domain objects: `chat` not `c`, `actor`
+not `a`, `message` not `m`, `space` not `s`. Loops read
+`for (const chat of chats)`, never `for (const c of chats)`.
+
+The reason is not tidiness. Two of the most dangerous rules in this system —
+space membership is the leading conjunct of chat access, and every message lives
+in a chat rather than in a space — are rules about *which* entity a line is
+holding. `access(a, c)` hides that; `access(actor, chat)` states it.
+
+**The wire protocol is the one exception, and it does not leak.** Frames carry
+`"t"`, `"c"`, `"m"`, `"r"` (DESIGN, *Sync protocol*) because bytes on a socket
+are a different concern from code that reads. Give them names at the parse
+boundary; those keys must never travel further in.
+
+### 7. Never commit until asked.
+
+Work off the default branch. Do not `git commit`, `git push`, create a branch or
+open a PR unless the ask was explicit — "make the change" is not "commit the
+change". Leave the work in the tree and say what is there.
+
+Approval is per-request and does not carry forward: being asked to commit once
+is not standing permission for the next change.
+
+### 8. Observability is part of the feature, not a follow-up.
+
+Any feature that is worth building is worth being able to see in production.
+Read [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) before adding a log, a
+metric or a span — and before deciding a feature needs none.
+
+The work is a conversation, not a checklist:
+
+- **Propose the markers with the question each one answers.** "A counter of
+  live-query subscriptions" is not a justification; "we cannot currently tell a
+  wedged invalidation registry from an idle one" is.
+- **Say what each is worth, and what it costs.** A marker nobody will read costs
+  cardinality, ingest and attention, and makes the signal around it harder to
+  find. Proposing *not* to instrument something is a legitimate answer.
+- **Agree them with the dev before adding them.** Instrumentation shapes what
+  gets debugged for the life of the feature; it is their call, not a detail to
+  slip in.
+
+Two limits are not negotiable and are enforced at compile time: **no message
+body in telemetry, ever**, and **no unbounded id as a metric label** — 100
+actors × 150 chats is 15k series for one metric, against a 10k cap.
+
 ## Commands
 
 ```bash
@@ -147,6 +208,6 @@ being remembered. The ones most easily broken by a reasonable-looking change:
   Declare and assign fields explicitly instead.
 - Imports inside packages use explicit `.ts` extensions, for the same reason:
   Node's ESM resolver has no extension inference.
-- Comments explain **why**, not what, and point at the doc (`§8.1`) rather than
-  restating it.
-- Work off the default branch. Commit only when asked.
+- Comments explain **why**, not what, and point at the doc **by name** rather
+  than restating it — `the contiguity invariant, DESIGN §8.1`, never a bare
+  `§8.1` (*Name the thing, never just its number*).

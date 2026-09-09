@@ -7,10 +7,17 @@ import { useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router';
 import { useSession } from './state';
 import { WorkspaceRail } from './WorkspaceRail';
+import { useQueryInvalidation } from '@/lib/query';
 
 export function AppShell() {
   const { state } = useSession();
   const navigate = useNavigate();
+
+  // Connects the live-query registry to the engine's invalidations, once for
+  // the whole tree. Here rather than at module load so the subscription has a
+  // teardown, and here rather than per-surface so a second reader cannot forget.
+  // Surfaces call useQuery, which is live in its own right.
+  useQueryInvalidation();
 
   // The ONE case where the engine is allowed to move the URL (invariant 57):
   // the thing you were looking at has ceased to exist. Sign-out is the common

@@ -16,11 +16,44 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const SOURCES = ['apps/desktop/src', 'apps/server/src', 'packages/authz/src', 'packages/telemetry/src'];
 
 /**
+ * The reads the live-query client owns, taken from the catalogue itself rather
+ * than restated here.
+ *
+ * A hand-copied list is a list that drifts, and drifting the wrong way means
+ * the rule silently stops covering a query — so it reads the source of truth
+ * and throws if it cannot find it. A rule that cannot locate what it guards
+ * must fail loudly, not pass.
+ */
+function catalogueOps() {
+  const file = join(ROOT, 'apps/desktop/src/renderer/lib/query/catalogue.ts');
+  const body = readFileSync(file, 'utf8');
+  const block = body.match(/export const TOPICS: TopicsFor = \{([\s\S]*?)\n\};/);
+  if (!block) throw new Error(`check-boundaries: no TOPICS block in ${file}`);
+  const ops = [...block[1].matchAll(/'([^']+)'\s*:/g)].map(m => m[1]);
+  if (ops.length === 0) throw new Error(`check-boundaries: TOPICS is empty in ${file}`);
+  return ops;
+}
+
+/**
  * `where` narrows the files a rule applies to; `allow` exempts the module that
  * legitimately owns the thing being banned — a rule with no owner is a rule
  * nobody can satisfy.
  */
 const RULES = [
+  {
+    id: 'renderer/no-direct-query',
+    doc: 'FRONTEND.md §6.3 — components read through the live-query client',
+    why: 'A read issued straight at the bridge is invisible to the invalidation '
+       + 'registry, so nothing refreshes it. There is no error and no spinner — '
+       + 'the surface simply keeps rendering what it read once, and the bug is '
+       + 'found by a user noticing that somebody who joined is not in the list. '
+       + 'Call useQuery(name) instead; it subscribes as well as reads. '
+       + 'Commands (auth.signIn, invite.create) are writes and stay direct.',
+    pattern: new RegExp(`\\.query\\s*\\(\\s*['"](?:${catalogueOps().join('|')})['"]`),
+    where: [/apps\/desktop\/src\/renderer\//],
+    // The client itself calls the bridge dynamically; that is its job.
+    allow: [/apps\/desktop\/src\/renderer\/lib\/query\//],
+  },
   {
     id: 'authz/no-role-comparison',
     doc: 'AUTHZ.md §7 — every permission check goes through can()',
