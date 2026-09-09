@@ -330,7 +330,7 @@
           "expr": "quantile_over_time(0.95, {service_name=\"relayed-server\"} | metric_name=\"identity.memberships\" | unwrap metric_value [$__auto])",
           "legendFormat": "p95",
           "queryType": "range",
-          "refId": "A"
+          "refId": "B"
         }
       ],
       "options": {
@@ -456,7 +456,7 @@
           "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"workspace.switch\" | phase=\"authorized\" | unwrap metric_value [$__auto])",
           "legendFormat": "authorized p95",
           "queryType": "range",
-          "refId": "A"
+          "refId": "B"
         }
       ],
       "options": {
@@ -518,7 +518,7 @@
           "expr": "quantile_over_time(0.5, {service_name=\"relayed-desktop\"} | metric_name=\"app.boot\" | unwrap metric_value [$__auto])",
           "legendFormat": "p50",
           "queryType": "range",
-          "refId": "A"
+          "refId": "B"
         }
       ],
       "options": {
