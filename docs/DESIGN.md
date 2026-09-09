@@ -2598,6 +2598,10 @@ after the second surface exists rather than before the first.
      fresh — route changes are the natural first client event.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
+Scoped and sequenced in [`PHASE-2-SYNC.md`](PHASE-2-SYNC.md), which also records
+what already exists to build on: the 66-assertion executable model to port
+rather than rewrite, the `guardConnect` seam and the boundary rule that forces
+the socket through it, and nine telemetry events declared with no call sites.
 13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops.
 14. Protocol: `hello`/`welcome`, live events, `catchup`, `gap`, `traceparent`
     in the frame envelope (`OBSERVABILITY.md` §4).

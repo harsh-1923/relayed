@@ -13,6 +13,23 @@ ordered log, every read served from local SQLite.
 - **R2** updates arrive for every space they belong to, open on screen or not
 - **R3** without a network, local data is fully readable
 
+## Where we are
+
+| Phase | State |
+|---|---|
+| 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
+| 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
+| **1½ — the shell** | **In progress.** Router ✅, transition table ✅, live-query client ✗, renderer telemetry ✗ |
+| 2 — the sync core | Next. [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) |
+
+**Next task: Phase 1½ item 12c**, the live-query client — `DESIGN.md` §11's
+client half, specified in [`FRONTEND.md`](docs/FRONTEND.md) §5.
+`apps/desktop/src/renderer/routes/People.tsx` is the surface waiting on it: a
+list an invalidation should refresh, which nothing refreshes today.
+
+Green as of the last commit: **125 tests**, 103 spike assertions, 6 boundary
+rules over 152 files, typecheck across four packages, production build.
+
 ## Documentation
 
 | Doc | Covers |
@@ -24,7 +41,8 @@ ordered log, every read served from local SQLite.
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
-| [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Current phase: tenancy, social login, the actor model. |
+| [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
+| [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | **Next phase**: the sync core. Start here for what to build and what already exists to build on. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
@@ -84,10 +102,19 @@ This codebase is early; the risk is over-building. Workspace members under
 pnpm install         # pnpm 11, Node >=24 (engine-strict is on)
 pnpm services        # Postgres + Redis + MinIO + Grafana — docs/STACK.md §3
 pnpm services:down   # stop them
-pnpm dev             # every dev server, in parallel (currently the desktop app)
-pnpm otel:smoke      # prove the telemetry loop works before debugging the app
+pnpm dev             # desktop app + server, in parallel
+pnpm typecheck       # all packages, then the boundary checker
+pnpm test            # all packages
 pnpm spike:sync      # sync-protocol model tests — must stay green
+pnpm spike:authz     # authorization model tests
+pnpm check:boundaries # the six rules below, run by typecheck too
+pnpm otel:smoke      # prove the telemetry loop works before debugging the app
 ```
+
+**One Electron instance at a time.** The app takes a single-instance lock, so a
+second `pnpm dev` exits with "another instance already holds the lock" rather
+than racing. An orphaned instance (`ppid=1`) serving a stale build has caused
+confusion twice — check `ps` before concluding a change did not apply.
 
 ## Non-negotiables
 
