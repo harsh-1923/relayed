@@ -469,14 +469,21 @@ An agreement test is only as strong as the disagreement it could have detected.
 | A lower role never permits more than a higher one | **done** |
 | An unknown action, an action from another scope, an unplaced object | **done** — all denied, never defaulted |
 | Client and server agree | **moot** — they run the same function (§11) |
-| No source file outside the authz module matches `role ===` | **not built.** A lint rule, in the manner of the `console.*` ban (`OBSERVABILITY.md` §6) |
+| No source file outside the authz module matches `role ===` | **done** — `authz/no-role-comparison` in `tools/check-boundaries.mjs`, run by `pnpm typecheck` |
 | A denied write is denied server-side **even when the client permitted it** | **not built.** §3's contract, and the one that actually matters |
 
-The last two are the gap, and the first of them is worth more than it looks. A
-rule written down is not a rule enforced: the trap recorded in
-`PHASE-1-IDENTITY.md` §11a — attaching a rejection handler after an await — was
-walked into again while writing tests for the sign-in cancel path, by the person
-who wrote it down. Prose does not hold a boundary; a lint rule does.
+The remaining gap is the last row, and it is the one that matters: everything
+above tests that the evaluator agrees with itself, while that one tests that the
+server does not trust the client.
+
+The rule above is worth more than it looks, and it now exists. A rule written
+down is not a rule enforced: the trap recorded in `PHASE-1-IDENTITY.md` §11a —
+attaching a rejection handler after an await — was walked into again while
+writing tests for the sign-in cancel path, by the person who wrote it down.
+Prose does not hold a boundary; a checker does. There are six of them now, each
+naming the sentence it holds, and `FRONTEND.md` §4.5 rests entirely on one of
+them: the workspace is safe to keep in the URL only because
+`routing/switch-only-in-the-gate` makes navigation the sole input to a switch.
 
 ---
 

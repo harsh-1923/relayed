@@ -23,7 +23,9 @@ How builds reach users — packaging, signing, update channels — is
 | Fanout / presence | **Redis pub/sub** | At-most-once is sufficient — cursors self-heal (§9.3) |
 | Client database | **`node:sqlite`** | No native module, no `electron-rebuild` (§13.5) |
 | Client shell | **Electron** + electron-vite + electron-builder | §5 process architecture; distribution in [`RELEASE.md`](RELEASE.md) |
-| Client UI | **React**, TanStack Query, TanStack Virtual | Query's invalidation model matches §11.2 exactly |
+| Client UI | **React**, shadcn/Tailwind, TanStack Virtual | Windowing a message list is not worth hand-rolling |
+| Client routing | **React Router**, declarative mode, `HashRouter` | Loaders assume fetching is expensive; ours is ~1 ms from disk ([`FRONTEND.md`](FRONTEND.md) §4) |
+| Client read path | **Ours**, implementing §11 | A push-invalidated local replica is the data layer; a server-state cache is priced for a cost we do not pay (§5.2) |
 | Blobs | **S3-compatible** — R2 in production, MinIO locally | Egress cost dominates for a media-heavy chat client |
 | Auth | **WorkOS** | AuthKit for humans, M2M for agents, Pipes + Relay for third-party access (§6.2) |
 | Deploy artifact | **A long-running container** | The one hard constraint |
@@ -55,7 +57,10 @@ Recorded so they are not revisited by accident.
 | **MySQL / Vitess** | No partial indexes, so `chat_singleton` degrades from a database guarantee to application logic. |
 | **Turso / libSQL** | Sharing the SQLite dialect across client and server is attractive, but only ~60% of the schema overlaps, and adding a database that also does its own sync to a product whose hard part is sync creates two competing sync stories. |
 | **Kafka / NATS JetStream** | Durable log semantics we do not need — cursors and gap markers already repair dropped fanout. |
-| **Redux or any global client store** | §5: the renderer holds no authoritative state. A store reintroduces the drift the architecture removes. |
+| **Redux, Zustand, or any global client store** | §5: the renderer holds no authoritative state. A store reintroduces the drift the architecture removes, and there is no category of state left for it to hold (`FRONTEND.md` §3). |
+| **TanStack Query** | A server-state cache priced for a network round trip. Our read is a ~1 ms SQLite query over a MessagePort, so `staleTime`, background refetch, dedup and retry all solve a cost we do not pay — and `useInfiniteQuery` is single-direction where the message list needs paging around an anchor (`FRONTEND.md` §5.2). |
+| **React Router framework mode** | Owns the Vite build, which `electron-vite` already does, and has no hash-history option — our production renderer loads from `file://`. SSR is meaningless here and route code splitting works against R3 (`FRONTEND.md` §4.2). |
+| **React Router data mode** | Loaders revalidate on navigation and after actions; our data changes when the server pushes. Every list would need a loader *and* a subscription — two sources of truth for one view (`FRONTEND.md` §4.3). |
 | **`better-sqlite3`** | Native module, `electron-rebuild` on every Electron upgrade. `node:sqlite` covers every feature we need (§13.5). |
 | **uWebSockets.js** | Faster and leaner than `ws`, but a native binding. Keep as an escape hatch above ~100k connections. |
 
@@ -178,7 +183,7 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | electron-vite | https://electron-vite.org | resolve |
 | electron-updater | https://www.electron.build/auto-update | `/electron-userland/electron-builder` |
 | React | https://react.dev | resolve |
-| TanStack Query | https://tanstack.com/query/latest | resolve |
+| React Router | https://reactrouter.com | resolve |
 | TanStack Virtual | https://tanstack.com/virtual/latest | resolve |
 | Fastify | https://fastify.dev/docs/latest | `/fastify/fastify` |
 | @fastify/websocket | https://github.com/fastify/fastify-websocket | `/fastify/fastify-websocket` |
@@ -226,3 +231,10 @@ in §8.3 stays the artifact rather than becoming generated output.
    Grafana Cloud, OTel for traces and metrics, pino for logs, client telemetry
    routed through our own server. Product analytics remains a separate question
    from operational telemetry.
+6. ~~**Frontend architecture**~~ — settled in [`FRONTEND.md`](FRONTEND.md):
+   React Router in declarative mode, everything addressable in the URL with the
+   workspace included, our own live-query client rather than a server-state
+   cache, and no global store. Two libraries are deferred with named triggers
+   rather than indefinitely — **XState** at the Phase 2 transport (§7.4) and
+   **Zod** at the first wire format (§8.3) — so both are decisions with dates
+   attached rather than open questions.

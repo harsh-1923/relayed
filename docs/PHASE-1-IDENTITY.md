@@ -397,20 +397,29 @@ unordered and lost if the endpoint is down. `user.deleted` and
 membership row and revoke its sessions within a poll interval rather than within
 an access-token TTL. Reasoning in [`AUTHZ.md`](AUTHZ.md) §10.1.
 
-**Remaining**
+**Closed since**
 
-- [ ] **Actors are never replicated to the client.** The workspace replica has
-      the table and zero rows. Message authors cannot render offline without it,
-      so Phase 2 blocks on this rather than Phase 1 needing it.
-- [ ] **The airplane-mode test does not exist.** `RELAYED_VERIFY_BOOT=1` reports
-      `networkCallsBeforeFirstPaint: 0` by counting them in the process that
-      makes them, but nothing runs it with the network actually down and nothing
-      fails a build if it regresses.
-- [ ] **A lint rule for the rules we write down.** `AUTHZ.md` §12.2 wants one
-      for `role ===` outside the authz module; §11a below is the argument for
-      it.
-- [ ] Sync [`DESIGN.md`](DESIGN.md) — done for this phase; keep it in step as
-      Phase 2 moves §9 and §13.
+- [x] **Actors replicate to the client.** `GET /actors` fills the workspace
+      replica, so a message author can render offline. It is temporary by
+      design: `DESIGN.md` §9.1 puts the directory in the `welcome` frame, and
+      the shape here is that shape, so porting is a change of transport.
+- [x] **The airplane-mode test exists**, and proves R3 rather than measuring it.
+      `boot.test.ts` removes `fetch` from the process entirely — a boot that
+      needed the network cannot merely be slow, it throws — which is a stronger
+      claim than counting calls and finding zero.
+- [x] **The rules we write down are enforced.** `tools/check-boundaries.mjs`,
+      wired into `pnpm typecheck`: six rules, each naming the sentence in the
+      document it holds. §11a below is why it exists.
+- [x] Sync [`DESIGN.md`](DESIGN.md) — invariants 37–67 folded in, and the shell
+      slotted into §15 as Phase 1½.
+
+**Directory avatars, added later.** The directory arrived with `avatar_url` and
+nothing to render: `syncActors` wrote a literal `NULL` into `avatar_blob` and
+deleted every row on each sync, so a prefetch could not have stuck even if one
+had walked the table. Closed with an upsert that keeps the pointer while the URL
+is unchanged, a prefetch pass over the actors table, and a link-before-download
+step — content addressing means the same face already held under another row
+costs no request at all, and resolves offline where a download cannot.
 
 ## 11a. Learnings
 

@@ -855,6 +855,15 @@ Item 8 is not polish — it is what makes items 1–7 testable end to end. Witho
 it there is no way to reach a second workspace, and the switch logic ships
 unexercised.
 
+**All ten are done.** Item 8 changed shape afterwards, and the change is worth
+recording here because it altered who may start a switch: the rail no longer
+calls `workspace.switch` at all. It navigates to `/w/:workspaceId`, and a route
+guard makes the call — so the workspace can live in the URL, which is what lets
+a link to another workspace resolve rather than silently miss
+([`FRONTEND.md`](FRONTEND.md) §4.5). Nothing in §12's flows changed; only the
+number of callers, which is now one and is enforced by
+`tools/check-boundaries.mjs` rather than remembered.
+
 ---
 
 ## 20. Open questions

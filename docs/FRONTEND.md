@@ -1068,9 +1068,11 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 
 ## 14. Build order
 
-Slotted into `DESIGN.md` §15 between Phase 1 and Phase 2 — the shell is a
-prerequisite for having anywhere to put a message list, and the transition
-table is a Phase 1 cleanup that should not wait.
+Slotted into `DESIGN.md` §15 as **Phase 1½**, between Phase 1 and Phase 2 — the
+shell is a prerequisite for having anywhere to put a message list, and the
+transition table is a Phase 1 cleanup that should not wait. Sub-numbered there
+(12a–12d) so that nothing downstream renumbers: `DESIGN.md` §15's item numbers
+are referenced from four documents.
 
 1. ✅ **Router, shell, route table** (§4). **Done.** `main.tsx` went from 638
    lines to 20; the rest decomposed into `app/`, `routes/` and `features/`.
@@ -1108,7 +1110,9 @@ Named here so the gaps are decisions rather than discoveries:
 - **`/w/:wsId` bare** renders the workspace home rather than a remembered
   location; there is nothing yet to remember. The `account.db` column arrives
   with the space list.
-- **Directory avatars are initials only.** `ReplicaActor` carries `avatarUrl`
-  but no blob id, and invariant 46 forbids rendering the remote URL — the CSP
-  blocks it and it would go blank offline. The blob prefetch has to reach
-  directory rows first.
+- ~~**Directory avatars are initials only.**~~ **Closed.** `ReplicaActor` now
+  carries `avatarBlob` and `People.tsx` renders it. Three things had to change
+  at once: `syncActors` stopped deleting the table on every sync, the prefetch
+  learned to walk it, and the two boot tasks stopped racing — `fillAvatars` ran
+  in parallel with `fillActors`, so the pass would have found an empty table on
+  every first boot and worked only on the second.

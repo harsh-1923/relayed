@@ -2468,6 +2468,19 @@ test.
 | 52 | WorkOS `role_slug` is mirrored, **never consulted at check time** | Authorization stops surviving the removal of WorkOS, and every check becomes a network call |
 | 53 | A permission is a row in `memberships`, never a column on the object | The model stops being tuples and stops porting to a relationship engine |
 | 54 | A teardown **settles** every promise it abandons | An abandoned sign-in has no exit; callers wait for ever on a listener that is already gone (§13.1) |
+| 55 | A URL **names the workspace it addresses** | A shared link resolves against whichever workspace happens to be active, misses, and reads as "deleted" |
+| 56 | Every switch enters through **navigation**; nothing else calls `workspace.switch` | Two inputs to one piece of state, disagreeing exactly while a switch is in flight |
+| 57 | The engine **never writes the URL**, except the shell's guard when the active workspace ceases to exist | The URL and the engine begin correcting each other, and a switch in flight oscillates |
+| 58 | Offline, an unresolvable workspace is **"cannot check"**, never **"no access"** | The UI asserts a permission fact it has no basis for, and a plane looks like a revocation |
+| 59 | A route addresses a **space**; pane state lives in the **query** | Peer panes get encoded as nested path segments, where the same segment means different things by position and two panels have no address at all |
+| 60 | Every renderer read goes through the live-query client | An invalidation cannot find the views it must refresh, and the ones it misses go stale with no symptom |
+| 61 | The renderer holds no authoritative state — only query results, place, and ephemeral input | §5's guarantee dissolves quietly; two processes start disagreeing about what is true |
+| 62 | Every lifecycle transition is **declared**; an undeclared edge is rejected | An enum with five values silently admits twenty-five paths, and the wrong ones surface in production |
+| 63 | A lifecycle flag lives **inside** the state it belongs to, never beside it | `authenticated + awaitingBrowser: true` is representable, meaningless, and reachable |
+| 64 | Every state that waits on the outside world carries a **deadline** | Nothing fires the transition and the UI waits for ever — the sign-in hang, generalised. The other half of invariant 54 |
+| 65 | Every value crossing a process or a wire is **parsed**, not asserted | The type says `actor` is there, the wire disagrees, and the client drops data in silence |
+| 66 | An unknown **field** is dropped and an unknown **frame** is ignored — neither is fatal | Adding a field or a frame type breaks every client already in the field (invariant 43's client half) |
+| 67 | Every surface renders correctly **empty**, **offline-with-data**, and **live** | Offline correctness is asserted in a document and discovered false by a user on a plane |
 
 ### Scenarios to test explicitly
 
@@ -2559,9 +2572,27 @@ rather than one WorkOS lends us ([`AUTHZ.md`](AUTHZ.md)). Acceptance happens on
 AuthKit's hosted page, so joining is reconciliation rather than a flow we drive,
 fed by polling WorkOS's Events API.
 
-**Still open in Phase 1:** replicating actors to the client (which Phase 2 needs
-rather than Phase 1), and an automated airplane-mode test. Tracked in
-[`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) §11.
+✅ **Phase 1 is closed.** Actor replication and the automated airplane-mode test
+were the last two items; both landed, along with the boundary checker that
+enforces the rules these documents assert rather than restating them.
+
+**Phase 1½ — The shell** ← settled in [`FRONTEND.md`](FRONTEND.md)
+
+Sub-numbered so nothing downstream renumbers. It sits here because the sync core
+needs somewhere to render, and because the decisions are expensive to reverse
+after the second surface exists rather than before the first.
+
+12a. ✅ Router, shell, route table (`FRONTEND.md` §4). **Done** — React Router 8
+     in declarative mode over `HashRouter`; `main.tsx` 638 lines → 20; the
+     workspace lives in the URL and `WorkspaceGate` is the only caller of
+     `workspace.switch`, enforced by a boundary rule. Space routes are
+     deliberately absent until the first real surface (§4.6, §4.7).
+12b. Transition table for `session.ts`, and `awaitingBrowser` folded into the
+     state it belongs to (§7.2). A Phase 1 defect, not new work.
+12c. Live-query client implementing §11, with the invalidation registry and the
+     `renderer/no-direct-query` rule (§5, §6.3).
+12d. Renderer telemetry transport (`OBSERVABILITY.md` §3), while the router is
+     fresh — route changes are the natural first client event.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
 13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops.

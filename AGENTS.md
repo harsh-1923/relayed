@@ -23,6 +23,7 @@ ordered log, every read served from local SQLite.
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | What we collect and how. Read before adding any log, metric or span. |
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
+| [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Current phase: tenancy, social login, the actor model. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
@@ -90,8 +91,9 @@ pnpm spike:sync      # sync-protocol model tests — must stay green
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 54 invariants; the reasoning for 37–47 lives in `docs/STORAGE.md` §18 and for 48–54 in `docs/AUTHZ.md` §13, each paired with the failure
-it prevents. The ones most easily broken by a reasonable-looking change:
+Full list in `docs/DESIGN.md` §14 — 67 invariants; the reasoning for 37–47 lives in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, and for 55–67 in `docs/FRONTEND.md` §12, each paired with the failure
+it prevents. Six of them are enforced by `pnpm check:boundaries` rather than by
+being remembered. The ones most easily broken by a reasonable-looking change:
 
 | | |
 |---|---|
