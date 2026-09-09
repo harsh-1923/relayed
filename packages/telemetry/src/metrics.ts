@@ -147,6 +147,12 @@ export const metrics = {
        + '(STORAGE.md §9). A high switch:refresh ratio means vault slots are '
        + 'being lost and every visit is re-minting a session.',
   },
+  'auth.illegal_transition': {
+    kind: 'counter', labels: [],
+    doc: 'An auth transition nobody declared (transitions.ts). Throws in '
+       + 'development; here it is the production alarm, because a surprising '
+       + 'state must never close the read path. Should be flat at zero.',
+  },
   'auth.stale': {
     kind: 'counter', labels: [],
     doc: 'Sessions that degraded to read-only. Local data still works, so users '

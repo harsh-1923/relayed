@@ -16,7 +16,9 @@ export function SignIn() {
   // Sign-in finishes in the browser, so the thing that ends this route is a
   // push, not a click. Bounce through "/" rather than guessing a destination —
   // an invited person and a first-time owner end up in different places.
-  const done = state.auth.status !== 'signed_out' && state.auth.status !== 'authenticating';
+  const inFlight = state.auth.status === 'authenticating'
+    || state.auth.status === 'awaiting_browser';
+  const done = state.auth.status !== 'signed_out' && !inFlight;
   useEffect(() => { if (done) navigate('/', { replace: true }); }, [done, navigate]);
 
   // Deliberately NOT awaited into a local `busy` flag. auth.signIn does not
@@ -76,7 +78,7 @@ export function SignIn() {
             </Alert>
           )}
 
-          {state.awaitingBrowser ? (
+          {state.auth.status === 'awaiting_browser' ? (
             // Three ways out, because three things go wrong: the browser opened
             // and was dismissed, the browser never appeared, or the person
             // changed their mind. All three used to lead to a disabled button

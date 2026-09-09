@@ -141,8 +141,11 @@ test('a sign-in waiting on a browser can be abandoned', async () => {
 
   const inFlight = s.signIn().catch(() => {});
   await awaitingBrowser(s);
-  assert.equal(s.state.status, 'authenticating');
-  assert.equal(s.isAwaitingBrowser, true, 'there is something to cancel');
+  // One assertion where the status alone could not say it: it used to read
+  // `authenticating`, and a separate boolean beside it had to say whether a
+  // browser was involved. The status says so now.
+  assert.equal(s.state.status, 'awaiting_browser');
+  assert.equal(s.isAwaitingBrowser, true, 'the derived getter agrees with the state');
 
   assert.equal(s.cancelSignIn().status, 'signed_out');
   assert.equal(s.isAwaitingBrowser, false);
@@ -192,7 +195,7 @@ test('starting again supersedes the attempt that was waiting', async () => {
   await first;                          // superseded: its listener was closed
   await awaitingBrowser(s);
 
-  assert.equal(s.state.status, 'authenticating', 'the newer attempt survives the older one ending');
+  assert.equal(s.state.status, 'awaiting_browser', 'the newer attempt survives the older one ending');
   assert.notEqual(opened[1], firstUrl, 'a new attempt gets a new challenge and port');
 
   s.cancelSignIn();

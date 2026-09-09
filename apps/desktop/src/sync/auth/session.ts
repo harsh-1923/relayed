@@ -16,6 +16,7 @@
 // refresh token — which is what makes the workspace you left still drainable
 // and still returnable-to offline (STORAGE.md §9).
 import { emit, count, histogram } from '@relayed/telemetry';
+import { assertEdge } from './transitions.ts';
 import { createPkce } from './pkce.ts';
 import { listenForCallback } from './loopback.ts';
 import { buildAuthorizeUrl, exchangeCode, type WorkOSConfig } from './workos.ts';
@@ -27,7 +28,17 @@ import {
 
 export type AuthState =
   | { status: 'signed_out' }
+  /** Binding the loopback socket. Nothing to cancel yet, and no link to open. */
   | { status: 'authenticating' }
+  /**
+   * The browser is open and we are waiting on the person in it.
+   *
+   * A STATE, not a boolean beside the status. It used to be `#attempt`, a second
+   * variable tracking the same lifecycle, surfaced to the renderer as a sibling
+   * of `auth` — so `authenticated` with a live attempt was representable and
+   * meaningless (invariant 63). Six such combinations are now unconstructible.
+   */
+  | { status: 'awaiting_browser' }
   /** Signed in with WorkOS but no org yet — onboarding must run (§9). */
   | { status: 'needs_workspace'; identity: { email: string; displayName: string };
       handleSuggestions: string[]; pendingJoins: PendingJoin[] }
@@ -103,6 +114,8 @@ export class Session {
   }
 
   #set(next: AuthState): void {
+    // The one chokepoint, so the table has somewhere to be enforced.
+    assertEdge(this.#state.status, next.status);
     this.#state = next;
     for (const fn of this.#listeners) fn(next);
   }
@@ -120,7 +133,10 @@ export class Session {
     const url = buildAuthorizeUrl(this.#deps.config, pkce, listener.redirectUri);
     this.#attempt = { close: () => listener.close(), url };
     try {
+      // AFTER the browser opens, not before: a state that is true one tick
+      // early is a state that lies, and the test helper below polls on it.
       await this.#deps.openBrowser(url);
+      this.#set({ status: 'awaiting_browser' });
       const { code } = await listener.result;
       const workos = await exchangeCode(this.#deps.config, { code, verifier: pkce.verifier });
 
@@ -153,8 +169,14 @@ export class Session {
     }
   }
 
-  /** Is a sign-in waiting on a browser right now? */
-  get isAwaitingBrowser(): boolean { return this.#attempt !== null; }
+  /**
+   * Is a sign-in waiting on a browser right now?
+   *
+   * Derived from the state rather than tracked beside it. `#attempt` survives
+   * as what it always was — a closer and a url — and no longer doubles as a
+   * lifecycle flag.
+   */
+  get isAwaitingBrowser(): boolean { return this.#state.status === 'awaiting_browser'; }
 
   /**
    * Abandon the sign-in and return to a usable state.

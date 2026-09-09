@@ -2587,8 +2587,11 @@ after the second surface exists rather than before the first.
      workspace lives in the URL and `WorkspaceGate` is the only caller of
      `workspace.switch`, enforced by a boundary rule. Space routes are
      deliberately absent until the first real surface (§4.6, §4.7).
-12b. Transition table for `session.ts`, and `awaitingBrowser` folded into the
-     state it belongs to (§7.2). A Phase 1 defect, not new work.
+12b. ✅ Transition table for `session.ts`, and `awaiting_browser` promoted from
+     a boolean to a status (§7.2). **Done** — twenty-two declared edges asserted
+     at the one chokepoint, throwing in development and counted in production.
+     An XState port was tried first and reverted; §7.4a records what it cost and
+     what was kept.
 12c. Live-query client implementing §11, with the invalidation registry and the
      `renderer/no-direct-query` rule (§5, §6.3).
 12d. Renderer telemetry transport (`OBSERVABILITY.md` §3), while the router is

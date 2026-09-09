@@ -50,7 +50,10 @@ export interface ReplicaActor {
 
 export type AuthState =
   | { status: "signed_out" }
+  /** Binding the loopback socket. Nothing to cancel yet, and no link to open. */
   | { status: "authenticating" }
+  /** The browser is open and we are waiting on the person in it. */
+  | { status: "awaiting_browser" }
   | {
       status: "needs_workspace";
       identity: { email: string; displayName: string };
@@ -101,8 +104,6 @@ export interface AppState {
   workspaceId: string | null;
   workspaces: WorkspaceRow[];
   auth: AuthState;
-  /** A sign-in is waiting on a browser, and can be cancelled or re-opened. */
-  awaitingBrowser: boolean;
   /** Development build. False in a packaged app, where the controls do not exist. */
   devTools: boolean;
   /** The network is cut for the sync process — simulated aeroplane. */

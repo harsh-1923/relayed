@@ -26,7 +26,8 @@ after the second surface is built rather than before the first.
 | How does the renderer read? | **Our own live-query client**, ~150 lines, implementing DESIGN §11 | 5 |
 | TanStack Query? | **No.** It is priced for a cost we do not pay | 5.2 |
 | A global state library? | **No.** The renderer holds no authoritative state, by design | 3 |
-| How are illegal transitions prevented? | **A declared transition table**, asserted in `#set()` | 7.2 |
+| How are illegal transitions prevented? | **A declared transition table**, asserted in `#set()`. Built | 7.2 |
+| Is `awaitingBrowser` a flag? | **No — a status.** Binding and waiting are different states | 7.2 |
 | XState? | **Yes — deferred**, trigger is the Phase 2 transport | 7.4 |
 | Zod? | **Yes — deferred**, trigger is the first Phase 2 wire format | 8.3 |
 | Light mode? | **Deferred, explicitly.** Dark-only until someone asks | 9 |
@@ -529,64 +530,60 @@ about 30 lines and is painful to retrofit once forty components own their own
 
 ## 7. State machines
 
-### 7.1 What this addresses
+### 7.1 What this addressed
 
-`session.ts` is already a state machine, hand-rolled: a five-state union
-(`signed_out → authenticating → needs_workspace → authenticated → stale`) with
-`#set()` as its transition function.
+`session.ts` was already a state machine, hand-rolled: a status union with
+`#set()` as its transition function, and **nine** `#set()` calls each naming a
+DESTINATION while not one named a legal SOURCE.
 
-It has the classic defect. There are **two** variables describing one
-lifecycle: `#state.status`, and a separate nullable `#attempt` exposed as
-`isAwaitingBrowser`. The comment at `sync/index.ts:210` says so outright —
-"Distinct from `auth.status === 'authenticating'`". Their product has ten
-combinations; roughly four are meaningful, and nobody has enumerated which.
-`authenticated + awaitingBrowser: true` is representable and means nothing.
+It had the classic defect. Two variables described one lifecycle:
+`#state.status`, and a separate nullable `#attempt` exposed as
+`isAwaitingBrowser` and surfaced to the renderer as a **sibling** of `auth`
+rather than a member of it. `authenticated + awaitingBrowser: true` was
+representable and meant nothing.
 
 That is also where the hang lived: a state whose only exit was a five-minute
 timeout.
 
-### 7.2 The transition table — built now
+### 7.2 The transition table — built
 
-The property worth having is that the lifecycle **cannot take a path nobody
-declared**. That does not require a library.
+Two changes, and the smaller-looking one mattered more.
 
-```ts
-// apps/desktop/src/sync/auth/transitions.ts
-type Status = AuthState['status'];
+**`awaiting_browser` is a status, not a flag.** Folding the boolean into the
+union was the option on the table; making it a state was better, and the reason
+came from trying the XState port (§7.4a): the flag conflated two things. Binding
+the loopback socket and waiting on a person in a browser are different — one has
+nothing to cancel and no link to re-open, the other has both. The renderer now
+asks `auth.status === 'awaiting_browser'` instead of reading a second field, and
+`AppState.awaitingBrowser` is gone from the IPC contract entirely.
 
-/**
- * The edges, declared. An enum with five values otherwise admits twenty-five
- * paths; these are the ten that mean something.
- *
- * `satisfies` is what keeps it honest: adding a sixth status does not compile
- * until its edges are declared, so the table cannot rot behind the union.
- */
-export const ALLOWED = {
-  signed_out:      ['authenticating'],
-  authenticating:  ['needs_workspace', 'authenticated', 'signed_out'],
-  needs_workspace: ['authenticated', 'signed_out'],
-  authenticated:   ['stale', 'signed_out'],
-  stale:           ['authenticated', 'signed_out'],
-} as const satisfies Record<Status, readonly Status[]>;
+The state is entered **after** `openBrowser` returns, not before. A state that
+becomes true one tick before the thing it is named for is a state that lies, and
+the test helper polls on exactly that.
 
-export function assertEdge(from: Status, to: Status): void {
-  if (from === to) return;
-  if ((ALLOWED[from] as readonly Status[]).includes(to)) return;
-  // Loud in development, a metric in production: an illegal transition is a
-  // bug worth failing a test over and not worth crashing a user's app over.
-  const msg = `illegal transition ${from} → ${to}`;
-  if (process.env.NODE_ENV !== 'production') throw new Error(msg);
-  count('auth.illegal_transition');
-}
-```
+**The edges are declared**, in `auth/transitions.ts`, asserted from `#set()` —
+the one chokepoint. Six statuses admit thirty-six ordered pairs; twenty-two of
+them mean something, and before this nobody had said which.
 
-Then `#set()` calls `assertEdge(this.#state.status, next.status)` and nothing
-else changes. Roughly 30 lines, declarative, readable as a diagram, and it
-lands without a dependency.
+Writing it forced two answers that a guess would have got wrong:
 
-**And fold `awaitingBrowser` into the union** while doing it — it belongs to
-`authenticating`, not beside it. That is a TypeScript change, not a library
-one, and it removes six meaningless combinations.
+- **`signed_out → authenticated`** and **`signed_out → stale`** are legal and
+  common. A boot with a stored credential refreshes straight through; no browser
+  is involved, so it never passes through `authenticating`. Both were missing
+  from the sketch this section used to carry.
+- **`authenticated → authenticating` is rejected**, while
+  **`stale → authenticating` is allowed**. Signing in while signed in has no
+  meaning today; re-authenticating a stale session is the natural recovery, and
+  the edge is declared ahead of the button that will use it.
+
+Policy at the chokepoint: **throw in development, `count()` in production.** A
+crash is right where a person can act on it and wrong in a user's app, where an
+unexpected state must never close the read path.
+
+Validated exhaustively over `Status × Status`, with the counts asserted so that
+widening the table is a failing test rather than a quiet loosening. Negative
+control: deleting one edge fails three tests — including a real boot path, which
+is what proves the assert runs on live code and not only in its own unit test.
 
 ### 7.3 What the table does not catch, stated plainly
 
@@ -602,6 +599,27 @@ that need deadlines are exactly the ones that wait on the outside world.
 
 **Trigger: writing the Phase 2 transport.** Port `session.ts` at the same time,
 so the process has one idiom rather than two.
+
+**Scope correction.** An earlier draft claimed three parallel regions —
+connection, cursor, token. The cursor is not a region: catch-up is **per chat**,
+iterating every chat where `synced_through_rev < server_head_rev` across ~150 of
+them, with `has_gap` as a column (DESIGN §9.3). That is a loop over a table, and
+`spikes/sync-model.mjs` already models it in 66 assertions with no machine
+anywhere. Backfill is request/response paging; the outbox is a status column and
+a drain loop. What is genuinely machine-shaped is **connection health** — about
+five states with two timers — which is the same size as auth.
+
+So the honest tally is two small machines, not one large one, and the case rests
+on one property rather than on breadth: **resource cleanup on exit paths.** Both
+Phase 1 bugs in this area were cleanup that did not run on an exit path — the
+loopback teardown that cleared its own timer and stranded every awaiter, and the
+re-entrancy that fired `directory.synced` four times. `invoke` plus
+cancel-on-exit and `after` make that class structural, and the socket is the
+longest-lived resource in the app.
+
+**Kill criterion, checkable when the transport lands:** write the connection
+machine, then estimate the hand-rolled equivalent. If it is under ~60 lines with
+no timer-cancellation subtlety, the dependency has not paid — drop it.
 
 Not before. Rewriting a working auth machine now buys three bugs we have
 already fixed by hand. The connection lifecycle is a different matter, because
@@ -745,6 +763,27 @@ authenticating: {
 `cancel` and `reopen` — the two affordances added after the hang — are now
 visibly transitions *of that state*, rather than methods that have to check
 whether they are legal to call.
+
+### 7.4a The XState port, tried and reverted
+
+Tried early, against this document's own trigger, and reverted. Recorded because
+the result was informative rather than neutral.
+
+It worked — 707 lines against 376, all tests green — and it produced two
+regressions that only the existing tests caught: the session was published to
+context *after* `onSession` ran, so the directory sync read a null token and gave
+up silently on every first sign-in; and `isAwaitingBrowser` went false during the
+token exchange, flashing the renderer back to a "Sign in" button mid-flow.
+
+Three things came out of it and were kept:
+
+1. **`awaiting_browser` as a state** (§7.2). The port forced the binding/waiting
+   distinction the flag had hidden.
+2. **A regression test for the adopt path**, which had none. Every one of the
+   twelve session tests exercised a path that *fails*; none exercised the one
+   that succeeds, which is why the ordering bug was invisible.
+3. **A corrected estimate of the transport** (§7.4). It is smaller than this
+   document claimed.
 
 ### 7.5 What XState is not for here
 
@@ -1089,9 +1128,11 @@ are referenced from four documents.
    R3 holds through the router — and the redirect chain executing end to end,
    `/` → `/w/:wsId` → shell → rail.
 
-2. **Transition table + fold `awaitingBrowser` into the union** (§7.2). No
-   dependencies, closes a Phase 1 defect. Moved behind the router only because
-   the router was the thing blocking every surface.
+2. ✅ **Transition table, and `awaiting_browser` as a status** (§7.2). **Done.**
+   No dependency. Six statuses, twenty-two declared edges asserted at `#set()`,
+   and `AppState.awaitingBrowser` removed from the IPC contract. Two edges the
+   sketch in this document had wrong — a boot goes straight from `signed_out` to
+   `authenticated` or `stale`, never through `authenticating`.
 3. **Live-query client** (§5) with the invalidation registry, plus
    `renderer/no-direct-query` (§6.3). `routes/People.tsx` is the first surface
    waiting on it — it is a list an invalidation should refresh, and today

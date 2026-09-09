@@ -210,15 +210,10 @@ function view() {
     })),
     workspaceId: storage.workspaceId,
     workspaces,
+    // `awaiting_browser` is one of its statuses now, not a boolean beside it —
+    // so "is there something to cancel" is answered by the state rather than by
+    // a second field that could disagree with it.
     auth: session.state,
-    /**
-     * Whether a sign-in is genuinely waiting on a browser right now.
-     *
-     * Distinct from `auth.status === 'authenticating'`: the renderer needs to
-     * know whether there is something to cancel, and it must survive a window
-     * reload, so it cannot be a local flag in the renderer.
-     */
-    awaitingBrowser: session.isAwaitingBrowser,
     /** Development-only affordances. False in a packaged build, so the UI is absent. */
     devTools,
     offline: net.offline,
