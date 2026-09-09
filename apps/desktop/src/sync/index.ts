@@ -13,8 +13,9 @@ import { Session, type AuthState } from './auth/session.ts';
 import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
-import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
+import { listInvitations, createInvite, revokeInvite, fetchActors } from './auth/relayed.ts';
 import { newId } from './ids.ts';
+import { installNetworkGate } from './network.ts';
 import type { OurSession } from './auth/relayed.ts';
 
 interface Request { id: number; op: string; params?: unknown }
@@ -35,23 +36,23 @@ useOtlpIfConfigured('desktop');
  * someone remembers to check it is not instrumented. The URL list stays behind
  * `RELAYED_VERIFY_BOOT=1`, because that is a debugging aid rather than a signal.
  */
-let paintable = false;
 const bootT0 = Number(process.env['RELAYED_BOOT_T0'] ?? 0);
-const bootCalls: string[] = [];
-const traceCalls = Boolean(process.env['RELAYED_VERIFY_BOOT']);
-{
-  const real = globalThis.fetch;
-  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-    if (!paintable) {
-      count('boot.network_calls_before_paint');
-      if (traceCalls) {
-        const [input] = args;
-        bootCalls.push(input instanceof Request ? input.url : String(input));
-      }
-    }
-    return real(...args);
-  }) as typeof fetch;
-}
+
+/**
+ * Simulated offline, and R3's counter — the aeroplane without the aeroplane
+ * (STORAGE.md §17.3, OBSERVABILITY.md §9).
+ *
+ * Development builds only for the offline half (see main): a control that can
+ * disable the network has no business shipping, even behind a flag nothing
+ * renders.
+ */
+const devTools = Boolean(process.env['RELAYED_DEV']);
+const net = installNetworkGate(globalThis, {
+  trace: Boolean(process.env['RELAYED_VERIFY_BOOT']),
+  // A packaged build gets a wrapper with no offline branch in it at all — the
+  // counting half ships, the switch does not.
+  allowOffline: devTools,
+});
 
 const storage = new Storage(process.env['RELAYED_DATA'] ?? process.cwd());
 const boot = storage.boot();
@@ -136,13 +137,45 @@ function adoptSession(s: OurSession): void {
 
   // Scope the blob handler to whatever account is now open, then fill the
   // avatar cache. Fire-and-forget: a grey circle is not a failed sign-in.
+  // Both run HERE and nowhere else: adoptSession is reached by every path that
+  // ends with a usable workspace — boot, switch, sign-in, join — so calling
+  // them at those four call sites as well only duplicated the work.
   void setBlobAccount(storage.accountId);
   void fillAvatars();
+  void fillActors();
 }
 
 /** §13.3: avatars are fetched eagerly, always. Failures are silent and retried. */
 async function fillAvatars(): Promise<void> {
   if (await prefetchAvatars(storage) > 0) push();
+}
+
+/**
+ * Pull the workspace directory into the replica.
+ *
+ * Without it a message author cannot render offline, which is why Phase 2
+ * depends on this rather than Phase 1 needing it. Never throws: the directory
+ * going stale degrades names, and a failed refresh must not take the read path
+ * with it (§13.1).
+ */
+async function fillActors(): Promise<void> {
+  if (!storage.hasWorkspace) return;
+  // The token already in hand, NOT ensureFresh(). This runs from the session's
+  // own adopt path, and ensureFresh() can adopt again — which calls back into
+  // here. It terminated only because the token was fresh by the second pass;
+  // one boot still synced the directory four times.
+  const token = session.accessToken;
+  if (!token) return;
+  try {
+    const actors = await fetchActors(token);
+    storage.syncActors(actors);
+    count('directory.synced', { result: 'ok' });
+    emit('directory.synced', {
+      workspace: storage.workspaceId ?? '', actors: actors.length,
+    });
+  } catch {
+    count('directory.synced', { result: 'error' });
+  }
 }
 
 // ── the view the renderer renders ───────────────────────────────────────────
@@ -179,6 +212,10 @@ function view() {
      * reload, so it cannot be a local flag in the renderer.
      */
     awaitingBrowser: session.isAwaitingBrowser,
+    /** Development-only affordances. False in a packaged build, so the UI is absent. */
+    devTools,
+    offline: net.offline,
+    canGoOffline: net.canGoOffline,
   };
 }
 
@@ -195,6 +232,28 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   ping: () => ({ pong: true, at: Date.now() }),
   'app.state': () => view(),
   'ports.live': () => ({ count: ports.size }),
+
+  /**
+   * Cut or restore the network for this process. Development only.
+   *
+   * Coming back online re-activates deliberately: a `stale` session would
+   * otherwise sit there until the next refresh, which makes the toggle look
+   * one-way and hides whether recovery actually works.
+   */
+  'dev.setOffline': async (params) => {
+    if (!devTools) throw new Error('development builds only');
+    net.setOffline(Boolean((params as { offline?: boolean })?.offline));
+    emit('dev.offline', { offline: net.offline });
+    push();
+    if (!net.offline && storage.workspaceId) {
+      await session.activate(storage.workspaceId);
+      push();
+    }
+    return view();
+  },
+
+  /** The workspace directory, straight from the replica — no network. */
+  'actors.list': () => (storage.hasWorkspace ? storage.actors() : []),
 
   'db.info': () => {
     if (!storage.hasWorkspace) return { open: false };
@@ -375,7 +434,7 @@ function attach(port: Electron.MessagePortMain) {
     // The renderer can paint the moment it holds a port, and syncing has not
     // been allowed to start yet — so anything counted before now is a real R3
     // violation. Closing the window here stops counting ordinary sync traffic.
-    paintable = true;
+    net.markPaintable();
     // R3's headline number, from app start to the moment the renderer holds a
     // port and can paint. Recorded HERE rather than in main because the label —
     // whether there was local data at all — is only known on this side, and a
@@ -384,10 +443,10 @@ function attach(port: Electron.MessagePortMain) {
       histogram('app.boot', Date.now() - bootT0,
                 { had_account: storage.accountId ? 'yes' : 'no' });
     }
-    if (traceCalls) {
+    if (process.env['RELAYED_VERIFY_BOOT']) {
       console.log(JSON.stringify({
-        verify: 'boot', networkCallsBeforeFirstPaint: bootCalls.length,
-        calls: bootCalls,
+        verify: 'boot', networkCallsBeforeFirstPaint: net.callsBeforePaint.length,
+        calls: net.callsBeforePaint,
         accountId: storage.accountId, workspaceId: storage.workspaceId,
         workspaces: storage.accountId ? storage.workspaces().length : 0,
       }));

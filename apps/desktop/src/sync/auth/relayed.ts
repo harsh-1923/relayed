@@ -257,6 +257,28 @@ export const joinWorkspace = async (
     workspace_id: workspaceId, handle,
   }));
 
+export interface DirectoryActor {
+  id: string; workspaceId: string; type: 'human' | 'agent';
+  handle: string; displayName: string; avatarUrl: string | null;
+  ownerActorId: string | null; state: string; updatedAt: number;
+}
+
+/**
+ * The workspace directory. Replaced by DESIGN.md §9.1's `welcome` frame in
+ * Phase 2 — same shape, different transport.
+ */
+export async function fetchActors(accessToken: string): Promise<DirectoryActor[]> {
+  const raw = await get<{ actors: Record<string, unknown>[] }>('/actors', accessToken);
+  return (raw.actors ?? []).map(a => ({
+    id: String(a['id']), workspaceId: String(a['workspace_id']),
+    type: a['type'] === 'agent' ? 'agent' : 'human',
+    handle: String(a['handle']), displayName: String(a['display_name']),
+    avatarUrl: (a['avatar_url'] as string | null) ?? null,
+    ownerActorId: (a['owner_actor_id'] as string | null) ?? null,
+    state: String(a['state']), updatedAt: Number(a['updated_at'] ?? 0),
+  }));
+}
+
 export const signOutSession = (refreshToken: string): Promise<unknown> =>
   post('/auth/signout', { refresh_token: refreshToken });
 

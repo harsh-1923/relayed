@@ -57,6 +57,11 @@ function startSyncEngine(): Electron.UtilityProcess {
       ...process.env,
       RELAYED_DATA: app.getPath('userData'),
       RELAYED_BOOT_T0: String(bootStarted),
+      // Development tools — the simulated-offline switch, for one — exist only
+      // in an unpackaged build. Absent from production rather than hidden in
+      // it: a control that can disable the network has no business shipping,
+      // even behind a flag nobody renders.
+      ...(app.isPackaged ? {} : { RELAYED_DEV: '1' }),
     },
     stdio: 'inherit',
   });

@@ -188,6 +188,12 @@ export const metrics = {
        + 'a poll interval instead of an access-token TTL.',
   },
 
+  'directory.synced': {
+    kind: 'counter', labels: ['result'],
+    doc: 'Workspace directory pulled into the replica. A sustained error rate '
+       + 'means message authors will render as ids once Phase 2 lands.',
+  },
+
   'blob.bytes': {
     kind: 'histogram', unit: 'bytes', labels: ['kind'],
     doc: 'What the blob store actually costs on disk.',

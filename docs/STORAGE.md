@@ -703,6 +703,41 @@ extension of the actor's scope.
 
 **Unblocked by:** Phase 2 socket. Storage columns and the §15.1 guard ship now.
 
+### 16.2a Simulated offline, and the product feature it is NOT
+
+`sync/network.ts` can cut the network for the sync process. It is a **testing
+affordance**: R3 is otherwise checkable only by turning off the wifi, which also
+stops the dev server and the collector, so what broke is ambiguous. Cutting it
+in the one process that owns every outbound call keeps a failure attributable.
+
+Development builds only, and absent rather than unreachable in a packaged one:
+`allowOffline` selects a different wrapper, so production has no offline branch
+to execute. Overhead of what does ship — the R3 counter — is below what
+repeated measurement can resolve.
+
+**A user-facing "work offline" is a different feature, deliberately undecided.**
+Recorded here only so the two are not merged by whoever meets them next, because
+they look identical and are not:
+
+| | Simulated (dev) | Work offline (hypothetical) |
+|---|---|---|
+| Means | *pretend the network broke* | *I have chosen not to use it* |
+| Socket | errors, backoff churns | closed cleanly, no reconnect |
+| UI | the ordinary `stale` banner | a calm, chosen state |
+| Telemetry | `auth.stale` climbs — a failure | a mode, not an incident |
+| Outbox | queues by accident | queues by design, with a visible count |
+
+The third row is the trap. `auth.stale` exists to say *users are silently stuck
+in read-only*; wiring a deliberate user choice to the same mechanism would make
+that metric report intentions as outages.
+
+Deferred, not rejected. It would land with Phase 2 in any case, since every row
+above is defined in terms of a socket and an outbox that do not exist yet — and
+the prior question is who it is for. "Pause sync" elsewhere is mostly about
+metered connections and battery; for a chat client the interesting version might
+be about attention instead (*stop fetching, keep sending*), which is a different
+feature that happens to reuse the plumbing.
+
 ### 16.3 Notifications — two different features
 
 | | Mechanism | Works unsigned? | Blocked on |

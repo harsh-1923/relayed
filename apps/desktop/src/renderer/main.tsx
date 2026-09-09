@@ -1,7 +1,7 @@
 import './index.css';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AppState, Invitation, PendingJoin, RelayedApi, WorkspaceRow } from '../preload/api';
+import type { AppState, Invitation, PendingJoin, RelayedApi, ReplicaActor, WorkspaceRow } from '../preload/api';
 import { can, workspace as wsTarget, type Grants, type Role } from '@relayed/authz';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -446,6 +446,98 @@ function PendingJoins(props: {
 }
 
 /**
+ * The aeroplane, without the aeroplane.
+ *
+ * Turning off the wifi to check R3 also stops the dev server, the collector and
+ * the browser, so what breaks is ambiguous. This cuts the network for the SYNC
+ * PROCESS only — every outbound call the app makes, and nothing else — which
+ * makes a failure attributable to the thing being tested.
+ *
+ * Rendered only in a development build: `devTools` comes from an env var main
+ * sets when the app is unpackaged, so in production the control is absent
+ * rather than hidden.
+ */
+function DevStrip(props: { state: AppState; onState: (s: AppState | null) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [actors, setActors] = useState<ReplicaActor[] | null>(null);
+  if (!props.state.devTools || !props.state.canGoOffline) return null;
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      props.onState(await call(() => window.relayed!.query(
+        'dev.setOffline', { offline: !props.state.offline })));
+    } finally { setBusy(false); }
+  };
+
+  // Reads the replica, never the network — which is the point: it keeps
+  // answering while offline, and that is the property under test.
+  const readLocal = async () => {
+    const v = await call(() => window.relayed!.query('actors.list'));
+    setActors(v ?? []);
+  };
+
+  const off = props.state.offline;
+  return (
+    <Card className={off ? 'border-amber-500/60' : undefined}>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">
+              {off ? '✈︎ Offline (simulated)' : 'Development'}
+            </CardTitle>
+            <CardDescription>
+              {off
+                ? 'Every outbound call from the sync engine fails. Everything below still works.'
+                : 'Cut the network for the sync engine only — the dev server keeps running.'}
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant={off ? 'default' : 'secondary'}
+                    onClick={() => void toggle()} disabled={busy}>
+              {off ? 'Go online' : 'Go offline'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void readLocal()}>
+              Read from replica
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {off && (
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+            <li>Switch workspaces — the rail still works, and the repaint does not wait (§12.2).</li>
+            <li>Quit and reopen — the full UI renders from disk, with no sign-in screen (R3).</li>
+            <li>Watch the banner: the session goes <strong>stale</strong>, and local data is untouched.</li>
+          </ol>
+        )}
+        {actors && (
+          <div>
+            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Directory, read from the replica ({actors.length})
+            </div>
+            {actors.length === 0
+              ? <p className="text-sm text-muted-foreground">
+                  Empty — sign in once online so the directory replicates.
+                </p>
+              : (
+                <ul className="space-y-0.5 font-mono text-xs">
+                  {actors.map(a => (
+                    <li key={a.id}>
+                      @{a.handle}
+                      <span className="text-muted-foreground"> · {a.displayName} · {a.state}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * A one-line statement of what the client is actually reading from.
  *
  * The full on-disk inspector this replaces did its job — it proved that
@@ -536,6 +628,7 @@ function App() {
         )}
 
         <Separator />
+        <DevStrip state={state} onState={(v) => { if (v) setState(v); }} />
         <Replica state={state} />
       </main>
     </div>

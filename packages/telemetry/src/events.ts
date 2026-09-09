@@ -101,6 +101,16 @@ export const events = {
     fields: { actor: 'id', via: 'enum' },
     doc: 'An actor was tombstoned and its sessions revoked.',
   },
+  'directory.synced': {
+    fields: { workspace: 'id', actors: 'int' },
+    doc: 'The workspace directory was replicated. Replaced by the welcome '
+       + 'frame in Phase 2 (DESIGN §9.1).',
+  },
+  'dev.offline': {
+    fields: { offline: 'bool' },
+    doc: 'The simulated-offline switch was toggled. Development builds only, '
+       + 'and worth an event so a confusing local session can be explained.',
+  },
   'blob.served': {
     fields: { blob: 'id', result: 'enum' },
     doc: 'The relayed-blob handler resolved. result=miss is a grey circle a '

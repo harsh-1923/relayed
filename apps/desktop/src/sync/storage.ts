@@ -46,6 +46,24 @@ export interface WorkspaceRow {
   state: 'active' | 'removed';
 }
 
+/**
+ * An actor as the client holds it — narrower than the server's row.
+ *
+ * No identity_kind/identity_id: those are Layer 1 references (§6.3) and nothing
+ * on the client addresses an actor by anything but its id.
+ */
+export interface ReplicaActor {
+  id: string;
+  workspaceId: string;
+  type: 'human' | 'agent';
+  handle: string;
+  displayName: string;
+  avatarUrl: string | null;
+  ownerActorId: string | null;
+  state: string;
+  updatedAt: number;
+}
+
 export interface AccountSummary {
   accountId: string;
   deviceId: string;
@@ -458,6 +476,55 @@ export class Storage {
     this.#account?.close();
     this.#account = null;
     this.#accountId = null;
+  }
+
+  /**
+   * Replace the workspace directory with what the server holds.
+   *
+   * A full replace rather than a diff: the list is small — actors, not
+   * messages — and reconciling additions, renames, deactivations and departures
+   * separately is four ways to be subtly wrong about a table that can be
+   * rewritten in one statement. Phase 2's incremental path replaces this along
+   * with the transport.
+   *
+   * Deactivated actors are KEPT, deliberately. A tombstoned author still has to
+   * render on the messages they wrote (§6.3); dropping them would leave an
+   * empty name where a greyed one belongs.
+   */
+  syncActors(actors: readonly ReplicaActor[]): void {
+    const db = this.workspace;
+    db.exec('BEGIN');
+    try {
+      db.exec('DELETE FROM actors');
+      const insert = db.prepare(`
+        INSERT INTO actors (id, workspace_id, type, handle, display_name,
+                            avatar_url, avatar_blob, owner_actor_id, state, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+      `);
+      for (const a of actors) {
+        insert.run(a.id, a.workspaceId, a.type, a.handle, a.displayName,
+                   a.avatarUrl, a.ownerActorId, a.state, a.updatedAt);
+      }
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  actors(): ReplicaActor[] {
+    return (this.workspace.prepare('SELECT * FROM actors ORDER BY handle')
+      .all() as Record<string, unknown>[]).map(r => ({
+        id: String(r['id']),
+        workspaceId: String(r['workspace_id']),
+        type: r['type'] === 'agent' ? 'agent' : 'human',
+        handle: String(r['handle']),
+        displayName: String(r['display_name']),
+        avatarUrl: (r['avatar_url'] as string | null) ?? null,
+        ownerActorId: (r['owner_actor_id'] as string | null) ?? null,
+        state: String(r['state']),
+        updatedAt: Number(r['updated_at'] ?? 0),
+      }));
   }
 
   // ── blobs (§13.3) ───────────────────────────────────────────────────────

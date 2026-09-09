@@ -5,6 +5,7 @@ import { migrate } from './db/migrate.ts';
 import { authRoutes } from './auth/routes.ts';
 import { invitationRoutes } from './auth/invitations.ts';
 import { landingRoutes } from './web/landing.ts';
+import { directoryRoutes } from './auth/directory.ts';
 import { pool } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
 
@@ -33,6 +34,7 @@ app.get('/health', async () => ({ ok: true, service: 'relayed-server' }));
 await app.register(authRoutes);
 await app.register(invitationRoutes);
 await app.register(landingRoutes);
+await app.register(directoryRoutes);
 
 const applied = await migrate();
 if (applied.length) app.log.info({ applied }, 'migrations applied');
