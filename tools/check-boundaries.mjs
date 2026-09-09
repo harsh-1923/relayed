@@ -66,6 +66,21 @@ const RULES = [
     allow: [/apps\/desktop\/src\/sync\/transport\//, /apps\/desktop\/src\/sync\/network\.ts$/],
   },
   {
+    id: 'routing/switch-only-in-the-gate',
+    doc: 'FRONTEND.md §4.5 — navigation is the only input to a switch',
+    why: 'The workspace lives in the URL, which is safe for exactly one reason: '
+       + 'navigation is the only way a switch starts. A second caller makes the '
+       + 'route and the engine two authorities over which workspace is active, '
+       + 'and they disagree precisely while a switch is in flight — the shape '
+       + 'behind the stale-reply, epoch-reset and awaitingBrowser bugs. '
+       + 'Navigate to /w/:wsId instead; the gate turns that into the switch.',
+    pattern: /['"]workspace\.switch['"]/,
+    where: [/apps\/desktop\/src\/renderer\//],
+    // The gate is the one caller. Everything else — the rail, a deep link,
+    // back and forward — arrives there by navigating (invariant 56).
+    allow: [/apps\/desktop\/src\/renderer\/app\/WorkspaceGate\.tsx$/],
+  },
+  {
     id: 'identity/no-layer-1-on-the-client',
     doc: 'DESIGN.md §6.3 — nothing below Layer 2 references an identity',
     why: 'Replicating identity_id would hand every workspace member a directory '
