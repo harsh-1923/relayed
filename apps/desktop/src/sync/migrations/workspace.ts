@@ -67,4 +67,208 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE UNIQUE INDEX actor_handle ON actors(workspace_id, handle);
     `,
   },
+  {
+    version: 2,
+    name: 'sync',
+    up: `
+      -- Phase 2 step A, replica half (PHASE-2-SYNC.md §3). The client's side of
+      -- DESIGN.md §8.3.
+      --
+      -- What this deliberately does NOT create: reactions and the FTS table
+      -- (Phase 4), the blobs metadata table (Phase 7 — the store is
+      -- content-addressed on the filesystem today and needs no rows), and
+      -- drafts (a composer convenience with no composer yet). A table with no
+      -- writer has unverified constraints, and FTS's trigger-ordering trap
+      -- cannot be exercised until messages actually flow. The replica is a
+      -- replica: a later version adds them at no cost.
+
+      -- ─── Spaces ────────────────────────────────────────────────────────────
+      -- One table discriminated by kind, mirroring the server (DESIGN.md §7.1).
+      -- No org_id: a replica holds exactly one workspace, so the column would
+      -- be the same value on every row. Same reasoning as actors above.
+      CREATE TABLE spaces (
+        id                  TEXT PRIMARY KEY,
+        workspace_id        TEXT NOT NULL,
+        kind                TEXT NOT NULL,
+        name                TEXT,
+        slug                TEXT,
+        topic               TEXT,
+        visibility          TEXT,
+        membership_policy   TEXT NOT NULL,
+        lifecycle           TEXT NOT NULL DEFAULT 'active',
+        created_by_actor_id TEXT,
+        last_activity_at    INTEGER NOT NULL DEFAULT 0,
+        created_at          INTEGER NOT NULL,
+        updated_at          INTEGER NOT NULL,
+
+        CHECK (kind IN ('channel','dm','group_dm','room')),
+        CHECK (membership_policy IN ('open','invite','sealed')),
+        CHECK (lifecycle IN ('active','dormant','archived')),
+        CHECK (kind NOT IN ('dm','group_dm') OR membership_policy = 'sealed'),
+        CHECK (kind NOT IN ('dm','group_dm') OR lifecycle <> 'archived'),
+
+        -- The explicit IS NOT NULL is load-bearing in both of these. A CHECK
+        -- rejects a row only when it evaluates to FALSE, and NULL IN (...) is
+        -- NULL — so the natural spelling silently permits exactly the row it
+        -- forbids (DESIGN.md §13.5). Asserted per constraint in the test, on
+        -- both engines, because this replica and the server hold the same rule.
+        CHECK (CASE WHEN kind IN ('dm','group_dm')
+                    THEN visibility IS NULL
+                    ELSE visibility IS NOT NULL
+                         AND visibility IN ('public','private') END),
+        CHECK (CASE WHEN kind IN ('dm','group_dm') THEN 1
+                                                   ELSE name IS NOT NULL END)
+      );
+      CREATE INDEX space_workspace ON spaces(workspace_id, kind);
+      CREATE UNIQUE INDEX space_slug ON spaces(workspace_id, slug) WHERE slug IS NOT NULL;
+
+      -- ─── Chats: the universal message container ────────────────────────────
+      -- No next_ord/next_rev here. Allocation is the server's alone — a client
+      -- that could mint an ordinal would be a second authority over order,
+      -- which is the whole thing a server-ordered log exists to avoid.
+      CREATE TABLE chats (
+        id                  TEXT PRIMARY KEY,
+        workspace_id        TEXT NOT NULL,
+        space_id            TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        kind                TEXT NOT NULL,
+        name                TEXT,
+        created_by_actor_id TEXT,
+        created_at          INTEGER NOT NULL,
+        updated_at          INTEGER NOT NULL,
+        CHECK (kind IN ('sole','default','public','private'))
+      );
+      CREATE INDEX chat_space ON chats(space_id);
+      CREATE UNIQUE INDEX chat_singleton ON chats(space_id)
+        WHERE kind IN ('sole','default');
+
+      -- ─── Membership (DESIGN.md §7.3) ───────────────────────────────────────
+      -- scope_type='chat' rows exist ONLY for private chats; every other chat
+      -- derives access from its space. Space membership is the leading conjunct
+      -- of the access predicate, which is what makes "who can see this" have
+      -- exactly one answer.
+      CREATE TABLE memberships (
+        scope_type TEXT    NOT NULL,
+        scope_id   TEXT    NOT NULL,
+        actor_id   TEXT    NOT NULL,
+        role       TEXT    NOT NULL,
+        joined_at  INTEGER NOT NULL,
+        -- Set on removal; the row is KEPT. Removal freezes the local copy
+        -- rather than recalling it (DESIGN.md §6.6), and re-adding is then
+        -- exactly a gap rather than a special case.
+        left_at    INTEGER,
+        PRIMARY KEY (scope_type, scope_id, actor_id),
+        CHECK (scope_type IN ('space','chat'))
+      );
+      CREATE INDEX membership_actor ON memberships(actor_id) WHERE left_at IS NULL;
+
+      -- ─── Messages ──────────────────────────────────────────────────────────
+      -- No foreign keys on author_id, deliberately. A message may arrive before
+      -- the actor who wrote it has replicated — the directory and the log are
+      -- separate streams — and an FK would reject the message rather than
+      -- render an unknown author. chats.space_id above IS a real key, because
+      -- both sides of that pair arrive together in 'welcome'.
+      CREATE TABLE messages (
+        id          TEXT PRIMARY KEY,   -- ULID, CLIENT-generated (§10.1)
+        chat_id     TEXT NOT NULL,
+        parent_id   TEXT,               -- NULL = top-level; else the thread root
+        -- NULL while pending: the server has not assigned one yet. This is the
+        -- difference from the server's schema, where ord is NOT NULL — and the
+        -- reason the unique index below is partial.
+        ord         INTEGER,
+        rev         INTEGER,
+        author_id   TEXT NOT NULL,
+        body        TEXT NOT NULL,
+        -- Server time on ack; client time while pending, and overwritten by the
+        -- server's value when the ack lands (§13.7).
+        created_at  INTEGER NOT NULL,
+        edited_at   INTEGER,
+        deleted     INTEGER NOT NULL DEFAULT 0,
+        state       TEXT    NOT NULL DEFAULT 'pending',
+        local_only  INTEGER NOT NULL DEFAULT 0,
+
+        on_behalf_of_actor_id TEXT,
+        delegation_id         TEXT,
+
+        CHECK (state IN ('pending','acked','failed'))
+      );
+
+      -- Partial, because a pending message has no ordinal yet and several may
+      -- be pending at once. The server's equivalent is unconditional.
+      CREATE UNIQUE INDEX msg_ord ON messages(chat_id, ord) WHERE ord IS NOT NULL;
+
+      -- The chat view must skip thread replies WITHOUT scanning past them: a
+      -- thread with 800 replies would otherwise make "last 50 chat messages"
+      -- read 800 rows it discards.
+      CREATE INDEX msg_chat_view ON messages(chat_id, ord DESC) WHERE parent_id IS NULL;
+      CREATE INDEX msg_thread ON messages(parent_id, ord) WHERE parent_id IS NOT NULL;
+      CREATE INDEX msg_pending ON messages(chat_id, created_at) WHERE state = 'pending';
+
+      -- ─── Per-chat sync state (DESIGN.md §8.1) ──────────────────────────────
+      CREATE TABLE chat_state (
+        chat_id            TEXT PRIMARY KEY,
+
+        -- The two watermarks, and they are different facts. "I have everything
+        -- up to here, contiguously" is not "the server says this much exists",
+        -- and keeping them apart is what makes R2 cheap: a badge can be correct
+        -- for a chat holding no messages at all.
+        synced_through_rev INTEGER NOT NULL DEFAULT 0,
+        server_head_rev    INTEGER NOT NULL DEFAULT 0,
+
+        head_ord           INTEGER NOT NULL DEFAULT 0,
+        -- A MAX-register, never LWW (DESIGN.md §4). A device asleep for an hour
+        -- would otherwise un-read a chat when it syncs.
+        last_read_ord      INTEGER NOT NULL DEFAULT 0,
+        -- The backfill floor and the eviction mark. Without it, eviction is
+        -- indistinguishable from data loss to the person looking at it.
+        oldest_local_ord   INTEGER,
+
+        chat_unread        INTEGER NOT NULL DEFAULT 0,
+        thread_unread      INTEGER NOT NULL DEFAULT 0,
+        mention_count      INTEGER NOT NULL DEFAULT 0,
+
+        has_gap            INTEGER NOT NULL DEFAULT 0,
+        muted              INTEGER NOT NULL DEFAULT 0,
+        last_activity_at   INTEGER
+      );
+
+      -- ─── Revs above the contiguous frontier ────────────────────────────────
+      -- Required because "have I received rev N?" is NOT derivable from the
+      -- message rows (DESIGN.md §8.1): an edit overwrites the rev it replaced,
+      -- and a delete for a message this client never held writes nothing at all
+      -- — so MAX(rev) under-reports and the cursor stalls behind a rev it
+      -- actually received. Holds only revs ABOVE the frontier, so it collapses
+      -- to empty whenever the client is caught up.
+      CREATE TABLE pending_revs (
+        chat_id TEXT    NOT NULL,
+        rev     INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, rev)
+      );
+
+      -- ─── Outbox ────────────────────────────────────────────────────────────
+      -- Lives HERE, in the workspace replica, transactional with the optimistic
+      -- message it echoes (invariant 40). A crash between the row and the echo
+      -- otherwise yields something that looks sent and never sends.
+      CREATE TABLE outbox (
+        op_id      TEXT PRIMARY KEY,   -- ULID; the server dedupes on this
+        seq        INTEGER NOT NULL,   -- local monotonic; replay order
+        kind       TEXT NOT NULL,
+        chat_id    TEXT,
+        target_id  TEXT,               -- the message id the op acts on
+        payload    TEXT NOT NULL,      -- JSON
+        created_at INTEGER NOT NULL,
+        attempts   INTEGER NOT NULL DEFAULT 0,
+        next_at    INTEGER NOT NULL DEFAULT 0,
+        state      TEXT NOT NULL DEFAULT 'queued',
+        error      TEXT,
+
+        CHECK (state IN ('queued','inflight','failed')),
+        -- Phase 2 sends and deletes. Edits and reactions widen this in Phase 4,
+        -- deliberately rather than by having left it open.
+        CHECK (kind IN ('send','delete','read'))
+      );
+      CREATE INDEX outbox_ready ON outbox(next_at) WHERE state = 'queued';
+      -- Coalescing looks ops up by what they target, on every enqueue (§10.4).
+      CREATE INDEX outbox_target ON outbox(target_id);
+    `,
+  },
 ];

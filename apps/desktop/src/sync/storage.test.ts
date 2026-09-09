@@ -226,15 +226,19 @@ test('outbox_hint is written at close, and is zero before the write path exists'
     member({ workspaceId: 'wsp_a', actorId: 'act_a' }),
     member({ workspaceId: 'wsp_b', actorId: 'act_b' }),
   ]);
-  // The outbox table arrives with Phase 2; until then the count is honestly 0
-  // rather than an error (STORAGE.md §16.1).
+  // An empty outbox reads as 0 rather than as an error.
   storage.switchWorkspace('wsp_b');
   assert.equal(storage.workspaceRow('wsp_a')?.outboxHint, 0);
 
-  // With a table present it records the real count.
+  // With rows in it, the real count. The table is the real one now — Phase 2
+  // step A created it, so this no longer fabricates a two-column stand-in that
+  // could drift from the schema it is standing in for.
   storage.switchWorkspace('wsp_a');
-  storage.workspace.exec(`CREATE TABLE outbox (id TEXT PRIMARY KEY, state TEXT NOT NULL);
-    INSERT INTO outbox VALUES ('o1','queued'), ('o2','queued'), ('o3','failed');`);
+  storage.workspace.exec(`
+    INSERT INTO outbox (op_id, seq, kind, chat_id, target_id, payload, created_at, state)
+    VALUES ('o1',1,'send','c1','m1','{}',1,'queued'),
+           ('o2',2,'send','c1','m2','{}',1,'inflight'),
+           ('o3',3,'send','c1','m3','{}',1,'failed');`);
   storage.switchWorkspace('wsp_b');
   assert.equal(storage.workspaceRow('wsp_a')?.outboxHint, 2, 'failed rows are not pending work');
 });

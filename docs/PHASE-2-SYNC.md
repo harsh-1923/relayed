@@ -175,9 +175,25 @@ Both databases, no transport anywhere.
   chat)` counters `DESIGN.md` §12 puts on the server. `memberships` already
   exists from Phase 1 and gains `scope_type='chat'` rows only when private chats
   arrive in Phase 5 — do not add the column shape twice.
-- **Client** (`workspace.ts` version 2): everything in `DESIGN.md` §8.3 that is
-  not already there — see §2.5 above for what that is and why it is one
-  migration.
+- **Client** (`workspace.ts` version 2): what this phase actually writes —
+  spaces, chats, memberships, messages, `chat_state`, `pending_revs` and the
+  outbox.
+
+  **Narrowed while building, from "everything in `DESIGN.md` §8.3".** Reactions
+  and the FTS table belong to Phase 4, the blobs metadata table to Phase 7 (the
+  store is content-addressed on the filesystem today and needs no rows), and
+  drafts to whenever there is a composer. A table with no writer has constraints
+  nothing has ever exercised, and the FTS trigger-ordering trap in particular
+  cannot be tested until messages flow. The replica is a replica: a later
+  version adds them at no cost.
+
+  Two places the replica deliberately differs from the server, and both are
+  asserted rather than assumed to hold: `ord` is **nullable** here, because a
+  pending message has no ordinal until it is acked and several may be pending at
+  once — so its unique index is partial where the server's is not. And
+  `messages.author_id` carries **no foreign key**, because the directory and the
+  log are separate streams: an FK would reject a message whose author has not
+  replicated yet rather than render an unknown author.
 - **The singleton index is structural, not decorative.** `CREATE UNIQUE INDEX
   chat_singleton ON chats(space_id) WHERE kind IN ('sole','default')` is what
   makes "a channel has exactly one message list" unbreakable by application
@@ -186,7 +202,10 @@ Both databases, no transport anywhere.
 **Done when:** every constraint has a test *of its own*, each asserted against
 an expected outcome, executed against a real engine rather than read. The
 `spaces` policy matrix is exactly the table where a CHECK that evaluates to NULL
-hides. `pragma_auto_vacuum()` returns 2 on a fresh replica.
+hides — so the trap is written as an executable control on both engines: a
+scratch table carrying the natural spelling must **accept** the row the guarded
+spelling rejects. `pragma_auto_vacuum()` returns 2 after the migration, not only
+at open, and an existing version 1 replica upgrades without losing its rows.
 
 **De-risks:** a schema mistake found here is a migration nobody has run yet.
 Found after step E it is a migration in the field.
