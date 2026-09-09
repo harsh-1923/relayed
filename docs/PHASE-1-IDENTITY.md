@@ -366,15 +366,39 @@ flow produces when it declines to ask.
 - [x] `/auth/session` returns every membership; `/auth/switch` mints a session
       for a sibling actor without revoking the source
 
+**Server — done**
+
+- [x] An `actors` row is written on first sign-in
+- [x] Org / workspace creation on demand (§9 decision 1), and the same endpoint
+      creates additional workspaces for a signed-in identity
+- [x] Handle assignment UI — pre-filled, editable, never auto-suffixed (§10)
+- [x] `/auth/session` returns every membership; `/auth/switch` mints a session
+      for a sibling actor without revoking the source
+- [x] **Real WorkOS organizations**, created during onboarding — before our own
+      transaction, since holding one open across a network call makes the
+      slowest external service the lock duration — with the founder added as an
+      OrganizationMembership, which is the step easiest to miss: an organization
+      with no members is one invitations cannot be addressed to
+- [x] **Invitations** — create, list, revoke, each gated on
+      `can(actor, 'invite', workspace)` (see [`AUTHZ.md`](AUTHZ.md))
+- [x] **Joining**, with a handle chosen in that workspace — the first point in
+      the product where a collision is reachable
+- [x] **Authorization** exists at all: a `memberships` table, one `can()`, and
+      a role we own rather than one WorkOS lends us
+
+**Deactivation — closed, but not the way this document expected**
+
+§7 recorded a deactivation *webhook* as the accepted cost of minting our own
+tokens. It is closed by **polling WorkOS's Events API** instead, and the
+difference is not cosmetic: a cursor over a durable log cannot miss an event,
+needs no public endpoint, and is replayable, where a webhook is at-least-once,
+unordered and lost if the endpoint is down. `user.deleted` and
+`organization_membership.deleted` now tombstone the actor, tombstone its
+membership row and revoke its sessions within a poll interval rather than within
+an access-token TTL. Reasoning in [`AUTHZ.md`](AUTHZ.md) §10.1.
+
 **Remaining**
 
-- [ ] **WorkOS organizations are not real.** `organizations.workos_org_id` holds
-      `pending_org_<our id>`, because nothing calls the Management API. Nothing
-      depends on it yet — and invitations do, so this comes first.
-- [ ] **Invitations.** §9 decision 2 makes invite the only way into someone
-      else's org, and it is the only path that gives a second person an account.
-      Everything multi-workspace has so far been exercised by one identity
-      creating two workspaces, which is not the case the model exists for.
 - [ ] **Actors are never replicated to the client.** The workspace replica has
       the table and zero rows. Message authors cannot render offline without it,
       so Phase 2 blocks on this rather than Phase 1 needing it.
@@ -382,15 +406,15 @@ flow produces when it declines to ask.
       `networkCallsBeforeFirstPaint: 0` by counting them in the process that
       makes them, but nothing runs it with the network actually down and nothing
       fails a build if it regresses.
-- [ ] **Deactivation webhook.** The accepted cost of minting our own tokens
-      (§7). The state check on every refresh is the backstop, so access ends
-      within one access-token TTL rather than immediately.
-- [ ] Sync [`DESIGN.md`](DESIGN.md) — deferred to the end of this phase by
-      decision, since §9's protocol text and §13.1's storage layout both moved.
+- [ ] **A lint rule for the rules we write down.** `AUTHZ.md` §12.2 wants one
+      for `role ===` outside the authz module; §11a below is the argument for
+      it.
+- [ ] Sync [`DESIGN.md`](DESIGN.md) — done for this phase; keep it in step as
+      Phase 2 moves §9 and §13.
 
 ## 11a. Learnings
 
-Four things that cost time and are cheap to know.
+Things that cost time and are cheap to know.
 
 **`isDefaultProtocolClient()` lies.** See §6. An API that reports success while
 the underlying capability does nothing — the same shape as the WorkOS redirect
@@ -410,6 +434,29 @@ loopback listener's `result` rejects on a forged `state`; without a handler
 attached at construction that is an unhandled rejection, and Node terminates —
 so a CSRF attempt would have crashed the sync engine instead of failing the
 sign-in. Guarded, and covered by a test.
+
+**Writing that down did not stop me doing it again.** Tests for the sign-in
+cancel path attached `.catch()` after an `await`, the rejection fired in the
+gap, and the test process died — the same trap, in the same file, by the person
+who documented it. Two runs were spent guessing before a twelve-line script that
+printed a timestamp per step found it immediately. Two conclusions: prose does
+not hold a boundary, which is the argument for the lint rule in §11; and when a
+guess has failed twice, stop guessing and print.
+
+**A teardown that does not settle its promise strands every caller.** The
+loopback listener's `close()` stopped the server and left `result` pending for
+ever — and cleared the five-minute timeout that would otherwise have rescued it.
+So an abandoned sign-in had no exit at all, and the UI sat on "waiting for the
+browser" until the app was restarted. The visible bug was a missing Cancel
+button; adding one without this fix would have been a button that did nothing.
+Anything holding a promise others await must settle it on every path out,
+including the ones that look like cleanup.
+
+**An API can answer authoritatively about a flow it does not own.**
+`accept_invitation_url` is on AuthKit's domain, so WorkOS accepts invitations on
+its hosted page and we are never asked. A design built around our own accept
+endpoint was wrong before it was written, and only reading the live response
+said so.
 
 ## 12. What this phase must not preclude
 

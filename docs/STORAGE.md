@@ -133,6 +133,12 @@ Edge case, handled by the same rule: an account whose membership list came back
 *smaller* than what is stored (removed from a workspace) still matches on the
 remaining actor, and the missing one is marked `state='removed'`.
 
+The client's `account.db` is a **single migration**. It reached version five
+during this phase, two of those steps correcting mistakes of my own — a column
+named for a blob that held a URL, and fields that did not say whose they were —
+and the chain was squashed once the data was dropped. The reasoning survives in
+the schema's comments rather than in a sequence nobody will execute.
+
 ---
 
 ## 6. `account.db`
@@ -279,19 +285,20 @@ out and signing in as a different email gives two accounts one device identity �
 precisely the correlation invariant 38 exists to prevent. Found by reading the
 `sessions` table after a real session, not by testing.
 
-### 8.2 The pre-split migration orphans one session
+### 8.2 The pre-split migration, and why it is gone
 
-Moving the unkeyed `auth/refresh.bin` aside (§5) means no client can present
-that credential again — but the **server-side session stays live until it
-expires**, and no `account.db` records its `device_id`, so "sign out this
-device" can never reach it.
+An earlier version of this section recorded that moving the unkeyed
+`auth/refresh.bin` aside orphaned a live server-side session that no
+`account.db` knew about, so "sign out this device" could never reach it.
 
-Revoking it during the move would put a network call inside a boot path that
-must not touch the network (§11). The options are to revoke it after sync
-starts, or to let it expire. It affects only installs that predate the split,
-so it is recorded rather than built.
+That is history now. Before release, and with no users, the database, the WorkOS
+organizations and every client's `userData` were dropped and the migration code
+deleted with them — a repair for a state that can no longer occur is worse than
+no repair, because a reader has to work out whether it still applies.
 
----
+The reasoning is kept only because it generalises: **a migration that changes
+where a credential lives orphans whatever was pointing at the old place.** The
+next one of those will not have the luxury of a wipe.
 
 ## 9. Sessions and tokens
 
@@ -401,9 +408,24 @@ it does not need.
 
 ### 10.3 `POST /auth/refresh`
 
-Add `memberships` to the response, same shape as `/auth/session`. This is how
-"you were added to a workspace while signed in" reaches the client without a
-separate poll, and it keeps `account.db.workspaces` fresh on every boot.
+Returns three things beyond the token pair:
+
+| | |
+|---|---|
+| `actor` | which workspace this token is scoped to |
+| `memberships` | the full list, same shape as `/auth/session` |
+| `pending_joins` | invitations accepted since last time, read from the **local mirror** (AUTHZ.md §9.1) — free, so it can run every few minutes |
+
+**`actor` is not decoration, and its absence was a real bug.** Refresh originally
+returned memberships and no actor, so the client could not tell which workspace
+the new token belonged to and discarded the memberships travelling beside it.
+Sent on every refresh and applied on none — which made the paragraph this
+replaces false from the day it was written, and stayed invisible until a
+membership field finally changed between sign-ins.
+
+The lesson generalises past this endpoint: **a payload that cannot be attributed
+gets dropped.** Anything the client must apply has to arrive with enough context
+to say where it belongs.
 
 ### 10.4 `POST /auth/workspace`
 
@@ -760,7 +782,8 @@ not infer them from a passing render.
 ## 18. Invariants
 
 **Folded into DESIGN.md §14**, which is the canonical list; kept here because
-this is where the reasoning lives. Numbering continues from 36.
+this is where the reasoning lives. Numbering continues from 36, and continues
+again at 48 in [`AUTHZ.md`](AUTHZ.md) §13.
 
 | # | Invariant | What breaks without it |
 |---|---|---|

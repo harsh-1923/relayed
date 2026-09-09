@@ -22,6 +22,7 @@ ordered log, every read served from local SQLite.
 | [`docs/RELEASE.md`](docs/RELEASE.md) | How builds reach users, code signing, forward compatibility across versions. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | What we collect and how. Read before adding any log, metric or span. |
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
+| [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Current phase: tenancy, social login, the actor model. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
@@ -89,7 +90,7 @@ pnpm spike:sync      # sync-protocol model tests — must stay green
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 36 invariants, plus 37–46 in `docs/STORAGE.md` §18, each paired with the failure
+Full list in `docs/DESIGN.md` §14 — 54 invariants; the reasoning for 37–47 lives in `docs/STORAGE.md` §18 and for 48–54 in `docs/AUTHZ.md` §13, each paired with the failure
 it prevents. The ones most easily broken by a reasonable-looking change:
 
 | | |

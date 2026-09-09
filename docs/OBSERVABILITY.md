@@ -277,6 +277,17 @@ Events are held to a shape rather than a length — several Phase 2 entries are
 one honest line, and padding them to clear a threshold would make the catalogue
 worse.
 
+### 8a2. Signals added with authorization and invitations
+
+| | |
+|---|---|
+| `workos.poll{result}` | Event-log polls. A sustained error rate means the mirror is going stale — accepted invitations stop appearing and deactivations stop taking effect — with nothing user-visible to say so |
+| `workos.poll.lag` | Age of the newest applied event. The real answer to "how soon does an accepted invitation appear", and the number that would justify webhooks if it ever got bad (AUTHZ.md §10.1) |
+| `identity.provisioned{via}` | `self_signup` against `invite` — two very different growth stories, and unrecoverable once the row exists |
+| `identity.deactivated{via}` | Actors tombstoned and sessions revoked |
+| `auth.signin{outcome}` | Now includes `cancelled`, so deliberately abandoning a sign-in does not pollute the failure rate |
+| `handle.collision` | Still `reserved`, now with a call site in the join path |
+
 ### 8b. Where the ids live
 
 Metrics cannot carry them, so events do:

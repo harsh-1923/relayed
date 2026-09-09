@@ -247,9 +247,10 @@ consulted at check time.** Two reasons, and the second is the load-bearing one:
    replaceable in an afternoon because nothing below Layer 2 references it
    (§6.3). A role consulted at check time would be the one exception.
 
-The cost is a mirror that can drift, bounded by how promptly the mirror updates
-— on the membership webhook, and on every session refresh as a backstop, which
-is the same shape as the deactivation backstop in §9.7.
+The cost is a mirror that can drift, bounded by how promptly it updates — and
+it updates by **polling WorkOS's Events API**, not by webhook. That choice is
+§10.1; the short version is that a cursor over a durable log cannot miss an
+event, and a webhook can.
 
 ---
 
@@ -266,9 +267,67 @@ Small, and it is the point of writing this first:
 Note what is *not* needed: an `is_admin` flag, a role on `actors`, or a WorkOS
 role lookup. The invitation flow reads exactly one table.
 
+### 9.1 We do not own acceptance, and cannot
+
+Worth stating because the first design here assumed the opposite. WorkOS's
+invitation email links to **AuthKit's hosted page** — `accept_invitation_url` is
+on the `authkit.app` domain — so the `OrganizationMembership` exists before the
+app is ever opened and we are never asked. There is no accept endpoint of ours
+to build.
+
+Which makes this reconciliation rather than a flow we drive, and it arrives two
+ways:
+
+| | |
+|---|---|
+| **`/auth/session`** | asks WorkOS directly. The correctness backstop: a fresh install has no mirror, and the poller may never have run |
+| **`/auth/refresh`** | reads the local mirror. Free, so it runs every few minutes — which is what lets someone who accepts while already signed in see it without signing out |
+
+The actor is still not created by either. A handle is required, handles are per
+workspace, and this is the first point in the product where one can already be
+taken — so the client is told what is pending and the person chooses.
+
+**One consequence to expect:** the loopback redirect at the end of that hosted
+flow lands on a port nothing is listening to, because the listener only exists
+while a sign-in is running *in the app* and this one began in an email. The code
+in that URL is simply unused. `/welcome` exists so a successful acceptance does
+not end on a browser error page.
+
 ---
 
 ## 10. Deferring FGA — the trigger, and what changes when it fires
+
+### 10.1 A related decision, made the same way: polling over webhooks
+
+Not FGA, but the same shape of question — take the push-based integration, or
+own the correctness.
+
+WorkOS has a pollable **Events API**: cursor paging over a durable, ordered log.
+Measured against webhooks for our case:
+
+| | Events API | Webhooks |
+|---|---|---|
+| Can an event be missed? | **no** — the cursor does not move until it is applied | yes, if the endpoint is down |
+| Ordering | **total, by cursor** | not guaranteed |
+| Replay after a bug | **rewind the cursor** | ask WorkOS to resend |
+| Idempotency | **the cursor is the dedupe** | build it yourself |
+| Public endpoint, signature verification | not needed | required |
+| Latency | poll interval | ~instant |
+
+**Webhooks buy latency and cost consistency.** They are at-least-once and
+unordered, so a webhook-only design needs a reconciliation pass anyway and you
+end up building both. A cursor over a durable log *is* the consistency
+mechanism — the same reason `synced_through_rev` advances across contiguous runs
+rather than trusting each event to arrive (DESIGN.md §8.1).
+
+For us the latency difference is a poll interval against instant, where the
+alternative we were living with was **one access-token TTL**. Polling is a 30×
+improvement, not a compromise.
+
+Webhooks become right when something needs sub-second reaction — a
+deprovisioning that must cut a live socket rather than wait a poll. That is a
+Phase 6 concern, and it would sit *beside* the poller, not replace it: the
+reconciliation stays either way.
 
 ### Why not now
 
@@ -322,19 +381,29 @@ making it today makes it structural.
 
 ---
 
-## 11. Shapes that must exist now
+## 11. Shapes that must exist now — built
 
-The whole cost of keeping §10 cheap. None of it is speculative work — every item
-is needed by invitations anyway.
+The whole cost of keeping §10 cheap. None of it was speculative: every item was
+needed by invitations anyway.
 
-- [ ] `memberships(scope_type, scope_id, actor_id, role, joined_at, left_at)`
-      server-side, with `scope_type` including `'workspace'`
-- [ ] The same table replicated client-side (§8.3 already declares it)
-- [ ] `can(actor, action, object)` server-side, and **no role test outside it**
-- [ ] The client mirror, answering from the replica, never from the network
-- [ ] Actions and roles as closed unions in one file, mirroring §6's tables
-- [ ] `OrganizationMembership.role_slug` mirrored on write, never read at check
-      time
+- [x] `memberships(scope_type, scope_id, actor_id, role, joined_at, left_at)`
+      server-side, `scope_type` including `'workspace'`, with a partial unique
+      index enforcing exactly one owner per workspace
+- [x] `can(actor, action, object)` and **no role test outside it**
+- [x] The client mirror, answering from replicated state, never the network
+- [x] Actions and roles as closed unions in one file, mirroring §6's tables
+- [x] `OrganizationMembership.role_slug` mirrored, never read at check time
+
+One thing turned out better than planned. The plan was for the client to hold a
+second implementation kept in step by shared fixtures; instead the evaluator
+lives in **`packages/authz`** and both sides import the same function. Sharing
+the code is strictly stronger than sharing fixtures — there is no second
+implementation to drift.
+
+The client's projection is narrower than the eventual shape: `account.db` holds
+`actor_role` for the workspace tier only, because spaces and chats do not exist
+yet. Space and chat grants join it in Phase 2, and the evaluator already takes
+them.
 
 ---
 
@@ -391,14 +460,23 @@ fail, in both directions: breaking either evaluator breaks the equivalence.
 
 An agreement test is only as strong as the disagreement it could have detected.
 
-### 12.2 Beyond the spike
+### 12.2 Beyond the spike — what is built
 
-| Test | Where |
+| Test | Status |
 |---|---|
-| Every action in §6 has exactly one `can()` branch | server unit test |
-| No source file outside the authz module matches `role ===` or `.role ==` | lint rule, in the manner of the `console.*` ban (`OBSERVABILITY.md` §6) |
-| Client and server evaluators agree on a shared fixture set | shared test vectors |
-| A denied write is denied server-side **even when the client permitted it** | integration test — §3's contract, and the one that actually matters |
+| The **shipped** evaluator agrees with the spike model, exhaustively | **done** — the same fixture through both, so the spike validates the code rather than only the document |
+| A client with **fewer** grants can never permit more than the server | **done**, as a property: every subset of the server's grants is enumerated |
+| A lower role never permits more than a higher one | **done** |
+| An unknown action, an action from another scope, an unplaced object | **done** — all denied, never defaulted |
+| Client and server agree | **moot** — they run the same function (§11) |
+| No source file outside the authz module matches `role ===` | **not built.** A lint rule, in the manner of the `console.*` ban (`OBSERVABILITY.md` §6) |
+| A denied write is denied server-side **even when the client permitted it** | **not built.** §3's contract, and the one that actually matters |
+
+The last two are the gap, and the first of them is worth more than it looks. A
+rule written down is not a rule enforced: the trap recorded in
+`PHASE-1-IDENTITY.md` §11a — attaching a rejection handler after an await — was
+walked into again while writing tests for the sign-in cancel path, by the person
+who wrote it down. Prose does not hold a boundary; a lint rule does.
 
 ---
 
@@ -414,14 +492,18 @@ To fold into `DESIGN.md` §14. Numbering continues from 47.
 | 51 | A workspace role never inherits space-level read | A private room's confidentiality rests on trusting every admin |
 | 52 | WorkOS `role_slug` is mirrored, **never consulted at check time** | Authorization stops surviving the removal of WorkOS, and every check becomes a network call |
 | 53 | A permission is a row in `memberships`, never a column on the object | The model stops being tuples and stops porting to a relationship engine |
+| 54 | A teardown **settles** every promise it abandons | An abandoned sign-in has no exit; callers wait for ever on a listener that is already gone. Not an authorization rule, but discovered building this and recorded where the others are |
 
 ---
 
 ## 14. Open questions
 
-1. **Ownership transfer on deprovisioning.** SCIM removes the sole `owner` of a
-   workspace — who inherits? §7.3 solves the room case by letting the creator
-   promote others; the workspace case has no answer yet.
+1. **Ownership transfer on deprovisioning.** The WorkOS event poller now
+   deactivates an actor on `user.deleted`, which means it can remove the sole
+   `owner` of a workspace and leave it unadministrable. The partial unique index
+   permits zero owners; nothing yet decides who inherits. §7.3 solves the room
+   case by letting the creator promote others; the workspace case is open, and
+   is now reachable rather than hypothetical.
 2. **Agent action vocabulary.** §6 lists actions for humans. Agents need their
    own verbs (`invoke`, `read_history`, `post_as`), and `DESIGN.md` §16 item 10
    has been holding this open. It should be settled *with* the delegation
@@ -433,3 +515,7 @@ To fold into `DESIGN.md` §14. Numbering continues from 47.
 4. **Audit.** Every `can()` denial is a fact worth recording, and a permission
    change doubly so. Not built; the chokepoint in §7 is what makes it a
    one-file addition later.
+5. **Space and chat grants on the client.** The replica holds only the workspace
+   tier today, because that is all that exists. Phase 2 has to decide whether
+   every membership replicates or only the caller's own — the second is smaller
+   and is all `can()` needs, but rendering "who is in this room" needs the first.

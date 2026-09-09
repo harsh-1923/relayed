@@ -10,9 +10,11 @@
 ---
 
 > **Companion documents.** [`STORAGE.md`](STORAGE.md) owns the local storage
-> layout, multi-workspace and multi-account, and switching — it is the design of
-> record for everything under `userData`, and §6.1, §13.1 and §13.3 here defer to
-> it. [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) tracks the current phase.
+> layout, multi-workspace and multi-account, and switching — the design of record
+> for everything under `userData`, which §6.1, §13.1 and §13.3 here defer to.
+> [`AUTHZ.md`](AUTHZ.md) owns who may do what: it holds the `memberships` shape,
+> the single `can()`, and the correction to §6.2 below on who owns role.
+> [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) tracks the current phase.
 
 ## Table of contents
 
@@ -400,6 +402,13 @@ boundary**, and no cursor crosses it.
 WorkOS covers more than expected on the agent side and less than expected on the
 tenancy side. Both boundaries are worth internalizing: there is no workspace
 primitive, and there is no on-behalf-of token exchange for our own API.
+
+**Correction, from building it:** the row above assigns "org membership + role"
+to WorkOS, and only the first half survived. WorkOS owns *is this user in this
+org* — invitations and SCIM both attach to it. We own *what may they do*, because
+a role consulted at check time would put an external dependency on every write
+and would be the one thing that could not survive leaving WorkOS. `role_slug` is
+mirrored and never read at check time. See [`AUTHZ.md`](AUTHZ.md) §8.
 
 **Never key anything on email.** WorkOS user IDs are stable; emails are not.
 Email is a display attribute, never a join key. And since agents have no email,
@@ -1493,9 +1502,14 @@ replacement.
 WorkOS is not involved. Its token is traded for ours once, at interactive
 sign-in, and discarded; steady-state sync therefore depends on our server alone
 rather than on two systems that can disagree about whether you are signed in
-(PHASE-1-IDENTITY.md §7). The cost of that choice is a deactivation webhook:
-until it exists, a revoked WorkOS user keeps access for at most one access-token
-TTL, because the actor's state is re-checked on every refresh.
+(PHASE-1-IDENTITY.md §7). That choice has a cost — a revoked WorkOS user would
+otherwise keep access until their access token expired — and it is paid by
+**polling WorkOS's Events API**, not by a webhook as first assumed. A cursor over
+a durable log cannot miss an event, needs no public endpoint and is replayable,
+where a webhook is at-least-once, unordered and lost if the endpoint is down
+(AUTHZ.md §10.1). `user.deleted` now tombstones the actor and revokes its
+sessions within a poll interval; the state check on every refresh remains as the
+backstop beneath it.
 
 **Auth failure never closes the read path.** On refresh failure the sync engine
 enters `unauthenticated` and the socket drops; local reads continue untouched.
@@ -1844,6 +1858,19 @@ The correct shape, **as built**:
   `state`, and its result promise has a handler attached at construction — a
   forged `state` rejects, and an unhandled rejection would terminate the sync
   process.
+- **Closing the listener must settle the promise.** Tearing down without
+  rejecting leaves every caller awaiting it for ever, and tears down the timeout
+  that would have rescued them — so an abandoned sign-in had no exit at all and
+  the UI sat on "waiting for the browser" until restart. Rejecting on close is
+  what makes cancellation possible; `fail` after `settle` is a no-op, so the
+  success path is unaffected.
+- **A sign-in must be abandonable.** Three things go wrong and each needs its own
+  way out: the browser opened and was dismissed (cancel), the browser never
+  appeared (re-open the *same* url — a fresh one mints a PKCE challenge the
+  running listener cannot accept), or the person starts again (which supersedes
+  the waiting attempt rather than leaving it holding a port). The renderer reads
+  this from pushed state, never a local flag: the attempt lives in the sync
+  process, so a local flag dies with a window reload while the attempt does not.
 - **Tokens never reach the renderer.** The refresh token lives in `safeStorage`
   (OS keychain: Keychain / DPAPI / libsecret); the access token stays in memory
   in the sync process.
@@ -2430,6 +2457,18 @@ test.
 | 46 | Avatars are fetched into the blob store, **never rendered from a remote URL** | The CSP blocks it, correctly — and avatars go blank offline, §13.3's most visible failure |
 | 47 | A field naming an image, handle or name says **whose it is** | An actor's picture gets painted as the workspace's icon; type-correct, tests green, wrong on screen |
 
+**Authorization** — reasoning in [`AUTHZ.md`](AUTHZ.md) §13.
+
+| # | Invariant | What breaks without it |
+|---|---|---|
+| 48 | Every permission check goes through `can()` | Swapping the evaluator becomes a rewrite; rules drift between call sites until no two agree |
+| 49 | The client may **hide** a permitted action, never **permit** a denied one | A distributable binary decides its own permissions |
+| 50 | Space membership is the **leading conjunct** of chat access | An actor removed from a space keeps a private chat inside it |
+| 51 | A workspace role never inherits space-level read | A private room's confidentiality rests on trusting every admin |
+| 52 | WorkOS `role_slug` is mirrored, **never consulted at check time** | Authorization stops surviving the removal of WorkOS, and every check becomes a network call |
+| 53 | A permission is a row in `memberships`, never a column on the object | The model stops being tuples and stops porting to a relationship engine |
+| 54 | A teardown **settles** every promise it abandons | An abandoned sign-in has no exit; callers wait for ever on a listener that is already gone (§13.1) |
+
 ### Scenarios to test explicitly
 
 - Out-of-order live events arriving during catch-up → cursor must not skip.
@@ -2514,8 +2553,14 @@ model is deliberately shaped so they arrive without a migration.
 11. *Spike:* M2M Applications vs Agent Registration for agent identity (§16, item 6).
 12. ✅ *Milestone:* sign in via a real IdP; tokens never touch the renderer.
     **Done** — verified end to end against WorkOS staging.
-**Still open in Phase 1:** real WorkOS organizations via the Management API,
-then invitations — the first case with two humans in it. Tracked in
+✅ **Also done:** real WorkOS organizations, invitations, and the authorization
+the gate on them needed — a `memberships` table, one `can()`, and a role we own
+rather than one WorkOS lends us ([`AUTHZ.md`](AUTHZ.md)). Acceptance happens on
+AuthKit's hosted page, so joining is reconciliation rather than a flow we drive,
+fed by polling WorkOS's Events API.
+
+**Still open in Phase 1:** replicating actors to the client (which Phase 2 needs
+rather than Phase 1), and an automated airplane-mode test. Tracked in
 [`PHASE-1-IDENTITY.md`](PHASE-1-IDENTITY.md) §11.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
