@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { HashRouter } from 'react-router';
 import { AppStateProvider } from '@/app/state';
 import { Router } from '@/app/router';
+import { Telemetry } from '@/app/Telemetry';
 import { DevStrip } from '@/features/dev/DevStrip';
 
 // Hash history, not browser history (FRONTEND.md §4.4). The production renderer
@@ -14,6 +15,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
       <AppStateProvider>
+        {/* Renders nothing; reports the two facts only this side holds — which
+            route is showing, and when it first actually painted. */}
+        <Telemetry />
         <Router />
         {/* Outside the route tree on purpose: a control that can cut the
             network must be reachable from every screen, including the ones a

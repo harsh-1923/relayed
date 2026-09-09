@@ -14,6 +14,27 @@ import { topicsTouched } from '../../../shared/topics.ts';
 /** Issues one read against the sync engine. Null means "no usable answer". */
 export type RunQuery = (name: string, args: unknown) => Promise<unknown>;
 
+/** What caused a read. `epoch` is a workspace switch replacing the replica. */
+export type Trigger = 'mount' | 'invalidate' | 'epoch';
+
+/**
+ * Where this reports to, injected for the same reason the runner is: the
+ * registry stays testable without a bridge or an SDK behind it.
+ *
+ * `invalidation` is 0 for a mount, so a non-zero value on a read is exactly the
+ * set of reads the live-query loop caused — which is the number that says the
+ * loop is working at all.
+ */
+export interface RegistryReport {
+  read(info: {
+    invalidation: number; name: string; topic: string;
+    trigger: Trigger; rows: number; ms: number; ok: boolean;
+  }): void;
+  delivered(info: { invalidation: number; mounted: number; matched: number }): void;
+}
+
+const SILENT: RegistryReport = { read: () => {}, delivered: () => {} };
+
 export interface Snapshot {
   /** Null until the first read completes — NOT an empty result. */
   rows: unknown;
@@ -50,24 +71,40 @@ export interface Registry {
   ): () => void;
   snapshot(name: string, args: unknown): Snapshot;
   /** The write side told us something changed. Refetch what reads it. */
-  invalidate(topics: readonly string[]): void;
+  invalidate(topics: readonly string[], invalidation?: number): void;
   /** Everything is suspect — the replica underneath us was replaced. */
   invalidateAll(): void;
   /** Mounted entry count. For tests and, later, for a metric. */
   readonly size: number;
 }
 
-export function createRegistry(run: RunQuery): Registry {
+export function createRegistry(run: RunQuery, report: RegistryReport = SILENT): Registry {
   const entries = new Map<string, Entry>();
 
-  function load(key: string): void {
+  function load(key: string, trigger: Trigger, invalidation: number): void {
     const entry = entries.get(key);
     if (!entry) return;
     const generation = entry.generation;
+    const started = performance.now();
+
+    const done = (rows: unknown, error: string | null): void => {
+      report.read({
+        invalidation, name: entry.name,
+        // The first declared topic. A read with several is rare and the leading
+        // one is the one that identifies it; carrying a list would need a field
+        // type the catalogue does not have.
+        topic: entry.topics[0] ?? '',
+        trigger,
+        rows: Array.isArray(rows) ? rows.length : 0,
+        ms: performance.now() - started,
+        ok: error === null,
+      });
+      settle(key, generation, rows, error);
+    };
 
     void run(entry.name, entry.args).then(
-      rows => settle(key, generation, rows, null),
-      (err: unknown) => settle(key, generation, undefined, message(err)),
+      rows => done(rows, null),
+      (err: unknown) => done(undefined, message(err)),
     );
   }
 
@@ -99,7 +136,7 @@ export function createRegistry(run: RunQuery): Registry {
           refs: 0, generation: 0, listeners: new Set(),
         };
         entries.set(key, entry);
-        load(key);
+        load(key, 'mount', 0);
       }
       const mounted = entry;
       mounted.refs += 1;
@@ -121,19 +158,25 @@ export function createRegistry(run: RunQuery): Registry {
       return entries.get(keyOf(name, args))?.snapshot ?? NOTHING;
     },
 
-    invalidate(topics) {
+    invalidate(topics, invalidation = 0) {
       if (topics.length === 0) return;
+      let matched = 0;
       for (const [key, entry] of entries) {
         if (!topicsTouched(entry.topics, topics)) continue;
+        matched += 1;
         entry.generation += 1;
-        load(key);
+        load(key, 'invalidate', invalidation);
       }
+      // Reported even when nothing matched — ESPECIALLY then. A push that woke
+      // nothing is the signature of a topic the write side and the read side
+      // disagree about, and it is otherwise completely silent.
+      report.delivered({ invalidation, mounted: entries.size, matched });
     },
 
     invalidateAll() {
       for (const [key, entry] of entries) {
         entry.generation += 1;
-        load(key);
+        load(key, 'epoch', 0);
       }
     },
 

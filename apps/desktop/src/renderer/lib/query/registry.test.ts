@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRegistry, type RunQuery } from './registry.ts';
+import { createRegistry, type RegistryReport, type RunQuery } from './registry.ts';
 
 /** A run function that records every read and lets each one be settled by hand. */
 function recorder(answer: (name: string, args: unknown) => unknown = () => []) {
@@ -219,3 +219,59 @@ test('the snapshot identity is stable until the rows change', async () => {
   assert.equal(registry.snapshot('actors.list', undefined), after);
 });
 
+/** Collects what the registry reports, in order. */
+function watcher() {
+  const reads: { name: string; trigger: string; invalidation: number; rows: number; ok: boolean }[] = [];
+  const deliveries: { invalidation: number; mounted: number; matched: number }[] = [];
+  const report: RegistryReport = {
+    read: i => { reads.push({ name: i.name, trigger: i.trigger, invalidation: i.invalidation, rows: i.rows, ok: i.ok }); },
+    delivered: i => { deliveries.push(i); },
+  };
+  return { report, reads, deliveries };
+}
+
+test('a read reports what caused it, and mounts carry no invalidation id', async () => {
+  const io = recorder(() => [{ id: 'a_alice' }, { id: 'a_bob' }]);
+  const seen = watcher();
+  const registry = createRegistry(io.run, seen.report);
+
+  registry.subscribe('actors.list', undefined, ['actors'], () => {});
+  await settled();
+  assert.deepEqual(seen.reads, [
+    { name: 'actors.list', trigger: 'mount', invalidation: 0, rows: 2, ok: true },
+  ]);
+
+  registry.invalidate(['actors'], 41);
+  await settled();
+  assert.deepEqual(seen.reads[1],
+    { name: 'actors.list', trigger: 'invalidate', invalidation: 41, rows: 2, ok: true });
+
+  registry.invalidateAll();
+  await settled();
+  assert.equal(seen.reads[2]?.trigger, 'epoch');
+});
+
+test('a push that woke NOTHING is still reported', async () => {
+  // The silent case, and the reason `delivered` fires unconditionally: a topic
+  // the write side and the read side disagree about wakes nobody, raises no
+  // error, and leaves the surface stale. `matched: 0` is the only trace of it.
+  const io = recorder();
+  const seen = watcher();
+  const registry = createRegistry(io.run, seen.report);
+  registry.subscribe('actors.list', undefined, ['actors'], () => {});
+  await settled();
+
+  registry.invalidate(['chat:c_eng:messages'], 42);
+  await settled();
+
+  assert.equal(io.countFor('actors.list'), 1, 'nothing refetched');
+  assert.deepEqual(seen.deliveries, [{ invalidation: 42, mounted: 1, matched: 0 }]);
+});
+
+test('a failed read is reported as a read, not as silence', async () => {
+  const seen = watcher();
+  const registry = createRegistry(() => Promise.reject(new Error('disk gone')), seen.report);
+  registry.subscribe('actors.list', undefined, ['actors'], () => {});
+  await settled();
+  assert.equal(seen.reads[0]?.ok, false);
+});

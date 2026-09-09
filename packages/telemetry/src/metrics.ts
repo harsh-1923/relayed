@@ -41,6 +41,22 @@ export interface LabelValues {
   /** Whether boot had local data to render. A cold install is a different number. */
   had_account: 'yes' | 'no';
   /**
+   * What caused a renderer read (FRONTEND.md §5). `mount` is a surface opening;
+   * `invalidate` is the live-query loop delivering; `epoch` is a workspace
+   * switch replacing the replica underneath everything.
+   *
+   * The split is the point: if `invalidate` sits near zero while writes are
+   * happening, the loop is broken and NOTHING else says so — the UI keeps
+   * rendering what it fetched on mount, with no error and no spinner.
+   */
+  trigger: 'mount' | 'invalidate' | 'epoch';
+  /**
+   * Which of the three states a surface rendered (FRONTEND.md §6.2), plus the
+   * transient before its first read lands. `offline` means rows on disk with no
+   * network — the state the whole product exists to make ordinary.
+   */
+  surface: 'loading' | 'empty' | 'offline' | 'live';
+  /**
    * `linked` is a blob we already held under another row — the same face in two
    * workspaces is one file, so it costs no network at all. Worth its own value
    * rather than counting as `stored`: a high linked rate means content
@@ -210,6 +226,54 @@ export const metrics = {
   'blob.bytes': {
     kind: 'histogram', unit: 'bytes', labels: ['kind'],
     doc: 'What the blob store actually costs on disk.',
+  },
+
+  // ── the renderer read path (FRONTEND.md §5) ──────────────────────────────
+  'ui.query.duration': {
+    kind: 'histogram', unit: 'ms', labels: ['trigger', 'result'],
+    doc: 'How long a local read takes, end to end from the renderer. The ~1ms '
+       + 'figure is load-bearing for two decisions — not adopting a server-state '
+       + 'cache, and refetching coarsely instead of diffing — and both are '
+       + 'correct at 1ms and wrong at 40ms. Nothing else measures the number '
+       + 'those rest on. Split by trigger because an invalidation refetch '
+       + 'competing with a catch-up write is what degrades first.',
+  },
+  'ui.query.woken': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'Mounted reads refetched by ONE invalidation — the fan-out of the topic '
+       + 'tree. Flat at 1 while there is a single surface; it climbs when a '
+       + 'topic is too coarse, and it climbs before anyone notices the UI '
+       + 'working harder than it should. Advance warning, like chats_per_actor.',
+  },
+  'ui.surface.state': {
+    kind: 'counter', labels: ['surface'],
+    doc: 'What surfaces actually rendered, counted on transition rather than per '
+       + 'render. Answers a product question nothing else can: how often is '
+       + 'anyone offline-with-data, the state this app is built for. Sustained '
+       + '`empty` on a populated workspace is the local-first failure.',
+  },
+  'ui.paint': {
+    kind: 'histogram', unit: 'ms', labels: ['had_account'],
+    doc: 'App start to the router painting, reported BY the renderer. app.boot '
+       + 'measures to the moment the renderer could paint; this measures the '
+       + 'moment it did. The gap between them is React and routing, and R3 is '
+       + 'a claim about this number.',
+  },
+  'ui.telemetry.dropped': {
+    kind: 'counter', labels: [],
+    doc: 'Renderer telemetry discarded because the buffer was full '
+       + '(OBSERVABILITY.md §7 — this buffer drops oldest, unlike the outbox). '
+       + 'Non-zero means the sync process stopped draining, so treat every '
+       + 'other renderer signal around that window as incomplete.',
+  },
+
+  // ── the invalidation loop, write side ────────────────────────────────────
+  'sync.invalidate': {
+    kind: 'counter', labels: [],
+    doc: 'Invalidation pushes emitted — writes that told renderers to re-read. '
+       + 'Paired with ui.query.woken this is delivery: pushes out against reads '
+       + 'woken. Zero here while the directory is syncing means the write path '
+       + 'is not announcing itself and every open surface is quietly stale.',
   },
 } as const satisfies Record<string, MetricSpec>;
 

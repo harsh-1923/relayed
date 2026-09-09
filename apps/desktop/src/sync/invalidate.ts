@@ -8,7 +8,7 @@
 // ordering logic that cannot be tested directly gets tested by a user.
 
 /** Sends one flushed batch to every attached renderer. */
-export type Broadcast = (topics: string[]) => void;
+export type Broadcast = (batch: { invalidation: number; topics: string[] }) => void;
 
 export type Invalidate = (topics: readonly string[]) => void;
 
@@ -27,6 +27,13 @@ export function createInvalidator(
   schedule: (flush: () => void) => void = queueMicrotask,
 ): Invalidate {
   let pending: Set<string> | null = null;
+  /**
+   * Identifies one flushed batch, so the write that caused it and the reads it
+   * woke can be found together across two processes (OBSERVABILITY.md §10b).
+   * Per process and monotonic — enough to correlate a session, and replaced by
+   * `traceparent` in the frame envelope once there is a socket to carry one.
+   */
+  let nextInvalidation = 1;
 
   return (topics) => {
     if (topics.length === 0) return;
@@ -35,7 +42,8 @@ export function createInvalidator(
       schedule(() => {
         const flushing = pending;
         pending = null;
-        if (flushing && flushing.size > 0) broadcast([...flushing]);
+        if (!flushing || flushing.size === 0) return;
+        broadcast({ invalidation: nextInvalidation++, topics: [...flushing] });
       });
     }
     for (const changed of topics) pending.add(changed);

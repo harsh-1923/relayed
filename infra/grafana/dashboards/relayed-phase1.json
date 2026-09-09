@@ -762,13 +762,390 @@
       }
     },
     {
+      "id": 600,
+      "title": "The read path \u2014 is the live-query loop delivering?",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 601,
+      "title": "Local read latency, by what caused it",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "The number two decisions rest on: not adopting a server-state cache, and refetching coarsely instead of diffing. Both are correct at ~1ms and wrong at 40ms. `invalidate` is the line that degrades first, because it competes with whatever wrote.",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"ui.query.duration\" | trigger=\"mount\" | unwrap metric_value [$__auto])",
+          "legendFormat": "mount p95",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"ui.query.duration\" | trigger=\"invalidate\" | unwrap metric_value [$__auto])",
+          "legendFormat": "invalidate p95",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"ui.query.duration\" | trigger=\"epoch\" | unwrap metric_value [$__auto])",
+          "legendFormat": "switch p95",
+          "queryType": "range",
+          "refId": "C"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 602,
+      "title": "Invalidation delivery: pushes out vs reads woken",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "The loop, end to end. Pushes emitted by the sync engine against reads the registry actually refetched. Pushes climbing while woken stays flat means the write side is announcing topics nobody subscribes to \u2014 every open surface is then quietly stale, with no error anywhere.",
+      "gridPos": {
+        "x": 12,
+        "y": 29,
+        "w": 12,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({service_name=\"relayed-desktop\"} | metric_name=\"sync.invalidate\" [$__auto]))",
+          "legendFormat": "pushes emitted",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(sum_over_time({service_name=\"relayed-desktop\"} | metric_name=\"ui.query.woken\" | unwrap metric_value [$__auto]))",
+          "legendFormat": "reads woken",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 603,
+      "title": "What surfaces actually rendered",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Counted on transition, not per render. `offline` is rows on disk with no network \u2014 the state this architecture exists to make ordinary, and a number nothing else can answer. Sustained `empty` on a populated workspace is the local-first failure itself.",
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by (surface) (count_over_time({service_name=\"relayed-desktop\"} | metric_name=\"ui.surface.state\" [$__auto]))",
+          "legendFormat": "{{surface}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 604,
+      "title": "Could paint vs did paint",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "app.boot stops when the renderer holds a port; ui.paint is the frame the router actually committed. The gap between them is React and routing. R3 is a claim about the second line \u2014 the first is only the engine getting out of the way in time.",
+      "gridPos": {
+        "x": 8,
+        "y": 35,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"app.boot\" | unwrap metric_value [$__auto])",
+          "legendFormat": "could paint p95",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "quantile_over_time(0.95, {service_name=\"relayed-desktop\"} | metric_name=\"ui.paint\" | unwrap metric_value [$__auto])",
+          "legendFormat": "did paint p95",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 605,
+      "title": "Renderer telemetry dropped",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "The renderer's buffer drops oldest rather than growing (OBSERVABILITY.md \u00a77). Non-zero means the sync process stopped draining \u2014 so treat every other renderer signal in that window as incomplete rather than as an absence.",
+      "gridPos": {
+        "x": 16,
+        "y": 35,
+        "w": 8,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({service_name=\"relayed-desktop\"} | metric_name=\"ui.telemetry.dropped\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 606,
+      "title": "One invalidation, end to end \u2014 filter on `invalidation`",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "The whole loop across both processes. Pick an `invalidation` id and the chain reads: sync.invalidated (the push left) -> ui.invalidation.received (matched of mounted) -> ui.query.read (rows, ms). `matched: 0` while a surface is open means the write side and the read side disagree about the topic; `matched` equal to everything mounted means the topic is too coarse.",
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{service_name=~\"relayed-.+\"} | event_name=~\"sync\\\\.invalidated|ui\\\\..+\"",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
       "id": 500,
       "type": "row",
       "title": "Down to one user \u2014 the layer metrics cannot reach",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 51,
         "w": 24,
         "h": 1
       },
@@ -785,7 +1162,7 @@
       "description": "Every event carrying account, device, actor and workspace ids. This is what answers \"why did THIS user's switch hang\" \u2014 and it is gone in 14 days, which is why the aggregates above have to exist as metrics.",
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 52,
         "w": 24,
         "h": 12
       },

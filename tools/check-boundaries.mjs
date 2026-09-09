@@ -114,6 +114,21 @@ const RULES = [
     allow: [/apps\/desktop\/src\/renderer\/app\/WorkspaceGate\.tsx$/],
   },
   {
+    id: 'renderer/no-telemetry-sdk',
+    doc: 'OBSERVABILITY.md §3 — one SDK, in the utilityProcess',
+    why: 'A second SDK in the renderer means a second buffer, a second exporter '
+       + 'and a second flush timer — and a renderer timer is the one place a '
+       + 'timer cannot be trusted, because Chromium throttles a hidden page to '
+       + 'one tick a minute (DESIGN.md §13.9). Telemetry would then stop '
+       + 'draining exactly when the window is in the background, which is most '
+       + 'of the time. Import the catalogue TYPES from '
+       + '@relayed/telemetry/catalogue and emit through lib/telemetry, which '
+       + 'forwards over the port the renderer already holds.',
+    pattern: /import\s+(?!type\b)[^;]*from\s+['"]@relayed\/telemetry['"]/,
+    where: [/apps\/desktop\/src\/renderer\//],
+    allow: [],
+  },
+  {
     id: 'identity/no-layer-1-on-the-client',
     doc: 'DESIGN.md §6.3 — nothing below Layer 2 references an identity',
     why: 'Replicating identity_id would hand every workspace member a directory '

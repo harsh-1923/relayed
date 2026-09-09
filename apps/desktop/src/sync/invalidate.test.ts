@@ -5,10 +5,13 @@ import { createInvalidator } from './invalidate.ts';
 /** Holds the flush so a test can run a whole write loop before it fires. */
 function manual() {
   const sent: string[][] = [];
+  const ids: number[] = [];
   const flushes: (() => void)[] = [];
-  const invalidate = createInvalidator(topics => { sent.push(topics); }, f => { flushes.push(f); });
+  const invalidate = createInvalidator(
+    batch => { sent.push(batch.topics); ids.push(batch.invalidation); },
+    f => { flushes.push(f); });
   return {
-    invalidate, sent,
+    invalidate, sent, ids,
     flush: () => { const queued = flushes.splice(0); for (const f of queued) f(); },
     scheduled: () => flushes.length,
   };
@@ -50,9 +53,18 @@ test('an empty invalidation schedules nothing', () => {
   assert.deepEqual(io.sent, []);
 });
 
+test('each flushed batch gets its own id, so a chain can be correlated', () => {
+  const io = manual();
+  io.invalidate(['actors']);
+  io.flush();
+  io.invalidate(['actors']);
+  io.flush();
+  assert.deepEqual(io.ids, [1, 2]);
+});
+
 test('the default schedule is a microtask — it flushes without a timer', async () => {
   const sent: string[][] = [];
-  const invalidate = createInvalidator(topics => { sent.push(topics); });
+  const invalidate = createInvalidator(batch => { sent.push(batch.topics); });
   invalidate(['actors']);
   assert.deepEqual(sent, [], 'not synchronous: the write loop is still running');
   await Promise.resolve();

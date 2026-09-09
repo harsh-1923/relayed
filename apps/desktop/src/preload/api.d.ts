@@ -158,6 +158,26 @@ export interface RelayedApi {
     params: { workspaceId: string },
   ): Promise<AppState>;
   query(op: "debug.snapshot"): Promise<DebugSnapshot>;
+  /**
+   * Forward one catalogued record to the sync process, which owns the SDK
+   * (OBSERVABILITY.md §3). Typed against the catalogue on the renderer side
+   * by `lib/telemetry.ts`; loose here because the bridge carries the wire
+   * shape, not the catalogue.
+   */
+  query(
+    op: "telemetry.emit",
+    params: {
+      kind: "event" | "count" | "histogram";
+      name: string;
+      value?: number;
+      fields?: Record<string, string | number | boolean>;
+      labels?: Record<string, string>;
+      /** Records the renderer discarded since the last successful post. */
+      dropped?: number;
+    },
+  ): Promise<null>;
+  /** The router painted. The duration is computed on the other side. */
+  query(op: "telemetry.firstPaint", params: { at: number }): Promise<null>;
   query(
     op: "invite.list",
   ): Promise<{ invitations: Invitation[]; offline: boolean }>;
@@ -180,7 +200,7 @@ export interface RelayedApi {
    */
   subscribe(
     channel: "invalidate",
-    fn: (change: { topics: string[] }) => void,
+    fn: (change: { invalidation: number; topics: string[] }) => void,
   ): () => void;
   /**
    * Property name marking a reply superseded by a workspace switch. Present on

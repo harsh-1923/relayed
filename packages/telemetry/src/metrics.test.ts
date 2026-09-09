@@ -22,6 +22,7 @@ function walk(dir: string): string[] {
 const LABEL_CARDINALITY: Record<keyof LabelValues, number> = {
   result: 2, op: 5, phase: 2, tier: 2, via: 5, path: 2,
   outcome: 3, kind: 2, serve: 3, had_account: 2, stored: 3,
+  trigger: 3, surface: 4,
 };
 
 test('every declared label is a closed set with known cardinality', () => {
@@ -88,7 +89,7 @@ test('every declared metric is actually recorded somewhere', () => {
     join(root, 'packages', 'telemetry', 'src'),
   ].flatMap(d => walk(d));
   const code = sources
-    .filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+    .filter(f => (f.endsWith('.ts') || f.endsWith('.tsx')) && !f.endsWith('.test.ts'))
     // The catalogue itself must be excluded, or every metric matches its own
     // declaration and the test can never fail. A negative control caught this:
     // a metric added with no call site passed. Instrumentation that measures

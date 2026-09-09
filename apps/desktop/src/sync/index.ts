@@ -8,7 +8,10 @@
 //
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
-import { emit, count, histogram, span, useOtlpIfConfigured } from '@relayed/telemetry';
+import {
+  emit, count, histogram, span, useOtlpIfConfigured,
+  type EventName, type MetricName,
+} from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
 import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
@@ -18,6 +21,7 @@ import { newId } from './ids.ts';
 import { installNetworkGate } from './network.ts';
 import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
 import { createInvalidator } from './invalidate.ts';
+import { relayTelemetry } from './telemetry-relay.ts';
 import type { OurSession } from './auth/relayed.ts';
 
 interface Request { id: number; op: string; params?: unknown }
@@ -41,6 +45,8 @@ useOtlpIfConfigured('desktop');
 const bootT0 = Number(process.env['RELAYED_BOOT_T0'] ?? 0);
 /** Boot happens once per process; a port attach does not (see the call site). */
 let bootRecorded = false;
+/** Likewise the renderer's paint: a window reload paints again. */
+let paintRecorded = false;
 
 /**
  * Simulated offline, and R3's counter — the aeroplane without the aeroplane
@@ -240,9 +246,23 @@ function push(): void {
  * Dropped when nothing is attached: a renderer reads on mount anyway, so there
  * is no one to miss it. Coalescing and the flush rule live in `invalidate.ts`.
  */
-const invalidate = createInvalidator((topics) => {
+const invalidate = createInvalidator(({ invalidation, topics }) => {
+  count('sync.invalidate');
+  // One event per distinct ROOT rather than one carrying the list: the
+  // catalogue has no free-text field, deliberately, and a root is a closed set
+  // where a full topic is not. They share the batch id, so filtering on it
+  // still reassembles the whole push.
+  const perRoot = new Map<string, number>();
+  for (const changed of topics) {
+    const root = changed.split(':')[0] ?? changed;
+    perRoot.set(root, (perRoot.get(root) ?? 0) + 1);
+  }
+  for (const [root, under] of perRoot) {
+    emit('sync.invalidated', { invalidation, root, topics: under, ports: ports.size });
+  }
+
   if (ports.size === 0) return;
-  const data = { topics };
+  const data = { invalidation, topics };
   for (const p of ports) p.postMessage({ push: INVALIDATE_CHANNEL, data });
 });
 
@@ -386,6 +406,40 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
    * the epoch is wrong and the UI is discarding work it should have shown.
    */
   'telemetry.staleDropped': () => { count('ipc.stale_dropped'); return null; },
+
+  /**
+   * The renderer's telemetry, emitted here (OBSERVABILITY.md §3).
+   *
+   * Validation and the drop accounting live in `telemetry-relay.ts`, where they
+   * can be tested against malformed input directly.
+   */
+  'telemetry.emit': (params) => {
+    relayTelemetry(params, {
+      event: (name, fields) => emit(name as EventName, fields as never),
+      count: (name, labels) => count(name as MetricName, labels as never),
+      histogram: (name, value, labels) => histogram(name as MetricName, value, labels as never),
+      dropped: (n) => count('ui.telemetry.dropped', n),
+    });
+    return null;
+  },
+
+  /**
+   * The renderer painted. Only this side knows when the app started, so the
+   * duration is computed here from the renderer's timestamp.
+   *
+   * Once per process, for the same reason app.boot is: a window reload paints
+   * again while bootT0 still points at process start, and one sample of
+   * "twenty-five minutes to first paint" moves every percentile on the R3 panel.
+   */
+  'telemetry.firstPaint': (params) => {
+    if (paintRecorded || bootT0 <= 0) return null;
+    paintRecorded = true;
+    const at = (params as { at?: number })?.at ?? Date.now();
+    const had = storage.accountId ? 'yes' : 'no';
+    histogram('ui.paint', at - bootT0, { had_account: had });
+    emit('ui.first.paint', { to_first_paint: at - bootT0, from_local: had === 'yes' });
+    return null;
+  },
 
   // ── workspaces (STORAGE.md §12.2) ──────────────────────────────────────
   'workspace.switch': (params) => {

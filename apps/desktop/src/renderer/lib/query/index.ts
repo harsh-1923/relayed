@@ -17,9 +17,10 @@
 //                             registry to the engine. Never by a surface.
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { bridge, call } from '@/lib/ipc';
+import { emit, count, histogram } from '@/lib/telemetry';
 import { useSession } from '@/app/state';
 import { INVALIDATE_CHANNEL } from '../../../shared/topics.ts';
-import { createRegistry, type Registry } from './registry.ts';
+import { createRegistry, type Registry, type RegistryReport } from './registry.ts';
 import { TOPICS, type Queries, type QueryName } from './catalogue.ts';
 
 export type { QueryName } from './catalogue.ts';
@@ -44,14 +45,42 @@ export interface QueryResult<Rows> {
 }
 
 /**
+ * What the read path reports (OBSERVABILITY.md §10b).
+ *
+ * The event carries ids and the metric carries the aggregate, because they
+ * answer different questions under different constraints. `ui.query.read`
+ * reconstructs one user's loop and is gone in 14 days; `ui.query.duration` is
+ * how we know a local read is still about a millisecond, which not adopting a
+ * server-state cache and refetching coarsely both rest on.
+ */
+const report: RegistryReport = {
+  read: (info) => {
+    const ms = Math.round(info.ms * 100) / 100;
+    histogram('ui.query.duration', ms,
+              { trigger: info.trigger, result: info.ok ? 'ok' : 'error' });
+    emit('ui.query.read', {
+      invalidation: info.invalidation, query: info.name, topic: info.topic,
+      trigger: info.trigger, rows: info.rows, ms,
+    });
+  },
+  delivered: (info) => {
+    histogram('ui.query.woken', info.matched);
+    emit('ui.invalidation.received', info);
+  },
+};
+
+/**
  * The registry, wired to the bridge.
  *
  * `api.query` is overloaded per op and this is the one place that calls it
  * dynamically — which is exactly the call `renderer/no-direct-query` exists to
  * keep confined here.
  */
-const registry: Registry = createRegistry((name, args) =>
-  call(api => (api.query as (op: string, params?: unknown) => Promise<unknown>)(name, args)));
+const registry: Registry = createRegistry(
+  (name, args) =>
+    call(api => (api.query as (op: string, params?: unknown) => Promise<unknown>)(name, args)),
+  report,
+);
 
 /**
  * Connect the registry to the engine's invalidations. Called once, by the shell.
@@ -72,7 +101,7 @@ export function useQueryInvalidation(): void {
   useEffect(() => {
     const api = bridge();
     return api?.subscribe(INVALIDATE_CHANNEL,
-      ({ topics }) => { registry.invalidate(topics); });
+      ({ invalidation, topics }) => { registry.invalidate(topics, invalidation); });
   }, []);
 
   // A workspace switch replaces the replica underneath every mounted read, so
@@ -108,11 +137,20 @@ export function useQuery<Name extends QueryName>(
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
 
   const rows = snapshot.rows as Queries[Name]['rows'] | null;
-  return {
-    rows,
-    error: snapshot.error,
-    status: statusOf(snapshot.loaded, rows, state.offline, state.auth.status),
-  };
+  const status = statusOf(snapshot.loaded, rows, state.offline, state.auth.status);
+
+  // Counted on TRANSITION, not per render — React renders far too often for the
+  // latter to mean anything. It answers a product question nothing else can:
+  // how often is anyone actually offline with data, which is the state this
+  // whole architecture exists to make ordinary.
+  const seenStatus = useRef<QueryStatus | null>(null);
+  useEffect(() => {
+    if (seenStatus.current === status) return;
+    seenStatus.current = status;
+    count('ui.surface.state', { surface: status });
+  }, [status]);
+
+  return { rows, error: snapshot.error, status };
 }
 
 function statusOf(

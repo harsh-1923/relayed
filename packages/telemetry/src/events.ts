@@ -54,6 +54,50 @@ export const events = {
   'ws.zombie.detected':  { fields: { last_pong: 'ms' }, doc: 'Heartbeat deadline missed (invariant 30).' },
   'ws.reauth':           { fields: { ok: 'bool' }, doc: 'In-band token refresh (DESIGN §9.7).' },
 
+  // ── the renderer read path (FRONTEND.md §5, §10) ─────────────────────────
+  // These four are designed to be read TOGETHER, filtered on `invalidation`:
+  //
+  //   sync.invalidated         { invalidation: 41, root: 'actors', ports: 1 }
+  //   ui.invalidation.received { invalidation: 41, mounted: 6, matched: 1 }
+  //   ui.query.read            { invalidation: 41, query: 'actors.list', rows: 2 }
+  //
+  // That chain is the whole loop across two processes, in order. `matched`
+  // beside `mounted` is what answers "why did my surface not update" without
+  // reading any code: 0 means the topic is wrong, 6 means it is too coarse.
+  'sync.invalidated': {
+    fields: { invalidation: 'int', root: 'enum', topics: 'int', ports: 'int' },
+    doc: 'One coalesced invalidation push left the sync engine. `topics` is how '
+       + 'many distinct ones the batch collapsed to; `ports` is how many '
+       + 'renderers were listening — zero means nobody was attached and the '
+       + 'push was dropped, which is correct rather than a loss.',
+  },
+  'ui.invalidation.received': {
+    fields: { invalidation: 'int', mounted: 'int', matched: 'int' },
+    doc: 'A push reached the registry. `matched` of `mounted` reads were woken.',
+  },
+  'ui.query.read': {
+    fields: { invalidation: 'int', query: 'enum', topic: 'id',
+              trigger: 'enum', rows: 'int', ms: 'ms' },
+    doc: 'One read, resolved. `invalidation` is 0 for a mount or a workspace '
+       + 'switch, so a non-zero value is exactly the set of reads the live-query '
+       + 'loop caused. One event per read rather than a list per push, because '
+       + 'the catalogue has no free-text field to hold a list of topics in.',
+  },
+  'ui.route.changed': {
+    fields: { from: 'id', to: 'id', workspace: 'id' },
+    doc: 'Navigation. The spine every other renderer event hangs off — it is '
+       + 'what makes a session reconstructable when someone reports a bug, and '
+       + 'the reason it is the first client event rather than a later one.',
+  },
+  'ui.first.paint': {
+    fields: { to_first_paint: 'ms', from_local: 'bool' },
+    doc: 'App start to the router actually painting, reported by the renderer '
+       + 'after the frame commits. app.boot stops at the moment the renderer '
+       + 'COULD paint; this is when it did, and R3 is a claim about this one. '
+       + 'The R3 network counter deliberately still closes at port attach — '
+       + 'moving it here would count ordinary sync traffic as a violation.',
+  },
+
   // ── identity and storage ─────────────────────────────────────────────────
   // These carry ids on purpose. Metrics cannot (§5), so this is the only layer
   // that can answer "why did THIS user's switch hang" — at the cost of a
