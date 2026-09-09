@@ -22,10 +22,10 @@ ordered log, every read served from local SQLite.
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
 | **2 — the sync core** | **Next.** [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) |
 
-**Next task: the sync core** — the server's spaces/chats/messages tables with
-atomic `ord`/`rev` assignment, then the protocol and the client's contiguity
-logic (Phase 2, `DESIGN.md` §15 items 13–17, scoped in
-[`PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md)).
+**Next task: the two schemas** — the server's `spaces`/`chats`/`messages` tables
+and the replica's message schema, with no transport anywhere. That is step A of
+nine, sequenced in [`PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) §3, which carries
+what each step delivers and what "done" means for it.
 
 Two things there are easy to skim past and expensive to rediscover.
 `spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66

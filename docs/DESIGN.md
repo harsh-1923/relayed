@@ -2621,11 +2621,16 @@ after the second surface exists rather than before the first.
      the natural first client event.
 
 **Phase 2 — The sync core** ← the risky part, do it before any UI polish
-Scoped and sequenced in [`PHASE-2-SYNC.md`](PHASE-2-SYNC.md), which also records
-what already exists to build on: the 66-assertion executable model to port
+Scoped and sequenced in [`PHASE-2-SYNC.md`](PHASE-2-SYNC.md), which breaks the
+items below into **nine sub-phases, A–I, in execution order**, each with what it
+delivers and what "done" means. It also records what already exists to build on: the 66-assertion executable model to port
 rather than rewrite, the `guardConnect` seam and the boundary rule that forces
 the socket through it, and nine telemetry events declared with no call sites.
-13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops.
+13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops —
+    **including `delete`**, moved up from item 24. It is the only op in the
+    phase that takes a `rev` without an `ord`, so without it the two-counter
+    model ships exercised by nothing but the spike, and `pending_revs` is built
+    for a case that never occurs (`PHASE-2-SYNC.md` §1).
 14. Protocol: `hello`/`welcome`, live events, `catchup`, `gap`, `traceparent`
     in the frame envelope (`OBSERVABILITY.md` §4).
 15. Client cursors + **contiguity logic** incl. `pending_revs` (invariant 1).
@@ -2645,7 +2650,7 @@ the socket through it, and nine telemetry events declared with no call sites.
 **Phase 4 — Product surface**
 22. Threads (shared `ord`, parent-keyed backfill).
 23. Reactions (LWW-set, tombstones).
-24. Edits and deletes.
+24. Edits. (Deletes moved to item 13 — see there for why.)
 25. FTS5 + triggers + integrity check.
 
 **Phase 5 — Rooms** (§7) ← immediately after threads, since both touch containment
