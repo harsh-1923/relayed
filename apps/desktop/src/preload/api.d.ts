@@ -54,6 +54,8 @@ export interface AppState {
   workspaceId: string | null;
   workspaces: WorkspaceRow[];
   auth: AuthState;
+  /** A sign-in is waiting on a browser, and can be cancelled or re-opened. */
+  awaitingBrowser: boolean;
 }
 
 export interface FileNode {
@@ -82,6 +84,8 @@ export interface RelayedApi {
   query(op: 'app.state'): Promise<AppState>;
   query(op: 'auth.state'): Promise<AuthState>;
   query(op: 'auth.signIn'): Promise<AppState>;
+  query(op: 'auth.cancelSignIn'): Promise<AppState>;
+  query(op: 'auth.reopenBrowser'): Promise<{ reopened: boolean }>;
   query(op: 'auth.signOut'): Promise<AppState>;
   query(op: 'auth.configured'): Promise<{ clientId: string | null }>;
   query(op: 'auth.createWorkspace', params: { workspaceName: string; handle: string }): Promise<AppState>;

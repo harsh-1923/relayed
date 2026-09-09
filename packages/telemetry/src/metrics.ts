@@ -34,7 +34,7 @@ export interface LabelValues {
   via: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api' | 'workos_event';
   /** How a workspace obtained credentials: a stored token, or a first-ever switch. */
   path: 'refresh' | 'switch';
-  outcome: 'authenticated' | 'needs_workspace' | 'failed';
+  outcome: 'authenticated' | 'needs_workspace' | 'failed' | 'cancelled';
   /** Blob class. Avatars are the pinned one (DESIGN §13.3). */
   kind: 'avatar' | 'attachment';
   serve: 'hit' | 'miss' | 'rejected';

@@ -88,8 +88,22 @@ export function listenForCallback(opts: { state: string; timeoutMs?: number }): 
     const timer = setTimeout(() => { fail(new Error('callback timed out')); close(); }, timeoutMs);
     timer.unref?.();
 
+    /**
+     * Tear down, and SETTLE anyone waiting.
+     *
+     * The rejection is the part that matters. `close()` used to stop the server
+     * and leave `result` pending forever, so a caller awaiting it waited for
+     * ever — which is exactly what stranded the app when a sign-in was
+     * abandoned: the listener was gone, the await never returned, and the UI
+     * sat on "waiting for the browser" until the five-minute timeout that
+     * close() had just cancelled.
+     *
+     * `fail` after `settle` is a no-op, so the success path is unaffected: the
+     * first settlement wins, as always with promises.
+     */
     function close(): void {
       clearTimeout(timer);
+      fail(new Error('sign-in listener closed'));
       server.close();
       server.closeAllConnections?.();
     }

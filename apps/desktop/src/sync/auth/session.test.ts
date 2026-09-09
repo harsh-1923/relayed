@@ -30,6 +30,21 @@ const deps = (over: Partial<SessionDeps> & { vault: ReturnType<typeof fakeVault>
   ...over,
 });
 
+/**
+ * Wait until a sign-in is genuinely waiting on a browser.
+ *
+ * `listenForCallback` binds a real socket, so a microtask tick is not enough —
+ * assuming it was made these tests assert against a state that had not happened
+ * yet, and one of them then sat on the five-minute loopback timeout.
+ */
+async function awaitingBrowser(s: Session, ms = 2000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!s.isAwaitingBrowser) {
+    if (Date.now() > until) throw new Error('sign-in never reached the browser step');
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
+
 /** Points refresh at a closed port, which is the offline case. */
 function offline<T>(fn: () => Promise<T>): Promise<T> {
   process.env['RELAYED_SERVER_URL'] = 'http://127.0.0.1:1';
@@ -114,6 +129,74 @@ test('sign-in failure returns to signed_out without wiping stored state', async 
   await assert.rejects(s.signIn(), /browser unavailable/);
   assert.equal(s.state.status, 'signed_out');
   assert.equal(vault.slots.get(WSP_A), 'rt_existing');
+});
+
+test('a sign-in waiting on a browser can be abandoned', async () => {
+  // The bug this exists for: closing the browser tab without signing in left
+  // `authenticating` on screen for FIVE MINUTES — the loopback timeout — with a
+  // disabled button and no way out. Reloading the window did not help, because
+  // the attempt lives in the sync process.
+  const vault = fakeVault();
+  const s = new Session(deps({ vault, openBrowser: () => {} }));
+
+  const inFlight = s.signIn().catch(() => {});
+  await awaitingBrowser(s);
+  assert.equal(s.state.status, 'authenticating');
+  assert.equal(s.isAwaitingBrowser, true, 'there is something to cancel');
+
+  assert.equal(s.cancelSignIn().status, 'signed_out');
+  assert.equal(s.isAwaitingBrowser, false);
+  await inFlight;                  // the listener closes, the attempt rejects
+  assert.equal(s.state.status, 'signed_out', 'cancelling is final, not a race');
+});
+
+test('cancelling when nothing is in flight is harmless', () => {
+  // A control that throws when pressed twice is its own bug.
+  const s = new Session(deps({ vault: fakeVault() }));
+  assert.equal(s.state.status, 'signed_out');
+  assert.equal(s.cancelSignIn().status, 'signed_out');
+  assert.equal(s.cancelSignIn().status, 'signed_out');
+});
+
+test('re-opening the browser reuses the SAME url', async () => {
+  // A fresh url would mint a new PKCE challenge, and the listener already
+  // running is bound to the old one — so "open the link again" would hand the
+  // person a link that can never complete.
+  const opened: string[] = [];
+  const s = new Session(deps({ vault: fakeVault(), openBrowser: (u) => { opened.push(u); } }));
+
+  const inFlight = s.signIn().catch(() => {});
+  await awaitingBrowser(s);
+  assert.equal(opened.length, 1);
+
+  assert.equal(await s.reopenBrowser(), true);
+  assert.equal(opened.length, 2);
+  assert.equal(opened[1], opened[0], 'the second link must be the first link');
+
+  s.cancelSignIn();
+  await inFlight;
+  assert.equal(await s.reopenBrowser(), false, 'nothing to re-open once abandoned');
+});
+
+test('starting again supersedes the attempt that was waiting', async () => {
+  // Otherwise "try again" leaves the previous listener holding a port for five
+  // minutes and two callbacks can race for one sign-in.
+  const opened: string[] = [];
+  const s = new Session(deps({ vault: fakeVault(), openBrowser: (u) => { opened.push(u); } }));
+
+  const first = s.signIn().catch(() => {});
+  await awaitingBrowser(s);
+  const firstUrl = opened[0];
+
+  const second = s.signIn().catch(() => {});
+  await first;                          // superseded: its listener was closed
+  await awaitingBrowser(s);
+
+  assert.equal(s.state.status, 'authenticating', 'the newer attempt survives the older one ending');
+  assert.notEqual(opened[1], firstUrl, 'a new attempt gets a new challenge and port');
+
+  s.cancelSignIn();
+  await second;
 });
 
 test('state changes are observable', async () => {

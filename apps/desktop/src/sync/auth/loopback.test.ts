@@ -37,6 +37,33 @@ test('ignores any other path', async () => {
   l.close();
 });
 
+test('closing the listener SETTLES anyone waiting on it', async () => {
+  // The bug this exists for: close() stopped the server and left `result`
+  // pending for ever. A caller awaiting it waited for ever too — which is how
+  // an abandoned sign-in stranded the UI on "waiting for the browser", with the
+  // five-minute timeout that would have rescued it already cancelled by the
+  // same close().
+  const l = await listenForCallback({ state: 's' });
+  const settled = l.result.then(() => 'resolved').catch(() => 'rejected');
+  l.close();
+  const race = await Promise.race([
+    settled,
+    new Promise(r => setTimeout(() => r('STILL PENDING'), 250)),
+  ]);
+  assert.equal(race, 'rejected');
+});
+
+test('closing after a successful callback does not overturn the result', async () => {
+  // close() rejects, and the success path calls close() straight after
+  // settling. The first settlement has to win, or every successful sign-in
+  // would end in an error.
+  const l = await listenForCallback({ state: 'st' });
+  await fetch(`${l.redirectUri}?code=abc&state=st`);
+  assert.deepEqual(await l.result, { code: 'abc', state: 'st' });
+  l.close();
+  assert.deepEqual(await l.result, { code: 'abc', state: 'st' }, 'still resolved');
+});
+
 test('times out and stops listening', async () => {
   const l = await listenForCallback({ state: 's', timeoutMs: 250 });
   await assert.rejects(l.result, /timed out/);

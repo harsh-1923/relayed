@@ -171,6 +171,14 @@ function view() {
     workspaceId: storage.workspaceId,
     workspaces,
     auth: session.state,
+    /**
+     * Whether a sign-in is genuinely waiting on a browser right now.
+     *
+     * Distinct from `auth.status === 'authenticating'`: the renderer needs to
+     * know whether there is something to cancel, and it must survive a window
+     * reload, so it cannot be a local flag in the renderer.
+     */
+    awaitingBrowser: session.isAwaitingBrowser,
   };
 }
 
@@ -213,12 +221,24 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   // ── auth (PHASE-1-IDENTITY.md §7) ──────────────────────────────────────
   'auth.state': () => session.state,
   'auth.signIn': async () => {
-    // Opens the SYSTEM browser and blocks on the loopback callback. The
-    // renderer never sees a token — only the resulting state.
-    await session.signIn(storage.workspaceId ?? undefined);
+    // Opens the SYSTEM browser and blocks on the loopback callback — for up to
+    // five minutes. The renderer must NOT wait on this reply to know what is
+    // happening: state is pushed, so a window that reloads mid-sign-in still
+    // renders the right thing.
+    try {
+      await session.signIn(storage.workspaceId ?? undefined);
+    } catch (e) {
+      // A cancelled or timed-out attempt is an ordinary outcome, not an error
+      // worth an alert dialog. The pushed state already says signed_out.
+      if (!/cancel|timed out/i.test((e as Error).message)) throw e;
+    }
     push();
     return view();
   },
+  /** Abandon a sign-in waiting on a browser that is not coming back. */
+  'auth.cancelSignIn': () => { session.cancelSignIn(); push(); return view(); },
+  /** Re-open the same authorize URL — the browser may never have appeared. */
+  'auth.reopenBrowser': async () => ({ reopened: await session.reopenBrowser() }),
   'auth.signOut': async () => {
     const accountId = storage.accountId;
     const ids = accountId ? storage.workspaces().map(w => w.workspaceId) : [];

@@ -73,6 +73,16 @@ export class Session {
   #workspaceId: string | null = null;
   /** Held only between the WorkOS exchange and onboarding completing. */
   #pendingWorkosToken: string | null = null;
+  /**
+   * The sign-in currently waiting on a browser.
+   *
+   * Tracked so it can be ABANDONED. Without this the only exit from
+   * `authenticating` was the loopback's five-minute timeout — and a person who
+   * closes the browser tab, or never sees it open, is left looking at a dead
+   * control for five minutes with no way to start over. Reloading the window
+   * does not help either: the attempt lives here, not in the renderer.
+   */
+  #attempt: { close(): void; url: string } | null = null;
   #listeners = new Set<(s: AuthState) => void>();
   readonly #deps: SessionDeps;
   readonly #now: () => number;
@@ -100,11 +110,17 @@ export class Session {
   /** Full interactive sign-in: system browser, PKCE, loopback, then our server. */
   async signIn(preferredWorkspaceId?: string): Promise<AuthState> {
     const t0 = this.#now();
+    // Starting again supersedes whatever was waiting. Otherwise "try again"
+    // would leave the previous listener holding a port for five minutes, and
+    // two callbacks could race for one sign-in.
+    this.#abandon();
     this.#set({ status: 'authenticating' });
     const pkce = createPkce();
     const listener = await listenForCallback({ state: pkce.state });
+    const url = buildAuthorizeUrl(this.#deps.config, pkce, listener.redirectUri);
+    this.#attempt = { close: () => listener.close(), url };
     try {
-      await this.#deps.openBrowser(buildAuthorizeUrl(this.#deps.config, pkce, listener.redirectUri));
+      await this.#deps.openBrowser(url);
       const { code } = await listener.result;
       const workos = await exchangeCode(this.#deps.config, { code, verifier: pkce.verifier });
 
@@ -125,10 +141,54 @@ export class Session {
       return this.#state;
     } catch (err) {
       listener.close();
+      // A cancel has already reset the state and counted itself; reporting it
+      // again as a failure would make deliberate abandonment look like an
+      // outage in the sign-in funnel.
+      if (this.#attempt === null) throw err;
       this.#set({ status: 'signed_out' });
       this.#signedIn('failed', this.#now() - t0);
       throw err;
+    } finally {
+      this.#attempt = null;
     }
+  }
+
+  /** Is a sign-in waiting on a browser right now? */
+  get isAwaitingBrowser(): boolean { return this.#attempt !== null; }
+
+  /**
+   * Abandon the sign-in and return to a usable state.
+   *
+   * The affordance the five-minute timeout was standing in for. Idempotent, and
+   * safe when nothing is in flight — a button that throws when pressed twice is
+   * its own bug.
+   */
+  cancelSignIn(): AuthState {
+    if (this.#attempt === null) return this.#state;
+    this.#abandon();
+    count('auth.signin', { outcome: 'cancelled' });
+    this.#set({ status: 'signed_out' });
+    return this.#state;
+  }
+
+  /**
+   * Open the same authorize URL again.
+   *
+   * The browser may never have appeared — a default browser that failed to
+   * launch, a tab opened behind another window, a link dismissed by accident.
+   * Reusing the SAME url matters: a fresh one would mint a new PKCE challenge
+   * and the listener is bound to this one.
+   */
+  async reopenBrowser(): Promise<boolean> {
+    const url = this.#attempt?.url;
+    if (!url) return false;
+    await this.#deps.openBrowser(url);
+    return true;
+  }
+
+  #abandon(): void {
+    this.#attempt?.close();
+    this.#attempt = null;
   }
 
   /**

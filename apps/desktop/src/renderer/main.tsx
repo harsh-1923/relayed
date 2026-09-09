@@ -186,13 +186,27 @@ function Identity(props: {
   onState: (s: AppState | null) => void;
 }) {
   const auth = props.state.auth;
-  const [busy, setBusy] = useState(false);
+  
+  // Deliberately NOT awaited into a local `busy` flag. auth.signIn does not
+  // resolve until the browser comes back — up to five minutes — and a local
+  // flag is lost the moment the window reloads, which left the previous
+  // version showing a dead "Waiting for the browser…" with no way out.
+  // `awaitingBrowser` is pushed from the process that actually knows.
+  const signIn = useCallback(() => {
+    props.onError(null);
+    void call(() => window.relayed!.query('auth.signIn'))
+      .then((s) => props.onState(s))
+      .catch((e: Error) => props.onError(e.message));
+  }, [props]);
 
-  const signIn = useCallback(async () => {
-    setBusy(true); props.onError(null);
-    try { props.onState(await call(() => window.relayed!.query('auth.signIn'))); }
-    catch (e) { props.onError((e as Error).message); }
-    finally { setBusy(false); }
+  const cancelSignIn = useCallback(async () => {
+    props.onError(null);
+    props.onState(await call(() => window.relayed!.query('auth.cancelSignIn')));
+  }, [props]);
+
+  const reopen = useCallback(async () => {
+    props.onError(null);
+    await call(() => window.relayed!.query('auth.reopenBrowser'));
   }, [props]);
 
   // The reply is the authoritative post-sign-out state. The push that fires
@@ -262,10 +276,25 @@ function Identity(props: {
                 ? `Sign out of all ${props.state.workspaces.length}` : 'Sign out'}
             </Button>
           </div>
+        ) : props.state.awaitingBrowser ? (
+          // Three ways out, because there are three things that go wrong: the
+          // browser opened and was dismissed, the browser never appeared, or
+          // the person changed their mind. Previously all three led to a
+          // disabled button and a five-minute wait.
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Waiting for your browser. Finish signing in there, and this window
+              will catch up on its own.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={() => void reopen()}>
+                Open the link again
+              </Button>
+              <Button variant="ghost" onClick={() => void cancelSignIn()}>Cancel</Button>
+            </div>
+          </div>
         ) : (
-          <Button onClick={signIn} disabled={busy || auth.status === 'authenticating'}>
-            {busy || auth.status === 'authenticating' ? 'Waiting for the browser…' : 'Sign in'}
-          </Button>
+          <Button onClick={signIn}>Sign in</Button>
         )}
       </CardContent>
     </Card>
