@@ -416,6 +416,62 @@ Worth knowing when reading results:
 
 ---
 
+## 10a. The sink, as built
+
+`packages/telemetry` ships two sinks. `ConsoleSink` is the default and prints one
+JSON line per event. `OtlpSink` posts OTLP/HTTP JSON to a collector, and is
+installed **in addition** when `OTEL_EXPORTER_OTLP_ENDPOINT` is set — teed, so a
+dev terminal stays readable while Grafana gets the structured copy.
+
+```bash
+pnpm services                      # collector on :4318
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env
+pnpm dev
+pnpm grafana                       # {service_name="relayed-desktop"}
+```
+
+Event attributes arrive as queryable labels, so
+`{service_name="relayed-desktop", event_name="db.migrated"}` works.
+
+**Hand-rolled OTLP JSON, not the OTel SDK.** `@opentelemetry/sdk-logs` is still
+0.x (§6) and this is the signal we touch most. The wire format is identical, so
+adopting the SDK later changes only `otlp.ts`.
+
+**Dev-only as written.** It posts straight to a collector; production routes
+client telemetry through our own server so it can be scrubbed and validated
+against the catalogue first (§3).
+
+### Three bugs found by actually looking in Grafana
+
+The sink "worked" on the first attempt — **1 of 3 boot events arrived.** Each
+cause is one that would have gone unnoticed until the events mattered.
+
+**Sink installation must be synchronous.** The first version used a dynamic
+`import()`, so every event emitted before it resolved went to the console only —
+and the interesting ones (`db.migrated`, `app.boot`) all happen in the first
+milliseconds. Any async setup silently drops exactly the startup events you most
+want.
+
+**Every process that emits needs its own sink.** `app.boot` is emitted from the
+main process, which had none. Installing a sink in the `utilityProcess` covers
+the sync engine and nothing else — §3's "one SDK" means one *per process*, not
+one per app.
+
+**Flush on exit.** Queued records were lost when the app closed, which is exactly
+when the last events matter. Now hooked to `exit`, `SIGTERM` and `SIGINT`.
+
+The general lesson: **an emit call that returns successfully proves nothing.**
+The only check that counts is querying the backend, which is what `pnpm
+otel:smoke` exists for.
+
+### Overflow behaviour is implemented
+
+`OtlpSink` holds a bounded queue (500) and **drops the oldest** on overflow, per
+§7. A collector that is down is swallowed rather than surfaced — telemetry must
+never fail an app operation.
+
+---
+
 ## 10b. Where to look, locally
 
 ```bash
@@ -470,60 +526,6 @@ is no waterfall to open when a switch is slow, only a number.
 
 Both are the same fix — emit OTLP metrics to `/v1/metrics` and spans to
 `/v1/traces` — and both are §3's ingest work, which Phase 2 needs anyway.
-
-## 10a. The sink, as built
-
-`packages/telemetry` ships two sinks. `ConsoleSink` is the default and prints one
-JSON line per event. `OtlpSink` posts OTLP/HTTP JSON to a collector, and is
-installed **in addition** when `OTEL_EXPORTER_OTLP_ENDPOINT` is set — teed, so a
-dev terminal stays readable while Grafana gets the structured copy.
-
-```bash
-pnpm services                      # collector on :4318
-# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 in .env
-pnpm dev
-pnpm grafana                       # {service_name="relayed-desktop"}
-```
-
-Event attributes arrive as queryable labels, so
-`{service_name="relayed-desktop", event_name="db.migrated"}` works.
-
-**Hand-rolled OTLP JSON, not the OTel SDK.** `@opentelemetry/sdk-logs` is still
-0.x (§6) and this is the signal we touch most. The wire format is identical, so
-adopting the SDK later changes only `otlp.ts`.
-
-**Dev-only as written.** It posts straight to a collector; production routes
-client telemetry through our own server so it can be scrubbed and validated
-against the catalogue first (§3).
-
-### Three bugs found by actually looking in Grafana
-
-The sink "worked" on the first attempt — **1 of 3 boot events arrived.** Each
-cause is one that would have gone unnoticed until the events mattered.
-
-**Sink installation must be synchronous.** The first version used a dynamic
-`import()`, so every event emitted before it resolved went to the console only —
-and the interesting ones (`db.migrated`, `app.boot`) all happen in the first
-milliseconds. Any async setup silently drops exactly the startup events you most
-want.
-
-**Every process that emits needs its own sink.** `app.boot` is emitted from the
-main process, which had none. Installing a sink in the `utilityProcess` covers
-the sync engine and nothing else — §3's "one SDK" means one *per process*, not
-one per app.
-
-**Flush on exit.** Queued records were lost when the app closed, which is exactly
-when the last events matter. Now hooked to `exit`, `SIGTERM` and `SIGINT`.
-
-The general lesson: **an emit call that returns successfully proves nothing.**
-The only check that counts is querying the backend, which is what `pnpm
-otel:smoke` exists for.
-
-### Overflow behaviour is implemented
-
-`OtlpSink` holds a bounded queue (500) and **drops the oldest** on overflow, per
-§7. A collector that is down is swallowed rather than surfaced — telemetry must
-never fail an app operation.
 
 ---
 
