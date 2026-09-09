@@ -206,3 +206,53 @@ test('state changes are observable', async () => {
   await s.signOut([]);
   assert.deepEqual(seen, ['signed_out']);
 });
+
+/**
+ * A server that mints a session, so the ADOPT path can be exercised at all.
+ *
+ * Everything above tests the paths that fail. Nothing tested the one that
+ * succeeds, which is why the ordering below could regress unnoticed.
+ */
+async function mintingServer(): Promise<{ url: string; close(): Promise<void> }> {
+  const { createServer } = await import('node:http');
+  const server = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/auth/me') {
+      return res.end(JSON.stringify({ actor: {
+        id: 'act_1', handle: 'harsh', display_name: 'Harsh', avatar_url: null,
+        org_id: 'org_1', workspace_id: WSP_A } }));
+    }
+    req.on('data', () => {});
+    req.on('end', () => res.end(JSON.stringify({
+      access_token: 'new_access', refresh_token: 'rt_new', expires_in: 900 })));
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+  const port = (server.address() as { port: number }).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise<void>(r => server.close(() => r())),
+  };
+}
+
+test('onSession sees the access token it is about to persist', async () => {
+  // onSession lands the session in storage and then starts fillActors, which
+  // reads `session.accessToken` and returns early if it is null. So a token
+  // published AFTER this callback means the directory silently never syncs on
+  // a first sign-in — no error, no log, just an empty directory.
+  const server = await mintingServer();
+  process.env['RELAYED_SERVER_URL'] = server.url;
+  try {
+    const vault = fakeVault();
+    await vault.store(WSP_A, 'rt_old');
+    let seen: string | null | undefined;
+    const s: Session = new Session(deps({
+      vault, onSession: () => { seen = s.accessToken; },
+    }));
+    await s.activate(WSP_A);
+    assert.equal(s.state.status, 'authenticated');
+    assert.equal(seen, 'new_access', 'the token must be readable from inside onSession');
+  } finally {
+    delete process.env['RELAYED_SERVER_URL'];
+    await server.close();
+  }
+});
