@@ -8,11 +8,17 @@ export interface Actor {
   id: string; handle: string; displayName: string; avatarUrl: string | null;
   orgId: string; workspaceId: string;
 }
+export interface PendingJoin {
+  workspaceId: string; orgId: string; name: string; handleSuggestions: string[];
+}
+
+export interface Invitation { id: string; email: string; state: string; expires_at: string }
+
 export type AuthState =
   | { status: 'signed_out' }
   | { status: 'authenticating' }
   | { status: 'needs_workspace'; identity: { email: string; displayName: string };
-      handleSuggestions: string[] }
+      handleSuggestions: string[]; pendingJoins: PendingJoin[] }
   | { status: 'authenticated'; actor: Actor | null; expiresAt: number }
   | { status: 'stale'; actor: Actor | null; reason: string };
 
@@ -27,12 +33,19 @@ export interface WorkspaceRow {
   workspaceAvatarUrl: string | null; workspaceAvatarBlob: string | null;
   actorId: string; actorHandle: string; actorDisplayName: string;
   actorAvatarUrl: string | null; actorAvatarBlob: string | null;
+  actorRole: 'owner' | 'admin' | 'member';
   lastOpenedAt: number | null;
   unreadHint: number; mentionHint: number; outboxHint: number;
   state: 'active' | 'removed';
 }
 
 export interface AppState {
+  /**
+   * My grants in the ACTIVE workspace, as `scope:id -> role` pairs — the shape
+   * the shared can() takes (AUTHZ.md §3). An array rather than a Map because a
+   * Map does not survive structured cloning.
+   */
+  grants: [string, 'owner' | 'admin' | 'member'][];
   installId: string;
   /** Bumped on every workspace switch; stale replies are dropped (§12.1). */
   epoch: number;
@@ -74,6 +87,10 @@ export interface RelayedApi {
   query(op: 'auth.createWorkspace', params: { workspaceName: string; handle: string }): Promise<AppState>;
   query(op: 'workspace.switch', params: { workspaceId: string }): Promise<AppState>;
   query(op: 'debug.snapshot'): Promise<DebugSnapshot>;
+  query(op: 'invite.list'): Promise<{ invitations: Invitation[]; offline: boolean }>;
+  query(op: 'invite.create', params: { email: string }): Promise<{ invitation: Invitation }>;
+  query(op: 'invite.revoke', params: { id: string }): Promise<{ invitation: Invitation }>;
+  query(op: 'auth.join', params: { workspaceId: string; handle: string }): Promise<AppState>;
   subscribe(channel: 'app:state', fn: (s: AppState) => void): () => void;
   /**
    * Property name marking a reply superseded by a workspace switch. Present on

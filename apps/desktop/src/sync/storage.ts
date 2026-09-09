@@ -11,6 +11,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { emit, count, histogram } from '@relayed/telemetry';
+import type { Role } from '@relayed/authz';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -36,6 +37,8 @@ export interface WorkspaceRow {
   actorAvatarUrl: string | null;
   /** sha256 of the bytes we hold locally. null until fetched (§13.3). */
   actorAvatarBlob: string | null;
+  /** My role here — the grant the client's can() reads (AUTHZ.md §3). */
+  actorRole: Role;
   lastOpenedAt: number | null;
   unreadHint: number;
   mentionHint: number;
@@ -62,6 +65,7 @@ export interface Membership {
   actorHandle: string;
   actorDisplayName: string;
   actorAvatarUrl: string | null;
+  actorRole: Role;
 }
 
 const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
@@ -76,6 +80,7 @@ const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
   actorDisplayName: String(r['actor_display_name']),
   actorAvatarUrl: (r['actor_avatar_url'] as string | null) ?? null,
   actorAvatarBlob: (r['actor_avatar_blob'] as string | null) ?? null,
+  actorRole: ((r['actor_role'] as string | null) ?? 'member') as Role,
   lastOpenedAt: (r['last_opened_at'] as number | null) ?? null,
   unreadHint: Number(r['unread_hint'] ?? 0),
   mentionHint: Number(r['mention_hint'] ?? 0),
@@ -312,14 +317,15 @@ export class Storage {
         INSERT INTO workspaces (workspace_id, org_id, name, slug,
                                 workspace_avatar_url,
                                 actor_id, actor_handle, actor_display_name,
-                                actor_avatar_url, state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                                actor_avatar_url, actor_role, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(workspace_id) DO UPDATE SET
           org_id = excluded.org_id, name = excluded.name, slug = excluded.slug,
           workspace_avatar_url = excluded.workspace_avatar_url,
           actor_id = excluded.actor_id, actor_handle = excluded.actor_handle,
           actor_display_name = excluded.actor_display_name,
           actor_avatar_url = excluded.actor_avatar_url,
+          actor_role = excluded.actor_role,
           -- Drop a local blob only when its source URL actually changed;
           -- otherwise every membership refresh re-downloads every image.
           actor_avatar_blob = CASE
@@ -332,7 +338,8 @@ export class Storage {
       `);
       for (const m of memberships) {
         upsert.run(m.workspaceId, m.orgId, m.name, m.slug, m.workspaceAvatarUrl,
-                   m.actorId, m.actorHandle, m.actorDisplayName, m.actorAvatarUrl);
+                   m.actorId, m.actorHandle, m.actorDisplayName, m.actorAvatarUrl,
+                   m.actorRole);
       }
       if (memberships.length > 0) {
         const keep = memberships.map(() => '?').join(',');

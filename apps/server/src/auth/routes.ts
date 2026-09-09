@@ -14,6 +14,7 @@ import {
   type Identity, type Membership,
 } from '../provisioning/provision.ts';
 import { validateHandle } from '../provisioning/handle.ts';
+import { pendingJoins, joinWorkspace } from '../provisioning/join.ts';
 
 interface ExchangeBody {
   workos_access_token: string;
@@ -37,6 +38,7 @@ const wire = (m: Membership) => ({
   workspace_avatar_url: m.workspaceAvatarUrl,
   actor_id: m.actorId, actor_handle: m.actorHandle,
   actor_display_name: m.actorDisplayName, actor_avatar_url: m.actorAvatarUrl,
+  actor_role: m.actorRole,
 });
 
 async function issue(actorId: string, orgId: string, workspaceId: string, deviceId: string) {
@@ -88,13 +90,19 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const chosen = selectMembership(memberships, workspace_id);
 
     if (chosen === null) {
-      // No org for this identity. Per §9 decision 1 we do NOT create one here —
-      // the client runs onboarding and calls /auth/workspace with a chosen name
-      // and handle. Invited users never reach this branch.
+      // No actor anywhere for this identity. Either a genuine first sign-up, or
+      // someone who accepted an invitation and has no workspace of their own —
+      // and those are different screens, so both are answered here. Pushing an
+      // invited person into creating a workspace reads as a broken invite.
+      const joins = await pendingJoins(db, identity);
       return reply.send({
         needs_workspace: true,
         handle_suggestions: (await suggestHandles(db, '', identity)).slice(0, 5),
         identity: { email: identity.email, displayName: identity.displayName },
+        pending_joins: joins.map(j => ({
+          org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
+          handle_suggestions: j.handleSuggestions,
+        })),
       });
     }
     if (chosen === 'not_a_member') {
@@ -103,6 +111,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       needs_workspace: false,
+      // Workspaces WorkOS says they belong to and we have no actor for — an
+      // accepted invitation, seen for the first time. Not auto-joined: a handle
+      // is required and this is where one can already be taken (AUTHZ.md §9).
+      pending_joins: (await pendingJoins(db, identity)).map(j => ({
+        org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
+        handle_suggestions: j.handleSuggestions,
+      })),
       actor: { actorId: chosen.actorId, orgId: chosen.orgId, workspaceId: chosen.workspaceId },
       // ALL of them, so the client can populate account.db and draw the
       // switcher without a second call (STORAGE.md §6).
@@ -237,6 +252,52 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       });
     });
 
+  /**
+   * Accept a workspace one has been admitted to in WorkOS, with a chosen handle.
+   *
+   * Not an "accept invitation" endpoint: WorkOS already accepted it on its
+   * hosted page before the app was ever opened (join.ts). This is the moment the
+   * actor comes into existence, which is separate because it needs a handle.
+   */
+  app.post<{ Body: ExchangeBody & { workspace_id: string; handle: string } }>(
+    '/auth/join', async (req, reply) => {
+      const { workos_access_token, device_id, workspace_id, handle } = req.body ?? {};
+      if (!workos_access_token || !device_id || !workspace_id || !handle) {
+        return reply.code(400).send({ error: 'missing required fields' });
+      }
+      const bad = validateHandle(handle);
+      if (bad) return reply.code(400).send({ error: 'invalid_handle', reason: bad });
+
+      let identity: Identity;
+      try { identity = await identityFrom(workos_access_token); }
+      catch (e) {
+        const msg = (e as Error).message;
+        return /profile/i.test(msg)
+          ? reply.code(502).send({ error: 'profile_unavailable', detail: msg })
+          : reply.code(401).send({ error: 'invalid_token', detail: msg });
+      }
+
+      const joined = await joinWorkspace(db, identity, workspace_id, handle);
+      if (joined === 'not_invited') {
+        return reply.code(403).send({ error: 'not_invited' });
+      }
+      if (joined === 'handle_taken') {
+        // Never auto-suffixed (§10). They pick again.
+        return reply.code(409).send({
+          error: 'handle_taken',
+          handle_suggestions: (await suggestHandles(db, workspace_id, identity)).slice(0, 5),
+        });
+      }
+
+      const memberships = await resolveMemberships(db, identity.workosUserId);
+      return reply.send({
+        needs_workspace: false,
+        actor: joined,
+        memberships: memberships.map(wire),
+        ...(await issue(joined.actorId, joined.orgId, joined.workspaceId, device_id)),
+      });
+    });
+
   /** Rotate. The old refresh token is revoked in the same statement it is used. */
   app.post<{ Body: { refresh_token: string } }>('/auth/refresh', async (req, reply) => {
     const token = req.body?.refresh_token;
@@ -247,7 +308,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       .select(['sessions.id as sid', 'sessions.actor_id', 'sessions.device_id',
                'sessions.expires_at', 'sessions.revoked_at',
                'actors.org_id', 'actors.workspace_id', 'actors.state',
-               'actors.identity_id'])
+               'actors.identity_id', 'actors.display_name'])
       .where('sessions.refresh_hash', '=', hashRefreshToken(token))
       .executeTakeFirst();
 
@@ -271,8 +332,34 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       ? await resolveMemberships(db, row.identity_id)
       : [];
 
+    // And invitations accepted since the last sign-in. Read from the MIRROR
+    // rather than from WorkOS: refresh happens every few minutes, and a
+    // Management API call on each would be a per-user rate against a quota to
+    // learn something the poller already knows.
+    // The display name comes from the actor we already have. Email would give
+    // better suggestions and is deliberately not stored (§6.2), so a name-based
+    // suggestion is the best available — and an empty identity here produced no
+    // suggestions at all, leaving the join screen asking people to invent one.
+    const joins = row.identity_id
+      ? await pendingJoins(db, {
+          workosUserId: row.identity_id, email: '',
+          displayName: row.display_name, avatarUrl: null,
+        }, 'mirror')
+      : [];
+
     return reply.send({
+      // `actor` is returned here for the same reason every sibling endpoint
+      // returns it: without it the client cannot tell which workspace the new
+      // token is scoped to, and a client that cannot tell drops the
+      // memberships travelling alongside it. That is exactly what happened —
+      // memberships were sent on every refresh and applied on none of them,
+      // so a workspace added server-side never reached the client.
+      actor: { actorId: row.actor_id, orgId: row.org_id, workspaceId: row.workspace_id },
       memberships: memberships.map(wire),
+      pending_joins: joins.map(j => ({
+        org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
+        handle_suggestions: j.handleSuggestions,
+      })),
       ...(await issue(row.actor_id, row.org_id, row.workspace_id, row.device_id)),
     });
   });

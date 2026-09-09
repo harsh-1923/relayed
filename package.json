@@ -24,6 +24,7 @@
     "grafana": "open http://localhost:3000",
     "otel:smoke": "node scripts/otel-smoke.mjs",
     "spike:sync": "node spikes/sync-tests.mjs",
+    "spike:authz": "node spikes/authz-tests.mjs",
     "verify:sqlite": "npm --prefix spikes/electron-verify run sqlite",
     "verify:timer": "npm --prefix spikes/electron-verify run timer",
     "test": "pnpm -r test"

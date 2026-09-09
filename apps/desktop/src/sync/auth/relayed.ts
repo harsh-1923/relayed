@@ -1,3 +1,5 @@
+import type { Role } from '@relayed/authz';
+
 // Client for OUR auth server. Everything after the initial WorkOS exchange goes
 // through here, so steady-state sync depends only on our server being up
 // (PHASE-1-IDENTITY.md §6).
@@ -16,6 +18,7 @@ export interface OurSession {
   /** Epoch ms. */
   expiresAt: number;
   actor: Actor | null;
+  pendingJoins: PendingJoin[];
   /**
    * EVERY workspace this identity belongs to (STORAGE.md §10.1). Populated by
    * /auth/session, /auth/workspace and /auth/refresh; empty from /auth/switch,
@@ -39,6 +42,15 @@ export interface Membership {
   actorHandle: string;
   actorDisplayName: string;
   actorAvatarUrl: string | null;
+  actorRole: Role;
+}
+
+/** A workspace we were admitted to in WorkOS and have no actor for yet (§9). */
+export interface PendingJoin {
+  workspaceId: string;
+  orgId: string;
+  name: string;
+  handleSuggestions: string[];
 }
 
 /** Returned when the identity has no organization yet (§9 decision 1). */
@@ -46,6 +58,9 @@ export interface NeedsWorkspace {
   needsWorkspace: true;
   identity: { email: string; displayName: string };
   handleSuggestions: string[];
+  /** An invited person has no org of their own — and must not be pushed into
+   *  creating one, which reads as a broken invite. */
+  pendingJoins: PendingJoin[];
 }
 
 export class ServerError extends Error {
@@ -60,6 +75,21 @@ export class ServerError extends Error {
 }
 
 const baseUrl = () => process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787';
+
+async function get<T>(path: string, bearer: string): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl()}${path}`, { headers: { authorization: `Bearer ${bearer}` } });
+  } catch (e) {
+    throw new ServerError((e as Error).message, 'network', 0);
+  }
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new ServerError(String(json['detail'] ?? json['error'] ?? res.statusText),
+                          String(json['error'] ?? `http_${res.status}`), res.status);
+  }
+  return json as T;
+}
 
 async function post<T>(path: string, body: unknown, bearer?: string): Promise<T> {
   let res: Response;
@@ -98,13 +128,15 @@ interface RawSession {
   expires_in?: number;
   actor?: { actorId: string; orgId: string; workspaceId: string };
   memberships?: RawMembership[];
+  pending_joins?: { workspace_id: string; org_id: string; name: string;
+                    handle_suggestions: string[] }[];
 }
 
 interface RawMembership {
   workspace_id: string; org_id: string; name: string; slug: string;
   workspace_avatar_url: string | null;
   actor_id: string; actor_handle: string; actor_display_name: string;
-  actor_avatar_url: string | null;
+  actor_avatar_url: string | null; actor_role: Role;
 }
 
 const toMembership = (m: RawMembership): Membership => ({
@@ -112,6 +144,7 @@ const toMembership = (m: RawMembership): Membership => ({
   workspaceAvatarUrl: m.workspace_avatar_url ?? null,
   actorId: m.actor_id, actorHandle: m.actor_handle,
   actorDisplayName: m.actor_display_name, actorAvatarUrl: m.actor_avatar_url ?? null,
+  actorRole: m.actor_role ?? 'member',
 });
 
 const toSession = (raw: RawSession): OurSession => ({
@@ -123,6 +156,10 @@ const toSession = (raw: RawSession): OurSession => ({
         orgId: raw.actor.orgId, workspaceId: raw.actor.workspaceId }
     : null,
   memberships: (raw.memberships ?? []).map(toMembership),
+  pendingJoins: (raw.pending_joins ?? []).map(j => ({
+    workspaceId: j.workspace_id, orgId: j.org_id, name: j.name,
+    handleSuggestions: j.handle_suggestions ?? [],
+  })),
 });
 
 /** Trade a verified WorkOS token for our session. */
@@ -140,6 +177,10 @@ export async function exchangeForSession(
       needsWorkspace: true,
       identity: raw.identity ?? { email: '', displayName: '' },
       handleSuggestions: raw.handle_suggestions ?? [],
+      pendingJoins: (raw.pending_joins ?? []).map(j => ({
+        workspaceId: j.workspace_id, orgId: j.org_id, name: j.name,
+        handleSuggestions: j.handle_suggestions ?? [],
+      })),
     };
   }
   return toSession(raw);
@@ -184,6 +225,36 @@ export const switchSession = async (
 ): Promise<OurSession> =>
   toSession(await post<RawSession>('/auth/switch', {
     refresh_token: refreshToken, workspace_id: workspaceId,
+  }));
+
+export interface Invitation { id: string; email: string; state: string; expires_at: string }
+
+/**
+ * Invitations are proxied through the sync process because the renderer never
+ * holds a token (DESIGN.md §13.1). The server decides whether the caller may
+ * invite — the client's own can() only decides whether to show the control
+ * (AUTHZ.md §3, invariant 49).
+ */
+export const listInvitations = async (accessToken: string): Promise<{ invitations: Invitation[] }> =>
+  get<{ invitations: Invitation[] }>('/invitations', accessToken);
+
+export const createInvite = async (
+  accessToken: string, email: string,
+): Promise<{ invitation: Invitation }> =>
+  post<{ invitation: Invitation }>('/invitations', { email }, accessToken);
+
+export const revokeInvite = async (
+  accessToken: string, id: string,
+): Promise<{ invitation: Invitation }> =>
+  post<{ invitation: Invitation }>(`/invitations/${encodeURIComponent(id)}/revoke`, {}, accessToken);
+
+/** Materialise the actor for a workspace we were admitted to (§9). */
+export const joinWorkspace = async (
+  workosAccessToken: string, deviceId: string, workspaceId: string, handle: string,
+): Promise<OurSession> =>
+  toSession(await post<RawSession>('/auth/join', {
+    workos_access_token: workosAccessToken, device_id: deviceId,
+    workspace_id: workspaceId, handle,
   }));
 
 export const signOutSession = (refreshToken: string): Promise<unknown> =>

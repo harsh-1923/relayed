@@ -41,6 +41,37 @@ export interface ActorsTable {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * A permission, as a row (docs/AUTHZ.md §4). Read as a triple this is a
+ * relationship tuple — (actor_id, role, scope_type:scope_id) — which is what
+ * makes the evaluator swappable without touching the data.
+ */
+export interface MembershipsTable {
+  scope_type: 'workspace' | 'space' | 'chat';
+  scope_id: string;
+  actor_id: string;
+  role: 'owner' | 'admin' | 'member';
+  joined_at: Generated<Timestamp>;
+  /** Leaving is a tombstone, never a delete. */
+  left_at: Timestamp | null;
+}
+
+/** Where the WorkOS event poller has read up to. One row. */
+export interface WorkosCursorTable {
+  id: string;
+  after_id: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** What WorkOS says about org membership — admitted, not permitted. */
+export interface WorkosMembershipsTable {
+  workos_user_id: string;
+  workos_org_id: string;
+  role_slug: string | null;
+  status: string;
+  seen_at: Generated<Timestamp>;
+}
+
 export interface SessionsTable {
   id: string;
   actor_id: string;
@@ -56,5 +87,8 @@ export interface DB {
   organizations: OrganizationsTable;
   workspaces: WorkspacesTable;
   actors: ActorsTable;
+  memberships: MembershipsTable;
+  workos_cursor: WorkosCursorTable;
+  workos_memberships: WorkosMembershipsTable;
   sessions: SessionsTable;
 }

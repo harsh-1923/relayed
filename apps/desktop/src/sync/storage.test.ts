@@ -13,6 +13,7 @@ const root = () => mkdtempSync(join(tmpdir(), 'relayed-storage-'));
 const member = (over: Partial<Membership> & { workspaceId: string; actorId: string }): Membership => ({
   orgId: 'org_1', name: 'Workspace', slug: 'workspace', workspaceAvatarUrl: null,
   actorHandle: 'harsh', actorDisplayName: 'Harsh Sharma', actorAvatarUrl: null,
+  actorRole: 'owner',
   ...over,
 });
 
@@ -300,6 +301,7 @@ test('an existing v1 account.db migrates its avatar columns in place', () => {
   // what the server returned — which was a URL all along.
   const file = join(dir, 'accounts', accountId, 'account.db');
   const db = new DatabaseSync(file);
+  db.exec('ALTER TABLE workspaces DROP COLUMN actor_role');
   db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_url');
   db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_blob');
   db.exec('ALTER TABLE workspaces DROP COLUMN actor_avatar_blob');
@@ -318,6 +320,9 @@ test('an existing v1 account.db migrates its avatar columns in place', () => {
   assert.equal(row?.actorAvatarBlob, null);
   assert.equal(row?.actorHandle, 'harsh');
   assert.equal(row?.workspaceAvatarUrl, null, 'a workspace image is simply absent');
+  // v5's default is the LEAST privilege, so a row that predates the column
+  // grants nothing extra until the next membership refresh fills it in.
+  assert.equal(row?.actorRole, 'member');
 });
 
 test('blobs are content-addressed, sharded, and account-tier', () => {

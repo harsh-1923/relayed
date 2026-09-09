@@ -101,4 +101,16 @@ export const accountMigrations: readonly Migration[] = [
       ALTER TABLE workspaces ADD COLUMN workspace_avatar_blob TEXT;
     `,
   },
+  {
+    version: 5,
+    name: 'actor-role',
+    // My role in this workspace, so the UI can answer can() offline
+    // (AUTHZ.md §3). A projection, never the authority: the client may HIDE an
+    // action it believes is denied and may never permit one (invariant 49),
+    // and the server re-checks every write regardless.
+    //
+    // Defaulted to 'member', the least privilege, so a row that predates this
+    // column grants nothing extra until the next membership refresh fills it in.
+    up: `ALTER TABLE workspaces ADD COLUMN actor_role TEXT NOT NULL DEFAULT 'member';`,
+  },
 ];

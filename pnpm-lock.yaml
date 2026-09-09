@@ -16,6 +16,9 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0
+      '@relayed/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
       '@relayed/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -98,6 +101,9 @@ importers:
 
   apps/server:
     dependencies:
+      '@relayed/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
       '@relayed/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -120,6 +126,15 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.23.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/authz:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.5.0
+        version: 26.5.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

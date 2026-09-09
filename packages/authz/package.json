@@ -1,0 +1,17 @@
+{
+  "name": "@relayed/authz",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test src/",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^5.9.3"
+  }
+}

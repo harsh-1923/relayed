@@ -13,6 +13,7 @@ import { Session, type AuthState } from './auth/session.ts';
 import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
+import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
 import { newId } from './ids.ts';
 import type { OurSession } from './auth/relayed.ts';
 
@@ -108,7 +109,10 @@ const session = new Session({
  * 1 identity is written to disk (STORAGE.md §5).
  */
 function adoptSession(s: OurSession): void {
-  const workspaceId = s.actor?.workspaceId;
+  // Fall back to the workspace already open. A response that omits `actor` must
+  // not silently discard the memberships beside it — belt and braces alongside
+  // the server now always sending one.
+  const workspaceId = s.actor?.workspaceId ?? storage.workspaceId;
   if (!workspaceId) return;
 
   if (s.memberships.length > 0) {
@@ -146,7 +150,16 @@ async function fillAvatars(): Promise<void> {
 function view() {
   const hasAccount = storage.accountId !== null;
   const workspaces: WorkspaceRow[] = hasAccount ? storage.workspaces() : [];
+  const active = workspaces.find(w => w.workspaceId === storage.workspaceId);
   return {
+    /**
+     * My grants in the ACTIVE workspace, as `scope:id -> role` — the shape
+     * `can()` takes (AUTHZ.md §3). Sent as an array because a Map does not
+     * survive structured cloning to the renderer intact.
+     *
+     * Space and chat grants join this in Phase 2, when spaces exist.
+     */
+    grants: active ? [[`workspace:${active.workspaceId}`, active.actorRole]] : [],
     installId: storage.installId,
     epoch: storage.epoch,
     accountId: storage.accountId,
@@ -237,6 +250,31 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     return view();
   },
   'auth.configured': () => ({ clientId: (process.env['WORKOS_CLIENT_ID'] ?? '').slice(0, 14) || null }),
+
+  // ── invitations (AUTHZ.md §9) ──────────────────────────────────────────
+  // The renderer never holds a token, so every one of these is proxied through
+  // the process that does (DESIGN.md §13.1).
+  'invite.list': async () => {
+    const token = await session.ensureFresh();
+    if (!token) return { invitations: [], offline: true };
+    return { ...(await listInvitations(token)), offline: false };
+  },
+  'invite.create': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — an invitation cannot be queued');
+    return createInvite(token, (params as { email: string }).email);
+  },
+  'invite.revoke': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return revokeInvite(token, (params as { id: string }).id);
+  },
+  'auth.join': async (params) => {
+    const p = params as { workspaceId: string; handle: string };
+    await session.joinWorkspace(p.workspaceId, p.handle);
+    push();
+    return view();
+  },
 
   /** Everything on disk. Debug only — see Storage.debug(). */
   'debug.snapshot': () => storage.debug(),

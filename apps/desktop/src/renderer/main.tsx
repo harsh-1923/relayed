@@ -1,7 +1,8 @@
 import './index.css';
 import { StrictMode, useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AppState, RelayedApi, WorkspaceRow } from '../preload/api';
+import type { AppState, Invitation, PendingJoin, RelayedApi, WorkspaceRow } from '../preload/api';
+import { can, workspace as wsTarget, type Grants, type Role } from '@relayed/authz';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,6 +36,18 @@ async function call<T>(fn: () => Promise<T>): Promise<T | null> {
  * initials fallback is for.
  */
 const blobSrc = (id: string | null) => (id ? `relayed-blob://${id}` : undefined);
+
+/**
+ * The client's mirror of the server's evaluator — the SAME function, from
+ * @relayed/authz, not a second implementation that could drift (AUTHZ.md §12.2).
+ *
+ * It answers from replicated state and never touches the network, which is what
+ * lets the UI be correct offline (§3). It may only HIDE a control it believes is
+ * denied; the server re-checks every write regardless (invariant 49), so being
+ * wrong here is an affordance that fails on use, not a permission granted.
+ */
+const grantsOf = (state: AppState): Grants =>
+  new Map(state.grants as [string, Role][]);
 
 const initials = (s: string) =>
   s.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
@@ -217,7 +230,10 @@ function Identity(props: {
         {auth.status === 'needs_workspace' ? (
           <>
             <p className="text-sm text-muted-foreground">
-              Signed in as {auth.identity.email}. Name your workspace to finish.
+              Signed in as {auth.identity.email}.
+              {auth.pendingJoins.length > 0
+                ? ' Join a workspace you were invited to, or create your own.'
+                : ' Name your workspace to finish.'}
             </p>
             <WorkspaceForm
               defaultName={auth.identity.displayName
@@ -251,6 +267,150 @@ function Identity(props: {
             {busy || auth.status === 'authenticating' ? 'Waiting for the browser…' : 'Sign in'}
           </Button>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Invitations. Rendered only where the local mirror says the action exists. */
+function Invitations(props: { state: AppState; onError: (m: string | null) => void }) {
+  const [list, setList] = useState<Invitation[] | null>(null);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const wsId = props.state.workspaceId;
+
+  const mayInvite = wsId ? can(grantsOf(props.state), 'invite', wsTarget(wsId)) : false;
+  const mayManage = wsId ? can(grantsOf(props.state), 'manage_members', wsTarget(wsId)) : false;
+
+  const refresh = useCallback(async () => {
+    if (!mayManage) return;
+    const v = await call(() => window.relayed!.query('invite.list'));
+    if (v) setList(v.invitations);
+  }, [mayManage]);
+
+  useEffect(() => { void refresh(); }, [refresh, wsId]);
+
+  const send = useCallback(async () => {
+    setBusy(true); props.onError(null);
+    try {
+      await call(() => window.relayed!.query('invite.create', { email: email.trim() }));
+      setEmail('');
+      await refresh();
+    } catch (e) { props.onError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [email, props, refresh]);
+
+  const revoke = useCallback(async (id: string) => {
+    try { await call(() => window.relayed!.query('invite.revoke', { id })); await refresh(); }
+    catch (e) { props.onError((e as Error).message); }
+  }, [props, refresh]);
+
+  // Hidden, not disabled: an affordance that exists but always fails teaches
+  // people the app is broken rather than that they lack a permission.
+  if (!mayInvite && !mayManage) return null;
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="text-base">Invite people</CardTitle>
+        <CardDescription>
+          They receive an email, sign in, and choose a handle for this workspace.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {mayInvite && (
+          <div className="flex items-end gap-2">
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="invite-email">Email</Label>
+              <Input id="invite-email" type="email" placeholder="person@example.com"
+                     value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <Button onClick={send} disabled={busy || !email.includes('@')}>
+              {busy ? 'Sending…' : 'Invite'}
+            </Button>
+          </div>
+        )}
+
+        {mayManage && list && list.length > 0 && (
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Pending ({list.length})
+            </div>
+            {list.map(i => (
+              <div key={i.id} className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate font-mono text-xs">{i.email}</span>
+                <Button size="sm" variant="ghost" onClick={() => void revoke(i.id)}>Revoke</Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {mayManage && list && list.length === 0 && (
+          <p className="text-sm text-muted-foreground">No invitations pending.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A workspace we have been admitted to and have no actor in yet (§9). */
+function PendingJoins(props: {
+  joins: PendingJoin[]; onError: (m: string | null) => void; onState: (s: AppState | null) => void;
+}) {
+  const [pick, setPick] = useState<PendingJoin | null>(props.joins[0] ?? null);
+  const [handle, setHandle] = useState(props.joins[0]?.handleSuggestions[0] ?? '');
+  const [busy, setBusy] = useState(false);
+  if (props.joins.length === 0) return null;
+
+  const join = async () => {
+    if (!pick) return;
+    setBusy(true); props.onError(null);
+    try {
+      props.onState(await call(() => window.relayed!.query(
+        'auth.join', { workspaceId: pick.workspaceId, handle })));
+    } catch (e) { props.onError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="text-base">You have been invited</CardTitle>
+        <CardDescription>
+          Choose a handle for this workspace. Handles are per workspace, so one you
+          use elsewhere may already be taken here.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {props.joins.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            {props.joins.map(j => (
+              <Button key={j.workspaceId} size="sm"
+                      variant={j.workspaceId === pick?.workspaceId ? 'secondary' : 'ghost'}
+                      onClick={() => { setPick(j); setHandle(j.handleSuggestions[0] ?? ''); }}>
+                {j.name}
+              </Button>
+            ))}
+          </div>
+        )}
+        <div className="space-y-2">
+          <Label htmlFor="join-handle">Your handle in {pick?.name}</Label>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">@</span>
+            <Input id="join-handle" value={handle}
+                   onChange={(e) => setHandle(e.target.value.toLowerCase())} />
+          </div>
+          {(pick?.handleSuggestions.length ?? 0) > 1 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {pick?.handleSuggestions.map(sug => (
+                <Button key={sug} size="sm" variant={sug === handle ? 'secondary' : 'ghost'}
+                        onClick={() => setHandle(sug)}>@{sug}</Button>
+              ))}
+            </div>
+          )}
+        </div>
+        <Button onClick={() => void join()} disabled={busy || handle.length < 3}>
+          {busy ? 'Joining…' : `Join ${pick?.name ?? ''}`}
+        </Button>
       </CardContent>
     </Card>
   );
@@ -333,8 +493,17 @@ function App() {
             </CardContent>
           </Card>
         ) : (
-          <Identity state={state} onError={setError}
-                    onState={(s) => { if (s) setState(s); }} />
+          <>
+            {/* An invited person has no workspace of their own, and pushing
+                them into creating one reads as a broken invite (§9). */}
+            {state.auth.status === 'needs_workspace' && (
+              <PendingJoins joins={state.auth.pendingJoins} onError={setError}
+                            onState={(s) => { if (s) setState(s); }} />
+            )}
+            <Identity state={state} onError={setError}
+                      onState={(s) => { if (s) setState(s); }} />
+            <Invitations state={state} onError={setError} />
+          </>
         )}
 
         <Separator />

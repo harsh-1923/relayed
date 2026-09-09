@@ -21,15 +21,16 @@ import { listenForCallback } from './loopback.ts';
 import { buildAuthorizeUrl, exchangeCode, type WorkOSConfig } from './workos.ts';
 import {
   exchangeForSession, createWorkspace, createWorkspaceAuthed, refreshSession,
-  switchSession, signOutSession, fetchMe,
-  ServerError, type Actor, type OurSession,
+  switchSession, signOutSession, fetchMe, joinWorkspace,
+  ServerError, type Actor, type OurSession, type PendingJoin,
 } from './relayed.ts';
 
 export type AuthState =
   | { status: 'signed_out' }
   | { status: 'authenticating' }
   /** Signed in with WorkOS but no org yet — onboarding must run (§9). */
-  | { status: 'needs_workspace'; identity: { email: string; displayName: string }; handleSuggestions: string[] }
+  | { status: 'needs_workspace'; identity: { email: string; displayName: string };
+      handleSuggestions: string[]; pendingJoins: PendingJoin[] }
   | { status: 'authenticated'; actor: Actor | null; expiresAt: number }
   /** Signed in, but the token could not be refreshed. Reads still work. */
   | { status: 'stale'; actor: Actor | null; reason: string };
@@ -114,7 +115,8 @@ export class Session {
         // /auth/workspace. Held in memory only, and dropped either way.
         this.#pendingWorkosToken = workos.accessToken;
         this.#set({ status: 'needs_workspace', identity: result.identity,
-                    handleSuggestions: result.handleSuggestions });
+                    handleSuggestions: result.handleSuggestions,
+                    pendingJoins: result.pendingJoins });
         this.#signedIn('needs_workspace', this.#now() - t0);
         return this.#state;
       }
@@ -173,6 +175,23 @@ export class Session {
     if (!token) throw new Error('not authenticated');
     await this.#adopt(await createWorkspaceAuthed(
       token, this.#deps.deviceId(), workspaceName, handle));
+    return this.#state;
+  }
+
+  /**
+   * Join a workspace we were admitted to in WorkOS, with a chosen handle.
+   *
+   * Needs the WorkOS token, which is only held between sign-in and onboarding —
+   * so this is reachable from the same window as createWorkspace, and for the
+   * same reason: the actor does not exist yet, so there is no session of ours
+   * to authenticate with.
+   */
+  async joinWorkspace(workspaceId: string, handle: string): Promise<AuthState> {
+    if (!this.#pendingWorkosToken) throw new Error('no pending sign-in — start again');
+    const session = await joinWorkspace(
+      this.#pendingWorkosToken, this.#deps.deviceId(), workspaceId, handle);
+    this.#pendingWorkosToken = null;
+    await this.#adopt(session);
     return this.#state;
   }
 

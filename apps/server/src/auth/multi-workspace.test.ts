@@ -107,12 +107,27 @@ test('selectMembership prefers the requested workspace, and refuses a foreign on
   assert.equal(selectMembership([], 'wsp_1'), null);
 });
 
-test('refresh carries the membership list', opts, async () => {
+test('refresh carries the membership list AND an actor to scope it', opts, async () => {
   const r = await post('/auth/refresh', { refresh_token: refreshA });
   assert.equal(r.status, 200);
-  const j = await r.json() as { memberships: { workspace_id: string }[]; refresh_token: string };
+  const j = await r.json() as {
+    memberships: { workspace_id: string; actor_role: string }[];
+    actor?: { workspaceId: string };
+    refresh_token: string;
+  };
   assert.deepEqual(j.memberships.map(m => m.workspace_id), [a.wsp, b.wsp],
     'a workspace added server-side reaches the client without a separate poll');
+
+  // The regression this exists for: refresh returned memberships and NO actor,
+  // so the client could not tell which workspace the token was scoped to and
+  // discarded the memberships travelling with it. Sent on every refresh,
+  // applied on none — and invisible until a membership field actually changed.
+  assert.ok(j.actor?.workspaceId, 'refresh must identify the workspace it scoped to');
+  assert.equal(j.actor.workspaceId, a.wsp);
+
+  // The role is what the client's can() reads (AUTHZ.md §3).
+  assert.ok(j.memberships.every(m => ['owner', 'admin', 'member'].includes(m.actor_role)),
+    'every membership carries a role the client can evaluate');
   refreshA = j.refresh_token;   // rotation
 });
 

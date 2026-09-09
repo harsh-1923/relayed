@@ -87,6 +87,20 @@ export const events = {
     doc: 'A workspace switch completed its LOCAL phase — the part the user '
        + 'waits on. Token and socket work follows and is timed separately.',
   },
+  'workos.poll.applied': {
+    fields: { events: 'int', after: 'id' },
+    doc: 'Events applied and the cursor they advanced to. The cursor is the '
+       + 'replay handle: rewinding it rebuilds the mirror.',
+  },
+  'workos.poll.failed': {
+    fields: { after: 'id', reason: 'enum' },
+    doc: 'A poll or an apply failed. The cursor did NOT move, so the failure '
+       + 'mode is staleness rather than a silently skipped event.',
+  },
+  'identity.deactivated': {
+    fields: { actor: 'id', via: 'enum' },
+    doc: 'An actor was tombstoned and its sessions revoked.',
+  },
   'blob.served': {
     fields: { blob: 'id', result: 'enum' },
     doc: 'The relayed-blob handler resolved. result=miss is a grey circle a '

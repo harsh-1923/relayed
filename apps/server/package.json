@@ -9,9 +9,11 @@
     "migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
     "keygen": "node src/auth/keygen.ts",
     "test": "node --env-file-if-exists=../../.env --test src/",
+    "backfill:orgs": "node --env-file-if-exists=../../.env src/workos/backfill.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@relayed/authz": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "fastify": "^5.2.0",
     "jose": "^6.0.0",

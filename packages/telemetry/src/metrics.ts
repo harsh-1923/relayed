@@ -31,7 +31,7 @@ export interface LabelValues {
   /** Which database. The two migrate on independent version lines. */
   tier: 'account' | 'workspace';
   /** How an actor came to exist. */
-  via: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api';
+  via: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api' | 'workos_event';
   /** How a workspace obtained credentials: a stored token, or a first-ever switch. */
   path: 'refresh' | 'switch';
   outcome: 'authenticated' | 'needs_workspace' | 'failed';
@@ -164,6 +164,30 @@ export const metrics = {
     doc: 'Eager prefetch outcomes (DESIGN §13.3). `failed` is usually offline '
        + 'and recovers; a persistent rate means a broken CDN or a bad URL.',
   },
+  // ── WorkOS reconciliation ────────────────────────────────────────────────
+  'workos.poll': {
+    kind: 'counter', labels: ['result'],
+    doc: 'Event-log polls. A sustained error rate means the mirror is going '
+       + 'stale — accepted invitations stop appearing and deactivations stop '
+       + 'taking effect — with nothing user-visible to indicate it.',
+  },
+  'workos.poll.duration': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'How long a drain takes. Growing means a backlog rather than a slow API.',
+  },
+  'workos.poll.lag': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'Age of the newest applied event when it was applied. This is the real '
+       + 'answer to "how soon does an accepted invitation appear", and the '
+       + 'number that would justify webhooks if it ever got bad.',
+  },
+  'identity.deactivated': {
+    kind: 'counter', labels: ['via'],
+    doc: 'Actors tombstoned and their sessions revoked. via=workos_event is the '
+       + 'gap accepted when we chose to mint our own tokens, now closed within '
+       + 'a poll interval instead of an access-token TTL.',
+  },
+
   'blob.bytes': {
     kind: 'histogram', unit: 'bytes', labels: ['kind'],
     doc: 'What the blob store actually costs on disk.',
