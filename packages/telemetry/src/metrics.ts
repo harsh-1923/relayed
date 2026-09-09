@@ -40,7 +40,14 @@ export interface LabelValues {
   serve: 'hit' | 'miss' | 'rejected';
   /** Whether boot had local data to render. A cold install is a different number. */
   had_account: 'yes' | 'no';
-  stored: 'stored' | 'skipped' | 'failed';
+  /**
+   * `linked` is a blob we already held under another row — the same face in two
+   * workspaces is one file, so it costs no network at all. Worth its own value
+   * rather than counting as `stored`: a high linked rate means content
+   * addressing is earning its keep, and a linked hit works offline where a
+   * stored one does not.
+   */
+  stored: 'stored' | 'linked' | 'skipped' | 'failed';
 }
 
 export type LabelName = keyof LabelValues;

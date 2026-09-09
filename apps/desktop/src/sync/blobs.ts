@@ -29,6 +29,37 @@ export async function prefetchAvatars(storage: Storage): Promise<number> {
   if (!storage.accountId) return 0;
   let stored = 0;
 
+  /**
+   * Attach bytes to one row, downloading only if nobody already holds them.
+   *
+   * The link-first step is not just an optimisation. A URL we already hold
+   * resolves OFFLINE, where a download cannot — and the commonest case in this
+   * app is the same person appearing as "you" in account.db and again as a
+   * directory row, which is one file either way.
+   */
+  const resolve = async (url: string, attach: (blobId: string) => void): Promise<void> => {
+    const held = storage.blobForUrl(url);
+    if (held) {
+      attach(held);
+      count('blob.prefetch', { kind: 'avatar', stored: 'linked' });
+      stored += 1;
+      return;
+    }
+    try {
+      const id = await fetchBlob(storage, url);
+      if (!id) { count('blob.prefetch', { kind: 'avatar', stored: 'skipped' }); return; }
+      attach(id);
+      count('blob.prefetch', { kind: 'avatar', stored: 'stored' });
+      stored += 1;
+    } catch {
+      // Offline, 404, a CDN hiccup — all the same to us, and all recoverable
+      // on the next pass. A PERSISTENT failure rate is the interesting
+      // signal: that is a bad URL or a broken CDN, not a plane.
+      count('blob.prefetch', { kind: 'avatar', stored: 'failed' });
+    }
+  };
+
+  // ── account tier: the rail and the identity card ───────────────────────────
   for (const w of storage.workspaces()) {
     const wanted = [
       { which: 'actor' as const,     url: w.actorAvatarUrl,     held: w.actorAvatarBlob },
@@ -38,20 +69,24 @@ export async function prefetchAvatars(storage: Storage): Promise<number> {
       // Already held. A blob is cleared only when its source URL changes (see
       // syncMemberships), so this is the steady state after the first run.
       if (!url || (held && storage.hasBlob(held))) continue;
-      try {
-        const id = await fetchBlob(storage, url);
-        if (!id) { count('blob.prefetch', { kind: 'avatar', stored: 'skipped' }); continue; }
-        storage.setAvatarBlob(w.workspaceId, which, id);
-        count('blob.prefetch', { kind: 'avatar', stored: 'stored' });
-        stored += 1;
-      } catch {
-        // Offline, 404, a CDN hiccup — all the same to us, and all recoverable
-        // on the next pass. A PERSISTENT failure rate is the interesting
-        // signal: that is a bad URL or a broken CDN, not a plane.
-        count('blob.prefetch', { kind: 'avatar', stored: 'failed' });
-      }
+      await resolve(url, id => storage.setAvatarBlob(w.workspaceId, which, id));
     }
   }
+
+  // ── workspace tier: the directory ──────────────────────────────────────────
+  // The ACTIVE workspace only, because `actors` lives in the workspace replica
+  // and exactly one is open (STORAGE.md §4). Switching runs this again.
+  //
+  // Ordering matters and is not obvious: this needs syncActors to have run, so
+  // fillActors calls back here once the directory has landed rather than the
+  // two racing at boot.
+  if (storage.hasWorkspace) {
+    for (const a of storage.actors()) {
+      if (!a.avatarUrl || (a.avatarBlob && storage.hasBlob(a.avatarBlob))) continue;
+      await resolve(a.avatarUrl, id => storage.setActorAvatarBlob(a.id, id));
+    }
+  }
+
   if (stored > 0) emit('blob.prefetched', { kind: 'avatar', count: stored });
   return stored;
 }

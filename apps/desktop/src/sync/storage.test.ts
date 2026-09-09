@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { Storage, type Membership } from './storage.ts';
+import { Storage, type Membership, type DirectoryRow } from './storage.ts';
 import { accountMigrations } from './migrations/account.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
 
@@ -373,3 +373,74 @@ test('the debug snapshot lists vault slots by name and never their contents', ()
   assert.ok(!JSON.stringify(snap).includes('SECRET'), 'a credential must never reach the renderer');
 });
 
+
+// ── the workspace directory ──────────────────────────────────────────────────
+// None of this was covered, which is how a `DELETE FROM actors` on every sync
+// survived long enough to make directory avatars permanently grey.
+
+const dirRow = (over: Partial<DirectoryRow> & { id: string }): DirectoryRow => ({
+  workspaceId: 'wsp_a', type: 'human', handle: 'someone', displayName: 'Some One',
+  avatarUrl: null, ownerActorId: null, state: 'active', updatedAt: 1,
+  ...over,
+});
+
+test('a directory sync keeps an avatar already fetched, and drops it when the url changes', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  const url = 'https://cdn.example/face.png';
+  const id = 'a'.repeat(64);
+
+  storage.syncActors([dirRow({ id: 'act_a', avatarUrl: url })]);
+  storage.putBlob(id, new TextEncoder().encode('PNG'));
+  storage.setActorAvatarBlob('act_a', id);
+  assert.equal(storage.actors()[0]?.avatarBlob, id);
+
+  // The same directory again. The pointer must survive — the previous
+  // implementation deleted every row first, so whatever the prefetch wrote was
+  // gone by the next refresh and the fetch happened for ever with no effect.
+  storage.syncActors([dirRow({ id: 'act_a', avatarUrl: url })]);
+  assert.equal(storage.actors()[0]?.avatarBlob, id, 'an unchanged url keeps its bytes');
+
+  // Negative control: a NEW url means the bytes we hold are the old face.
+  storage.syncActors([dirRow({ id: 'act_a', avatarUrl: 'https://cdn.example/other.png' })]);
+  assert.equal(storage.actors()[0]?.avatarBlob, null, 'a changed url must drop the pointer');
+});
+
+test('a directory sync removes actors the snapshot no longer contains', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+
+  storage.syncActors([dirRow({ id: 'act_a' }), dirRow({ id: 'act_b', handle: 'other' })]);
+  assert.equal(storage.actors().length, 2);
+
+  // Upsert replaced delete-then-insert, so removal is no longer free — it is a
+  // second statement, and this is the test that says it still happens.
+  storage.syncActors([dirRow({ id: 'act_a' })]);
+  assert.deepEqual(storage.actors().map(a => a.id), ['act_a']);
+
+  // The empty snapshot: an `IN ()` with no parameters is a syntax error in
+  // SQLite, so this exercises the guard rather than the happy path.
+  storage.syncActors([]);
+  assert.equal(storage.actors().length, 0);
+});
+
+test('blobForUrl links bytes already held elsewhere, and ignores a pointer whose file is gone', () => {
+  const dir = root();
+  const url = 'https://cdn.example/face.png';
+  const { storage, accountId } = seeded(dir, [member({
+    workspaceId: 'wsp_a', actorId: 'act_a', actorAvatarUrl: url,
+  })]);
+  const id = 'a'.repeat(64);
+
+  assert.equal(storage.blobForUrl(url), null, 'nothing held yet');
+
+  storage.putBlob(id, new TextEncoder().encode('PNG'));
+  storage.setAvatarBlob('wsp_a', 'actor', id);
+  // The same person as "you" in account.db and as a directory row is one file.
+  assert.equal(storage.blobForUrl(url), id, 'the same url anywhere is the same bytes');
+
+  // A pointer to bytes that are gone is WORSE than no pointer: it renders as a
+  // broken image where a monogram belongs.
+  rmSync(join(dir, 'accounts', accountId, 'blobs', id.slice(0, 2), id));
+  assert.equal(storage.blobForUrl(url), null, 'an evicted blob must not be linked');
+});

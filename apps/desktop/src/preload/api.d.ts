@@ -39,7 +39,10 @@ export interface ReplicaActor {
   type: "human" | "agent";
   handle: string;
   displayName: string;
+  /** Where it came from. Never rendered — the CSP blocks it (invariant 46). */
   avatarUrl: string | null;
+  /** sha256 of bytes held locally, served over relayed-blob:. What to render. */
+  avatarBlob: string | null;
   ownerActorId: string | null;
   state: string;
   updatedAt: number;

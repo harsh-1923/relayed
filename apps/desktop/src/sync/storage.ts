@@ -58,11 +58,23 @@ export interface ReplicaActor {
   type: 'human' | 'agent';
   handle: string;
   displayName: string;
+  /** Where the picture came from. The renderer never sees this (invariant 46). */
   avatarUrl: string | null;
+  /** sha256 of the bytes we hold, or null. This is what the renderer renders. */
+  avatarBlob: string | null;
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
 }
+
+/**
+ * A directory row as the SERVER sends it.
+ *
+ * `avatarBlob` names bytes on this device, so it cannot come off the wire and
+ * is deliberately absent here. `syncActors` preserves whatever we already hold
+ * rather than asking the caller for a null it could only guess at.
+ */
+export type DirectoryRow = Omit<ReplicaActor, 'avatarBlob'>;
 
 export interface AccountSummary {
   accountId: string;
@@ -491,20 +503,44 @@ export class Storage {
    * render on the messages they wrote (§6.3); dropping them would leave an
    * empty name where a greyed one belongs.
    */
-  syncActors(actors: readonly ReplicaActor[]): void {
+  syncActors(actors: readonly DirectoryRow[]): void {
     const db = this.workspace;
     db.exec('BEGIN');
     try {
-      db.exec('DELETE FROM actors');
-      const insert = db.prepare(`
+      // Upsert rather than DELETE-then-INSERT. The delete was wiping
+      // `avatar_blob` on every sync, which made prefetching directory avatars
+      // pointless: whatever the prefetch wrote, the next refresh removed.
+      const upsert = db.prepare(`
         INSERT INTO actors (id, workspace_id, type, handle, display_name,
-                            avatar_url, avatar_blob, owner_actor_id, state, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+                            avatar_url, owner_actor_id, state, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          workspace_id   = excluded.workspace_id,
+          type           = excluded.type,
+          handle         = excluded.handle,
+          display_name   = excluded.display_name,
+          avatar_url     = excluded.avatar_url,
+          owner_actor_id = excluded.owner_actor_id,
+          state          = excluded.state,
+          updated_at     = excluded.updated_at,
+          -- The bytes we hold are the OLD url's. Keep the pointer only while the
+          -- url is unchanged; otherwise drop it and let the prefetch refill.
+          -- Same rule as syncMemberships, for the same reason.
+          avatar_blob = CASE
+            WHEN actors.avatar_url IS NOT DISTINCT FROM excluded.avatar_url
+            THEN actors.avatar_blob ELSE NULL END
       `);
       for (const a of actors) {
-        insert.run(a.id, a.workspaceId, a.type, a.handle, a.displayName,
+        upsert.run(a.id, a.workspaceId, a.type, a.handle, a.displayName,
                    a.avatarUrl, a.ownerActorId, a.state, a.updatedAt);
       }
+      // The directory is a full snapshot, so an actor absent from it is gone.
+      // Deactivated actors are NOT absent — they arrive with state='deactivated'
+      // precisely so a tombstoned author still renders (§6.3).
+      const ids = actors.map(a => a.id);
+      db.prepare(
+        `DELETE FROM actors WHERE id NOT IN (${ids.map(() => '?').join(',') || "''"})`,
+      ).run(...ids);
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -521,6 +557,7 @@ export class Storage {
         handle: String(r['handle']),
         displayName: String(r['display_name']),
         avatarUrl: (r['avatar_url'] as string | null) ?? null,
+        avatarBlob: (r['avatar_blob'] as string | null) ?? null,
         ownerActorId: (r['owner_actor_id'] as string | null) ?? null,
         state: String(r['state']),
         updatedAt: Number(r['updated_at'] ?? 0),
@@ -549,6 +586,50 @@ export class Storage {
     const column = which === 'actor' ? 'actor_avatar_blob' : 'workspace_avatar_blob';
     this.account.prepare(`UPDATE workspaces SET ${column} = ? WHERE workspace_id = ?`)
       .run(blobId, workspaceId);
+  }
+
+  /** A directory row's picture. Lives in the workspace replica, not account.db. */
+  setActorAvatarBlob(actorId: string, blobId: string): void {
+    this.workspace.prepare('UPDATE actors SET avatar_blob = ? WHERE id = ?')
+      .run(blobId, actorId);
+  }
+
+  /**
+   * Have we already fetched this exact URL, under any row?
+   *
+   * Content addressing means the same bytes are one file however they arrive,
+   * so the same face in two workspaces — or the same person appearing both as
+   * "you" in account.db and as a directory row — needs no second download.
+   *
+   * Keyed on the URL rather than on the hash because the hash is only knowable
+   * after fetching, which is the cost being avoided. Safe for the same reason
+   * `syncMemberships` clears a blob when its URL changes: this codebase treats
+   * URL identity as byte identity, and invalidates on URL change.
+   *
+   * Returns null unless the bytes are genuinely still on disk — a pointer to a
+   * file that has been evicted is worse than no pointer, because it renders as
+   * a broken image rather than a monogram.
+   */
+  blobForUrl(url: string): string | null {
+    const seen = (id: unknown): string | null =>
+      typeof id === 'string' && this.hasBlob(id) ? id : null;
+
+    const acc = this.account.prepare(`
+      SELECT actor_avatar_blob AS b FROM workspaces
+       WHERE actor_avatar_url = ? AND actor_avatar_blob IS NOT NULL
+      UNION ALL
+      SELECT workspace_avatar_blob FROM workspaces
+       WHERE workspace_avatar_url = ? AND workspace_avatar_blob IS NOT NULL
+      LIMIT 1
+    `).get(url, url) as Record<string, unknown> | undefined;
+    const fromAccount = seen(acc?.['b']);
+    if (fromAccount) return fromAccount;
+
+    if (!this.#workspace) return null;
+    const row = this.#workspace.prepare(
+      'SELECT avatar_blob AS b FROM actors WHERE avatar_url = ? AND avatar_blob IS NOT NULL LIMIT 1',
+    ).get(url) as Record<string, unknown> | undefined;
+    return seen(row?.['b']);
   }
 
   /** See DebugSnapshot. Never used by the app itself. */

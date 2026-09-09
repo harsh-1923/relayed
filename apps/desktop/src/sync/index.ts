@@ -37,6 +37,8 @@ useOtlpIfConfigured('desktop');
  * `RELAYED_VERIFY_BOOT=1`, because that is a debugging aid rather than a signal.
  */
 const bootT0 = Number(process.env['RELAYED_BOOT_T0'] ?? 0);
+/** Boot happens once per process; a port attach does not (see the call site). */
+let bootRecorded = false;
 
 /**
  * Simulated offline, and R3's counter — the aeroplane without the aeroplane
@@ -173,6 +175,11 @@ async function fillActors(): Promise<void> {
     emit('directory.synced', {
       workspace: storage.workspaceId ?? '', actors: actors.length,
     });
+    // Directory avatars can only be prefetched once the directory exists, and
+    // fillAvatars is fired off in parallel with this — so it has already run
+    // against an empty table by the time we get here. Run it again now that
+    // there is something to walk. Idempotent: anything already held is skipped.
+    await fillAvatars();
   } catch {
     count('directory.synced', { result: 'error' });
   }
@@ -439,7 +446,15 @@ function attach(port: Electron.MessagePortMain) {
     // port and can paint. Recorded HERE rather than in main because the label —
     // whether there was local data at all — is only known on this side, and a
     // cold install is a genuinely different number from a warm one.
-    if (bootT0 > 0) {
+    //
+    // Once per PROCESS, not once per attach. A renderer reload closes its port
+    // and opens a new one, so `ports.size === 1` becomes true again while
+    // bootT0 still points at process start — which recorded a 1,555,160 ms
+    // "boot" the first time anyone reloaded the window. One sample like that
+    // moves every percentile on the R3 panel, and the panel then reads as a
+    // regression that did not happen.
+    if (bootT0 > 0 && !bootRecorded) {
+      bootRecorded = true;
       histogram('app.boot', Date.now() - bootT0,
                 { had_account: storage.accountId ? 'yes' : 'no' });
     }
