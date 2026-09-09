@@ -59,9 +59,9 @@ export interface WorkOSOrganization { id: string; name: string }
 /**
  * Create the organization SSO, Directory Sync and invitations all attach to.
  *
- * Until this existed, `organizations.workos_org_id` held `pending_<our id>` and
- * our users belonged to no WorkOS organization at all — which invitations
- * cannot work around, since an invitation is addressed to an organization.
+ * Called before our own transaction (provision.ts), so `workos_org_id` always
+ * holds a real id — an invitation is addressed to an organization, and one that
+ * does not exist in WorkOS cannot receive any.
  */
 export const createOrganization = (name: string): Promise<WorkOSOrganization> =>
   call<WorkOSOrganization>('POST', '/organizations', { name });

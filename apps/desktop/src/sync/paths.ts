@@ -58,7 +58,3 @@ export const workspaceDb   = (root: string, acc: string, wsp: string) =>
   join(workspaceDir(root, acc, wsp), 'relayed.db');
 export const blobsDir      = (root: string, acc: string, wsp: string) =>
   join(workspaceDir(root, acc, wsp), 'blobs');
-
-/** Pre-split layout, kept only so boot can move it aside once (§5). */
-export const legacyDb    = (root: string) => join(root, 'relayed.db');
-export const legacyVault = (root: string) => join(root, 'auth', 'refresh.bin');

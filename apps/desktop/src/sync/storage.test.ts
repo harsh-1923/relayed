@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -201,20 +201,6 @@ test('the epoch survives SIGNING OUT, which deletes the account', () => {
   assert.ok(second.storage.epoch > high, 'and the next switch continues upward');
 });
 
-test('the epoch is seeded from the pre-device-tier per-account value', () => {
-  // An install that already switched a few times must not restart below what a
-  // live renderer remembers.
-  const dir = root();
-  const { storage, accountId } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
-  storage.close();
-  rmSync(join(dir, 'epoch'), { force: true });
-  const db = new DatabaseSync(join(dir, 'accounts', accountId, 'account.db'));
-  db.prepare("INSERT INTO meta(k,v) VALUES('epoch','7') ON CONFLICT(k) DO UPDATE SET v='7'").run();
-  db.close();
-
-  assert.equal(new Storage(dir).epoch, 7);
-});
-
 test('a switch commits last_workspace before touching a handle', () => {
   const dir = root();
   const { storage } = seeded(dir, [
@@ -288,41 +274,6 @@ test('forgetting a workspace removes only that workspace', () => {
   assert.ok(!existsSync(join(wsps, 'wsp_a')));
   assert.ok(existsSync(join(wsps, 'wsp_b')));
   assert.equal(storage.workspaceRow('wsp_a'), null);
-});
-
-test('an existing v1 account.db migrates its avatar columns in place', () => {
-  const dir = root();
-  const { storage, accountId } = seeded(dir, [
-    member({ workspaceId: 'wsp_a', actorId: 'act_a', actorAvatarUrl: 'https://example.test/a.png' }),
-  ]);
-  storage.close();
-
-  // Wind it back to the real v1 shape: one column, named avatar_blob, holding
-  // what the server returned — which was a URL all along.
-  const file = join(dir, 'accounts', accountId, 'account.db');
-  const db = new DatabaseSync(file);
-  db.exec('ALTER TABLE workspaces DROP COLUMN actor_role');
-  db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_url');
-  db.exec('ALTER TABLE workspaces DROP COLUMN workspace_avatar_blob');
-  db.exec('ALTER TABLE workspaces DROP COLUMN actor_avatar_blob');
-  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_handle       TO handle');
-  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_display_name TO display_name');
-  db.exec('ALTER TABLE workspaces RENAME COLUMN actor_avatar_url   TO avatar_blob');
-  db.exec('PRAGMA user_version = 1');
-  db.close();
-
-  const reopened = new Storage(dir);
-  reopened.openAccount(accountId);
-  const row = reopened.workspaceRow('wsp_a');
-  // v2 renames the column to what it actually holds, v3 adds the genuinely
-  // local blob, v4 says whose each field is. The value survives all three.
-  assert.equal(row?.actorAvatarUrl, 'https://example.test/a.png');
-  assert.equal(row?.actorAvatarBlob, null);
-  assert.equal(row?.actorHandle, 'harsh');
-  assert.equal(row?.workspaceAvatarUrl, null, 'a workspace image is simply absent');
-  // v5's default is the LEAST privilege, so a row that predates the column
-  // grants nothing extra until the next membership refresh fills it in.
-  assert.equal(row?.actorRole, 'member');
 });
 
 test('blobs are content-addressed, sharded, and account-tier', () => {
@@ -422,22 +373,3 @@ test('the debug snapshot lists vault slots by name and never their contents', ()
   assert.ok(!JSON.stringify(snap).includes('SECRET'), 'a credential must never reach the renderer');
 });
 
-test('the pre-split layout is moved aside, not deleted', () => {
-  const dir = root();
-  // What Phase 1 left behind: one flat replica and one unkeyed vault slot.
-  const legacy = new DatabaseSync(join(dir, 'relayed.db'));
-  legacy.exec('CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)');
-  legacy.close();
-  mkdirSync(join(dir, 'auth'), { recursive: true });
-  writeFileSync(join(dir, 'auth', 'refresh.bin'), 'opaque');
-
-  new Storage(dir);
-  assert.ok(!existsSync(join(dir, 'relayed.db')));
-  assert.ok(existsSync(join(dir, 'relayed.db.pre-split')), 'a replica is recoverable, but not silently deleted');
-  assert.ok(existsSync(join(dir, 'auth', 'refresh.bin.pre-split')));
-
-  // Idempotent: a second boot must not fail on the already-present target.
-  writeFileSync(join(dir, 'relayed.db'), 'again');
-  new Storage(dir);
-  assert.ok(!existsSync(join(dir, 'relayed.db')));
-});

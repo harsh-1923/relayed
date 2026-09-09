@@ -8,7 +8,7 @@
 // active one is a field, not a global — which is what keeps the deferred
 // outbox drainer (§16.1) an addition rather than an untangling.
 import type { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { emit, count, histogram } from '@relayed/telemetry';
 import type { Role } from '@relayed/authz';
@@ -160,7 +160,6 @@ export class Storage {
     this.root = root;
     mkdirSync(p.accountsDir(root), { recursive: true });
     this.installId = readInstallId(root);
-    moveLegacyAside(root);
     this.#epoch = readEpoch(root);
   }
 
@@ -627,29 +626,15 @@ function countOutbox(db: DatabaseSync): number {
 /**
  * Monotonic across sign-out, account deletion and restart — the whole point.
  *
- * Seeded from the highest per-account value the pre-device-tier layout wrote,
- * so an install that already switched a few times does not start below what a
- * live renderer remembers.
+ * Device tier, not per account: sign-out deletes the account directory, and a
+ * counter that reset while a renderer still remembered the old value made every
+ * later reply look stale (invariant 41).
  */
 function readEpoch(root: string): number {
   const file = p.epochFile(root);
   if (existsSync(file)) return Number(readFileSync(file, 'utf8').trim()) || 0;
-
-  let seed = 0;
-  const dir = p.accountsDir(root);
-  if (existsSync(dir)) {
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      if (!e.isDirectory() || !existsSync(p.accountDb(root, e.name))) continue;
-      const db = openDatabase(p.accountDb(root, e.name));
-      try {
-        const row = db.prepare("SELECT v FROM meta WHERE k = 'epoch'").get() as { v: string } | undefined;
-        seed = Math.max(seed, Number(row?.v ?? 0) || 0);
-      } catch { /* a database too old to have meta cannot have an epoch */ }
-      finally { db.close(); }
-    }
-  }
-  writeFileSync(file, String(seed) + '\n', { mode: 0o600 });
-  return seed;
+  writeFileSync(file, '0\n', { mode: 0o600 });
+  return 0;
 }
 
 function bumpEpoch(root: string, current: number): number {
@@ -668,24 +653,4 @@ function readInstallId(root: string): string {
   const id = newId('ins');
   writeFileSync(file, id + '\n', { mode: 0o600 });
   return id;
-}
-
-/**
- * The pre-split layout put one flat `relayed.db` and a single unkeyed vault
- * slot directly in userData. Neither can be carried forward — the vault is now
- * keyed per workspace, so the session has to be re-established either way.
- *
- * Moved aside rather than deleted. The database is a replica holding no
- * unrecoverable state, but silently deleting anything under a user's
- * Application Support directory is not a habit worth having.
- */
-function moveLegacyAside(root: string): void {
-  for (const file of [p.legacyDb(root), p.legacyVault(root)]) {
-    if (!existsSync(file)) continue;
-    const target = `${file}.pre-split`;
-    if (existsSync(target)) { rmSync(file, { force: true }); continue; }
-    renameSync(file, target);
-    console.warn(`[storage] moved pre-split ${file} aside -> ${target}`);
-  }
-  for (const suffix of ['-wal', '-shm']) rmSync(p.legacyDb(root) + suffix, { force: true });
 }

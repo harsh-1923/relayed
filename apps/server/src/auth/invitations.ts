@@ -34,14 +34,13 @@ async function caller(authorization: string | undefined): Promise<Caller | null>
   } catch { return null; }
 }
 
-/** The WorkOS organization behind a workspace, or null if it predates the backfill. */
+/** The WorkOS organization an invitation is addressed to. */
 async function workosOrgFor(workspaceId: string): Promise<string | null> {
   const row = await db.selectFrom('workspaces')
     .innerJoin('organizations', 'organizations.id', 'workspaces.org_id')
     .select('organizations.workos_org_id as id')
     .where('workspaces.id', '=', workspaceId).executeTakeFirst();
-  if (!row || row.id.startsWith('pending_')) return null;
-  return row.id;
+  return row?.id ?? null;
 }
 
 const wire = (i: { id: string; email: string; state: string; expires_at: string }) => ({

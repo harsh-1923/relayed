@@ -38,12 +38,3 @@ CREATE UNIQUE INDEX membership_one_owner ON memberships (scope_type, scope_id)
 -- The hot path: every check starts from "what does this actor belong to".
 CREATE INDEX membership_actor ON memberships (actor_id) WHERE left_at IS NULL;
 CREATE INDEX membership_scope ON memberships (scope_type, scope_id) WHERE left_at IS NULL;
-
--- Every actor that exists today founded its own workspace, so each becomes its
--- owner. Written as a backfill rather than left to the application: an actor
--- with no membership row can do nothing at all, which would lock every existing
--- account out of its own workspace the moment can() starts being consulted.
-INSERT INTO memberships (scope_type, scope_id, actor_id, role, joined_at)
-SELECT 'workspace', a.workspace_id, a.id, 'owner', a.created_at
-FROM actors a
-WHERE a.type = 'human' AND a.state <> 'deactivated';
