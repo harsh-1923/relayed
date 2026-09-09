@@ -82,6 +82,26 @@ rediscover the hard way.
 contiguity, gap markers, catch-up, backfill paging, idempotency, unread
 arithmetic, outbox coalescing and read-state convergence.
 
+**Porting is not transliteration, and step B found where the line is.** The
+spike's `#bump` reads the counter and writes it back:
+
+```js
+const c = SELECT next_ord, next_rev FROM chats WHERE id=?
+UPDATE chats SET next_ord=?, next_rev=? WHERE id=?
+```
+
+That is correct in the spike, which runs one in-memory SQLite connection with no
+concurrency at all. Transliterated into Postgres it is a **lost update**: two
+senders both read 4 and both write 5, and two messages share an ordinal.
+`DESIGN.md` §8.4 already gives the right form — `SET next_ord = next_ord + 1 …
+RETURNING` — which takes a row lock, so the second transaction blocks and then
+adds to the committed value.
+
+So: port the **assertions** literally and the **behaviour** faithfully; re-derive
+anything whose correctness depended on the spike being single-threaded. Both
+forms are now in `allocate.test.ts`, the unsafe one as a negative control that
+asserts it really does lose an ordinal.
+
 `DESIGN.md` §15 item 15 says port it rather than rewriting it, and that
 instruction is the single highest-leverage sentence in this document. The spike
 is not a sketch — it is the acceptance suite, and it disagrees with intuition in
@@ -232,6 +252,30 @@ twenty lines.
 **Done when:** a concurrent-writer test shows two senders never interleave a
 `rev`, and a replayed `op_id` returns the first `ord` rather than allocating a
 second. Both are assertions the spike already makes; port them.
+
+**Built** as `sync/allocate.ts`: `allocate()` and `applyOnce()`, no transport
+and no access checks — step C composes them and adds the membership test.
+
+Three things the sketch above did not anticipate, each asserted:
+
+- **`allocate` takes a `Transaction`, not a `Kysely`,** and the type is doing
+  real work. Allocate in one transaction and insert in another, and a crash
+  between them burns an ordinal permanently: `head_ord` then names a message
+  that does not exist and every client's unread arithmetic stays one too high.
+- **The retry cannot be scoped to the ledger's own constraint.** `work` runs
+  before the ledger insert, so two concurrent copies of one op collide on
+  `messages_pkey` first and never reach `ops_pkey`. Retrying broadly is safe
+  because the retry is justified by evidence — the second attempt re-reads the
+  ledger and only replays if the op is actually there — so a genuine duplicate
+  message id from a different op still surfaces rather than being absorbed.
+- **One retry is provably enough.** Postgres raises the violation only when the
+  winning transaction commits; if it rolls back, the loser simply proceeds. A
+  conflict therefore means the winner is committed and visible to a fresh
+  transaction, so the retry's ledger read finds it. A loop would be theatre.
+
+The concurrency proofs are deterministic rather than probabilistic — two
+connections, one holding the row lock while the other is asserted to be blocked
+— because "duplicates are unlikely" is not the claim being made.
 
 ---
 
@@ -467,6 +511,12 @@ Each of these has already cost time somewhere in this repository.
 - **Verify a probe's success condition, not just its output.** A redirect check
   reported four URIs as accepted because it treated any `302` as success — the
   redirect was *to* an error page.
+- **Postgres `bigint` arrives in JavaScript as a STRING.** node-postgres does
+  that deliberately, because int8 outruns a JavaScript number. `ord` and `rev`
+  are int8 and the Kysely types call them `number`, so `next_ord + 1` evaluates
+  to `"51"` — silently, with the compiler satisfied and every happy-path test
+  green. Fixed once, in `db/types.ts`, by registering an int8 parser with a
+  safe-integer guard; found by running a query rather than by reading one.
 
 ---
 
