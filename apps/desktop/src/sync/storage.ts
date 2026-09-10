@@ -176,6 +176,21 @@ export interface BootState {
   epoch: number;
 }
 
+/** What `welcome` carried, in the client's own shape. */
+export interface WelcomePayload {
+  actorId: string;
+  spaces: {
+    id: string; kind: string; name: string | null; slug: string | null;
+    visibility: string | null; membershipPolicy: string; lifecycle: string;
+  }[];
+  chats: {
+    id: string; spaceId: string; kind: string; name: string | null;
+    headOrd: number; headRev: number;
+    chatUnread: number; threadUnread: number; mentionCount: number;
+  }[];
+  memberships: { scopeType: string; scopeId: string; role: string }[];
+}
+
 export class Storage {
   readonly root: string;
   readonly installId: string;
@@ -503,6 +518,101 @@ export class Storage {
    * render on the messages they wrote (§6.3); dropping them would leave an
    * empty name where a greyed one belongs.
    */
+  /**
+   * Write everything `welcome` carried, in one transaction.
+   *
+   * THIS IS WHAT MAKES R2 CHEAP. Every badge in the sidebar becomes correct
+   * here, with `messages` still completely empty — because "I have it" and
+   * "I know it exists" are different facts, and only the second is needed to
+   * render a number.
+   *
+   * `synced_through_rev` IS DELIBERATELY NOT TOUCHED. It means "I hold every
+   * change up to here, contiguously", and receiving a head is not receiving the
+   * changes below it. Advancing it from this frame would jump the frontier past
+   * events that were never applied — a silent permanent hole, which is the one
+   * thing the contiguity rule exists to prevent (invariant 1). What moves is
+   * `server_head_rev`: the gap between the two is precisely the catch-up that
+   * is owed.
+   */
+  applyWelcome(payload: WelcomePayload): void {
+    const db = this.workspace;
+    const workspaceId = this.workspaceId;
+    if (!workspaceId) throw new Error('applyWelcome with no workspace open');
+    db.exec('BEGIN');
+    try {
+      // `created_at` is required and is NOT carried on the wire: it is a local
+      // "when did this replica first hear of it", not the server's clock, and a
+      // client that invented one would be inventing history. On conflict it is
+      // left alone for the same reason.
+      const now = Date.now();
+      const space = db.prepare(`
+        INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
+                            membership_policy, lifecycle, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          kind = excluded.kind, name = excluded.name, slug = excluded.slug,
+          visibility = excluded.visibility,
+          membership_policy = excluded.membership_policy,
+          lifecycle = excluded.lifecycle,
+          updated_at = excluded.updated_at
+      `);
+      for (const row of payload.spaces) {
+        space.run(row.id, workspaceId, row.kind, row.name, row.slug,
+                  row.visibility, row.membershipPolicy, row.lifecycle, now, now);
+      }
+
+      const chat = db.prepare(`
+        INSERT INTO chats (id, workspace_id, space_id, kind, name,
+                           created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          space_id = excluded.space_id, kind = excluded.kind,
+          name = excluded.name, updated_at = excluded.updated_at
+      `);
+      // The counters and the head, per chat. `chat_state` is upserted rather
+      // than replaced so a row that already carries a frontier and a gap marker
+      // keeps them — this frame knows what the SERVER holds and nothing about
+      // what this device has applied.
+      const state = db.prepare(`
+        INSERT INTO chat_state (chat_id, server_head_rev, head_ord,
+                                chat_unread, thread_unread, mention_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+          server_head_rev = excluded.server_head_rev,
+          head_ord        = excluded.head_ord,
+          chat_unread     = excluded.chat_unread,
+          thread_unread   = excluded.thread_unread,
+          mention_count   = excluded.mention_count
+      `);
+      for (const row of payload.chats) {
+        chat.run(row.id, workspaceId, row.spaceId, row.kind, row.name, now, now);
+        state.run(row.id, row.headRev, row.headOrd,
+                  row.chatUnread, row.threadUnread, row.mentionCount);
+      }
+
+      // The caller's OWN memberships — the grants can() evaluates for their own
+      // affordances. Replaced wholesale, because a membership absent from this
+      // frame is one they no longer hold, and a stale row would let the UI
+      // offer an action the server will refuse.
+      db.prepare('DELETE FROM memberships WHERE actor_id = ?').run(payload.actorId);
+      const membership = db.prepare(`
+        INSERT INTO memberships (scope_type, scope_id, actor_id, role,
+                                 joined_at, left_at)
+        VALUES (?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(scope_type, scope_id, actor_id) DO UPDATE SET
+          role = excluded.role, left_at = NULL
+      `);
+      for (const row of payload.memberships) {
+        membership.run(row.scopeType, row.scopeId, payload.actorId, row.role, now);
+      }
+
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
   syncActors(actors: readonly DirectoryRow[]): void {
     const db = this.workspace;
     db.exec('BEGIN');

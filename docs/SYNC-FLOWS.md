@@ -133,7 +133,7 @@ referenced from other documents and neither gets renumbered.
 | 4 — the event log | *new* | 13 completed, 14 assumed it | ✅ |
 | 5 — the socket, both halves | D | 14 | ✅ |
 | 6 — the registry and fanout | *new* | 14 | ✅ |
-| 7 — `hello` and `welcome` | E | 14 | ☐ |
+| 7 — `hello` and `welcome` | E | 14 | ✅ |
 | 8 — the apply loop and the frontier | F | 14, 15 | ☐ |
 | 9 — catch-up, gap and backfill | G | 14 | ☐ |
 | 10 — the directory as a stream | *new* | 14 | ☐ |
@@ -426,9 +426,19 @@ inside the transport.
 
 ---
 
-### Step 7 — `hello` and `welcome`
+### Step 7 — `hello` and `welcome` ✅
 
 `Phase 2 step E · DESIGN.md item 14 · G3, G5, G6`
+
+**Built.** `welcome` grew from a chat array to the whole payload — joined
+spaces with their stream cursors, chats with head state and counters, the
+caller's own memberships, and the workspace cursor — plus `Storage.applyWelcome`
+on the client and negotiated compression on both halves. Two things came out
+differently: compression is **negotiated in `hello` and applied to any frame
+over 8 KB**, rather than being a `welcome`-shaped special case; and the
+query-count test now asserts the cost is **equal at two chat counts** rather
+than equal to one, because the frame legitimately reads four shapes and the
+property was always the slope.
 
 The first exchange that means something, and the one that satisfies R2 — after
 it, every badge in the sidebar is correct and not one message body has been
@@ -458,15 +468,33 @@ fetched.
 
 **Done when**
 
-- [ ] A client with empty cursors receives `welcome`, writes `chat_state` for
+- [x] A client with empty cursors receives `welcome`, writes `chat_state` for
       every chat, and the sidebar badge matches the server's **with the message
-      tables empty**. That last clause is the whole point.
-- [ ] The frame carries no collection sized by the workspace (invariant 71),
-      asserted against a 1,600-actor fixture rather than by inspection.
-- [ ] One statement at 150 chats and at 300.
+      tables empty**. That last clause is the whole point, and it is the
+      assertion: `SELECT COUNT(*) FROM messages` is zero while the badge reads
+      six.
+- [x] **`welcome` does not advance `synced_through_rev`** — added while
+      building, and the sharpest rule on the client. Being told a head exists
+      is not holding the changes below it, so advancing the frontier here would
+      jump it past events that were never applied: a silent permanent hole
+      (invariant 1). The gap between the two watermarks *is* the catch-up owed,
+      and a reconnect must leave an existing frontier and gap marker alone.
+- [x] The frame carries no collection sized by the workspace (invariant 71),
+      asserted against a 300-actor fixture with a dozen unjoined public
+      channels rather than by inspection.
+- [x] ~~One statement~~ **the same number of statements** at two chat counts.
+      Requiring exactly one was guarding a number rather than the property; the
+      frame reads four shapes now and the slope is what must stay flat.
 - [ ] Gzipped frame bytes and members-per-workspace are dashboard metrics.
-- [ ] `auth/directory.ts` and `fetchActors` are gone and the directory still
-      refreshes.
+      **Deferred to step 13 (the instrumentation pass)**, with the mechanism
+      built: compression is negotiated and applied, so the bytes exist to be
+      measured.
+- [ ] ~~`auth/directory.ts` and `fetchActors` are gone.~~ **Moved to step 10
+      (the directory as a stream), which is where the replacement lands.** As
+      written this criterion deleted a working directory three steps before
+      anything replaced it: `People.tsx` would render empty and every message
+      author would be a monogram, for the whole of steps 8 and 9. The HTTP
+      directory keeps running until the stream that supersedes it exists.
 
 ---
 
@@ -582,6 +610,12 @@ not landed yet.
       appears when it does, with no error state in between.
 - [ ] A reconnect two revs behind fetches **two rows**, not 1,600.
 - [ ] A deactivated actor still renders on their old messages, offline included.
+- [ ] **`auth/directory.ts` and `fetchActors` are deleted here**, not earlier —
+      moved from step 7, where deleting them would have left the client with no
+      directory at all until this step landed. The live-query invalidation that
+      currently fires inside `fillActors` moves with them; miss it and the
+      workspace directory silently stops refreshing, which is exactly the
+      failure the live-query client exists to remove.
 - [ ] Directory page count and latency are metrics, so open question 6
       (directory retention on the client) becomes a measurement at 20,000
       members rather than a guess.

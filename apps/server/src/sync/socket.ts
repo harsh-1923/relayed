@@ -12,6 +12,7 @@
 // of authenticating a frame later is that an unauthenticated socket exists for
 // a moment — which is why it carries a deadline it cannot talk its way out of.
 import type { Server } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Kysely } from 'kysely';
 import {
@@ -23,6 +24,7 @@ import { verifyAccessToken, type SessionClaims } from '../auth/tokens.ts';
 import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import type { AppendedEvent } from './events.ts';
+import { welcome } from './feed.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -46,6 +48,22 @@ const HELLO_TIMEOUT_MS = 10_000;
  * are never released (invariant 29).
  */
 const READ_TIMEOUT_MS = 70_000;
+
+/**
+ * Frames above this are compressed, when the client said it could.
+ *
+ * ONE-SHOT, PER FRAME — which is why this does not reopen the decision to leave
+ * `permessage-deflate` off (invariant 28). That rule exists because PERSISTENT
+ * compression holds a zlib context for the life of every connection: ~189 KB
+ * each, seventeen times the connection itself, 1.8 GB at ten thousand of them.
+ * Compressing one frame allocates, compresses and frees. Different mechanism,
+ * opposite conclusion.
+ *
+ * Eight kilobytes because below it the saving is smaller than the syscall.
+ * `welcome` at any real workspace size is far above; a single `ev` frame is far
+ * below and stays text.
+ */
+const COMPRESS_ABOVE_BYTES = 8_192;
 
 export interface SocketDeps {
   db: Kysely<DB>;
@@ -220,6 +238,10 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     }
 
     state.claims = claims;
+    // Only what this build can actually decompress, intersected with what we
+    // can produce. An algorithm we do not know is ignored rather than refused,
+    // so a newer client offering something better costs nothing today.
+    state.compress = hello.compression?.includes('gzip') === true;
     registry.add(state);
     state.arm(readTimeoutMs, () => {
       note('sync.socket.read_timeout');
@@ -227,14 +249,36 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     });
     note('sync.socket.connected');
 
-    // Only what the CONNECTION knows. Spaces, chats, memberships and cursors
-    // are added to this same frame by the step that makes badges correct — as
-    // added fields, because a client that predates them drops what it does not
-    // know rather than failing.
+    // THE FRAME THAT SATISFIES R2. After this one exchange every badge in the
+    // sidebar is correct and not one message body has been fetched — because
+    // "I have it" and "I know it exists" are different facts, and `welcome`
+    // carries the second for every chat the actor can reach.
+    const payload = await welcome(deps.db, claims.workspaceId, claims.actorId);
+
     state.send('welcome', {
       protocol: PROTOCOL,
       now: Date.now(),
       actor: { id: actor.id, handle: actor.handle, display_name: actor.display_name },
+      spaces: payload.spaces.map(space => ({
+        id: space.id, kind: space.kind, name: space.name, slug: space.slug,
+        visibility: space.visibility, membership_policy: space.membershipPolicy,
+        lifecycle: space.lifecycle, rev: space.rev,
+      })),
+      chats: payload.chats.map(chat => ({
+        id: chat.chatId, space_id: chat.spaceId, kind: chat.kind, name: chat.name,
+        head_ord: chat.headOrd, head_rev: chat.headRev,
+        chat_unread: chat.chatUnread,
+        // Threads are Phase 4. Sent as zero rather than omitted, so the client
+        // writes a complete row and the column never holds a stale value from
+        // a previous session.
+        thread_unread: 0,
+        mention_count: chat.mentionCount,
+      })),
+      memberships: payload.memberships.map(membership => ({
+        scope_type: membership.scopeType, scope_id: membership.scopeId,
+        role: membership.role,
+      })),
+      streams: payload.streams,
     });
   }
 
@@ -264,6 +308,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
 class ConnectionState implements Delivery {
   socket: WebSocket;
   claims: SessionClaims | null = null;
+  /** Set from `hello`. Text-only until a client says otherwise. */
+  compress = false;
   #timer: NodeJS.Timeout | null = null;
 
   constructor(socket: WebSocket) {
@@ -295,7 +341,15 @@ class ConnectionState implements Delivery {
     // sending; `ws` throws on a closed socket, and that throw would surface
     // inside whatever unrelated handler happened to be running.
     if (this.socket.readyState !== this.socket.OPEN) return;
-    this.socket.send(frame(t, body));
+    const text = frame(t, body);
+    // Compressed frames go as BINARY, which is how the client tells them apart
+    // — no envelope flag, because a flag would have to be read out of a payload
+    // that has not been decompressed yet.
+    if (this.compress && text.length > COMPRESS_ABOVE_BYTES) {
+      this.socket.send(gzipSync(text));
+      return;
+    }
+    this.socket.send(text);
   }
 
   /** Say goodbye and mean it: the timer goes even if the close never lands. */

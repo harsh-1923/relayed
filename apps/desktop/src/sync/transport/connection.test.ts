@@ -208,13 +208,22 @@ test('a MALFORMED frame is ignored and the connection stays live', async () => {
 });
 
 test('a welcome carrying fields this client predates still makes it live', async () => {
-  // The promise the next steps depend on: filling `welcome` with spaces, chats
-  // and cursors must not require every client to update first.
+  // The promise every later step depends on: a server that starts sending
+  // something new must not require every client to update first.
+  //
+  // The fixture named `spaces` until the step that declared it, at which point
+  // this failed — correctly, because `spaces` had stopped being unknown and its
+  // placeholder shape no longer validated. Whatever stands in for "a field from
+  // the future" has to be something no version will ever declare.
   const h = harness();
   h.connection.start();
   h.latest().accept();
   await tick();
-  h.latest().deliver('welcome', { ...WELCOME, spaces: [{ id: 'spc_1' }], streams: [] });
+  h.latest().deliver('welcome', {
+    ...WELCOME,
+    weather_on_the_server: 'drizzle',
+    presence: [{ actor: 'act_2', typing: true }],
+  });
 
   assert.equal(h.connection.state, 'live');
   h.connection.stop();

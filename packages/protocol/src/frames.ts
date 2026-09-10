@@ -160,6 +160,15 @@ export const Hello = z.object({
     id: z.string(),
     rev: z.number().int().nonnegative(),
   })).optional(),
+  /**
+   * What this client can decompress. Absent means "text only".
+   *
+   * NEGOTIATED rather than versioned, because compression is a property of a
+   * client build and not of the protocol: bumping the version would make every
+   * older client too old for a change that costs them nothing. An unknown
+   * algorithm in this list is ignored, so adding one later needs no coordination.
+   */
+  compression: z.array(z.string()).optional(),
 });
 export type Hello = z.infer<typeof Hello>;
 
@@ -172,17 +181,19 @@ export const INBOUND: Bodies = { hello: Hello, ping: Ping };
 // ─── Server → client ────────────────────────────────────────────────────────
 
 /**
- * The answer to `hello`, and the frame that will grow most.
- *
- * Today it carries only what the CONNECTION knows: who you are, what the server
- * thinks the time is, and which protocol it spoke. The step that makes badges
- * correct adds spaces, chats, the caller's own memberships and stream cursors —
- * as ADDED FIELDS on this same frame, not a second one, because a client that
- * predates them drops what it does not know rather than failing.
+ * The answer to `hello`, and the frame that carries the most.
  *
  * `now` is not decoration: a client compares it with its own clock to compute
  * skew, and a badly wrong clock otherwise produces confusing timestamps
  * everywhere with no clue as to why (`DESIGN.md` §13.7).
+ *
+ * WHICH FIELDS ARE OPTIONAL, and why it is not a shrug. `protocol`, `now` and
+ * `actor` are required — a welcome without them is not a welcome, and accepting
+ * one would be inventing what we were not sent. The four collections are
+ * optional because **absent and empty mean the same thing**: an actor in no
+ * spaces genuinely has no spaces, so a server that omits an empty array must
+ * not break a client. That is the line between the two leniency rules — tolerate
+ * what carries no information, refuse what is missing.
  */
 export const Welcome = z.object({
   protocol: z.number().int(),
@@ -192,6 +203,66 @@ export const Welcome = z.object({
     handle: z.string(),
     display_name: z.string(),
   }),
+
+  /**
+   * Spaces the actor has JOINED. Not every space they could see.
+   *
+   * Public means discoverable, not synced. A workspace with three hundred
+   * public channels where this actor belongs to forty sends forty; browsing the
+   * rest is a query against the directory, made when somebody opens the browser
+   * (DESIGN.md §7.4).
+   */
+  spaces: z.array(z.object({
+    id: z.string(),
+    kind: z.string(),
+    name: z.string().nullable(),
+    slug: z.string().nullable(),
+    visibility: z.string().nullable(),
+    membership_policy: z.string(),
+    lifecycle: z.string(),
+    rev: z.number().int().nonnegative(),
+  })).optional(),
+
+  /**
+   * Head state and counters, per chat. THE POINT OF THE WHOLE FRAME.
+   *
+   * After this arrives every badge in the sidebar is correct, with the message
+   * tables still empty — which is R2, satisfied in one round trip. "I have it"
+   * and "I know it exists" are different facts, and keeping them apart is what
+   * makes a badge cheap for a chat holding nothing at all.
+   */
+  chats: z.array(z.object({
+    id: z.string(),
+    space_id: z.string(),
+    kind: z.string(),
+    name: z.string().nullable(),
+    head_ord: z.number().int().nonnegative(),
+    head_rev: z.number().int().nonnegative(),
+    chat_unread: z.number().int().nonnegative(),
+    thread_unread: z.number().int().nonnegative(),
+    mention_count: z.number().int().nonnegative(),
+  })).optional(),
+
+  /**
+   * The CALLER's own memberships, not everyone's.
+   *
+   * These are the grants `can()` evaluates for their own affordances. "Who else
+   * is in this space" is a view concern, answered per space when a surface asks
+   * — sending every membership in the workspace would be members × spaces in
+   * the worst case, which is the shape invariant 71 forbids.
+   */
+  memberships: z.array(z.object({
+    scope_type: z.string(),
+    scope_id: z.string(),
+    role: z.string(),
+  })).optional(),
+
+  /** Cursors for the streams that are not chats. */
+  streams: z.array(z.object({
+    kind: z.string(),
+    id: z.string(),
+    rev: z.number().int().nonnegative(),
+  })).optional(),
 });
 export type Welcome = z.infer<typeof Welcome>;
 

@@ -545,7 +545,7 @@ test('welcome carries head and counters for every chat, in one call', opts, asyn
   await fill(second.chatId, 2);
   await markRead(db, me, first.chatId, 1);
 
-  const rows = await welcome(db, wsp, me);
+  const { chats: rows } = await welcome(db, wsp, me);
   const byChat = new Map(rows.map(r => [r.chatId, r]));
   assert.equal(byChat.get(first.chatId)?.chatUnread, 2);
   assert.equal(byChat.get(first.chatId)?.headOrd, 3);
@@ -584,7 +584,7 @@ test('welcome agrees with counters(), chat for chat, across the awkward cases',
   await deleteMessage(db, { opId: ulid('op'), chatId: withTombstones.chatId,
                             actorId: bob, messageId: doomed.id });
 
-  const batched = new Map((await welcome(db, wsp, me)).map(row => [row.chatId, row]));
+  const batched = new Map((await welcome(db, wsp, me)).chats.map(row => [row.chatId, row]));
 
   for (const { chatId } of [readToEnd, neverOpened, onlyMine, withTombstones, empty]) {
     const one = await counters(db, chatId, me);
@@ -608,23 +608,37 @@ test('welcome agrees with counters(), chat for chat, across the awkward cases',
   assert.equal(batched.get(empty.chatId)?.chatUnread, 0, 'and an empty chat still appears');
 });
 
-test('welcome is ONE query, whatever the chat count', opts, async () => {
+test('welcome costs the SAME whatever the chat count', opts, async () => {
   // The regression this exists for: the first version issued 1 + 2N statements,
   // which is invisible in a test that only checks the values and fatal at the
-  // moment every client reconnects at once after a deploy.
-  await channel();
-  await channel();
-  await channel();
+  // moment every client reconnects at once after a deploy — 301 statements per
+  // welcome, times every client in the jitter window.
+  //
+  // ASSERTED AS A COMPARISON, not as a number. This used to require exactly one
+  // statement, which was true and was not the property: the frame legitimately
+  // reads four different shapes, and growing to four would have failed a test
+  // that was guarding the wrong thing. What must never change is the SLOPE.
+  const count = async (): Promise<{ queries: number; chats: number }> => {
+    let queries = 0;
+    const counted = db.withPlugin({
+      transformQuery: (args) => { queries += 1; return args.node; },
+      transformResult: async (args) => args.result,
+    });
+    const payload = await welcome(counted, wsp, me);
+    return { queries, chats: payload.chats.length };
+  };
 
-  let queries = 0;
-  const counted = db.withPlugin({
-    transformQuery: (args) => { queries += 1; return args.node; },
-    transformResult: async (args) => args.result,
-  });
-  const rows = await welcome(counted, wsp, me);
+  await channel();
+  await channel();
+  const few = await count();
 
-  assert.ok(rows.length >= 3, 'the fixture really did have several chats');
-  assert.equal(queries, 1, `welcome issued ${queries} queries for ${rows.length} chats`);
+  for (let i = 0; i < 6; i++) await channel();
+  const many = await count();
+
+  assert.ok(many.chats > few.chats + 4, 'the fixture really did grow');
+  assert.equal(many.queries, few.queries,
+    `welcome went from ${few.queries} queries at ${few.chats} chats `
+    + `to ${many.queries} at ${many.chats} — that is a slope, not a constant`);
 });
 
 test('welcome shows only chats the actor belongs to', opts, async () => {
@@ -632,7 +646,7 @@ test('welcome shows only chats the actor belongs to', opts, async () => {
   const { chatId: theirs } = await createChannel(db, {
     workspaceId: wsp, name: 'private-to-bob', createdBy: bob });
 
-  const rows = await welcome(db, wsp, me);
+  const { chats: rows } = await welcome(db, wsp, me);
   const ids = rows.map(r => r.chatId);
   assert.ok(ids.includes(mine.chatId));
   assert.ok(!ids.includes(theirs), 'a chat in a space `me` never joined is not listed');
@@ -642,10 +656,10 @@ test('SPIKE §6.6: removal freezes a chat — it leaves welcome, and re-add rest
   opts, async () => {
   const { spaceId, chatId } = await channel();
   await fill(chatId, 3);
-  assert.ok((await welcome(db, wsp, bob)).some(r => r.chatId === chatId));
+  assert.ok((await welcome(db, wsp, bob)).chats.some(c => c.chatId === chatId));
 
   await leaveSpace(db, spaceId, bob);
-  assert.ok(!(await welcome(db, wsp, bob)).some(r => r.chatId === chatId),
+  assert.ok(!(await welcome(db, wsp, bob)).chats.some(c => c.chatId === chatId),
     'the cursor simply stops advancing — nothing is recalled');
 
   // Messages arrive while bob is away — from `me`, who is still a member. Bob
@@ -654,6 +668,6 @@ test('SPIKE §6.6: removal freezes a chat — it leaves welcome, and re-add rest
   await fill(chatId, 2, me);
   await joinSpace(db, spaceId, bob);
 
-  const back = (await welcome(db, wsp, bob)).find(r => r.chatId === chatId);
+  const back = (await welcome(db, wsp, bob)).chats.find(c => c.chatId === chatId);
   assert.equal(back?.headRev, 5, 'and re-adding is exactly a gap: the head moved on');
 });

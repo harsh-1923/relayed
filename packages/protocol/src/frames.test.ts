@@ -125,20 +125,32 @@ test('the two directions are separate tables, not one', () => {
 
 test('a welcome carrying fields this version predates still parses', () => {
   // The forward-compatibility promise, from the client's side and stated as a
-  // scenario rather than as an intention: the step that fills this frame with
-  // spaces, chats and cursors must not require a client update to be deployed
-  // first.
+  // scenario rather than as an intention: a server that starts sending
+  // something new must not require a client update to be deployed first.
+  //
+  // THE FIXTURE HAD TO CHANGE ONCE ALREADY, which is the test working. It used
+  // `spaces` as the example of a future field; the step that filled this frame
+  // declared `spaces`, so it stopped being stripped and this failed. Whatever
+  // is named here must be something no version has ever declared — so it is a
+  // deliberately absurd one rather than the next feature anybody might add.
   const future = frame('welcome', {
     protocol: PROTOCOL, now: 1789042451238,
     actor: { id: 'act_1', handle: 'harsh', display_name: 'Harsh Sharma' },
-    spaces: [{ id: 'spc_1' }], chats: [], memberships: [], streams: [],
+    spaces: [{
+      id: 'spc_1', kind: 'channel', name: 'engineering', slug: 'engineering',
+      visibility: 'public', membership_policy: 'open', lifecycle: 'active', rev: 31,
+    }],
+    weather_on_the_server: 'drizzle',
+    quantum_entanglement_id: 42,
   });
   const read = readFrame(future, OUTBOUND);
   assert.equal(read.kind, 'frame');
   if (read.kind !== 'frame') return;
   const body = read.body as Welcome;
   assert.equal(body.actor.handle, 'harsh');
-  assert.equal('spaces' in body, false, 'dropped, not rejected');
+  assert.equal(body.spaces?.[0]?.slug, 'engineering', 'declared fields survive');
+  assert.equal('weather_on_the_server' in body, false, 'undeclared ones are dropped, not rejected');
+  assert.equal('quantum_entanglement_id' in body, false);
 });
 
 test('hello carries no actor, workspace or device id', () => {

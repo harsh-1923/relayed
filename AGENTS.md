@@ -20,27 +20,26 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 6 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 7 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: `hello` and `welcome`** — filling the handshake with per-chat head
-state and counters, the caller's joined spaces and their own memberships, so
-that after one round trip **every badge in the sidebar is correct before a
-single message body has been fetched**. That is R2, and step 7 of fourteen in
-the sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries
-what each step delivers, what "done" means for it, and the six goals the phase
-is measured against.
+**Next task: the apply loop and the frontier** — `applyEvent`'s three cases
+(duplicate, at-the-frontier, above-it), and replacing `pending_revs` with
+`staged_events` so an event above the frontier is retained **whole** rather than
+as a bare revision. That is step 8 of fourteen in the sync build plan
+([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries what each step
+delivers, what "done" means for it, and the six goals the phase is measured
+against.
 
-Two traps there are already written down and both are easy to walk into: the
-directory invalidation currently fires inside `fillActors` and must move to the
-`welcome` handler, or the workspace directory silently stops refreshing; and
-`welcome` must stay **one statement** whatever the chat count, because
-reconnects arrive together after a deploy and an N+1 multiplies by every client
-at once.
+It has the most expensive failure mode in the system, and the trap is written
+down: duplicate suppression and rev-only staging are each individually mandatory
+and **lose an edit permanently when combined** (`SYNC-FLOWS.md` §11.1). Write
+that trace as a test against `pending_revs` FIRST and watch it fail — a test
+that has never failed has proved nothing.
 
 **Done so far:** the two schemas, allocation and idempotency, the domain ops,
-the event log, the socket, and fanout — steps 1 to 6. A committed event now
-reaches every actor entitled to it and nobody else; what it does not yet carry
-is any state a client could paint from.
+the event log, the socket, fanout, and `hello`/`welcome` — steps 1 to 7. A
+client now connects, authenticates, and receives head state and counters for
+every chat it can reach; what it cannot yet do is apply an event that arrives.
 
 Three things are easy to skim past and expensive to rediscover.
 `spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
@@ -53,7 +52,7 @@ an unknown `t` is ignored and an unknown field is dropped, never fatal. And
 and XState was measured at 129 lines against a ~60 line criterion and dropped
 anyway, for reasons `FRONTEND.md` §7.4 records.
 
-Green as of the last commit: **368 tests**, 103 spike assertions, 9 boundary
+Green as of the last commit: **377 tests**, 103 spike assertions, 9 boundary
 rules over 187 files, typecheck across five packages, production build.
 
 ## Documentation

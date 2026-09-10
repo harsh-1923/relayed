@@ -221,6 +221,48 @@ export async function counters(
 
 export interface WelcomeChat extends Head, Counters {
   chatId: string;
+  spaceId: string;
+  kind: string;
+  name: string | null;
+}
+
+export interface WelcomeSpace {
+  id: string;
+  kind: string;
+  name: string | null;
+  slug: string | null;
+  visibility: string | null;
+  membershipPolicy: string;
+  lifecycle: string;
+  rev: number;
+}
+
+export interface WelcomeMembership {
+  scopeType: string;
+  scopeId: string;
+  role: string;
+}
+
+export interface WelcomeStream {
+  kind: string;
+  id: string;
+  rev: number;
+}
+
+/**
+ * Everything a client needs to paint a correct sidebar, before it holds a
+ * single message.
+ *
+ * Four collections, and what is NOT here is the point (invariant 71): no actor
+ * directory, and no spaces this actor has not joined. Both would be sized by
+ * the workspace rather than by the person, which is how a frame that is fine at
+ * a hundred people becomes half a megabyte at sixteen hundred (DESIGN.md §9.9).
+ */
+export interface WelcomePayload {
+  spaces: WelcomeSpace[];
+  chats: WelcomeChat[];
+  memberships: WelcomeMembership[];
+  streams: WelcomeStream[];
 }
 
 /**
@@ -263,6 +305,86 @@ const mentionPattern = (actorId: string): string => `%<@${actorId}>%`;
  */
 export async function welcome(
   db: Kysely<DB>, workspaceId: string, actorId: string,
+): Promise<WelcomePayload> {
+  // FOUR statements, and the number that matters is that it is FOUR rather than
+  // four-plus-one-per-chat. The original chat query issued 1 + 2N — 301
+  // statements for 150 chats — and reconnects arrive together after a deploy,
+  // so an N+1 here multiplies by every client at once: at the ~333
+  // reconnects/second §9.8 plans for, that was ~100k statements/second.
+  //
+  // A constant is not an N+1, so these run in parallel rather than being forced
+  // into one query with `json_build_object`. The test asserts the count is
+  // EQUAL at 150 chats and at 300, which is the property; asserting "one" would
+  // have been asserting a number that happened to hold.
+  const [chats, spaces, memberships, workspaceRev] = await Promise.all([
+    welcomeChats(db, workspaceId, actorId),
+    welcomeSpaces(db, actorId),
+    welcomeMemberships(db, actorId),
+    db.selectFrom('workspaces').select('next_rev')
+      .where('id', '=', workspaceId).executeTakeFirst(),
+  ]);
+
+  return {
+    spaces, chats, memberships,
+    // Only the workspace stream. There is no actor cursor: an actor is a
+    // delivery address rather than an ordered stream, so there is nothing to
+    // be behind on (docs/SYNC-FLOWS.md §5). Space cursors ride on the space
+    // rows themselves, above.
+    streams: [{ kind: 'workspace', id: workspaceId, rev: workspaceRev?.next_rev ?? 0 }],
+  };
+}
+
+/**
+ * The spaces this actor has JOINED, with each one's stream cursor.
+ *
+ * Joined, not visible. A workspace with three hundred public channels where
+ * this actor belongs to forty sends forty — public means discoverable, not
+ * synced, and the difference is what keeps this frame sized by the person
+ * rather than by the company (invariant 71).
+ */
+async function welcomeSpaces(db: Kysely<DB>, actorId: string): Promise<WelcomeSpace[]> {
+  const rows = await db.selectFrom('spaces')
+    .innerJoin('memberships', join => join
+      .onRef('memberships.scope_id', '=', 'spaces.id')
+      .on('memberships.scope_type', '=', 'space')
+      .on('memberships.actor_id', '=', actorId)
+      .on('memberships.left_at', 'is', null))
+    .select(['spaces.id', 'spaces.kind', 'spaces.name', 'spaces.slug',
+             'spaces.visibility', 'spaces.membership_policy', 'spaces.lifecycle',
+             'spaces.next_rev'])
+    .execute();
+
+  return rows.map(row => ({
+    id: row.id, kind: row.kind, name: row.name, slug: row.slug,
+    visibility: row.visibility, membershipPolicy: row.membership_policy,
+    lifecycle: row.lifecycle, rev: row.next_rev,
+  }));
+}
+
+/**
+ * The caller's OWN memberships — the grants `can()` evaluates for their own
+ * affordances.
+ *
+ * Not everyone's. "Who else is in this space" is a view concern, answered per
+ * space when a surface asks for it; sending every membership in the workspace
+ * would be members × spaces in the worst case, which is precisely the shape
+ * invariant 71 forbids.
+ */
+async function welcomeMemberships(
+  db: Kysely<DB>, actorId: string,
+): Promise<WelcomeMembership[]> {
+  const rows = await db.selectFrom('memberships')
+    .select(['scope_type', 'scope_id', 'role'])
+    .where('actor_id', '=', actorId)
+    .where('left_at', 'is', null)
+    .execute();
+  return rows.map(row => ({
+    scopeType: row.scope_type, scopeId: row.scope_id, role: row.role,
+  }));
+}
+
+async function welcomeChats(
+  db: Kysely<DB>, workspaceId: string, actorId: string,
 ): Promise<WelcomeChat[]> {
   const rows = await db.selectFrom('chats')
     .innerJoin('memberships', join => join
@@ -291,7 +413,8 @@ export async function welcome(
         .where('messages.author_id', '!=', actorId)
         .as('counted'),
       join => join.onTrue())
-    .select(['chats.id as chat_id', 'chats.next_ord', 'chats.next_rev',
+    .select(['chats.id as chat_id', 'chats.space_id', 'chats.kind', 'chats.name',
+             'chats.next_ord', 'chats.next_rev',
              'counted.unread', 'counted.mentions'])
     .where('chats.workspace_id', '=', workspaceId)
     .where('chats.kind', '!=', 'private')
@@ -299,6 +422,9 @@ export async function welcome(
 
   return rows.map(row => ({
     chatId: row.chat_id,
+    spaceId: row.space_id,
+    kind: row.kind,
+    name: row.name,
     headOrd: row.next_ord,
     headRev: row.next_rev,
     chatUnread: row.unread,

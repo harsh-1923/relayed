@@ -8,12 +8,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
+import { gunzipSync } from 'node:zlib';
 import WebSocket from 'ws';
 import { frame, readFrame, OUTBOUND, CLOSE, PROTOCOL } from '@relayed/protocol';
 import { db, pool } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
-import { createChannel } from './spaces.ts';
+import { createChannel, addToSpace } from './spaces.ts';
 import { send } from './ops.ts';
 import type { SessionClaims } from '../auth/tokens.ts';
 
@@ -421,4 +422,158 @@ test('closing the server tells every client WHY', opts, async () => {
   const { code } = await peer.closed;
   assert.equal(code, CLOSE.goingAway);
   await new Promise<void>(resolve => { own.close(() => { resolve(); }); });
+});
+
+// ─── welcome carries the workspace ──────────────────────────────────────────
+
+test('welcome carries joined spaces, chats with counters, and own memberships',
+  opts, async () => {
+    // R2, in one exchange. After this frame every badge in the sidebar is
+    // correct — with the message tables on the client still empty, because
+    // "I have it" and "I know it exists" are different facts.
+    const space = await createChannel(db, {
+      workspaceId: wsp, name: `w-${ulid('x')}`, createdBy: me,
+    });
+    // Joined FIRST, then posts. `can()` checks membership on the way in, so the
+    // other order is a Forbidden rather than an unread message.
+    await addToSpace(db, space.spaceId, outsider, me);
+    await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: outsider,
+                     messageId: ulid('msg'), body: 'unread by me' });
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    const body = await peer.next('welcome') as {
+      spaces: { id: string; rev: number }[];
+      chats: { id: string; chat_unread: number; head_rev: number }[];
+      memberships: { scope_type: string; scope_id: string; role: string }[];
+      streams: { kind: string; rev: number }[];
+    };
+
+    const mine = body.spaces.find(s => s.id === space.spaceId);
+    assert.ok(mine, 'the space this actor joined');
+    assert.ok(mine.rev > 0, 'with its stream cursor, so catch-up knows where to start');
+
+    const chat = body.chats.find(c => c.id === space.chatId);
+    assert.ok(chat, 'and its chat');
+    assert.equal(chat.chat_unread, 1, 'a correct badge, before any body is fetched');
+    assert.ok(chat.head_rev > 0);
+
+    // The whole row, not a role comparison — `authz/no-role-comparison` caught
+    // the first version of this line, and was right to: a role tested at a call
+    // site is the pattern that drifts, and a deepEqual is a stronger assertion
+    // anyway because it pins the shape the client parses.
+    assert.deepEqual(
+      body.memberships.find(m => m.scope_id === space.spaceId),
+      { scope_type: 'space', scope_id: space.spaceId, role: 'admin' },
+      'the caller’s own grants, in the shape can() reads');
+    assert.deepEqual(body.streams.map(s => s.kind), ['workspace'],
+      'no actor cursor: an actor is a delivery address, not a stream');
+
+    peer.socket.close();
+  });
+
+test('welcome carries NO collection sized by the workspace', opts, async () => {
+  // Invariant 71, asserted against a fixture large enough for the difference to
+  // matter rather than by reading the code. Measured at 1,600 members the actor
+  // directory was 345 KB — 69% of the frame, and the only term that grows
+  // because the company hired somebody rather than because this person joined
+  // something (DESIGN.md §9.9).
+  const crowd = Array.from({ length: 300 }, () => ulid('act'));
+  await db.insertInto('actors').values(crowd.map(id => ({
+    id, org_id: org, workspace_id: wsp, type: 'human' as const,
+    handle: `c-${id.slice(-10).toLowerCase()}`, display_name: 'Crowd',
+    avatar_url: null, identity_kind: 'workos_user' as const, identity_id: `wu_${id}`,
+    owner_actor_id: null, provisioned_by: 'api' as const, state: 'active' as const,
+  }))).execute();
+  await db.insertInto('memberships').values(crowd.map(id => ({
+    scope_type: 'workspace' as const, scope_id: wsp, actor_id: id, role: 'member' as const,
+  }))).execute();
+
+  // ...and a pile of public channels this actor has NOT joined.
+  for (let i = 0; i < 12; i++) {
+    await createChannel(db, {
+      workspaceId: wsp, name: `unjoined-${ulid('x')}`, createdBy: crowd[0] as string,
+    });
+  }
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  const body = await peer.next('welcome') as Record<string, unknown>;
+
+  assert.equal('actors' in body, false, 'the directory is a stream, not an array');
+  const spaces = body['spaces'] as { id: string }[];
+  const joined = await db.selectFrom('memberships').select('scope_id')
+    .where('scope_type', '=', 'space').where('actor_id', '=', me)
+    .where('left_at', 'is', null).execute();
+  assert.equal(spaces.length, joined.length,
+    'joined spaces only — public means discoverable, not synced');
+
+  const memberships = body['memberships'] as { scope_id: string }[];
+  assert.ok(memberships.length < 100,
+    'the CALLER’s own memberships, not members × spaces');
+
+  peer.socket.close();
+});
+
+test('a large welcome is compressed when the client says it can', opts, async () => {
+  // One-shot, per frame — which is why it does not reopen the decision to leave
+  // permessage-deflate off. That rule is about a zlib context held for the life
+  // of every connection (~189 KB each); this allocates, compresses and frees.
+  //
+  // The frame is made genuinely large rather than the threshold made small. An
+  // injectable limit would have tested that the branch runs; this tests that a
+  // realistic workspace actually crosses it, which is the question — a
+  // compression path that never triggers in production is not compression.
+  for (let i = 0; i < 45; i++) {
+    await createChannel(db, {
+      workspaceId: wsp, name: `bulk-${ulid('x')}`, createdBy: me,
+    });
+  }
+
+  const socket = new WebSocket(url);
+  let binary = 0;
+  let text = 0;
+  const frames: { t: string; body: unknown }[] = [];
+  socket.on('message', (raw: Buffer, isBinary: boolean) => {
+    if (isBinary) { binary++; raw = gunzipSync(raw); } else { text++; }
+    const read = readFrame(raw.toString('utf8'), OUTBOUND);
+    if (read.kind === 'frame') frames.push({ t: read.t, body: read.body });
+  });
+  await new Promise<void>(resolve => { socket.on('open', () => resolve()); });
+
+  socket.send(frame('hello', {
+    protocol: PROTOCOL, access_token: `good:${me}`, compression: ['gzip'],
+  }));
+  const deadline = Date.now() + 3_000;
+  while (!frames.some(f => f.t === 'welcome') && Date.now() < deadline) {
+    await sleep(5);
+  }
+
+  const welcomeFrame = frames.find(f => f.t === 'welcome');
+  assert.ok(welcomeFrame, 'and it still parses after the round trip');
+  assert.equal(binary, 1, 'the large frame came back compressed');
+  assert.equal(text, 0);
+  socket.close();
+});
+
+test('a client that offers no compression gets plain text', opts, async () => {
+  // Negotiated, not versioned. An older build that has never heard of the field
+  // must keep working unchanged rather than being told it is too old for a
+  // change that costs it nothing.
+  const socket = new WebSocket(url);
+  let binary = 0;
+  let sawWelcome = false;
+  socket.on('message', (raw: Buffer, isBinary: boolean) => {
+    if (isBinary) binary++;
+    if (!isBinary && raw.toString('utf8').includes('"welcome"')) sawWelcome = true;
+  });
+  await new Promise<void>(resolve => { socket.on('open', () => resolve()); });
+
+  socket.send(frame('hello', { protocol: PROTOCOL, access_token: `good:${me}` }));
+  const deadline = Date.now() + 3_000;
+  while (!sawWelcome && Date.now() < deadline) await sleep(5);
+
+  assert.ok(sawWelcome, 'a welcome arrived');
+  assert.equal(binary, 0, 'and none of it was binary');
+  socket.close();
 });

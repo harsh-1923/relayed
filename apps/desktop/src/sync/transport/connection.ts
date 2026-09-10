@@ -12,6 +12,7 @@
 // anything else — so there is exactly one place a timer can leak, rather than
 // one per exit path.
 import WebSocket from 'ws';
+import { gunzipSync } from 'node:zlib';
 import { frame, readFrame, OUTBOUND, PROTOCOL, CLOSE, type Welcome } from '@relayed/protocol';
 import { guardConnect, type Gate } from '../network.ts';
 
@@ -53,6 +54,14 @@ export interface ConnectionDeps {
   /** Every other recognised frame. Unknown ones never reach here. */
   onFrame?(t: string, body: unknown): void;
   onEvent?(name: string, detail?: Record<string, unknown>): void;
+  /**
+   * How far this client has got, per stream, for `hello` to carry.
+   *
+   * Read at connect time rather than held, because a reconnect must send where
+   * the replica is NOW — not where it was when the connection object was built,
+   * which after a long backoff is a different place entirely.
+   */
+  cursors?(): { kind: string; id: string; rev: number }[];
   /** Seams. Tests supply a fake socket and a fixed jitter; nothing else does. */
   open?(url: string): SocketLike;
   random?(): number;
@@ -193,8 +202,17 @@ export class Connection {
       generation === this.#generation && this.#socket === socket;
 
     socket.on('open', (() => { if (current()) void this.#hello(); }) as never);
-    socket.on('message', ((raw: unknown) => {
-      if (current()) this.#onMessage(String(raw));
+    socket.on('message', ((raw: unknown, isBinary?: boolean) => {
+      if (!current()) return;
+      // BINARY MEANS COMPRESSED. There is no flag in the envelope saying so,
+      // because a flag would have to be read out of a payload that has not been
+      // decompressed yet.
+      if (isBinary === true && Buffer.isBuffer(raw)) {
+        try { this.#onMessage(gunzipSync(raw).toString('utf8')); }
+        catch { this.#deps.onEvent?.('sync.frame.malformed', { reason: 'bad_gzip' }); }
+        return;
+      }
+      this.#onMessage(String(raw));
     }) as never);
     socket.on('close', ((code: number) => {
       if (current()) this.#onClose(Number(code));
@@ -218,7 +236,14 @@ export class Connection {
       this.#enter('unauthorised');
       return;
     }
-    this.#socket?.send(frame('hello', { protocol: PROTOCOL, access_token: token }));
+    this.#socket?.send(frame('hello', {
+      protocol: PROTOCOL,
+      access_token: token,
+      // What this build can decompress. Advertised rather than assumed: a
+      // server that does not know the word sends text, and nothing breaks.
+      compression: ['gzip'],
+      cursors: this.#deps.cursors?.() ?? [],
+    }));
   }
 
   #onMessage(raw: string): void {

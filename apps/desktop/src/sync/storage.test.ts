@@ -448,3 +448,139 @@ test('blobForUrl links bytes already held elsewhere, and ignores a pointer whose
   rmSync(join(dir, 'accounts', accountId, 'blobs', id.slice(0, 2), id));
   assert.equal(storage.blobForUrl(url), null, 'an evicted blob must not be linked');
 });
+
+// ─── welcome, applied ───────────────────────────────────────────────────────
+
+const welcomePayload = (over: Partial<Parameters<Storage['applyWelcome']>[0]> = {}) => ({
+  actorId: 'act_me',
+  spaces: [{
+    id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering',
+    visibility: 'public', membershipPolicy: 'open', lifecycle: 'active',
+  }],
+  chats: [{
+    id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null,
+    headOrd: 5521, headRev: 8140,
+    chatUnread: 6, threadUnread: 2, mentionCount: 1,
+  }],
+  memberships: [{ scopeType: 'space', scopeId: 'spc_eng', role: 'admin' }],
+  ...over,
+});
+
+test('welcome makes every badge correct with NO messages held', () => {
+  // R2, and the whole reason the frame carries head state rather than history.
+  // "I have it" and "I know it exists" are different facts; only the second is
+  // needed to render a number, and it costs one round trip instead of a
+  // hundred thousand messages.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload());
+
+  const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const state = db.prepare('SELECT * FROM chat_state WHERE chat_id = ?').get('cht_eng') as
+    Record<string, number>;
+  assert.equal(state['chat_unread'], 6);
+  assert.equal(state['mention_count'], 1);
+  assert.equal(state['thread_unread'], 2);
+  assert.equal(state['head_ord'], 5521);
+  assert.equal(state['server_head_rev'], 8140);
+
+  const messages = db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number };
+  assert.equal(messages.n, 0, 'and not one message body was fetched');
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('welcome does NOT advance the contiguity frontier', () => {
+  // The sharpest rule in the client. `synced_through_rev` means "I hold every
+  // change up to here, contiguously" — and being TOLD a head exists is not
+  // holding the changes below it. Advancing it here would jump the frontier
+  // past events that were never applied, which is a silent permanent hole
+  // (invariant 1). The gap between the two watermarks IS the catch-up owed.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload());
+
+  const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const state = db.prepare('SELECT * FROM chat_state WHERE chat_id = ?').get('cht_eng') as
+    Record<string, number>;
+  assert.equal(state['synced_through_rev'], 0, 'nothing has been applied yet');
+  assert.equal(state['server_head_rev'], 8140, 'but we know how much is owed');
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a second welcome keeps the frontier and the gap marker it found', () => {
+  // A reconnect must not undo progress. This frame knows what the SERVER holds
+  // and nothing about what this device has applied, so it may only ever move
+  // the server-side watermark.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload());
+
+  const path = join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db');
+  let db = new DatabaseSync(path);
+  db.prepare('UPDATE chat_state SET synced_through_rev = ?, has_gap = 1, oldest_local_ord = ? WHERE chat_id = ?')
+    .run(8100, 5000, 'cht_eng');
+  db.close();
+
+  storage.applyWelcome(welcomePayload({
+    chats: [{
+      id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null,
+      headOrd: 5600, headRev: 8200, chatUnread: 9, threadUnread: 0, mentionCount: 2,
+    }],
+  }));
+
+  db = new DatabaseSync(path);
+  const state = db.prepare('SELECT * FROM chat_state WHERE chat_id = ?').get('cht_eng') as
+    Record<string, number>;
+  assert.equal(state['synced_through_rev'], 8100, 'progress survived');
+  assert.equal(state['has_gap'], 1, 'and so did the gap marker');
+  assert.equal(state['oldest_local_ord'], 5000);
+  assert.equal(state['server_head_rev'], 8200, 'while the head moved on');
+  assert.equal(state['chat_unread'], 9);
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a membership dropped from welcome is removed, not left stale', () => {
+  // A stale grant would let the UI offer an action the server refuses — which
+  // reads to the user as the app being broken rather than as them not being
+  // allowed. The client may HIDE a permitted action; it may never permit a
+  // denied one (invariant 49).
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    memberships: [
+      { scopeType: 'space', scopeId: 'spc_eng', role: 'admin' },
+      { scopeType: 'space', scopeId: 'spc_old', role: 'member' },
+    ],
+  }));
+
+  storage.applyWelcome(welcomePayload());   // spc_old is gone
+
+  const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const rows = db.prepare('SELECT scope_id FROM memberships WHERE actor_id = ?')
+    .all('act_me') as { scope_id: string }[];
+  assert.deepEqual(rows.map(r => r.scope_id), ['spc_eng']);
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('applying welcome is one transaction — a failure writes nothing', () => {
+  // Half a welcome is worse than none: chats without their spaces render as
+  // orphans, and badges without their chats are numbers attached to nothing.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  assert.throws(() => storage.applyWelcome(welcomePayload({
+    chats: [{
+      id: 'cht_orphan', spaceId: 'spc_missing', kind: 'sole', name: null,
+      headOrd: 1, headRev: 1, chatUnread: 0, threadUnread: 0, mentionCount: 0,
+    }],
+  })));
+
+  const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const spaces = db.prepare('SELECT COUNT(*) n FROM spaces').get() as { n: number };
+  assert.equal(spaces.n, 0, 'the space rolled back with the chat that failed');
+  db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
