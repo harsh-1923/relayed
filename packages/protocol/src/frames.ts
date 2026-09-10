@@ -44,6 +44,15 @@ export const CLOSE = {
   tooOld: 4003,
   /** The server is going away — deploy, restart. Reconnect with jitter. */
   goingAway: 4004,
+  /**
+   * This connection stopped reading and its backlog outgrew the limit.
+   *
+   * Dropping rather than buffering is only safe because durable catch-up
+   * exists: everything the client missed is still in the log, so reconnecting
+   * replays it. A system without that would have to choose between unbounded
+   * memory and a silent permanent hole.
+   */
+  slowConsumer: 4005,
 } as const;
 
 // ─── The envelope ───────────────────────────────────────────────────────────
@@ -190,6 +199,23 @@ export const Pong = z.object({});
 export type Pong = z.infer<typeof Pong>;
 
 /**
+ * One event from a stream — the frame the whole sync engine exists to deliver.
+ *
+ * `payload` is `unknown` on purpose. Its shape depends on `type`, and the client
+ * is required to tolerate a `type` it has never heard of by accounting for the
+ * revision and skipping the effect (invariant 32). Validating the payload here
+ * would make an unrecognised event MALFORMED rather than merely unfamiliar,
+ * which is the frontier-stalling bug that rule exists to prevent.
+ */
+export const Ev = z.object({
+  stream: z.object({ kind: z.string(), id: z.string() }),
+  rev: z.number().int().positive(),
+  type: z.string(),
+  payload: z.unknown(),
+});
+export type Ev = z.infer<typeof Ev>;
+
+/**
  * Sent immediately before closing a connection whose client is too old.
  *
  * Built now, a year before anything can trigger it, because the moment it is
@@ -203,7 +229,7 @@ export const TooOld = z.object({
 export type TooOld = z.infer<typeof TooOld>;
 
 /** Every frame this client accepts. */
-export const OUTBOUND: Bodies = { welcome: Welcome, pong: Pong, too_old: TooOld };
+export const OUTBOUND: Bodies = { welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev };
 
 /** Serialise a frame. The one place `t` is attached, so it cannot be forgotten. */
 export function frame(t: string, body: Record<string, unknown> = {}): string {

@@ -15,7 +15,7 @@ import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { chatPlacement } from './placement.ts';
 import { allocateChat, applyOnce } from './allocate.ts';
-import { appendEvent } from './events.ts';
+import { appendEvent, type AppendedEvent } from './events.ts';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -43,6 +43,23 @@ export interface Ack {
   createdAt: string;
 }
 
+/**
+ * What an op produced: what to tell the sender, and what happened.
+ *
+ * Two outputs for two audiences. The ack reconciles the sender's outbox row;
+ * the event is what everybody else learns, and the caller decides who that is —
+ * which is how `ops.ts` still knows nothing about sockets.
+ *
+ * `event` IS ABSENT ON A REPLAY, and that absence is load-bearing. A retried op
+ * returns the stored ack without running the work, so nothing new happened —
+ * fanning out here would deliver a duplicate message to every other device
+ * while the sender's own ack correctly reported one.
+ */
+export interface Applied {
+  ack: Ack;
+  event?: AppendedEvent;
+}
+
 export interface SendInput {
   opId: string;
   chatId: string;
@@ -61,9 +78,15 @@ export interface SendInput {
  * here (DESIGN.md §13.7). The client's own clock renders its pending row and is
  * replaced by the value in this ack.
  */
-export async function send(db: Kysely<DB>, input: SendInput): Promise<Ack> {
+export async function send(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   const authorize = await chatGate(db, input.actorId, input.chatId);
   authorize('post');
+
+  // Captured from the closure rather than returned through the ledger, because
+  // the ledger stores the ACK verbatim and hands it back on a replay. Putting
+  // the event in there too would make a replay hand back an event as well, and
+  // the caller would fan out a message that was already delivered.
+  let event: AppendedEvent | undefined;
 
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'send',
@@ -91,7 +114,7 @@ export async function send(db: Kysely<DB>, input: SendInput): Promise<Ack> {
     // clock. The sender applies the ack and every other device applies the
     // event; if the two disagreed, one message would render at two different
     // times depending on which device you looked at.
-    await appendEvent(trx, allocated, 'message.created', {
+    event = await appendEvent(trx, allocated, 'message.created', {
       id: ack.messageId,
       ord: allocated.ord as number,
       parent_id: input.parentId ?? null,
@@ -102,7 +125,12 @@ export async function send(db: Kysely<DB>, input: SendInput): Promise<Ack> {
 
     return ack;
   });
-  return applied.result;
+
+  // Narrowed rather than cast: `event` is always set when the work ran, but the
+  // compiler cannot see that through a closure, and a cast here would be the one
+  // place a genuine bug could hide behind an assertion.
+  if (applied.replayed || !event) return { ack: applied.result };
+  return { ack: applied.result, event };
 }
 
 export interface DeleteInput {
@@ -125,7 +153,7 @@ export interface DeleteInput {
  * event is idempotent where it lands, and the special case would earn nothing
  * but a branch.
  */
-export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise<Ack> {
+export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise<Applied> {
   // ONE snapshot of grants and placement, asked TWO questions. Loading twice
   // was two wasted round trips and, worse, two chances to disagree: a
   // membership revoked between the reads would have let the first check pass
@@ -150,6 +178,8 @@ export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise
   // Both questions go to can(), which is where that distinction is written down.
   authorize(message.author_id === input.actorId ? 'delete_own' : 'delete_any');
 
+  let event: AppendedEvent | undefined;
+
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'delete',
   }, async (trx) => {
@@ -164,11 +194,16 @@ export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise
     // all and merely accounts for the revision — which is the case that forces
     // the frontier to be tracked explicitly rather than derived from rows, and
     // the reason `delete` is in this phase at all (PHASE-2-SYNC.md §1).
-    await appendEvent(trx, allocated, 'message.deleted', { id: input.messageId });
+    event = await appendEvent(trx, allocated, 'message.deleted', { id: input.messageId });
 
     return ackOf(input.messageId, input.chatId, null, allocated.rev, row.created_at);
   });
-  return applied.result;
+
+  // Narrowed rather than cast: `event` is always set when the work ran, but the
+  // compiler cannot see that through a closure, and a cast here would be the one
+  // place a genuine bug could hide behind an assertion.
+  if (applied.replayed || !event) return { ack: applied.result };
+  return { ack: applied.result, event };
 }
 
 /**

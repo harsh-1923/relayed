@@ -22,7 +22,7 @@ import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { spacePlacement } from './placement.ts';
 import { allocateStream } from './allocate.ts';
-import { appendEvent, spaceStream } from './events.ts';
+import { appendEvent, spaceStream, type AppendedEvent } from './events.ts';
 import { ulid } from '../db/ulid.ts';
 
 export interface NewChannel {
@@ -36,6 +36,13 @@ export interface NewChannel {
 export interface Channel {
   spaceId: string;
   chatId: string;
+  /**
+   * The three events creation produced, in revision order, for the caller to
+   * deliver. Returned rather than delivered here for the same reason `send`
+   * returns its own: nothing in this file knows a socket exists, and fanning
+   * out inside the transaction would publish a space that a rollback un-created.
+   */
+  events: AppendedEvent[];
 }
 
 /** No such workspace. Distinguished from "not allowed", which is Forbidden. */
@@ -91,6 +98,7 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
   const visibility = input.visibility ?? 'public';
 
   const membershipPolicy = visibility === 'public' ? 'open' : 'invite';
+  const events: AppendedEvent[] = [];
 
   try {
     await db.transaction().execute(async (trx) => {
@@ -125,26 +133,26 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
       // that space's members, and right now that is one person. Everyone else
       // learns of a public space by browsing the directory, and of a space they
       // join through the ordinary gap path (DESIGN.md §7.2).
-      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
         'space.created', {
           id: spaceId, kind: 'channel', name: input.name,
           slug: input.slug ?? null, visibility,
           membership_policy: membershipPolicy, lifecycle: 'active',
-        });
+        }));
 
-      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
         'chat.created',
-        { id: chatId, space_id: spaceId, kind: 'sole', name: null });
+        { id: chatId, space_id: spaceId, kind: 'sole', name: null }));
 
-      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-        'space.member_added', { actor_id: input.createdBy, role: 'admin' });
+      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+        'space.member_added', { actor_id: input.createdBy, role: 'admin' }));
     });
   } catch (err) {
     if (isConstraint(err, 'space_slug')) throw new SlugTakenError(input.slug ?? '');
     throw err;
   }
 
-  return { spaceId, chatId };
+  return { spaceId, chatId, events };
 }
 
 /**
@@ -160,9 +168,9 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
  */
 export async function joinSpace(
   db: Kysely<DB>, spaceId: string, actorId: string,
-): Promise<void> {
+): Promise<AppendedEvent> {
   await requireSpace(db, actorId, spaceId, 'join');
-  await db.transaction().execute(trx => addMember(trx, spaceId, actorId, 'member'));
+  return db.transaction().execute(trx => addMember(trx, spaceId, actorId, 'member'));
 }
 
 /**
@@ -175,9 +183,9 @@ export async function joinSpace(
 export async function addToSpace(
   db: Kysely<DB>, spaceId: string, actorId: string, by: string,
   role: 'member' | 'admin' = 'member',
-): Promise<void> {
+): Promise<AppendedEvent> {
   await requireSpace(db, by, spaceId, 'add_member');
-  await db.transaction().execute(trx => addMember(trx, spaceId, actorId, role));
+  return db.transaction().execute(trx => addMember(trx, spaceId, actorId, role));
 }
 
 /**
@@ -189,8 +197,8 @@ export async function addToSpace(
  */
 export async function leaveSpace(
   db: Kysely<DB>, spaceId: string, actorId: string,
-): Promise<void> {
-  await db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
+): Promise<AppendedEvent> {
+  return db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
 }
 
 /**
@@ -205,19 +213,63 @@ export async function leaveSpace(
  */
 export async function removeFromSpace(
   db: Kysely<DB>, spaceId: string, actorId: string, by: string,
-): Promise<void> {
+): Promise<AppendedEvent> {
   if (by !== actorId) await requireSpace(db, by, spaceId, 'remove_member');
-  await db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
+  return db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
 }
 
 /** Members of a space who have not left. The fanout set for every chat in it. */
 export async function spaceMembers(db: Kysely<DB>, spaceId: string): Promise<string[]> {
+  return membersOf(db, 'space', spaceId);
+}
+
+/**
+ * Members of a private chat who have not left.
+ *
+ * Only ever the SECOND conjunct of the access predicate — space membership
+ * leads, and this narrows it (invariant 50). Used alone it would grant an actor
+ * removed from a space continued access to a private chat inside it, through a
+ * chat membership row nobody thought to tombstone.
+ *
+ * Private chats arrive in Phase 5, so nothing writes these rows yet. The read
+ * exists now because the audience calculation is where getting the predicate
+ * backwards would be an access leak rather than a missing feature — and a
+ * branch with no test is a branch that is wrong when it finally runs.
+ */
+export async function chatMembers(db: Kysely<DB>, chatId: string): Promise<string[]> {
+  return membersOf(db, 'chat', chatId);
+}
+
+/**
+ * Everyone in a workspace who has not left.
+ *
+ * The audience for the one workspace-wide stream, the actor directory — and it
+ * is the right answer there ONLY because every member is entitled to all of it,
+ * so no recipient ends up with a cursor full of holes (DESIGN.md §9.9).
+ */
+export async function workspaceMembers(
+  db: Kysely<DB>, workspaceId: string,
+): Promise<string[]> {
+  return membersOf(db, 'workspace', workspaceId);
+}
+
+/**
+ * One shape for all three, because they are one question asked of one table.
+ *
+ * A permission is a row (AUTHZ.md §4), so "who belongs to this" is the same
+ * query whatever `this` is — and three hand-written copies would be three
+ * chances to forget `left_at IS NULL`, which is the clause that makes removal
+ * take effect.
+ */
+async function membersOf(
+  db: Kysely<DB>, scopeType: 'workspace' | 'space' | 'chat', scopeId: string,
+): Promise<string[]> {
   const rows = await db.selectFrom('memberships').select('actor_id')
-    .where('scope_type', '=', 'space')
-    .where('scope_id', '=', spaceId)
+    .where('scope_type', '=', scopeType)
+    .where('scope_id', '=', scopeId)
     .where('left_at', 'is', null)
     .execute();
-  return rows.map(r => r.actor_id);
+  return rows.map(row => row.actor_id);
 }
 
 /**
@@ -236,14 +288,14 @@ export async function spaceMembers(db: Kysely<DB>, spaceId: string): Promise<str
  */
 async function addMember(
   trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
-): Promise<void> {
+): Promise<AppendedEvent> {
   await trx.insertInto('memberships')
     .values({ scope_type: 'space', scope_id: spaceId, actor_id: actorId, role })
     .onConflict(oc => oc.columns(['scope_type', 'scope_id', 'actor_id'])
       .doUpdateSet({ left_at: null, joined_at: sql`now()` }))
     .execute();
 
-  await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+  return appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
     'space.member_added', { actor_id: actorId, role });
 }
 
@@ -259,7 +311,7 @@ async function addMember(
  */
 async function removeMember(
   trx: Transaction<DB>, spaceId: string, actorId: string,
-): Promise<void> {
+): Promise<AppendedEvent> {
   await trx.updateTable('memberships')
     .set({ left_at: sql`now()` })
     .where('scope_type', '=', 'space')
@@ -274,7 +326,7 @@ async function removeMember(
   // per event instead of holding a subscription (docs/SYNC-FLOWS.md §7). They
   // learn of it the next time they reconnect and the space is absent from
   // `welcome`; until then their local copy simply freezes.
-  await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+  return appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
     'space.member_removed', { actor_id: actorId });
 }
 

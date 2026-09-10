@@ -132,7 +132,7 @@ referenced from other documents and neither gets renumbered.
 | 3 — the domain ops | C | 13 | ✅ |
 | 4 — the event log | *new* | 13 completed, 14 assumed it | ✅ |
 | 5 — the socket, both halves | D | 14 | ✅ |
-| 6 — the registry and fanout | *new* | 14 | ☐ |
+| 6 — the registry and fanout | *new* | 14 | ✅ |
 | 7 — `hello` and `welcome` | E | 14 | ☐ |
 | 8 — the apply loop and the frontier | F | 14, 15 | ☐ |
 | 9 — catch-up, gap and backfill | G | 14 | ☐ |
@@ -356,9 +356,18 @@ and invariant 43 requires ignoring it.
 
 ---
 
-### Step 6 — The registry and fanout
+### Step 6 — The registry and fanout ✅
 
 `new, split out of Phase 2 step D · DESIGN.md item 14 · G3, G5`
+
+**Built.** `sync/registry.ts`, `sync/fanout.ts`, the `ev` frame, and the domain
+ops returning their events instead of swallowing them. Twenty-three tests of its
+own plus two through a real socket. Two things came out differently from the
+sketch below: the ops now return `{ ack, event }` rather than an ack alone —
+because the event has to leave the transaction somehow, and returning it keeps
+`ops.ts` unaware that sockets exist — and `fanout` filters by **workspace** as
+well as by audience, which the sketch had as a line in a diagram and is a real
+tenant boundary.
 
 Server-only, testable against fake sockets, and the piece that carries the whole
 authorization argument — which is why it is its own step rather than a paragraph
@@ -387,15 +396,33 @@ inside the transport.
 
 **Done when**
 
-- [ ] An actor removed from a space receives nothing further for it on the very
+- [x] An actor removed from a space receives nothing further for it on the very
       next event — with the socket still open and still receiving other spaces.
-- [ ] A private chat's audience is the intersection with space membership
+- [x] A private chat's audience is the intersection with space membership
       **leading**: an actor still in the chat row but out of the space receives
       nothing.
-- [ ] Two connections for one actor both receive.
-- [ ] A socket past the buffer threshold is closed, reconnects, and catch-up
-      leaves it byte-identical to one that never dropped.
-- [ ] Audience size and fanout duration are metrics, not log lines.
+
+      Private chats are Phase 5, so the test writes the membership rows by hand.
+      Worth doing now rather than then: getting the conjuncts the wrong way
+      round is an access leak rather than a missing feature, and the test leaves
+      a **stale chat membership in place** so the space check in front of it is
+      what has to do the work.
+- [x] Two connections for one actor both receive — and a third, for the same
+      actor in a *different workspace*, does not.
+- [x] A socket past the buffer threshold is closed. **The second half —
+      "reconnects, and catch-up leaves it byte-identical" — is not asserted,
+      because catch-up over a socket does not exist until step 9.** The drop
+      is tested; the repair it relies on is tested at the domain layer and not
+      yet through a reconnect. Re-check this when step 9 lands rather than
+      treating the box as closed.
+- [ ] Audience size and fanout duration are metrics, not log lines. **Deferred
+      to step 13 (the instrumentation pass)**, with the seam built: `fanout`
+      returns `{ audience, delivered, dropped }` rather than logging, so the
+      markers have something to read that is not a re-derivation.
+- [x] **Added while building:** a replayed op fans out nothing. The ledger stops
+      the work happening twice; without a second guard the *event* would still
+      escape from the rolled-back first attempt, and every other device would
+      receive a message the sender's own ack correctly reported once.
 
 ---
 
@@ -1806,7 +1833,9 @@ than an item without an owner.
 | WebSocket transport, client-initiated heartbeat, permissive parse | **Built** | 5 |
 | `hello` → `welcome` handshake, close codes, `too_old` | **Built** | 5 (`welcome` grows at 7) |
 | Stream heads on the heartbeat reply | New | 6 |
-| Connection registry, `audienceFor`, fanout, slow-consumer drop | New | 6 |
+| Connection registry, `audienceFor`, fanout, slow-consumer drop | **Built** | 6 |
+| Domain ops returning their event, so it can leave the transaction | **Built** | 6 |
+| The `ev` frame | **Built** | 6 |
 | `hello`/`welcome`/`ev`/`ack`/`nack` frames, `too_old` | New | 7 |
 | One-shot gzip of the `welcome` frame | New | 7 |
 | `pending_revs` → `staged_events` | Replica migration, fixes the lost-edit bug of §11.1 | 8 |
@@ -1859,8 +1888,10 @@ it is filed.
    trip for ten rows. Inlining below a threshold would avoid it and would put a
    conditional into the one frame that most needs to be predictable. Measure the
    round trip before adding the branch.
-8. **A slow consumer must be dropped, not buffered.** *(built in step 6; the
-   threshold is the part still open.)* If one socket's
+8. **A slow consumer must be dropped, not buffered.** *(Built in step 6 at
+   1 MB — a few thousand frames at measured sizes. The number is a starting
+   point, not a finding: it wants a real distribution of `bufferedAmount` under
+   load before it means anything.)* If one socket's
    `bufferedAmount` grows past a threshold, close it and let the client reconnect
    and catch up. That is safe *because* durable catch-up exists; a system without
    it would have to buffer without bound or lose the event silently. The

@@ -250,8 +250,8 @@ test('a slug already taken in the workspace is reported, not swallowed', opts, a
 
 test('a member sends; the head advances', opts, async () => {
   const { chatId } = await channel();
-  const ack = await send(db, {
-    opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'), body: 'hello',
+  const { ack } = await send(db, {
+    opId: ulid("op"), chatId, actorId: bob, messageId: ulid("msg"), body: "hello",
   });
   assert.equal(ack.ord, 1);
   assert.equal(ack.rev, 1);
@@ -288,8 +288,8 @@ test('a delete takes a revision and NO ordinal, and keeps the row', opts, async 
   await send(db, { opId: ulid('op'), chatId, actorId: bob,
                    messageId: ulid('msg'), body: 'after' });
 
-  const ack = await deleteMessage(db, {
-    opId: ulid('op'), chatId, actorId: bob, messageId });
+  const { ack } = await deleteMessage(db, {
+    opId: ulid("op"), chatId, actorId: bob, messageId });
 
   assert.equal(ack.ord, null, 'a delete allocates no ordinal');
   assert.equal(ack.rev, 3);
@@ -322,7 +322,7 @@ test('a space admin may delete somebody else’s message', opts, async () => {
   const { chatId } = await channel();
   const messageId = ulid('msg');
   await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId, body: 'bobs' });
-  const ack = await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId });
+  const { ack } = await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId });
   assert.equal(ack.ord, null);
 });
 

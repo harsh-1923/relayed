@@ -20,18 +20,27 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 5 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 6 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the registry and fanout** — `audienceFor`, which computes an
-event's recipients from memberships at send time so there is no subscription to
-revoke, plus the connection registry and the slow-consumer rule. That is step 6
-of fourteen in the sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2),
-which carries what each step delivers, what "done" means for it, and the six
-goals the phase is measured against.
+**Next task: `hello` and `welcome`** — filling the handshake with per-chat head
+state and counters, the caller's joined spaces and their own memberships, so
+that after one round trip **every badge in the sidebar is correct before a
+single message body has been fetched**. That is R2, and step 7 of fourteen in
+the sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries
+what each step delivers, what "done" means for it, and the six goals the phase
+is measured against.
+
+Two traps there are already written down and both are easy to walk into: the
+directory invalidation currently fires inside `fillActors` and must move to the
+`welcome` handler, or the workspace directory silently stops refreshing; and
+`welcome` must stay **one statement** whatever the chat count, because
+reconnects arrive together after a deploy and an N+1 multiplies by every client
+at once.
 
 **Done so far:** the two schemas, allocation and idempotency, the domain ops,
-the event log, and the socket — steps 1 to 5. The socket authenticates and stays
-alive but carries no product meaning yet; nothing is fanned out to it.
+the event log, the socket, and fanout — steps 1 to 6. A committed event now
+reaches every actor entitled to it and nobody else; what it does not yet carry
+is any state a client could paint from.
 
 Three things are easy to skim past and expensive to rediscover.
 `spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
@@ -44,8 +53,8 @@ an unknown `t` is ignored and an unknown field is dropped, never fatal. And
 and XState was measured at 129 lines against a ~60 line criterion and dropped
 anyway, for reasons `FRONTEND.md` §7.4 records.
 
-Green as of the last commit: **343 tests**, 103 spike assertions, 9 boundary
-rules over 184 files, typecheck across five packages, production build.
+Green as of the last commit: **368 tests**, 103 spike assertions, 9 boundary
+rules over 187 files, typecheck across five packages, production build.
 
 ## Documentation
 

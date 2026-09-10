@@ -63,7 +63,19 @@ function connection(over: Record<string, unknown> = {}): Connection {
   });
 }
 
-const until = async (predicate: () => boolean, ms = 3_000): Promise<void> => {
+/**
+ * Wait for something to become true, generously.
+ *
+ * Fifteen seconds rather than three, and the margin is not laziness. Every
+ * property in this file is "eventually notices", never "notices within N" — the
+ * deadlines that matter are asserted against a fake clock in `connection.test`.
+ * At three seconds this passed alone and under the desktop suite, then failed
+ * when `pnpm test` ran every package in parallel: a loaded event loop delayed a
+ * socket close past the margin, and the failure said nothing about the code.
+ *
+ * A test whose margin is the thing under test measures the scheduler.
+ */
+const until = async (predicate: () => boolean, ms = 15_000): Promise<void> => {
   const deadline = Date.now() + ms;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error('condition not met in time');

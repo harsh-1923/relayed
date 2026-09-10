@@ -20,6 +20,9 @@ import {
 } from '@relayed/protocol';
 import type { DB } from '../db/schema.ts';
 import { verifyAccessToken, type SessionClaims } from '../auth/tokens.ts';
+import { Registry, type Delivery } from './registry.ts';
+import { fanout, type FanoutResult } from './fanout.ts';
+import type { AppendedEvent } from './events.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -54,19 +57,20 @@ export interface SocketDeps {
   onEvent?: (name: string, detail?: Record<string, unknown>) => void;
 }
 
-/** One live connection. Not a permission — a delivery target (SYNC-FLOWS §6). */
-export interface Connection {
-  socket: WebSocket;
-  /** From the verified token, never from the client. Null until `hello`. */
-  claims: SessionClaims | null;
-  send(t: string, body?: Record<string, unknown>): void;
-}
-
 export interface SyncSocket {
-  /** Live connections. A metric, and what the fanout step will iterate. */
+  /** Every connection, authenticated or not. */
   size(): number;
-  /** Authenticated connections for one actor. Keyed by actor, not by device. */
-  forActor(actorId: string): Connection[];
+  /** Authenticated connections only, keyed by actor rather than by device. */
+  registry: Registry;
+  /**
+   * Deliver one committed event to whoever is entitled to it.
+   *
+   * Bound to this socket's registry and database so a caller needs neither.
+   * MUST be called after the transaction that produced the event has committed
+   * — publishing from inside one means a rollback has already told every client
+   * about something that never happened.
+   */
+  deliver(event: AppendedEvent): Promise<FanoutResult>;
   close(): Promise<void>;
 }
 
@@ -88,7 +92,13 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     perMessageDeflate: false,
   });
 
+  // Two collections, and the split is deliberate. Every socket is in
+  // `connections` from the moment it opens, so an anonymous one still has a
+  // deadline and still gets closed on shutdown. Only an AUTHENTICATED one joins
+  // the registry, because the registry is keyed by actor and an anonymous
+  // socket has no actor to key it by.
   const connections = new Set<ConnectionState>();
+  const registry = new Registry();
 
   server.on('upgrade', (request, socket, head) => {
     // `request.url` is a path, not an absolute URL, so it needs a base to be
@@ -115,9 +125,17 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       state.bye(CLOSE.helloTimeout, 'no hello');
     });
 
+    const forget = (): void => {
+      state.dispose();
+      connections.delete(state);
+      // Removed on BOTH paths. A registry that only shed connections on a clean
+      // close would keep writing to sockets that errored — and that leak's
+      // symptom is memory on the busiest server, months later.
+      if (state.claims) registry.remove(state);
+    };
     socket.on('message', (raw: Buffer) => { void onMessage(state, raw); });
-    socket.on('error', () => { state.dispose(); connections.delete(state); });
-    socket.on('close', () => { state.dispose(); connections.delete(state); });
+    socket.on('error', forget);
+    socket.on('close', forget);
   }
 
   async function onMessage(state: ConnectionState, raw: Buffer): Promise<void> {
@@ -202,6 +220,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     }
 
     state.claims = claims;
+    registry.add(state);
     state.arm(readTimeoutMs, () => {
       note('sync.socket.read_timeout');
       state.bye(CLOSE.goingAway, 'silent');
@@ -221,9 +240,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
 
   return {
     size: () => connections.size,
-    forActor(actorId) {
-      return [...connections].filter(c => c.claims?.actorId === actorId);
-    },
+    registry,
+    deliver: (event) => fanout(deps.db, registry, event),
     async close() {
       // Every connection told WHY, so clients reconnect with jitter instead of
       // discovering a dead socket at their next heartbeat. This is the half of
@@ -243,7 +261,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
  * said anything it was supposed to?" — so they share a handle, and there is no
  * way to clear one and leak the other.
  */
-class ConnectionState implements Connection {
+class ConnectionState implements Delivery {
   socket: WebSocket;
   claims: SessionClaims | null = null;
   #timer: NodeJS.Timeout | null = null;
@@ -251,6 +269,19 @@ class ConnectionState implements Connection {
   constructor(socket: WebSocket) {
     this.socket = socket;
   }
+
+  // ── the Delivery surface fanout sees ──
+  //
+  // Deliberately narrow: somewhere to put bytes, a way to tell whether that
+  // somewhere is keeping up, and a way to end it. Fanout can reach none of the
+  // transport state below, which is what stops it growing opinions about
+  // connections.
+
+  /** Only read after `claims` is set, which is when this joins the registry. */
+  get actorId(): string { return this.claims?.actorId ?? ''; }
+  get workspaceId(): string { return this.claims?.workspaceId ?? ''; }
+  get backlog(): number { return this.socket.bufferedAmount; }
+  drop(code: number, reason: string): void { this.bye(code, reason); }
 
   arm(ms: number, onExpiry: () => void): void {
     if (this.#timer) clearTimeout(this.#timer);

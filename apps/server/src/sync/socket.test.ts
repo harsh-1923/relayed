@@ -13,6 +13,8 @@ import { frame, readFrame, OUTBOUND, CLOSE, PROTOCOL } from '@relayed/protocol';
 import { db, pool } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
+import { createChannel } from './spaces.ts';
+import { send } from './ops.ts';
 import type { SessionClaims } from '../auth/tokens.ts';
 
 const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
@@ -22,6 +24,7 @@ const org = ulid('org');
 const wsp = ulid('wsp');
 const me = ulid('act');
 const gone = ulid('act');
+const outsider = ulid('act');   // in the workspace, in no space
 
 /** A stand-in for the real verifier: no signing key, same contract. */
 const claimsFor = (actorId: string): SessionClaims => ({
@@ -44,12 +47,17 @@ before(async () => {
   await db.insertInto('workspaces')
     .values({ id: wsp, org_id: org, name: 'Socket', slug: `s-${wsp.slice(-6).toLowerCase()}` })
     .execute();
-  for (const [id, state] of [[me, 'active'], [gone, 'deactivated']] as const) {
+  for (const [id, state] of
+       [[me, 'active'], [gone, 'deactivated'], [outsider, 'active']] as const) {
     await db.insertInto('actors').values({
       id, org_id: org, workspace_id: wsp, type: 'human',
       handle: `s-${id.slice(-6).toLowerCase()}`, display_name: 'Socket Test',
       avatar_url: null, identity_kind: 'workos_user', identity_id: `wu_${id}`,
       owner_actor_id: null, provisioned_by: 'api', state,
+    }).execute();
+    // can() needs the workspace conjunct above any space one (AUTHZ.md §7).
+    await db.insertInto('memberships').values({
+      scope_type: 'workspace', scope_id: wsp, actor_id: id, role: 'member',
     }).execute();
   }
 
@@ -68,6 +76,9 @@ after(async () => {
   if (!reachable) return;
   await sync.close();
   await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
+  await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();
+  await db.deleteFrom('spaces').where('workspace_id', '=', wsp).execute();
+  await db.deleteFrom('memberships').where('scope_id', '=', wsp).execute();
   await db.deleteFrom('organizations').where('id', '=', org).execute();
   await pool.end();
 });
@@ -305,21 +316,83 @@ test('two devices for one actor are two connections under one id', opts, async (
     peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
     await peer.next('welcome');
   }
-  assert.equal(sync.forActor(me).length, 2);
+  assert.equal(sync.registry.forActors([me]).length, 2);
   first.socket.close();
   second.socket.close();
   await sleep(50);
-  assert.equal(sync.forActor(me).length, 0, 'and both are released on close');
+  assert.equal(sync.registry.forActors([me]).length, 0, 'and both are released on close');
 });
 
 test('an unauthenticated connection belongs to no actor', opts, async () => {
   const peer = await connect();
-  assert.equal(sync.forActor(me).length, 0);
+  assert.equal(sync.registry.forActors([me]).length, 0);
   assert.ok(sync.size() >= 1, 'it is a connection, it is just nobody yet');
   peer.socket.close();
 });
 
 // ─── the upgrade ────────────────────────────────────────────────────────────
+
+// ─── fanout, over a real connection ─────────────────────────────────────────
+
+test('a committed event reaches a real socket, and only the right one',
+  opts, async () => {
+    // The seam the fanout tests cannot cover: they use a fake Delivery, so
+    // nothing there proves that a real ConnectionState satisfies that interface
+    // — that `workspaceId` comes off the verified claims, that `send` reaches
+    // the wire, that `backlog` reads the socket rather than returning zero
+    // forever. All four would fail identically and silently: events resolved,
+    // audience correct, nothing delivered.
+    const space = await createChannel(db, {
+      workspaceId: wsp, name: `sock-${ulid('x')}`, createdBy: me,
+    });
+
+    const member = await connect();
+    member.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await member.next('welcome');
+
+    // `gone` is deactivated, so it cannot authenticate — a second live socket
+    // for somebody outside the space needs a third actor.
+    const outsiderPeer = await connect();
+    outsiderPeer.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+    await outsiderPeer.next('welcome');
+
+    const { event } = await send(db, {
+      opId: ulid('op'), chatId: space.chatId, actorId: me,
+      messageId: ulid('msg'), body: 'over the wire',
+    });
+    const result = await sync.deliver(event!);
+
+    assert.equal(result.audience, 1, 'only the space member is entitled');
+    assert.equal(result.delivered, 1);
+
+    const ev = await member.next('ev') as {
+      stream: { kind: string; id: string }; type: string; payload: { body: string };
+    };
+    assert.deepEqual(ev.stream, { kind: 'chat', id: space.chatId });
+    assert.equal(ev.type, 'message.created');
+    assert.equal(ev.payload.body, 'over the wire');
+    assert.equal(outsiderPeer.frames.some(f => f.t === 'ev'), false,
+      'the outsider’s socket was open and received nothing');
+
+    member.socket.close();
+    outsiderPeer.socket.close();
+  });
+
+test('a closed socket leaves the registry, so fanout stops finding it',
+  opts, async () => {
+    // Removal happens on close AND on error. A registry that only shed
+    // connections on a clean close would keep writing to sockets that errored,
+    // and the leak's symptom is memory on the busiest server, months later.
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+    assert.equal(sync.registry.forActors([me]).length, 1);
+
+    peer.socket.close();
+    await peer.closed;
+    await sleep(50);
+    assert.equal(sync.registry.forActors([me]).length, 0);
+  });
 
 test('an upgrade on any other path is refused', opts, async () => {
   // Refused at the handshake rather than accepted and closed after, so a

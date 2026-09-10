@@ -217,7 +217,7 @@ test('the event carries the same created_at the sender was acked with', opts, as
   // every other device applies the event.
   const { chatId } = await channel();
   const messageId = ulid('msg');
-  const ack = await send(db, {
+  const { ack } = await send(db, {
     opId: ulid('op'), chatId, actorId: me, messageId, body: 'timestamped',
   });
 
@@ -240,7 +240,12 @@ test('a replayed op appends NO second event', opts, async () => {
   const first = await send(db, input);
   const replay = await send(db, input);
 
-  assert.deepEqual(replay, first, 'the stored ack, verbatim');
+  assert.deepEqual(replay.ack, first.ack, 'the stored ack, verbatim');
+  // The replay carries no EVENT, which is a second guarantee on top of the
+  // ack's. The ledger stops the work happening twice; this stops the caller
+  // fanning out a message every other device already has.
+  assert.ok(first.event, 'the first attempt did the work');
+  assert.equal(replay.event, undefined);
   assert.equal((await log(chatStream(chatId))).length, 1);
 });
 
