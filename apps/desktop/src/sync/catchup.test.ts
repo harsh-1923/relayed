@@ -13,7 +13,8 @@ import { applyEvent, frontierOf, type Stream, type Envelope } from './apply.ts';
 import { replicaEffect } from './effects.ts';
 import {
   CatchupScheduler, applyCatchup, applyGap, applyBackfill, backfillFloor,
-  type MessageRow,
+  applyDirectoryPage, directorySnapshotComplete, directoryOwed,
+  type MessageRow, type DirectoryRow,
 } from './catchup.ts';
 
 const CHAT: Stream = { kind: 'chat', id: 'cht_eng' };
@@ -336,5 +337,156 @@ test('a live event after a gap applies at the new frontier', () => {
   const next = applyEvent(deps, CHAT, created(101, 51));
   assert.equal(next.outcome, 'applied');
   assert.equal(frontierOf(db, CHAT), 101);
+  db.close();
+});
+
+// ─── the directory ──────────────────────────────────────────────────────────
+
+const WORKSPACE: Stream = { kind: 'workspace', id: 'wsp_1' };
+
+const person = (id: string, over: Partial<DirectoryRow> = {}): DirectoryRow => ({
+  id, type: 'human', handle: id.slice(-4), display_name: `Person ${id.slice(-4)}`,
+  avatar_url: null, owner_actor_id: null, state: 'active', updated_at: 1, ...over,
+});
+
+const actorEvent = (rev: number, id: string, over: Record<string, unknown> = {}): Envelope => ({
+  rev, type: 'actor.updated',
+  payload: {
+    id, type: 'human', handle: id.slice(-4), display_name: `Person ${id.slice(-4)}`,
+    avatar_url: null, state: 'active', ...over,
+  },
+});
+
+const nameOf = (db: DatabaseSync, id: string): string | undefined =>
+  (db.prepare('SELECT display_name FROM actors WHERE id = ?').get(id) as
+    { display_name: string } | undefined)?.display_name;
+
+test('a reconnect two revisions behind applies TWO rows, not sixteen hundred', () => {
+  // The entire reason the directory is a stream rather than an array in
+  // `welcome`. Re-sending replicated state that changes rarely is the worst
+  // possible shape: maximum bytes, minimum information.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+
+  applyDirectoryPage(db, WORKSPACE.id,
+    Array.from({ length: 1_600 }, (_, i) => person(`act_${String(i).padStart(5, '0')}`)));
+  directorySnapshotComplete(db, WORKSPACE.id, 4_819);
+
+  applyEvent(deps, WORKSPACE, actorEvent(4_820, 'act_00007', { display_name: 'Renamed' }));
+  applyEvent(deps, WORKSPACE, actorEvent(4_821, 'act_99999'));
+
+  assert.equal(nameOf(db, 'act_00007'), 'Renamed', 'the rename landed');
+  assert.equal(nameOf(db, 'act_99999'), 'Person 9999', 'and the new arrival');
+  assert.equal(frontierOf(db, WORKSPACE), 4_821);
+  assert.equal(
+    (db.prepare('SELECT COUNT(*) n FROM actors').get() as { n: number }).n, 1_601);
+  db.close();
+});
+
+test('a directory page does NOT delete what it did not contain', () => {
+  // The difference from the HTTP directory this replaced: that was a whole
+  // snapshot in one response and could treat absence as removal. A PAGE cannot
+  // — an actor missing from page two is on page one.
+  const db = replica();
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1'), person('act_2')]);
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_3')]);
+
+  assert.equal(
+    (db.prepare('SELECT COUNT(*) n FROM actors').get() as { n: number }).n, 3,
+    'all three survived');
+  db.close();
+});
+
+test('the cursor is adopted only after the LAST page', () => {
+  // Adopting it after page one would leave the client believing it held a
+  // directory it had only started fetching — and every actor on later pages
+  // missing until they happened to change.
+  const db = replica();
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1')]);
+  assert.equal(frontierOf(db, WORKSPACE), 0, 'a page alone advances nothing');
+  assert.equal(directoryOwed(db, WORKSPACE.id), true, 'still owed');
+
+  directorySnapshotComplete(db, WORKSPACE.id, 4_821);
+  assert.equal(frontierOf(db, WORKSPACE), 4_821);
+  assert.equal(directoryOwed(db, WORKSPACE.id), false, 'and settled');
+  db.close();
+});
+
+test('a fresh device owes a directory; one that has it does not', () => {
+  const db = replica();
+  assert.equal(directoryOwed(db, WORKSPACE.id), true, 'no row at all is the same as zero');
+
+  directorySnapshotComplete(db, WORKSPACE.id, 4_821);
+  assert.equal(directoryOwed(db, WORKSPACE.id), false);
+
+  applyGap(db, WORKSPACE, 9_000, { kind: 'directory' });
+  assert.equal(directoryOwed(db, WORKSPACE.id), true, 'a gap owes one again');
+  db.close();
+});
+
+test('a DEACTIVATED actor is updated, never removed', () => {
+  // Their past messages still have to render. A client that dropped the row
+  // would show an empty name where a greyed one belongs (DESIGN.md §6.3).
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1')]);
+  directorySnapshotComplete(db, WORKSPACE.id, 10);
+
+  applyEvent(deps, WORKSPACE, actorEvent(11, 'act_1', { state: 'deactivated' }));
+
+  const row = db.prepare('SELECT display_name, state FROM actors WHERE id = ?')
+    .get('act_1') as { display_name: string; state: string };
+  assert.equal(row.state, 'deactivated');
+  assert.equal(row.display_name, 'Person ct_1', 'the name survived, so it can be greyed');
+  db.close();
+});
+
+test('an avatar already fetched survives a directory update, and drops on a new url', () => {
+  // The bytes we hold are the OLD url's. Keeping the pointer across a change
+  // renders yesterday's picture; dropping it on every update makes prefetching
+  // pointless. Same rule the HTTP directory used, for the same reason.
+  const db = replica();
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1', { avatar_url: 'https://a/1.png' })]);
+  db.prepare("UPDATE actors SET avatar_blob = 'deadbeef' WHERE id = 'act_1'").run();
+
+  applyDirectoryPage(db, WORKSPACE.id, [
+    person('act_1', { avatar_url: 'https://a/1.png', display_name: 'Renamed' })]);
+  let row = db.prepare('SELECT avatar_blob FROM actors WHERE id = ?').get('act_1') as
+    { avatar_blob: string | null };
+  assert.equal(row.avatar_blob, 'deadbeef', 'same url, bytes kept');
+
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1', { avatar_url: 'https://a/2.png' })]);
+  row = db.prepare('SELECT avatar_blob FROM actors WHERE id = ?').get('act_1') as
+    { avatar_blob: string | null };
+  assert.equal(row.avatar_blob, null, 'new url, bytes dropped for the prefetch to refill');
+  db.close();
+});
+
+test('THE MONOGRAM WINDOW: an author renders before their row lands', () => {
+  // The product consequence, named rather than discovered. On a FRESH device,
+  // between first paint and the last directory page, a message author has no
+  // name — the same fallback avatars already use, and the price of not blocking
+  // the first frame on a collection sized by the company.
+  //
+  // Asserted as a JOIN that survives the absence, because the failure mode is
+  // not "no name" — it is an inner join that drops the message entirely.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, created(1, 1));
+
+  const row = db.prepare(`
+    SELECT m.id, m.body, a.display_name
+      FROM messages m LEFT JOIN actors a ON a.id = m.author_id
+     WHERE m.chat_id = ?`).get(CHAT.id) as
+    { id: string; body: string; display_name: string | null };
+
+  assert.equal(row.body, 'body 1', 'the message renders');
+  assert.equal(row.display_name, null, 'with no name yet — a monogram, not a gap');
+
+  applyDirectoryPage(db, WORKSPACE.id, [person('act_1', { display_name: 'Harsh Sharma' })]);
+  const named = db.prepare(`
+    SELECT a.display_name FROM messages m LEFT JOIN actors a ON a.id = m.author_id
+     WHERE m.chat_id = ?`).get(CHAT.id) as { display_name: string | null };
+  assert.equal(named.display_name, 'Harsh Sharma', 'and the name arrives after');
   db.close();
 });

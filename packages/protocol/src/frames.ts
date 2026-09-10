@@ -209,10 +209,30 @@ export const BackfillRequest = z.object({
 });
 export type BackfillRequest = z.infer<typeof BackfillRequest>;
 
+/**
+ * One page of the actor directory.
+ *
+ * KEYSET ON ACTOR ID, not an offset and not a revision. Actors have no ordinal,
+ * but ULIDs sort — so "everyone after this id" is a seek on the primary key and
+ * pages cannot skip or repeat when somebody joins mid-fetch, which is exactly
+ * what OFFSET does.
+ *
+ * This is a SNAPSHOT read, not catch-up. Catch-up over the workspace stream
+ * carries the deltas; this exists for the case where there are too many to be
+ * worth replaying — a fresh device, or a cursor past the retention horizon.
+ */
+export const DirectoryRequest = z.object({
+  /** Absent for the first page. */
+  after_id: z.string().nullable().optional(),
+  limit: z.number().int().positive().max(1000).optional(),
+});
+export type DirectoryRequest = z.infer<typeof DirectoryRequest>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
   catchup: CatchupRequest, backfill: BackfillRequest,
+  directory: DirectoryRequest,
 };
 
 // ─── Server → client ────────────────────────────────────────────────────────
@@ -401,10 +421,41 @@ export const BackfillOk = z.object({
 });
 export type BackfillOk = z.infer<typeof BackfillOk>;
 
+/**
+ * One page of the directory, plus where the stream was when the page was taken.
+ *
+ * `head_rev` is what makes a paged snapshot safe to jump a cursor to. The client
+ * adopts it only after the LAST page: at that point it holds current state for
+ * the whole workspace, so advancing past the revisions it never replayed is the
+ * same trade the gap makes — and safe for the same reason.
+ *
+ * Deactivated actors are INCLUDED. A tombstoned author still has to render on
+ * the messages they wrote, and a client that dropped them would show an empty
+ * name where a greyed one belongs (DESIGN.md §6.3).
+ */
+export const DirectoryOk = z.object({
+  rows: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    handle: z.string(),
+    display_name: z.string(),
+    avatar_url: z.string().nullable(),
+    owner_actor_id: z.string().nullable(),
+    state: z.string(),
+    updated_at: z.number().int(),
+  })),
+  /** Pass back as `after_id` for the next page. Null on the last. */
+  next_after_id: z.string().nullable(),
+  complete: z.boolean(),
+  head_rev: z.number().int().nonnegative(),
+});
+export type DirectoryOk = z.infer<typeof DirectoryOk>;
+
 /** Every frame this client accepts. */
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
+  directory_ok: DirectoryOk,
 };
 
 /** Serialise a frame. The one place `t` is attached, so it cannot be forgotten. */

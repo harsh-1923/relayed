@@ -577,3 +577,68 @@ const toMessage = (row: {
   id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
   body: row.body, parentId: row.parent_id,
 });
+
+export interface DirectoryRow {
+  id: string;
+  type: string;
+  handle: string;
+  displayName: string;
+  avatarUrl: string | null;
+  ownerActorId: string | null;
+  state: string;
+  updatedAt: number;
+}
+
+export interface DirectoryPage {
+  rows: DirectoryRow[];
+  nextAfterId: string | null;
+  complete: boolean;
+}
+
+/** How many actors ride in one directory page. Four pages at 1,600 members. */
+export const DIRECTORY_PAGE = 500;
+
+/**
+ * One page of the workspace directory, keyset on actor id.
+ *
+ * KEYSET, NEVER OFFSET, and actors have no ordinal to key on — but ULIDs sort,
+ * so the primary key already gives a stable order. Offset paging would skip or
+ * repeat rows when somebody joins mid-fetch, which for a directory means an
+ * author silently missing from a client that paged past them.
+ *
+ * `identity_kind` and `identity_id` are deliberately not selected. They are
+ * Layer 1 references (DESIGN.md §6.3), nothing on the client addresses an actor
+ * by anything but `actor_id`, and sending them would hand every member a
+ * directory of everyone else's external identifiers for no feature — which is
+ * what the `identity/no-layer-1-on-the-client` boundary rule exists to catch.
+ *
+ * Deactivated actors ARE included. A tombstoned author still has to render on
+ * the messages they wrote; dropping them shows an empty name where a greyed one
+ * belongs.
+ */
+export async function directoryPage(
+  db: Kysely<DB>, workspaceId: string,
+  afterId: string | null = null, limit = DIRECTORY_PAGE,
+): Promise<DirectoryPage> {
+  let query = db.selectFrom('actors')
+    .select(['id', 'type', 'handle', 'display_name', 'avatar_url',
+             'owner_actor_id', 'state', 'updated_at'])
+    .where('workspace_id', '=', workspaceId)
+    .orderBy('id')
+    .limit(limit);
+  if (afterId !== null) query = query.where('id', '>', afterId);
+
+  const rows = await query.execute();
+  return {
+    rows: rows.map(row => ({
+      id: row.id, type: row.type, handle: row.handle,
+      displayName: row.display_name, avatarUrl: row.avatar_url,
+      ownerActorId: row.owner_actor_id, state: row.state,
+      updatedAt: new Date(row.updated_at as unknown as string).getTime(),
+    })),
+    // Derived from the page being short rather than asked for, so a client
+    // cannot be told to keep paging into nothing.
+    nextAfterId: rows.length === limit ? (rows.at(-1)?.id ?? null) : null,
+    complete: rows.length < limit,
+  };
+}

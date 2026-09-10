@@ -15,6 +15,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import { topic } from '../shared/topics.ts';
 import type { Effect, Stream, Envelope } from './apply.ts';
 
+interface ActorChanged {
+  id: string; type: string; handle: string; display_name: string;
+  avatar_url: string | null; state: string;
+}
+
 interface MessageCreated {
   id: string; ord: number; parent_id: string | null;
   author_id: string; body: string; created_at: string;
@@ -41,6 +46,13 @@ export function replicaEffect(onUnknown?: (type: string) => void): Effect {
       case 'space.created':
       case 'chat.created':
         return [topic.space(stream.id), topic.spaces()];
+
+      // The directory, on the one workspace-wide stream. Steady state is one
+      // event and one row — not a re-send of 1,600 of them, which is the entire
+      // reason it is a stream rather than an array in `welcome`.
+      case 'actor.created':
+      case 'actor.updated':
+        return actorChanged(db, stream, event);
 
       default:
         onUnknown?.(event.type);
@@ -98,4 +110,35 @@ function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): stri
   if (result.changes === 0) return [];
 
   return [topic.messages(stream.id), topic.chatState(stream.id)];
+}
+
+function actorChanged(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
+  const actor = event.payload as ActorChanged;
+
+  // The workspace comes from the STREAM, which for a directory event IS the
+  // workspace — no lookup, and no chance of filing an actor under the wrong one.
+  //
+  // Upsert, and `avatar_blob` is preserved while the URL is unchanged. The
+  // bytes we hold are the OLD url's, so keeping the pointer across a change
+  // would render yesterday's picture; dropping it on every update would make
+  // prefetching pointless. Same rule the HTTP directory used, for the same
+  // reason.
+  db.prepare(`
+    INSERT INTO actors (id, workspace_id, type, handle, display_name,
+                        avatar_url, owner_actor_id, state, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      type = excluded.type, handle = excluded.handle,
+      display_name = excluded.display_name, avatar_url = excluded.avatar_url,
+      state = excluded.state, updated_at = excluded.updated_at,
+      avatar_blob = CASE
+        WHEN actors.avatar_url IS NOT DISTINCT FROM excluded.avatar_url
+        THEN actors.avatar_blob ELSE NULL END
+  `).run(actor.id, stream.id, actor.type, actor.handle, actor.display_name,
+         actor.avatar_url, actor.state, Date.now());
+
+  // A DEACTIVATED actor is updated, never removed. Their past messages still
+  // have to render — a client that dropped the row would show an empty name
+  // where a greyed one belongs (DESIGN.md §6.3).
+  return [topic.actors()];
 }

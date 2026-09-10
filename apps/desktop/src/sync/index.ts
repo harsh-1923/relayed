@@ -16,11 +16,12 @@ import { Session, type AuthState } from './auth/session.ts';
 import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
-import { listInvitations, createInvite, revokeInvite, fetchActors } from './auth/relayed.ts';
+import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
 import { newId } from './ids.ts';
 import { installNetworkGate } from './network.ts';
 import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
 import { createInvalidator } from './invalidate.ts';
+import { createLink } from './link.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
 import type { OurSession } from './auth/relayed.ts';
 
@@ -152,7 +153,11 @@ function adoptSession(s: OurSession): void {
   // them at those four call sites as well only duplicated the work.
   void setBlobAccount(storage.accountId);
   void fillAvatars();
-  void fillActors();
+  // The directory arrives over the socket now, page by page, and the link is
+  // what asks for it. `fetchActors` and `GET /actors` are gone: a client that
+  // has just connected needs the directory anyway, so fetching it over HTTP as
+  // well was a second path to the same data.
+  link.start();
 }
 
 /** §13.3: avatars are fetched eagerly, always. Failures are silent and retried. */
@@ -173,31 +178,55 @@ async function fillAvatars(): Promise<void> {
  * going stale degrades names, and a failed refresh must not take the read path
  * with it (§13.1).
  */
-async function fillActors(): Promise<void> {
-  if (!storage.hasWorkspace) return;
-  // The token already in hand, NOT ensureFresh(). This runs from the session's
-  // own adopt path, and ensureFresh() can adopt again — which calls back into
-  // here. It terminated only because the token was fresh by the second pass;
-  // one boot still synced the directory four times.
-  const token = session.accessToken;
-  if (!token) return;
-  try {
-    const actors = await fetchActors(token);
-    storage.syncActors(actors);
-    invalidate([topic.actors()]);
-    count('directory.synced', { result: 'ok' });
-    emit('directory.synced', {
-      workspace: storage.workspaceId ?? '', actors: actors.length,
+/**
+ * The socket, and everything that arrives on it.
+ *
+ * Constructed once and started when a workspace is open — the connection itself
+ * is idle until then, because there is nothing to authenticate with and nowhere
+ * to put what arrives.
+ *
+ * `guardConnect` runs inside it before any socket is constructed, so simulated
+ * offline cuts this as decisively as it cuts fetch. Patching `fetch` catches
+ * fetch and nothing else, and half a simulation is worse than none because it
+ * looks like it worked.
+ */
+const link = createLink({
+  url: (process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787')
+    .replace(/^http/, 'ws') + '/sync',
+  gate: net,
+  db: () => (storage.hasWorkspace ? storage.workspace : null),
+  workspaceId: () => storage.workspaceId,
+  token: async () => session.accessToken,
+  invalidate: (topics) => { invalidate(topics); },
+  onWelcome: (body) => {
+    storage.applyWelcome({
+      actorId: body.actor.id,
+      spaces: (body.spaces ?? []).map(space => ({
+        id: space.id, kind: space.kind, name: space.name, slug: space.slug,
+        visibility: space.visibility, membershipPolicy: space.membership_policy,
+        lifecycle: space.lifecycle, rev: space.rev,
+      })),
+      chats: (body.chats ?? []).map(chat => ({
+        id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
+        headOrd: chat.head_ord, headRev: chat.head_rev,
+        chatUnread: chat.chat_unread, threadUnread: chat.thread_unread,
+        mentionCount: chat.mention_count,
+      })),
+      memberships: (body.memberships ?? []).map(m => ({
+        scopeType: m.scope_type, scopeId: m.scope_id, role: m.role,
+      })),
     });
-    // Directory avatars can only be prefetched once the directory exists, and
-    // fillAvatars is fired off in parallel with this — so it has already run
-    // against an empty table by the time we get here. Run it again now that
-    // there is something to walk. Idempotent: anything already held is skipped.
-    await fillAvatars();
-  } catch {
-    count('directory.synced', { result: 'error' });
-  }
-}
+    // Every badge in the sidebar is correct as of this line, with the message
+    // table still empty. Waking the surfaces is what makes that visible.
+    invalidate([topic.spaces(), topic.actors()]);
+  },
+  // Left unwired on purpose. Nine sync events are declared and have no call
+  // sites, and they are being wired in ONE pass rather than nine decisions made
+  // six steps apart — which is what buys a coherent picture of a request
+  // crossing the whole path instead of nine markers that each answer a local
+  // question (step 13 of the plan).
+  onEvent: () => {},
+});
 
 // ── the view the renderer renders ───────────────────────────────────────────
 
@@ -566,6 +595,12 @@ process.parentPort.on('message', (e) => {
   const [port] = e.ports;
   if (port) { attach(port); return; }
   const msg = e.data as { type?: string; url?: string };
+  // Waking from sleep, forwarded by main because `powerMonitor` is a
+  // main-process API and the socket lives here. Worth the hop: after a lid
+  // closes the connection is dead and the operating system will not find out
+  // for minutes, so a machine that has just woken is the only prompt signal
+  // there is (invariant 30).
+  if (msg?.type === 'net:resume') { link.retryNow(); return; }
   if (msg?.type === 'auth:callback' && msg.url) {
     // Phase 1: PKCE exchange lands here. Logging only for now — the point is
     // that the URL reached the process that owns the verifier.

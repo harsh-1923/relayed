@@ -151,6 +151,24 @@ export class Connection {
     this.#connect();
   }
 
+  /**
+   * Write one frame, if there is a socket to write it to.
+   *
+   * Silently dropped when there is not, deliberately. Every frame this sends is
+   * a REQUEST for something the client can ask for again — catch-up, a
+   * directory page — and each has a caller that re-asks on reconnect. Queueing
+   * them would deliver a burst of stale requests the moment a socket returns,
+   * against a `welcome` that has already answered most of them.
+   *
+   * Writes that must not be lost do not come through here: they go in the
+   * outbox, which is durable and transactional with its own echo (invariant 40).
+   */
+  send(t: string, body: Record<string, unknown> = {}): boolean {
+    if (this.#state !== 'live' || !this.#socket) return false;
+    this.#socket.send(frame(t, body));
+    return true;
+  }
+
   // ── the machine ───────────────────────────────────────────────────────────
 
   /**

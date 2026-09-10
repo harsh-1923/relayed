@@ -136,7 +136,7 @@ referenced from other documents and neither gets renumbered.
 | 7 — `hello` and `welcome` | E | 14 | ✅ |
 | 8 — the apply loop and the frontier | F | 14, 15 | ✅ |
 | 9 — catch-up, gap and backfill | G | 14 | ✅ |
-| 10 — the directory as a stream | *new* | 14 | ☐ |
+| 10 — the directory as a stream | *new* | 14 | ✅ |
 | 11 — the outbox | H | 16 | ☐ |
 | 12 — retention, and the residue we accept | *new* | 14 | ☐ |
 | 13 — the instrumentation pass | *new* | 14 | ☐ |
@@ -630,9 +630,23 @@ lazy backfill on open rather than on reconnect.
 
 ---
 
-### Step 10 — The directory as a stream
+### Step 10 — The directory as a stream ✅
 
 `new · DESIGN.md item 14 · G2, G5`
+
+**Built.** `actor.*` applied on the client, the paged `directory` /
+`directory_ok` frames keyset on actor id, and `auth/directory.ts` plus
+`fetchActors` deleted. Twelve tests.
+
+**It also absorbed a dependency the plan never assigned**, and that is worth
+recording rather than smoothing over. Every step from the socket onwards built a
+piece with a test — a connection, an apply loop, a scheduler, a pager — and
+**nothing assembled them**: the engine had never opened a socket. It was nobody's
+step until this one forced it, because `fetchActors` may only be deleted once
+its replacement is *running*. `sync/link.ts` is that assembly, and it is
+deliberately thin: it decides which function gets called with what, and nothing
+else. The moment it holds an opinion it becomes a second place the frontier rule
+lives.
 
 The first consumer of the stream machinery that is not a chat — which is the
 proof that it generalised, rather than a claim that it did.
@@ -653,19 +667,27 @@ not landed yet.
 
 **Done when**
 
-- [ ] A fresh device paints before the directory lands, and the author's name
-      appears when it does, with no error state in between.
-- [ ] A reconnect two revs behind fetches **two rows**, not 1,600.
-- [ ] A deactivated actor still renders on their old messages, offline included.
-- [ ] **`auth/directory.ts` and `fetchActors` are deleted here**, not earlier —
+- [x] A fresh device paints before the directory lands, and the author's name
+      appears when it does, with no error state in between. Asserted as a LEFT
+      JOIN that survives the absence, because the failure mode is not "no name"
+      — it is an inner join that drops the message entirely.
+- [x] A reconnect two revs behind applies **two rows**, not 1,600.
+- [x] A deactivated actor still renders on their old messages: an
+      `actor.updated` carrying `state: 'deactivated'`, never a removal.
+- [x] **`auth/directory.ts` and `fetchActors` are deleted here**, not earlier —
       moved from step 7, where deleting them would have left the client with no
-      directory at all until this step landed. The live-query invalidation that
-      currently fires inside `fillActors` moves with them; miss it and the
-      workspace directory silently stops refreshing, which is exactly the
-      failure the live-query client exists to remove.
-- [ ] Directory page count and latency are metrics, so open question 6
-      (directory retention on the client) becomes a measurement at 20,000
-      members rather than a guess.
+      directory at all until this step landed. The invalidation moved with them,
+      and now fires **per page** rather than once at the end: on a fresh device
+      the first page is the difference between every author being a monogram and
+      most of them having a name, and it lands seconds before the last.
+- [ ] Directory page count and latency are metrics. **Deferred to step 13 (the
+      instrumentation pass)** with the seam built — the pager reports rows per
+      page, so open question 6 (directory retention on the client) becomes a
+      measurement rather than a guess as soon as the markers land.
+- [x] **Added while building:** a directory page does NOT delete what it did not
+      contain. The HTTP endpoint was a whole snapshot in one response and could
+      treat absence as removal; a page cannot, because an actor missing from
+      page two is on page one.
 
 ---
 
@@ -1923,7 +1945,8 @@ than an item without an owner.
 | Client apply loop, staging, and one `stream_state` for every frontier | **Built** | 8 |
 | Catch-up scheduler, gap handling, lazy backfill | **Built** | 9 |
 | `catchup` generalised across stream kinds, `catchup`/`backfill` frames | **Built** | 9 |
-| `workspace` stream for the directory, paged `directory` fetch | New — replaces `GET /actors` | 10 |
+| `workspace` stream for the directory, paged `directory` fetch | **Built** — replaced `GET /actors` | 10 |
+| `sync/link.ts` — the engine's end of the socket, routing frames into the replica | **Built** | 10 (unassigned by the plan) |
 | Outbox drainer and coalescing | New | 11 |
 | Event retention sweep | New | 12 |
 

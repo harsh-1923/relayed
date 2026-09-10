@@ -749,3 +749,112 @@ test('a short backfill page reports complete, so paging terminates', opts, async
   assert.equal(page.complete, true, 'derived from the short page, not asked for');
   peer.socket.close();
 });
+
+// ─── the directory, paged ───────────────────────────────────────────────────
+
+test('the directory pages by actor id, keyset and complete-flagged', opts, async () => {
+  // Keyset, never OFFSET. Actors have no ordinal, but ULIDs sort — so the
+  // primary key already gives a stable order, and offset paging would skip or
+  // repeat rows when somebody joins mid-fetch. For a directory that means an
+  // author silently missing from a client that paged past them.
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('directory', { after_id: null, limit: 2 });
+  const first = await peer.next('directory_ok') as {
+    rows: { id: string }[]; next_after_id: string | null;
+    complete: boolean; head_rev: number;
+  };
+
+  assert.equal(first.rows.length, 2);
+  assert.equal(first.complete, false, 'a full page means there may be more');
+  assert.equal(first.next_after_id, first.rows[1]?.id, 'the cursor is the last id');
+  assert.ok(first.rows[0]!.id < first.rows[1]!.id, 'ordered, so paging is stable');
+  peer.socket.close();
+});
+
+test('a directory page carries no Layer 1 identity reference', opts, async () => {
+  // `identity_kind` and `identity_id` are deliberately not selected. Nothing on
+  // the client addresses an actor by anything but `actor_id`, and sending them
+  // would hand every member a directory of everyone else's external
+  // identifiers for no feature (invariant 16).
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('directory', { after_id: null, limit: 5 });
+  const page = await peer.next('directory_ok') as { rows: Record<string, unknown>[] };
+
+  for (const row of page.rows) {
+    for (const forbidden of ['identity_kind', 'identity_id', 'workos_user_id']) {
+      assert.equal(forbidden in row, false, `a directory row leaked ${forbidden}`);
+    }
+  }
+  peer.socket.close();
+});
+
+test('a DEACTIVATED actor is in the directory, not omitted from it', opts, async () => {
+  // A tombstoned author still has to render on the messages they wrote. A
+  // client that dropped them would show an empty name where a greyed one
+  // belongs (DESIGN.md §6.3).
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('directory', { after_id: null, limit: 1000 });
+  const page = await peer.next('directory_ok') as {
+    rows: { id: string; state: string }[];
+  };
+
+  const tombstoned = page.rows.find(r => r.id === gone);
+  assert.ok(tombstoned, 'the deactivated actor is present');
+  assert.equal(tombstoned.state, 'deactivated', 'and says so, so it can be greyed');
+  peer.socket.close();
+});
+
+test('the directory is scoped by the TOKEN, never by a parameter', opts, async () => {
+  // A workspace id in a request is not evidence of membership in it. That is
+  // the whole of the authorization here — and it is enough, because every
+  // member of a workspace is entitled to all of its directory, which is exactly
+  // why the directory can be a workspace-wide stream at all (DESIGN.md §9.9).
+  const otherOrg = ulid('org');
+  const otherWsp = ulid('wsp');
+  const stranger = ulid('act');
+  await db.insertInto('organizations')
+    .values({ id: otherOrg, workos_org_id: `test_${otherOrg}`, name: 'Other' }).execute();
+  await db.insertInto('workspaces')
+    .values({ id: otherWsp, org_id: otherOrg, name: 'Other',
+              slug: `o-${otherWsp.slice(-6).toLowerCase()}` }).execute();
+  await db.insertInto('actors').values({
+    id: stranger, org_id: otherOrg, workspace_id: otherWsp, type: 'human',
+    handle: 'stranger', display_name: 'Stranger', avatar_url: null,
+    identity_kind: 'workos_user', identity_id: `wu_${stranger}`,
+    owner_actor_id: null, provisioned_by: 'api', state: 'active' }).execute();
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+  peer.send('directory', { after_id: null, limit: 1000, workspace_id: otherWsp });
+  const page = await peer.next('directory_ok') as { rows: { id: string }[] };
+
+  assert.equal(page.rows.some(r => r.id === stranger), false,
+    'the workspace_id in the request was ignored');
+  peer.socket.close();
+  await db.deleteFrom('organizations').where('id', '=', otherOrg).execute();
+});
+
+test('head_rev rides along, so a completed snapshot knows its cursor', opts, async () => {
+  // Read BEFORE the page rather than after: taken afterwards it could be higher
+  // than the data, and a client adopting it would jump its frontier past a
+  // change the page did not contain.
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('directory', { after_id: null, limit: 1000 });
+  const page = await peer.next('directory_ok') as { head_rev: number; complete: boolean };
+  assert.equal(page.complete, true);
+  assert.equal(typeof page.head_rev, 'number');
+  peer.socket.close();
+});

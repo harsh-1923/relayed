@@ -5,7 +5,6 @@ import { migrate } from './db/migrate.ts';
 import { authRoutes } from './auth/routes.ts';
 import { invitationRoutes } from './auth/invitations.ts';
 import { landingRoutes } from './web/landing.ts';
-import { directoryRoutes } from './auth/directory.ts';
 import { pool, db } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
 import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
@@ -35,7 +34,6 @@ app.get('/health', async () => ({ ok: true, service: 'relayed-server' }));
 await app.register(authRoutes);
 await app.register(invitationRoutes);
 await app.register(landingRoutes);
-await app.register(directoryRoutes);
 
 // The sync socket, on Fastify's own HTTP server rather than a second listener:
 // one port, one TLS terminator, and an upgrade that a proxy already knows how

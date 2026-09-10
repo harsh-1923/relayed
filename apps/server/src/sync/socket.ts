@@ -17,7 +17,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
-  type Hello, type CatchupRequest, type BackfillRequest,
+  type Hello, type CatchupRequest, type BackfillRequest, type DirectoryRequest,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
 import { loadGrants } from '../authz/can.ts';
@@ -27,7 +27,7 @@ import { verifyAccessToken, type SessionClaims } from '../auth/tokens.ts';
 import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import { parseStream, type AppendedEvent, type Stream } from './events.ts';
-import { welcome, catchup, backfill, streamHead } from './feed.ts';
+import { welcome, catchup, backfill, streamHead, directoryPage } from './feed.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -190,6 +190,9 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
 
     if (read.t === 'catchup') { await onCatchup(state, read.body as CatchupRequest); return; }
     if (read.t === 'backfill') { await onBackfill(state, read.body as BackfillRequest); return; }
+    if (read.t === 'directory') {
+      await onDirectory(state, read.body as DirectoryRequest); return;
+    }
 
     if (read.t === 'ping') {
       // The heartbeat is CLIENT-initiated, which is one mechanism serving both
@@ -287,6 +290,47 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // A short page means the beginning was reached. Derived rather than asked
       // for, so a client cannot be told to keep paging into nothing.
       complete: rows.length < limit,
+    });
+  }
+
+  /**
+   * One page of the directory.
+   *
+   * Scoped by the TOKEN's workspace, never by a parameter — a workspace id in a
+   * request is not evidence of membership in it. That is the whole of the
+   * authorization here, and it is enough: every member of a workspace is
+   * entitled to all of its directory, which is precisely why the directory can
+   * be a workspace-wide stream at all (DESIGN.md §9.9).
+   *
+   * `head_rev` rides along so the client knows what cursor this snapshot
+   * corresponds to. Read BEFORE the page rather than after: taken afterwards it
+   * could be higher than the data, and the client would jump its frontier past
+   * a change the page did not contain.
+   */
+  async function onDirectory(
+    state: ConnectionState, request: DirectoryRequest,
+  ): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+
+    const headRev = await streamHead(deps.db, {
+      kind: 'workspace', id: claims.workspaceId,
+    });
+    const page = await directoryPage(
+      deps.db, claims.workspaceId, request.after_id ?? null, request.limit,
+    );
+
+    note('sync.directory.page', { rows: page.rows.length });
+    state.send('directory_ok', {
+      rows: page.rows.map(row => ({
+        id: row.id, type: row.type, handle: row.handle,
+        display_name: row.displayName, avatar_url: row.avatarUrl,
+        owner_actor_id: row.ownerActorId, state: row.state,
+        updated_at: row.updatedAt,
+      })),
+      next_after_id: page.nextAfterId,
+      complete: page.complete,
+      head_rev: headRev,
     });
   }
 

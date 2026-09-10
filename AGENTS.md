@@ -20,26 +20,26 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 9 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 10 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the directory as a stream** — `actor.*` events applied on the
-client, the paged `directory` fetch keyed on actor id, and the monogram fallback
-for an author whose row has not landed yet. That is step 10 of fourteen in the
-sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
+**Next task: the outbox** — coalescing on enqueue, in-order replay per chat,
+and the ack applied in one transaction with the outbox row it clears. That is
+step 11 of fourteen in the sync build plan
+([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), and the first thing a user can break
+by being offline.
 
-It is the first consumer of the stream machinery that is **not a chat**, which
-is the proof it generalised rather than a claim that it did. Two things are
-already written down for it: `auth/directory.ts` and `fetchActors` are deleted
-**here** rather than earlier, because this is where their replacement lands —
-and the live-query invalidation that currently fires inside `fillActors` moves
-with them, or the workspace directory silently stops refreshing.
+The sharpest rule there is a correctness requirement rather than an
+optimisation: **compose then delete offline must produce ZERO network ops**, not
+two that fail — `delete` targets a message the server has never heard of, so the
+pair is dropped entirely and never touches the wire. That is why the outbox
+indexes `target_id`.
 
-**Done so far:** the two schemas, allocation and idempotency, the domain ops,
-the event log, the socket, fanout, `hello`/`welcome`, the apply loop, and
-catch-up — steps 1 to 9. A client now connects, paints correct badges, applies
-what arrives, and asks for what it missed.
+**Done so far:** steps 1 to 10. A client connects, paints correct badges,
+applies what arrives, asks for what it missed, and hydrates its directory over
+the socket — `sync/link.ts` is what assembles those into a running engine. What
+it cannot yet do is write.
 
-Green as of the last commit: **424 tests**, 103 spike assertions, 9 boundary
+Green as of the last commit: **436 tests**, 103 spike assertions, 9 boundary
 rules over 192 files, typecheck across five packages, production build.
 
 ## Documentation

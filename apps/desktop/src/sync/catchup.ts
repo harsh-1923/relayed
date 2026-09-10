@@ -250,3 +250,96 @@ export function backfillFloor(
     hasGap: (stream?.has_gap ?? 0) === 1,
   };
 }
+
+export interface DirectoryRow {
+  id: string;
+  type: string;
+  handle: string;
+  display_name: string;
+  avatar_url: string | null;
+  owner_actor_id: string | null;
+  state: string;
+  updated_at: number;
+}
+
+/**
+ * Apply one page of the directory snapshot.
+ *
+ * PAGES ARE ADDITIVE, and the last one does NOT delete what it did not contain.
+ * That is the difference from the HTTP directory this replaced, which was a
+ * whole snapshot in one response and could therefore treat absence as removal.
+ * A page cannot: an actor missing from page two is on page one.
+ *
+ * Removal is not something the directory needs to express anyway. An actor is
+ * tombstoned rather than deleted, so leaving is an `actor.updated` carrying
+ * `state: 'deactivated'` — and their row has to survive regardless, because
+ * their past messages still have to render (DESIGN.md §6.3).
+ */
+export function applyDirectoryPage(
+  db: DatabaseSync, workspaceId: string, rows: readonly DirectoryRow[],
+): string[] {
+  if (rows.length === 0) return [];
+
+  db.exec('BEGIN');
+  try {
+    const upsert = db.prepare(`
+      INSERT INTO actors (id, workspace_id, type, handle, display_name,
+                          avatar_url, owner_actor_id, state, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        type = excluded.type, handle = excluded.handle,
+        display_name = excluded.display_name, avatar_url = excluded.avatar_url,
+        owner_actor_id = excluded.owner_actor_id, state = excluded.state,
+        updated_at = excluded.updated_at,
+        -- The bytes we hold are the OLD url's. Keep the pointer only while the
+        -- url is unchanged, or a rename of somebody's picture renders the
+        -- previous one for ever.
+        avatar_blob = CASE
+          WHEN actors.avatar_url IS NOT DISTINCT FROM excluded.avatar_url
+          THEN actors.avatar_blob ELSE NULL END
+    `);
+    for (const row of rows) {
+      upsert.run(row.id, workspaceId, row.type, row.handle, row.display_name,
+                 row.avatar_url, row.owner_actor_id, row.state, row.updated_at);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+
+  return ['actors'];
+}
+
+/**
+ * Adopt the cursor a completed snapshot corresponds to.
+ *
+ * Called ONLY after the last page. The same trade the gap makes, and safe for
+ * the same reason: what has been adopted is current state for the whole
+ * workspace, so the revisions between the old cursor and this head describe
+ * changes already reflected in the rows.
+ *
+ * Called after page one instead, a client would believe it held a directory it
+ * had only started fetching — and every actor on pages two onwards would be
+ * missing until somebody happened to change.
+ */
+export function directorySnapshotComplete(
+  db: DatabaseSync, workspaceId: string, headRev: number,
+): void {
+  db.prepare(`
+    INSERT INTO stream_state (stream_kind, stream_id, synced_through_rev,
+                              server_head_rev, has_gap)
+    VALUES ('workspace', ?, ?, ?, 0)
+    ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+      synced_through_rev = MAX(stream_state.synced_through_rev, excluded.synced_through_rev),
+      server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev),
+      has_gap = 0
+  `).run(workspaceId, headRev, headRev);
+}
+
+/** Does this client still owe itself a directory fetch? */
+export function directoryOwed(db: DatabaseSync, workspaceId: string): boolean {
+  const row = db.prepare(`SELECT synced_through_rev, has_gap FROM stream_state
+                           WHERE stream_kind = 'workspace' AND stream_id = ?`)
+    .get(workspaceId) as { synced_through_rev: number; has_gap: number } | undefined;
+  // Never heard of, or gapped. A fresh device has no row at all, which is the
+  // same fact as a cursor of zero and is treated as one.
+  return !row || row.has_gap === 1 || row.synced_through_rev === 0;
+}
