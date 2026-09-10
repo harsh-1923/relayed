@@ -17,14 +17,17 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
-  type Hello,
+  type Hello, type CatchupRequest, type BackfillRequest,
 } from '@relayed/protocol';
+import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
+import { loadGrants } from '../authz/can.ts';
+import { chatPlacement, spacePlacement } from './placement.ts';
 import type { DB } from '../db/schema.ts';
 import { verifyAccessToken, type SessionClaims } from '../auth/tokens.ts';
 import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
-import type { AppendedEvent } from './events.ts';
-import { welcome } from './feed.ts';
+import { parseStream, type AppendedEvent, type Stream } from './events.ts';
+import { welcome, catchup, backfill, streamHead } from './feed.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -185,6 +188,9 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       state.bye(CLOSE.goingAway, 'silent');
     });
 
+    if (read.t === 'catchup') { await onCatchup(state, read.body as CatchupRequest); return; }
+    if (read.t === 'backfill') { await onBackfill(state, read.body as BackfillRequest); return; }
+
     if (read.t === 'ping') {
       // The heartbeat is CLIENT-initiated, which is one mechanism serving both
       // directions: the client learns the server is alive from this reply, and
@@ -196,6 +202,92 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // in that stream, so the last event before a silence would never arrive.
       state.send('pong');
     }
+  }
+
+  /**
+   * May this actor read this stream?
+   *
+   * NEVER INFERRED FROM THE CURSOR. A client sends the stream id it wants, and a
+   * modified one can send any id at all — so the answer comes from `can()` over
+   * grants loaded now, exactly as it would for any other read. The cursor says
+   * how far along, not whether.
+   *
+   * A workspace stream is readable by anyone in the workspace, which the token
+   * already establishes: the connection's own workspace claim IS the check, and
+   * comparing it here is the whole of it.
+   */
+  async function mayRead(claims: SessionClaims, stream: Stream): Promise<boolean> {
+    if (stream.kind === 'workspace') return stream.id === claims.workspaceId;
+
+    const [grants, placement] = await Promise.all([
+      loadGrants(deps.db, claims.actorId),
+      stream.kind === 'chat'
+        ? chatPlacement(deps.db, stream.id)
+        : spacePlacement(deps.db, stream.id),
+    ]);
+    const target = stream.kind === 'chat' ? chatTarget(stream.id) : spaceTarget(stream.id);
+    return can(grants, 'read', target, placement);
+  }
+
+  async function onCatchup(state: ConnectionState, request: CatchupRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+
+    // Narrowed, never cast. A `kind` this server does not have is ignored the
+    // same way an unknown frame is — a newer client naming a stream kind this
+    // deployment predates must not be an error.
+    const stream = parseStream(request.stream);
+    if (!stream) { note('sync.frame.unknown', { t: `catchup:${request.stream.kind}` }); return; }
+
+    // SILENCE rather than a denial frame. Telling an actor that a stream exists
+    // but is not theirs is a disclosure; telling them nothing is not. The client
+    // is asking about something it was told about, so in practice this only
+    // fires for a modified one.
+    if (!await mayRead(claims, stream)) {
+      note('sync.catchup.denied', { kind: stream.kind });
+      return;
+    }
+
+    const result = await catchup(deps.db, stream, request.from_rev);
+    if (result.kind === 'gap') {
+      note('sync.gap.sent', { kind: request.stream.kind });
+      state.send('gap', {
+        stream, head_rev: result.headRev, snapshot: result.snapshot,
+      });
+      return;
+    }
+
+    state.send('catchup_ok', {
+      stream,
+      from_rev: result.fromRev,
+      to_rev: result.toRev,
+      // False when the batch was capped by the read limit and another round is
+      // owed. The client must not stop asking just because a reply arrived.
+      complete: result.toRev >= await streamHead(deps.db, stream),
+      events: result.events,
+    });
+  }
+
+  async function onBackfill(state: ConnectionState, request: BackfillRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    if (!await mayRead(claims, { kind: 'chat', id: request.c })) {
+      note('sync.backfill.denied');
+      return;
+    }
+
+    const limit = request.limit ?? 50;
+    const rows = await backfill(deps.db, request.c, request.before_ord, limit);
+    state.send('backfill_ok', {
+      c: request.c,
+      rows: rows.map(row => ({
+        id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
+        body: row.body, parent_id: row.parentId,
+      })),
+      // A short page means the beginning was reached. Derived rather than asked
+      // for, so a client cannot be told to keep paging into nothing.
+      complete: rows.length < limit,
+    });
   }
 
   async function onHello(state: ConnectionState, hello: Hello): Promise<void> {

@@ -51,6 +51,28 @@ export const spaceStream = (id: string): SpaceStream => ({ kind: 'space', id });
 export const workspaceStream = (id: string): WorkspaceStream =>
   ({ kind: 'workspace', id });
 
+/**
+ * Narrow a stream reference that came off the wire.
+ *
+ * Returns null for a kind this server does not have, which is NOT the same as
+ * rejecting the connection: a newer client may name a stream kind this
+ * deployment predates, and that is the ordinary state of a fleet where updates
+ * are opt-in.
+ *
+ * It is also a real guard rather than a formality. Without it a `kind` of
+ * anything at all fell through to the workspace branch of the head lookup — so
+ * a client asking about `banana:spc_1` would have been answered about a
+ * workspace. A cast would have compiled and done exactly that.
+ */
+export function parseStream(ref: { kind: string; id: string }): Stream | null {
+  switch (ref.kind) {
+    case 'chat': return chatStream(ref.id);
+    case 'space': return spaceStream(ref.id);
+    case 'workspace': return workspaceStream(ref.id);
+    default: return null;
+  }
+}
+
 /** `chat:cht_01M2…` — the stable name for a stream in a log line or a frame. */
 export const streamName = (stream: Stream): string => `${stream.kind}:${stream.id}`;
 

@@ -135,7 +135,7 @@ referenced from other documents and neither gets renumbered.
 | 6 — the registry and fanout | *new* | 14 | ✅ |
 | 7 — `hello` and `welcome` | E | 14 | ✅ |
 | 8 — the apply loop and the frontier | F | 14, 15 | ✅ |
-| 9 — catch-up, gap and backfill | G | 14 | ☐ |
+| 9 — catch-up, gap and backfill | G | 14 | ✅ |
 | 10 — the directory as a stream | *new* | 14 | ☐ |
 | 11 — the outbox | H | 16 | ☐ |
 | 12 — retention, and the residue we accept | *new* | 14 | ☐ |
@@ -560,9 +560,15 @@ system. It lands before anything that produces volume, deliberately.
 
 ---
 
-### Step 9 — Catch-up, gap and backfill
+### Step 9 — Catch-up, gap and backfill ✅
 
 `Phase 2 step G · DESIGN.md item 14 · G2`
+
+**Built.** `catchup` generalised across stream kinds with a discriminated
+snapshot, the `catchup`/`backfill` request frames and their three replies,
+server handlers gated on `can()`, and `sync/catchup.ts` on the client — the
+coalescing scheduler, chunked application, the gap, and backfill paging.
+Twenty-five tests.
 
 What bounds a reconnect to O(streams) rather than O(messages).
 
@@ -580,12 +586,10 @@ lazy backfill on open rather than on reconnect.
   mid-scroll.
 - **A gap clears staged events for that stream.** The frontier has jumped past
   them; leaving them behind means applying an event twice or never.
-- **`catchup` is still chat-shaped, and this is where that ends.** Its gap
-  branch returns a materialised tail of *messages*, which is meaningless for a
-  space or the directory. `eventsSince` is already generic; the gap policy is
-  not, and each stream kind needs its own answer to "what does a client render
-  while it is behind" — the newest messages for a chat, the current row for a
-  space, a paged snapshot for the directory (step 10).
+- ~~**`catchup` is still chat-shaped**~~ — **resolved here.** The gap reply now
+  carries a snapshot discriminated by stream kind: newest messages for a chat,
+  current shape for a space, and for the directory nothing at all, because it is
+  the one collection sized by the workspace and is paged separately (step 10).
 - **Retuning the gap threshold is not a one-line change.** It is a separate
   constant from `eventsSince`'s limit, and the two are equal today. Raise the
   threshold alone and a replay is truncated by the limit — which `toRev` now
@@ -594,15 +598,35 @@ lazy backfill on open rather than on reconnect.
 
 **Done when**
 
-- [ ] A far-behind client receives a gap plus a tail, renders it immediately,
+- [x] A far-behind client receives a gap plus a tail, renders it immediately,
       and backfills on open.
-- [ ] A gap sets `has_gap` and `oldest_local_ord` and clears `staged_events`
-      for that stream.
-- [ ] A 50,000-event catch-up does not starve an open surface — measured as that
-      surface's query latency during the catch-up, not as the catch-up's own
-      duration.
-- [ ] The ~500-rev gap threshold is replaced by a measurement, or re-affirmed
-      with the data that supports it. This is the step that can finally do it.
+- [x] A gap sets `has_gap` and `oldest_local_ord` and clears `staged_events`
+      for that stream. The floor only ever goes **down** — a later gap with a
+      shorter tail must not raise it and hide history already held.
+- [x] A large catch-up does not starve an open surface — **asserted on the
+      reader's latency, not the writer's duration**, because a catch-up that
+      finishes quickly while the interface is frozen has failed. A reader
+      polling during a 3,000-event catch-up saw a worst case well under 100 ms.
+- [x] **The gap threshold is re-affirmed with data, and the data changed what
+      the number means.** Measured: 265 bytes per event on the wire, and one to
+      three milliseconds of server time *at any size*. So the database is not
+      the constraint and the wire is — at 500 revs a single replay is 129 KB,
+      comparable to the whole `welcome` frame, and a client reconnecting after
+      a deploy asks on every stream it is behind on rather than one.
+
+      What would actually settle the number is a distribution of how far behind
+      real clients are, and there is no traffic to take one from. What the
+      measurement *did* settle is the coupling below.
+- [x] **Added while measuring:** the threshold and the replay limit are now one
+      derived from the other rather than two constants that happen to match.
+      Raise the threshold alone and a replay is silently capped — a client told
+      it may replay 900 revisions is sent 500. Survivable only because `toRev`
+      reports what was delivered; a silent permanent hole before that fix.
+- [x] **Added while building:** a stream `kind` this server does not have is
+      ignored rather than fatal. Without the guard it fell through to the
+      workspace branch of the head lookup, so a client asking about
+      `banana:spc_1` would have been answered about a workspace — and a cast
+      would have compiled and done exactly that.
 
 ---
 
@@ -1897,7 +1921,8 @@ than an item without an owner.
 | One-shot gzip of the `welcome` frame | New | 7 |
 | `pending_revs` → `staged_events` | **Built** — replica v3, fixes the lost-edit bug of §11.1 | 8 |
 | Client apply loop, staging, and one `stream_state` for every frontier | **Built** | 8 |
-| Catch-up scheduler, gap handling, lazy backfill | New | 9 |
+| Catch-up scheduler, gap handling, lazy backfill | **Built** | 9 |
+| `catchup` generalised across stream kinds, `catchup`/`backfill` frames | **Built** | 9 |
 | `workspace` stream for the directory, paged `directory` fetch | New — replaces `GET /actors` | 10 |
 | Outbox drainer and coalescing | New | 11 |
 | Event retention sweep | New | 12 |

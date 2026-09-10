@@ -19,7 +19,10 @@ import {
   spaceMembers, SlugTakenError, UnknownWorkspaceError,
 } from './spaces.ts';
 import { send, deleteMessage, markRead, MessageNotFoundError } from './ops.ts';
-import { head, catchup, backfill, counters, welcome, eventsSince } from './feed.ts';
+import {
+  head, catchup, backfill, counters, welcome, eventsSince,
+  GAP_THRESHOLD, REPLAY_LIMIT,
+} from './feed.ts';
 import { chatStream } from './events.ts';
 
 const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
@@ -413,7 +416,7 @@ test('one stream carries messages and deletes, in revision order', opts, async (
 test('SPIKE §9.3: below the threshold the server replays in full', opts, async () => {
   const { chatId } = await channel();
   await fill(chatId, 8);
-  const result = await catchup(db, chatId, 0, 10);
+  const result = await catchup(db, chatStream(chatId), 0, 10);
   assert.equal(result.kind, 'replay');
   if (result.kind !== 'replay') return;
   assert.equal(result.toRev, 8, 'cursor would reach head');
@@ -427,14 +430,20 @@ test('SPIKE §9.3: above the threshold the server returns a bounded gap', opts, 
   // rather than O(messages).
   const { chatId } = await channel();
   await fill(chatId, 400);
-  const result = await catchup(db, chatId, 0, 50);
+  const result = await catchup(db, chatStream(chatId), 0, 50);
   assert.equal(result.kind, 'gap', 'a gap, not 400 events');
   if (result.kind !== 'gap') return;
-  assert.equal(result.recent.length, 50, 'the tail is bounded');
   assert.equal(result.headRev, 400);
-  assert.equal(result.headOrd, 400, 'head_ord is known despite the gap');
-  assert.equal(result.recent[0]?.ord, 351, 'the tail starts where the gap ends');
-  assert.equal(result.recent.at(-1)?.ord, 400, 'and is oldest-first, ready to render');
+  // The snapshot is discriminated by stream kind: a chat's answer to "what do I
+  // render while behind" is its newest messages, which is meaningless for the
+  // streams that carry none.
+  assert.equal(result.snapshot.kind, 'messages');
+  if (result.snapshot.kind !== 'messages') return;
+  assert.equal(result.snapshot.recent.length, 50, 'the tail is bounded');
+  assert.equal(result.snapshot.headOrd, 400, 'head_ord is known despite the gap');
+  assert.equal(result.snapshot.recent[0]?.ord, 351, 'the tail starts where the gap ends');
+  assert.equal(result.snapshot.recent.at(-1)?.ord, 400,
+    'and is oldest-first, ready to render');
 });
 
 // ── §9.4 keyset backfill paging ────────────────────────────────────────────
@@ -442,11 +451,12 @@ test('SPIKE §9.3: above the threshold the server returns a bounded gap', opts, 
 test('SPIKE §9.4: paging terminates, without duplicates or holes', opts, async () => {
   const { chatId } = await channel();
   await fill(chatId, 237);
-  const gap = await catchup(db, chatId, 0, 50);
+  const gap = await catchup(db, chatStream(chatId), 0, 50);
   assert.equal(gap.kind, 'gap');
   if (gap.kind !== 'gap') return;
 
-  let cursor = gap.recent[0]?.ord ?? 0;   // the client's oldest_local_ord
+  if (gap.snapshot.kind !== 'messages') return;
+  let cursor = gap.snapshot.recent[0]?.ord ?? 0;   // the client's oldest_local_ord
   assert.equal(cursor, 188);
   const seen: number[] = [];
   let pages = 0;
@@ -462,7 +472,7 @@ test('SPIKE §9.4: paging terminates, without duplicates or holes', opts, async 
   assert.equal(seen.length, new Set(seen).size, 'no duplicates across pages');
   assert.equal(cursor, 1, 'backfill reached the beginning');
   // 1..187 below the tail, plus the 50 in the tail, is the whole history.
-  assert.equal(seen.length + gap.recent.length, 237, 'full history reassembled');
+  assert.equal(seen.length + gap.snapshot.recent.length, 237, 'full history reassembled');
 });
 
 test('backfill excludes tombstones, so a deleted message is not paged back in',
@@ -670,4 +680,16 @@ test('SPIKE §6.6: removal freezes a chat — it leaves welcome, and re-add rest
 
   const back = (await welcome(db, wsp, bob)).chats.find(c => c.chatId === chatId);
   assert.equal(back?.headRev, 5, 'and re-adding is exactly a gap: the head moved on');
+});
+
+test('the replay limit and the gap threshold cannot drift apart', opts, () => {
+  // Two constants that happen to match are two constants that will eventually
+  // not. Raise the threshold alone and a replay is silently capped by the read
+  // limit — a client told it may replay 900 revisions is sent 500.
+  //
+  // That is survivable only because `toRev` reports what was DELIVERED rather
+  // than the head, so a second round finishes the job. Before that fix it was a
+  // silent permanent hole, which is why this is asserted rather than trusted.
+  assert.equal(REPLAY_LIMIT, GAP_THRESHOLD,
+    'a client that may replay N must be able to receive N');
 });

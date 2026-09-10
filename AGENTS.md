@@ -20,31 +20,27 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 8 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 9 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: catch-up, gap and backfill** — the client's scheduler asking for
-what it is behind on, one coalesced request per stream; the gap marker plus a
-recent tail for a client too far behind to replay; and lazy backfill on open.
-That is step 9 of fourteen in the sync build plan
-([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries what each step
-delivers, what "done" means for it, and the six goals the phase is measured
-against.
+**Next task: the directory as a stream** — `actor.*` events applied on the
+client, the paged `directory` fetch keyed on actor id, and the monogram fallback
+for an author whose row has not landed yet. That is step 10 of fourteen in the
+sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
 
-Two things there are already written down. `catchup` is still **chat-shaped** —
-its gap branch returns a materialised tail of *messages*, which is meaningless
-for a space or the directory, so each stream kind needs its own answer to "what
-does a client render while it is behind". And the ~500-rev gap threshold is a
-separate constant from `eventsSince`'s limit; they are equal today, and raising
-one alone truncates a replay — which `toRev` reports honestly, but which also
-means a second round is needed to finish.
+It is the first consumer of the stream machinery that is **not a chat**, which
+is the proof it generalised rather than a claim that it did. Two things are
+already written down for it: `auth/directory.ts` and `fetchActors` are deleted
+**here** rather than earlier, because this is where their replacement lands —
+and the live-query invalidation that currently fires inside `fillActors` moves
+with them, or the workspace directory silently stops refreshing.
 
 **Done so far:** the two schemas, allocation and idempotency, the domain ops,
-the event log, the socket, fanout, `hello`/`welcome`, and the apply loop —
-steps 1 to 8. A client now connects, receives correct badges, and can apply an
-event that arrives; what it cannot yet do is ask for the ones it missed.
+the event log, the socket, fanout, `hello`/`welcome`, the apply loop, and
+catch-up — steps 1 to 9. A client now connects, paints correct badges, applies
+what arrives, and asks for what it missed.
 
-Green as of the last commit: **398 tests**, 103 spike assertions, 9 boundary
-rules over 190 files, typecheck across five packages, production build.
+Green as of the last commit: **424 tests**, 103 spike assertions, 9 boundary
+rules over 192 files, typecheck across five packages, production build.
 
 ## Documentation
 

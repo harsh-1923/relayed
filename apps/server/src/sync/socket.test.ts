@@ -11,6 +11,7 @@ import { createServer, type Server } from 'node:http';
 import { gunzipSync } from 'node:zlib';
 import WebSocket from 'ws';
 import { frame, readFrame, OUTBOUND, CLOSE, PROTOCOL } from '@relayed/protocol';
+import { sql } from 'kysely';
 import { db, pool } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
@@ -576,4 +577,175 @@ test('a client that offers no compression gets plain text', opts, async () => {
   assert.ok(sawWelcome, 'a welcome arrived');
   assert.equal(binary, 0, 'and none of it was binary');
   socket.close();
+});
+
+// ─── catch-up and backfill ──────────────────────────────────────────────────
+
+test('catch-up replays the events after a client’s frontier', opts, async () => {
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `cu-${ulid('x')}`, createdBy: me,
+  });
+  for (let i = 0; i < 4; i++) {
+    await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: me,
+                     messageId: ulid('msg'), body: `m${i}` });
+  }
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('catchup', { stream: { kind: 'chat', id: space.chatId }, from_rev: 2 });
+  const reply = await peer.next('catchup_ok') as {
+    from_rev: number; to_rev: number; complete: boolean;
+    events: { rev: number; type: string }[];
+  };
+
+  assert.deepEqual(reply.events.map(e => e.rev), [3, 4], 'strictly after the frontier');
+  assert.equal(reply.to_rev, 4, 'what the frontier becomes once this applies');
+  assert.equal(reply.complete, true);
+  peer.socket.close();
+});
+
+test('a far-behind client gets a GAP with a tail, not a replay', opts, async () => {
+  // What bounds a reconnect to O(streams) rather than O(messages).
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `gap-${ulid('x')}`, createdBy: me,
+  });
+  // Cheaper than sending 600 messages: write the log directly and move the head.
+  await sql`
+    INSERT INTO sync_events
+      (event_id, workspace_id, stream_kind, stream_id, stream_rev, event_type, payload)
+    SELECT 'evt_gap_' || ${space.chatId} || '_' || n, ${wsp}, 'chat', ${space.chatId}, n,
+           'message.created', '{"id":"m"}'::jsonb
+      FROM generate_series(1, 900) n
+  `.execute(db);
+  await db.updateTable('chats').set({ next_rev: 900 })
+    .where('id', '=', space.chatId).execute();
+  await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: me,
+                   messageId: ulid('msg'), body: 'the newest' });
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('catchup', { stream: { kind: 'chat', id: space.chatId }, from_rev: 0 });
+  const gap = await peer.next('gap') as {
+    head_rev: number; snapshot: { kind: string; headOrd: number; recent: unknown[] };
+  };
+
+  assert.ok(gap.head_rev >= 900);
+  assert.equal(gap.snapshot.kind, 'messages');
+  assert.ok(gap.snapshot.recent.length <= 50, 'a bounded tail, not 900 events');
+  peer.socket.close();
+});
+
+test('a gap on a SPACE stream is its current shape, not a message tail',
+  opts, async () => {
+    // The snapshot is discriminated by stream kind. A message tail is
+    // meaningless for a stream that carries none — an earlier version returned
+    // one for every stream.
+    const space = await createChannel(db, {
+      workspaceId: wsp, name: `sp-${ulid('x')}`, createdBy: me,
+    });
+    await db.updateTable('spaces').set({ next_rev: 900 })
+      .where('id', '=', space.spaceId).execute();
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    peer.send('catchup', { stream: { kind: 'space', id: space.spaceId }, from_rev: 0 });
+    const gap = await peer.next('gap') as {
+      snapshot: { kind: string; chats: { id: string }[]; members: string[] };
+    };
+
+    assert.equal(gap.snapshot.kind, 'space');
+    assert.deepEqual(gap.snapshot.chats.map(c => c.id), [space.chatId]);
+    assert.deepEqual(gap.snapshot.members, [me]);
+    peer.socket.close();
+  });
+
+test('catch-up on a stream the actor cannot read is answered with SILENCE',
+  opts, async () => {
+    // Never inferred from the cursor — a modified client can send any id. And
+    // silence rather than a denial: telling an actor that a stream exists but is
+    // not theirs is a disclosure, telling them nothing is not.
+    const theirs = await createChannel(db, {
+      workspaceId: wsp, name: `priv-${ulid('x')}`, visibility: 'private',
+      createdBy: outsider,
+    });
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    peer.send('catchup', { stream: { kind: 'chat', id: theirs.chatId }, from_rev: 0 });
+    peer.send('ping');
+    await peer.next('pong');   // a later frame proves the connection survived
+
+    assert.equal(peer.frames.some(f => f.t === 'catchup_ok' || f.t === 'gap'), false,
+      'nothing was said about a chat this actor cannot see');
+    assert.equal(peer.socket.readyState, peer.socket.OPEN);
+    peer.socket.close();
+  });
+
+test('a stream KIND this server does not have is ignored, not fatal', opts, async () => {
+  // A newer client naming a stream kind this deployment predates must not be an
+  // error. Without the guard this fell through to the workspace branch of the
+  // head lookup, so `banana:spc_1` would have been answered about a workspace.
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('catchup', { stream: { kind: 'banana', id: 'nonsense' }, from_rev: 0 });
+  peer.send('ping');
+  await peer.next('pong');
+
+  assert.equal(peer.frames.some(f => f.t === 'gap' || f.t === 'catchup_ok'), false);
+  assert.equal(peer.socket.readyState, peer.socket.OPEN);
+  peer.socket.close();
+});
+
+test('backfill pages history below an ordinal, keyset and complete-flagged',
+  opts, async () => {
+    const space = await createChannel(db, {
+      workspaceId: wsp, name: `bf-${ulid('x')}`, createdBy: me,
+    });
+    for (let i = 0; i < 7; i++) {
+      await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: me,
+                       messageId: ulid('msg'), body: `m${i}` });
+    }
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    peer.send('backfill', { c: space.chatId, before_ord: 6, limit: 3 });
+    const page = await peer.next('backfill_ok') as {
+      rows: { ord: number }[]; complete: boolean;
+    };
+
+    assert.deepEqual(page.rows.map(r => r.ord), [5, 4, 3], 'newest first, below the cursor');
+    assert.equal(page.complete, false, 'a full page means there may be more');
+    peer.socket.close();
+  });
+
+test('a short backfill page reports complete, so paging terminates', opts, async () => {
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `bfc-${ulid('x')}`, createdBy: me,
+  });
+  for (let i = 0; i < 3; i++) {
+    await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: me,
+                     messageId: ulid('msg'), body: `m${i}` });
+  }
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('backfill', { c: space.chatId, before_ord: 3, limit: 50 });
+  const page = await peer.next('backfill_ok') as { rows: unknown[]; complete: boolean };
+  assert.equal(page.rows.length, 2);
+  assert.equal(page.complete, true, 'derived from the short page, not asked for');
+  peer.socket.close();
 });

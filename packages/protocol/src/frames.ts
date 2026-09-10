@@ -175,8 +175,45 @@ export type Hello = z.infer<typeof Hello>;
 export const Ping = z.object({});
 export type Ping = z.infer<typeof Ping>;
 
+/** A stream reference, as it appears in both directions. */
+const StreamRef = z.object({ kind: z.string(), id: z.string() });
+
+/**
+ * "What durable changes did I miss after my contiguous cursor?"
+ *
+ * `from_rev` is the client's FRONTIER, not its head — the point below which it
+ * holds an unbroken run. Sending the head instead would ask the server to skip
+ * exactly the events sitting in a hole.
+ *
+ * The server never infers the stream from the cursor: a modified client can put
+ * any id here, so the answer is gated on `can()` like every other read.
+ */
+export const CatchupRequest = z.object({
+  stream: StreamRef,
+  from_rev: z.number().int().nonnegative(),
+});
+export type CatchupRequest = z.infer<typeof CatchupRequest>;
+
+/**
+ * "Give me history below this ordinal."
+ *
+ * A DIFFERENT QUESTION from catch-up, keyed differently. Catch-up replays what
+ * CHANGED, by revision; backfill hydrates what the partial replica chose not to
+ * hold, by ordinal. Conflating them is how a client ends up replaying a
+ * thousand deletions to render a scrollback.
+ */
+export const BackfillRequest = z.object({
+  c: z.string(),
+  before_ord: z.number().int().positive(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+export type BackfillRequest = z.infer<typeof BackfillRequest>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
-export const INBOUND: Bodies = { hello: Hello, ping: Ping };
+export const INBOUND: Bodies = {
+  hello: Hello, ping: Ping,
+  catchup: CatchupRequest, backfill: BackfillRequest,
+};
 
 // ─── Server → client ────────────────────────────────────────────────────────
 
@@ -299,8 +336,76 @@ export const TooOld = z.object({
 });
 export type TooOld = z.infer<typeof TooOld>;
 
+/**
+ * A replay: the events between a client's frontier and where it can reach.
+ *
+ * The events are the SAME envelope as a live `ev` frame, so the client feeds
+ * them into one apply path rather than two. That is what removes the class of
+ * bug where an event behaves differently depending on which door it came
+ * through — the class that only shows up under a reconnect.
+ */
+export const CatchupOk = z.object({
+  stream: StreamRef,
+  from_rev: z.number().int().nonnegative(),
+  /** What the frontier becomes once this batch applies contiguously. */
+  to_rev: z.number().int().nonnegative(),
+  /** False when the batch was capped and another round is owed. */
+  complete: z.boolean(),
+  events: z.array(z.object({
+    rev: z.number().int().positive(),
+    type: z.string(),
+    payload: z.unknown(),
+  })),
+});
+export type CatchupOk = z.infer<typeof CatchupOk>;
+
+/**
+ * Too far behind to replay: current state instead of history.
+ *
+ * This is what bounds a reconnect to O(streams) rather than O(messages) — a
+ * person away for a week across 150 chats gets one small frame each, not a
+ * hundred thousand messages.
+ *
+ * `snapshot` is discriminated by stream kind because "what do I render while
+ * behind" has a different answer for each: a chat's newest messages, a space's
+ * current shape, and for the directory nothing at all — it is paged separately,
+ * being the one collection sized by the workspace (invariant 71).
+ */
+export const Gap = z.object({
+  stream: StreamRef,
+  head_rev: z.number().int().nonnegative(),
+  snapshot: z.object({ kind: z.string() }).loose(),
+});
+export type Gap = z.infer<typeof Gap>;
+
+/**
+ * One page of history, newest first.
+ *
+ * Rows are COMPLETE CURRENT STATE — the body as it stands now, tombstone
+ * status, everything. That is what makes "account for the revision, skip the
+ * effect" safe for an edit below the window: when the row finally arrives it
+ * already carries the edited body.
+ */
+export const BackfillOk = z.object({
+  c: z.string(),
+  rows: z.array(z.object({
+    id: z.string(),
+    ord: z.number().int().positive(),
+    rev: z.number().int().nonnegative(),
+    author_id: z.string(),
+    body: z.string(),
+    parent_id: z.string().nullable(),
+  })),
+  /** True when the beginning of history was reached. */
+  complete: z.boolean(),
+});
+export type BackfillOk = z.infer<typeof BackfillOk>;
+
 /** Every frame this client accepts. */
-export const OUTBOUND: Bodies = { welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev };
+export const OUTBOUND: Bodies = {
+  welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
+  catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
+};
 
 /** Serialise a frame. The one place `t` is attached, so it cannot be forgotten. */
 export function frame(t: string, body: Record<string, unknown> = {}): string {

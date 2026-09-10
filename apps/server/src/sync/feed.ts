@@ -7,10 +7,52 @@
 // or uses SQLite spellings, and each is named where it changed.
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
-import { chatStream, type Stream } from './events.ts';
+import { type Stream } from './events.ts';
+import { spaceMembers } from './spaces.ts';
 
-/** How far behind a client may be before catch-up becomes a gap marker. */
+/**
+ * How far behind a client may be before catch-up becomes a gap marker.
+ *
+ * MEASURED, and the measurement changed what the number means rather than the
+ * number itself. Replaying from a 5,000-event log, on a laptop against local
+ * Postgres:
+ *
+ *   revs |  bytes | server ms | bytes/rev
+ *   -----+--------+-----------+----------
+ *     50 |   13 K |       1.1 |     265 B
+ *    250 |   65 K |       1.4 |     265 B
+ *    500 |  129 K |       1.5 |     265 B
+ *   5000 |  129 K |       2.5 |   capped
+ *
+ * Two things fall out. **The server is not the constraint** — one to three
+ * milliseconds whatever the size, so tuning this to protect the database would
+ * be tuning the wrong thing. And **the wire is**: at this threshold a single
+ * replay is 129 KB, which is comparable to the whole `welcome` frame we went to
+ * some trouble to shrink — and a client reconnecting after a deploy asks on
+ * every stream it is behind on, not one.
+ *
+ * The number is RE-AFFIRMED rather than replaced, because what would actually
+ * settle it is a distribution of how far behind real clients are, and there is
+ * no traffic yet to take one from. What the measurement does settle is the
+ * relationship below.
+ */
 export const GAP_THRESHOLD = 500;
+
+/**
+ * The most events one replay may carry.
+ *
+ * TIED TO THE THRESHOLD ON PURPOSE, rather than being a second constant that
+ * happens to match. Raise the threshold alone and a replay is silently capped
+ * here — the client is told it may replay 900 revisions and sent 500. That is
+ * survivable now only because `toRev` reports what was DELIVERED rather than
+ * the head (a second round finishes the job), and it was a silent permanent
+ * hole before that fix.
+ *
+ * Equal, not merely related: a client that may replay N must be able to receive
+ * N. Deriving one from the other is what stops the two drifting apart in a
+ * commit that only meant to tune one of them.
+ */
+export const REPLAY_LIMIT = GAP_THRESHOLD;
 
 /** How much recent history rides along with a gap marker. */
 const GAP_TAIL = 50;
@@ -50,15 +92,60 @@ export interface Event {
   payload: unknown;
 }
 
+/**
+ * What a client too far behind gets instead of a replay.
+ *
+ * DISCRIMINATED BY STREAM KIND, because "what does a client render while it is
+ * behind" has a different answer for each. A chat's answer is its newest
+ * messages; a space's is its current shape; the directory's is a paged snapshot
+ * too large to inline. An earlier version returned a message tail for every
+ * stream, which is meaningless for the two that carry no messages.
+ */
+export type Snapshot =
+  /** The newest messages, oldest-first so the client renders them in order. */
+  | { kind: 'messages'; headOrd: number; recent: MessageRow[] }
+  /** A space's current shape: the row, its chats, and who is in it. */
+  | { kind: 'space'; space: WelcomeSpace; chats: ChatRow[]; members: string[] }
+  /**
+   * The directory, which is NOT inlined.
+   *
+   * At 1,600 members it is 345 KB — the exact collection invariant 71 exists to
+   * keep out of a frame. The client pages it with keyset requests instead, and
+   * this says only that it must (step 10 of the plan).
+   */
+  | { kind: 'directory' };
+
+export interface ChatRow {
+  id: string;
+  spaceId: string;
+  kind: string;
+  name: string | null;
+}
+
 export type Catchup =
-  | { kind: 'replay'; chatId: string; fromRev: number; toRev: number; events: Event[] }
-  | { kind: 'gap'; chatId: string; headRev: number; headOrd: number; recent: MessageRow[] };
+  | { kind: 'replay'; stream: Stream; fromRev: number; toRev: number; events: Event[] }
+  | { kind: 'gap'; stream: Stream; headRev: number; snapshot: Snapshot };
 
 /** The last allocated ordinal and revision. Zero on a chat nothing has touched. */
 export async function head(db: Kysely<DB>, chatId: string): Promise<Head> {
   const row = await db.selectFrom('chats').select(['next_ord', 'next_rev'])
     .where('id', '=', chatId).executeTakeFirst();
   return { headOrd: row?.next_ord ?? 0, headRev: row?.next_rev ?? 0 };
+}
+
+/**
+ * The head revision of any stream.
+ *
+ * Zero for a stream that does not exist, which reads the same as one nothing has
+ * happened in — and that is the right answer either way: a client asking about
+ * a stream it cannot see should learn nothing from the difference.
+ */
+export async function streamHead(db: Kysely<DB>, stream: Stream): Promise<number> {
+  if (stream.kind === 'chat') return (await head(db, stream.id)).headRev;
+  const table = stream.kind === 'space' ? 'spaces' : 'workspaces';
+  const row = await db.selectFrom(table).select('next_rev')
+    .where('id', '=', stream.id).executeTakeFirst();
+  return row?.next_rev ?? 0;
 }
 
 /**
@@ -83,7 +170,7 @@ export async function head(db: Kysely<DB>, chatId: string): Promise<Head> {
  * gap-versus-replay first, so a replay is already bounded by the threshold.
  */
 export async function eventsSince(
-  db: Kysely<DB>, stream: Stream, fromRev: number, limit = GAP_THRESHOLD,
+  db: Kysely<DB>, stream: Stream, fromRev: number, limit = REPLAY_LIMIT,
 ): Promise<Event[]> {
   const rows = await db.selectFrom('sync_events')
     .select(['stream_rev', 'event_type', 'payload'])
@@ -112,46 +199,97 @@ export async function eventsSince(
  * backfilled lazily when somebody actually opens the chat.
  */
 export async function catchup(
-  db: Kysely<DB>, chatId: string, fromRev: number, threshold = GAP_THRESHOLD,
+  db: Kysely<DB>, stream: Stream, fromRev: number, threshold = GAP_THRESHOLD,
 ): Promise<Catchup> {
-  const { headRev, headOrd } = await head(db, chatId);
+  const headRev = await streamHead(db, stream);
 
   if (headRev - fromRev > threshold) {
-    const rows = await db.selectFrom('messages')
-      .select(['id', 'ord', 'rev', 'author_id', 'body', 'parent_id'])
-      .where('chat_id', '=', chatId)
-      .where('deleted', '=', false)
-      .orderBy('ord', 'desc')
-      .limit(GAP_TAIL)
-      .execute();
-    return {
-      kind: 'gap', chatId, headRev, headOrd,
-      // Newest-first from the database, oldest-first to the client: it renders
-      // in ordinal order, and reversing here means every caller does not.
-      recent: rows.reverse().map(toMessage),
-    };
+    return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, stream) };
   }
 
-  const events = await eventsSince(db, chatStream(chatId), fromRev);
+  const events = await eventsSince(db, stream, fromRev);
 
   // `toRev` is what the client's frontier BECOMES once this batch applies, so
   // it is derived from what was actually delivered — never from the head.
   //
   // Those are the same number today only because the replay threshold and
   // `eventsSince`'s limit happen to be the same constant. They are two
-  // constants, and step 9 of the plan exists partly to retune the first with
-  // real traffic (docs/SYNC-FLOWS.md §2). Tune it upward against a fixed limit
-  // and `toRev: headRev` would tell a client its frontier had reached the head
-  // when only the first 500 events were sent — advancing it past events it
-  // never received, which is a silent permanent hole and the exact failure the
-  // contiguity rule exists to prevent (invariant 1).
+  // constants, and this step exists partly to retune the first with real
+  // traffic. Tune it upward against a fixed limit and `toRev: headRev` would
+  // tell a client its frontier had reached the head when only the first 500
+  // events were sent — advancing it past events it never received, which is a
+  // silent permanent hole and the exact failure the contiguity rule exists to
+  // prevent (invariant 1).
   //
   // Empty falls back to `fromRev`, not `headRev`: nothing arrived, so nothing
   // moves.
   const toRev = events.length > 0 ? (events.at(-1) as Event).rev : fromRev;
 
-  return { kind: 'replay', chatId, fromRev, toRev, events };
+  return { kind: 'replay', stream, fromRev, toRev, events };
 }
+
+/**
+ * Current state for a client that has fallen past the replay horizon.
+ *
+ * Jumping a frontier past revisions never seen is safe precisely BECAUSE this
+ * is current state rather than a partial history. Anything below it is not
+ * missing-and-unknown, it is missing-and-marked — the client records where the
+ * floor is and backfill repairs it on demand.
+ */
+async function snapshotOf(db: Kysely<DB>, stream: Stream): Promise<Snapshot> {
+  if (stream.kind === 'chat') {
+    const rows = await db.selectFrom('messages')
+      .select(['id', 'ord', 'rev', 'author_id', 'body', 'parent_id'])
+      .where('chat_id', '=', stream.id)
+      .where('deleted', '=', false)
+      .orderBy('ord', 'desc')
+      .limit(GAP_TAIL)
+      .execute();
+    const { headOrd } = await head(db, stream.id);
+    return {
+      kind: 'messages', headOrd,
+      // Newest-first from the database, oldest-first to the client: it renders
+      // in ordinal order, and reversing here means every caller does not.
+      recent: rows.reverse().map(toMessage),
+    };
+  }
+
+  // The directory is deliberately NOT inlined — at 1,600 members it is the
+  // 345 KB collection invariant 71 exists to keep out of a frame.
+  if (stream.kind === 'workspace') return { kind: 'directory' };
+
+  const [space, chats, members] = await Promise.all([
+    db.selectFrom('spaces')
+      .select(['id', 'kind', 'name', 'slug', 'visibility', 'membership_policy',
+               'lifecycle', 'next_rev'])
+      .where('id', '=', stream.id).executeTakeFirst(),
+    db.selectFrom('chats').select(['id', 'space_id', 'kind', 'name'])
+      .where('space_id', '=', stream.id).execute(),
+    spaceMembers(db, stream.id),
+  ]);
+
+  // A space that no longer exists still gets a well-formed snapshot rather than
+  // an error: the client has been told it is behind, and the honest answer is
+  // "there is nothing here now".
+  return {
+    kind: 'space',
+    space: space
+      ? {
+          id: space.id, kind: space.kind, name: space.name, slug: space.slug,
+          visibility: space.visibility, membershipPolicy: space.membership_policy,
+          lifecycle: space.lifecycle, rev: space.next_rev,
+        }
+      : {
+          id: stream.id, kind: 'channel', name: null, slug: null,
+          visibility: null, membershipPolicy: 'invite', lifecycle: 'archived', rev: 0,
+        },
+    chats: chats.map(chat => ({
+      id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
+    })),
+    members,
+  };
+}
+
 
 /**
  * One page of history below an ordinal, newest first.

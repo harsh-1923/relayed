@@ -1,0 +1,252 @@
+// Asking for what was missed, and rendering while behind.
+// Step 9 of the sync build plan (docs/SYNC-FLOWS.md §2, §12–§14).
+//
+// THREE DIFFERENT QUESTIONS, and conflating any two of them is how this goes
+// wrong:
+//
+//   catch-up   "what CHANGED after my frontier?"   keyed by REVISION
+//   gap        "I am too far behind to replay"     current state, not history
+//   backfill   "give me history below this point"  keyed by ORDINAL
+//
+// Catch-up replays what happened; backfill hydrates what a partial replica
+// chose not to hold. Ask backfill for a replay and a client re-renders a
+// thousand deletions to draw a scrollback.
+import type { DatabaseSync } from 'node:sqlite';
+import { applyBatch, behind, type ApplyDeps, type Stream, type Envelope } from './apply.ts';
+
+/**
+ * One catch-up request in flight per stream, and one queued behind it.
+ *
+ * A COALESCED REQUEST, not one per hole. A client that fell behind by a hundred
+ * events sees a hundred staged arrivals; asking each time would send a hundred
+ * requests for one answer, and the answer to all of them is the same range.
+ *
+ * The queued bit matters as much as the in-flight bit: an event that arrives
+ * while a request is out means the reply will already be stale, so exactly one
+ * follow-up is remembered — not zero, which leaves the client behind for ever,
+ * and not a queue, which is the same storm with a delay.
+ */
+export class CatchupScheduler {
+  #inflight = new Set<string>();
+  #again = new Set<string>();
+  #request: (stream: Stream, fromRev: number) => void;
+  #db: DatabaseSync;
+
+  constructor(db: DatabaseSync, request: (stream: Stream, fromRev: number) => void) {
+    this.#db = db;
+    this.#request = request;
+  }
+
+  /** Ask for everything currently owed. Safe to call as often as you like. */
+  sweep(): void {
+    for (const owed of behind(this.#db)) this.want(owed.stream);
+  }
+
+  /** Ask for one stream, or remember to ask again if a request is already out. */
+  want(stream: Stream): void {
+    const key = keyOf(stream);
+    if (this.#inflight.has(key)) { this.#again.add(key); return; }
+    this.#inflight.add(key);
+    this.#request(stream, frontier(this.#db, stream));
+  }
+
+  /**
+   * A reply landed. Ask again if the stream is still behind.
+   *
+   * Driven by the DATABASE rather than by what the reply said, because the two
+   * can differ: a live event may have arrived and staged while the request was
+   * out, and a truncated batch leaves the stream behind by construction.
+   */
+  settled(stream: Stream): void {
+    const key = keyOf(stream);
+    this.#inflight.delete(key);
+    const wanted = this.#again.delete(key);
+    if (wanted || stillBehind(this.#db, stream)) this.want(stream);
+  }
+
+  /** In-flight requests. A metric, and what a test asserts coalescing with. */
+  get pending(): number { return this.#inflight.size; }
+}
+
+const keyOf = (stream: Stream): string => `${stream.kind}:${stream.id}`;
+
+const frontier = (db: DatabaseSync, stream: Stream): number =>
+  (db.prepare(`SELECT synced_through_rev FROM stream_state
+               WHERE stream_kind = ? AND stream_id = ?`)
+    .get(stream.kind, stream.id) as { synced_through_rev: number } | undefined)
+    ?.synced_through_rev ?? 0;
+
+const stillBehind = (db: DatabaseSync, stream: Stream): boolean =>
+  behind(db).some(owed => keyOf(owed.stream) === keyOf(stream));
+
+/**
+ * Apply a catch-up reply, in bounded chunks.
+ *
+ * CHUNKED AND YIELDING, which is not an optimisation. WAL lets readers proceed
+ * during writes, but a single transaction holding the writer for fifty thousand
+ * events blocks every other write and makes the queries a visible surface is
+ * making wait behind it. The user's experience of "catching up" should be a
+ * sidebar filling in, not an application that stops answering.
+ */
+export async function applyCatchup(
+  deps: ApplyDeps, stream: Stream, events: readonly Envelope[], chunk = 200,
+): Promise<{ topics: string[]; needsCatchup: boolean }> {
+  const topics = new Set<string>();
+  let needsCatchup = false;
+
+  for (let at = 0; at < events.length; at += chunk) {
+    const batch = applyBatch(deps, stream, events.slice(at, at + chunk));
+    for (const t of batch.topics) topics.add(t);
+    if (batch.needsCatchup) needsCatchup = true;
+    // Between chunks, not inside one. Yielding mid-transaction would hold the
+    // writer across a turn of the event loop, which is the opposite of the point.
+    if (at + chunk < events.length) await new Promise(resolve => setImmediate(resolve));
+  }
+
+  return { topics: [...topics], needsCatchup };
+}
+
+export interface MessageRow {
+  id: string;
+  ord: number;
+  rev: number;
+  author_id: string;
+  body: string;
+  parent_id: string | null;
+}
+
+/**
+ * Take a gap: adopt current state and jump the frontier past history never seen.
+ *
+ * THIS IS WHAT BOUNDS A RECONNECT TO O(STREAMS) rather than O(messages). A
+ * person away for a week across 150 chats gets one small frame each, not a
+ * hundred thousand messages.
+ *
+ * Jumping the frontier is safe precisely BECAUSE the tail is current state
+ * rather than partial history. What sits below it is not missing-and-unknown,
+ * it is missing-and-MARKED: `has_gap` says there is a floor and
+ * `oldest_local_ord` says where, so backfill can repair it on demand and the UI
+ * can say "there is more above" rather than pretending the chat starts here.
+ */
+export function applyGap(
+  db: DatabaseSync, stream: Stream, headRev: number,
+  snapshot: { kind: string; headOrd?: number; recent?: MessageRow[] },
+): string[] {
+  db.exec('BEGIN');
+  try {
+    let oldest: number | null = null;
+
+    if (snapshot.kind === 'messages' && snapshot.recent) {
+      const insert = db.prepare(`
+        INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
+                              created_at, state, local_only)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'acked', 0)
+        ON CONFLICT(id) DO UPDATE SET
+          ord = excluded.ord, rev = excluded.rev, body = excluded.body
+      `);
+      for (const row of snapshot.recent) {
+        insert.run(row.id, stream.id, row.parent_id, row.ord, row.rev,
+                   row.author_id, row.body);
+        oldest = oldest === null ? row.ord : Math.min(oldest, row.ord);
+      }
+      db.prepare(`
+        INSERT INTO chat_state (chat_id, head_ord, oldest_local_ord)
+        VALUES (?, ?, ?)
+        ON CONFLICT(chat_id) DO UPDATE SET
+          head_ord = MAX(chat_state.head_ord, excluded.head_ord),
+          -- The FLOOR, so it only ever goes down. A later gap with a shorter
+          -- tail must not raise it and hide history already held.
+          oldest_local_ord = MIN(
+            COALESCE(chat_state.oldest_local_ord, excluded.oldest_local_ord),
+            excluded.oldest_local_ord)
+      `).run(stream.id, snapshot.headOrd ?? 0, oldest);
+    }
+
+    db.prepare(`
+      INSERT INTO stream_state (stream_kind, stream_id, synced_through_rev,
+                                server_head_rev, has_gap)
+      VALUES (?, ?, ?, ?, 1)
+      ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+        synced_through_rev = excluded.synced_through_rev,
+        server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev),
+        has_gap = 1
+    `).run(stream.kind, stream.id, headRev, headRev);
+
+    // Everything staged is now below the frontier, so it can never be drained.
+    // Left behind it would sit there for ever — the table's whole claim is that
+    // it collapses to empty whenever the client is caught up.
+    db.prepare('DELETE FROM staged_events WHERE stream_kind = ? AND stream_id = ?')
+      .run(stream.kind, stream.id);
+
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+
+  return stream.kind === 'chat'
+    ? [`chat:${stream.id}:messages`, `chat:${stream.id}:state`]
+    : [`${stream.kind}:${stream.id}`];
+}
+
+/**
+ * Insert a page of history and lower the floor.
+ *
+ * LAZY, and on open rather than on reconnect: a chat nobody is looking at does
+ * not need its scrollback, and fetching one for every gapped chat at reconnect
+ * would undo exactly the bound the gap bought.
+ */
+export function applyBackfill(
+  db: DatabaseSync, chatId: string, rows: readonly MessageRow[], complete: boolean,
+): string[] {
+  if (rows.length === 0 && !complete) return [];
+
+  db.exec('BEGIN');
+  try {
+    const insert = db.prepare(`
+      INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
+                            created_at, state, local_only)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'acked', 0)
+      ON CONFLICT(id) DO UPDATE SET
+        ord = excluded.ord, rev = excluded.rev, body = excluded.body
+    `);
+    let oldest: number | null = null;
+    for (const row of rows) {
+      insert.run(row.id, chatId, row.parent_id, row.ord, row.rev,
+                 row.author_id, row.body);
+      oldest = oldest === null ? row.ord : Math.min(oldest, row.ord);
+    }
+
+    if (oldest !== null) {
+      db.prepare(`UPDATE chat_state SET oldest_local_ord = MIN(
+                    COALESCE(oldest_local_ord, ?), ?) WHERE chat_id = ?`)
+        .run(oldest, oldest, chatId);
+    }
+
+    // The gap CLOSES when the floor reaches the beginning — either the server
+    // said this was the last page, or we are holding ordinal 1. Clearing it on
+    // "no rows returned" alone would clear it on a network hiccup too.
+    const floor = (db.prepare('SELECT oldest_local_ord FROM chat_state WHERE chat_id = ?')
+      .get(chatId) as { oldest_local_ord: number | null } | undefined)?.oldest_local_ord;
+    if (complete || floor === 1) {
+      db.prepare(`UPDATE stream_state SET has_gap = 0
+                   WHERE stream_kind = 'chat' AND stream_id = ?`).run(chatId);
+    }
+
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+
+  return [`chat:${chatId}:messages`];
+}
+
+/** Where a chat's scrollback currently stops, and whether more is known to exist. */
+export function backfillFloor(
+  db: DatabaseSync, chatId: string,
+): { oldestLocalOrd: number | null; hasGap: boolean } {
+  const state = db.prepare('SELECT oldest_local_ord FROM chat_state WHERE chat_id = ?')
+    .get(chatId) as { oldest_local_ord: number | null } | undefined;
+  const stream = db.prepare(`SELECT has_gap FROM stream_state
+                              WHERE stream_kind = 'chat' AND stream_id = ?`)
+    .get(chatId) as { has_gap: number } | undefined;
+  return {
+    oldestLocalOrd: state?.oldest_local_ord ?? null,
+    hasGap: (stream?.has_gap ?? 0) === 1,
+  };
+}

@@ -111,7 +111,7 @@ test('three mutations of ONE message are three recoverable events', opts, async 
   // is the read; `catchup` wraps it with the gap-versus-replay policy, and a
   // replay that quietly dropped an event would be invisible to the assertion
   // above.
-  const replay = await catchup(db, chatId, 0);
+  const replay = await catchup(db, chatStream(chatId), 0);
   assert.equal(replay.kind, 'replay');
   if (replay.kind !== 'replay') return;
   assert.deepEqual(replay.events.map(event => event.type),
@@ -145,7 +145,7 @@ test('a truncated replay reports the frontier it DELIVERED, not the head',
 
     // Threshold above the distance, so this is a replay rather than a gap —
     // while the read's own limit still caps the batch at 500.
-    const replay = await catchup(db, chatId, 0, 1000);
+    const replay = await catchup(db, chatStream(chatId), 0, 1000);
     assert.equal(replay.kind, 'replay');
     if (replay.kind !== 'replay') return;
 
