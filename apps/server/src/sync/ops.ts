@@ -14,7 +14,8 @@ import { can, chat as chatTarget } from '@relayed/authz';
 import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { chatPlacement } from './placement.ts';
-import { allocate, applyOnce } from './allocate.ts';
+import { allocateChat, applyOnce } from './allocate.ts';
+import { appendEvent } from './events.ts';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -67,22 +68,39 @@ export async function send(db: Kysely<DB>, input: SendInput): Promise<Ack> {
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'send',
   }, async (trx) => {
-    const { ord, rev } = await allocate(trx, input.chatId, true);
+    const allocated = await allocateChat(trx, input.chatId, true);
     const row = await trx.insertInto('messages').values({
       id: input.messageId, chat_id: input.chatId, parent_id: input.parentId ?? null,
-      ord: ord as number, rev, author_id: input.actorId, body: input.body,
+      ord: allocated.ord as number, rev: allocated.rev,
+      author_id: input.actorId, body: input.body,
     }).returning('created_at').executeTakeFirstOrThrow();
 
     // The space's activity clock, which drives auto-dormancy. Bumped here and
-    // not in allocate(), because a delete is activity for the sync cursor but
-    // not a reason to keep a space out of the "inactive" list.
+    // not in the allocator, because a delete is activity for the sync cursor
+    // but not a reason to keep a space out of the "inactive" list.
     await trx.updateTable('spaces')
       .set({ last_activity_at: sql`now()` })
       .where('id', 'in', eb => eb.selectFrom('chats').select('space_id')
         .where('id', '=', input.chatId))
       .execute();
 
-    return ackOf(input.messageId, input.chatId, ord, rev, row.created_at);
+    const ack = ackOf(input.messageId, input.chatId,
+                      allocated.ord, allocated.rev, row.created_at);
+
+    // The event carries the ack's OWN timestamp, not a second reading of the
+    // clock. The sender applies the ack and every other device applies the
+    // event; if the two disagreed, one message would render at two different
+    // times depending on which device you looked at.
+    await appendEvent(trx, allocated, 'message.created', {
+      id: ack.messageId,
+      ord: allocated.ord as number,
+      parent_id: input.parentId ?? null,
+      author_id: input.actorId,
+      body: input.body,
+      created_at: ack.createdAt,
+    });
+
+    return ack;
   });
   return applied.result;
 }
@@ -135,13 +153,20 @@ export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'delete',
   }, async (trx) => {
-    const { rev } = await allocate(trx, input.chatId, false);
+    const allocated = await allocateChat(trx, input.chatId, false);
     const row = await trx.updateTable('messages')
-      .set({ deleted: true, body: '', rev })
+      .set({ deleted: true, body: '', rev: allocated.rev })
       .where('id', '=', input.messageId)
       .returning('created_at')
       .executeTakeFirstOrThrow();
-    return ackOf(input.messageId, input.chatId, null, rev, row.created_at);
+
+    // The id alone. A recipient that never held this message writes nothing at
+    // all and merely accounts for the revision — which is the case that forces
+    // the frontier to be tracked explicitly rather than derived from rows, and
+    // the reason `delete` is in this phase at all (PHASE-2-SYNC.md §1).
+    await appendEvent(trx, allocated, 'message.deleted', { id: input.messageId });
+
+    return ackOf(input.messageId, input.chatId, null, allocated.rev, row.created_at);
   });
   return applied.result;
 }

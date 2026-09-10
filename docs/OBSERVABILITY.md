@@ -401,7 +401,7 @@ The pattern:
 
 | Invariant | Signal |
 |---|---|
-| 1 — cursor advances contiguously | `sync.cursor.lag` (`server_head_rev − synced_through_rev`); `sync.pending_revs.depth`, expected ≈ 0 |
+| 1 — cursor advances contiguously | `sync.cursor.lag` (`server_head_rev − synced_through_rev`); `sync.staged_events.depth`, expected ≈ 0 |
 | 5 — op idempotency | `sync.op.duplicate.rate` |
 | 6 / 7 — outbox coalescing, in-order replay | `outbox.depth`, `outbox.oldest.age`, `outbox.failed.count` |
 | 25 — join uses the gap path | `sync.gap.count`, `sync.backfill.pages` |

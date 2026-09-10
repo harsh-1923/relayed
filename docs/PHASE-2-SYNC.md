@@ -8,6 +8,21 @@ the router exists so there is somewhere to render one.
 Companion to `DESIGN.md` §8 (data model), §9 (sync protocol), §10 (write path)
 and §11 (read path), which this document sequences rather than restates.
 
+> **Superseded in part, and where.** The nine sub-phases A–I below are still the
+> shape of the work, but [`SYNC-FLOWS.md`](SYNC-FLOWS.md) §2 (the build plan) is
+> now the plan of record: it carries A–I forward one for one and adds three
+> steps this document did not anticipate — the **event log** (a row cannot
+> record what happened, so nothing but messages has a catch-up path today), the
+> **registry and fanout** split out of step D so the authorization argument gets
+> its own tests, and the **actor directory as a stream** (`DESIGN.md` §9.9, the
+> `welcome` ceiling — the directory measured at 69% of the frame). Its §1
+> (goals) states the six properties the phase is measured against.
+>
+> Two corrections to what is written below, both traced in that document: the
+> frontier table holds **whole envelopes, not bare revs** (`SYNC-FLOWS.md` §11.1,
+> why the envelope and not just the rev), and `welcome` **does not carry the
+> directory**.
+
 ---
 
 ## 1. What this phase delivers
@@ -53,9 +68,9 @@ phase does:
 - gaps in `ord`, which must be **normal** rather than a repair case
 - tombstones kept rather than the row removed
 - **a delete for a message the client never held, which writes nothing at all**
-  — the exact case that forced `pending_revs` to exist (`DESIGN.md` §8.1). Build
-  that table without this and it is never genuinely needed, so it is never
-  genuinely tested.
+  — the exact case that forced explicit frontier tracking to exist
+  (`DESIGN.md` §8.1). Build that table without this and it is never genuinely
+  needed, so it is never genuinely tested.
 
 The spike already models it (`del({ opId, msgId })`), so this is porting rather
 than new design. The cost is a `deleted` column the client schema already
@@ -428,18 +443,24 @@ mode in the system.
 - `synced_through_rev` means "I hold every change with rev ≤ this" — a
   contiguous prefix, no holes. An event arriving at rev 501 while the cursor
   sits at 400 is **stored** and the cursor is **not advanced**.
-- `pending_revs` holds only revs above the frontier, and collapses to empty
+- `staged_events` holds only events above the frontier, and collapses to empty
   whenever the client is caught up. It exists because "have I seen rev N?" is
   not answerable from message rows: an edit overwrites the rev it replaced, and
   a delete for a message the client never held writes nothing at all.
+
+  **Corrected since this was written:** it stages the whole envelope rather than
+  the bare rev. Duplicate suppression and rev-only staging are each mandatory
+  alone and lose an edit permanently together — the trace is `SYNC-FLOWS.md`
+  §11.1 (why the envelope, not just the rev), and the fix is a replica migration
+  scheduled as step 8 (the apply loop and the frontier) of that document's plan.
 - **A rev is recorded before, and independently of, whether its event can be
   applied.** An unrecognised op must still advance the cursor, or the frontier
   stalls for ever and the client silently stops receiving that chat.
 - **A delete for a message this client never held is the sharpest case**, and
   the reason `delete` was pulled into this phase (§1). It writes no row at all —
-  there is nothing to mark — so the rev it carries exists only in
-  `pending_revs`. A client that skips it stalls its own frontier permanently
-  while looking perfectly healthy.
+  there is nothing to mark — so the only trace of the rev is the frontier's own
+  bookkeeping. A client that skips it stalls its own frontier permanently while
+  looking perfectly healthy.
 
 **Done when:** out-of-order events injected during catch-up leave the frontier
 correct; `sync.cursor.stalled` has a call site; and an unknown op advances the
@@ -601,7 +622,8 @@ glance rather than by re-reading.
 
 Client:
 
-- [ ] `synced_through_rev` advances contiguously; `pending_revs` holds the rest
+- [ ] `synced_through_rev` advances contiguously; `staged_events` holds the
+      rest, as envelopes rather than revs
 - [ ] An unknown frame `t` and an unknown `op` are both non-fatal
 - [ ] Catch-up, gap, and lazy backfill on open
 - [ ] Outbox coalesces and replays in order, transactional with its echo
@@ -611,7 +633,9 @@ Client:
 Server:
 
 - [ ] Atomic `ord`/`rev` per chat, idempotent on client-generated ids
-- [ ] `welcome` carries the directory and per-chat counters
+- [ ] `welcome` carries per-chat counters, joined spaces, and the caller's own
+      memberships — and **no collection sized by the workspace** (invariant 71).
+      The directory arrives on its own stream
 - [ ] `catchup` replies with a replay or a gap marker at the ~500-rev threshold
 
 Both:
@@ -628,8 +652,8 @@ Worth naming, because all three pass a checklist:
 
 - **The two counters were never separated in practice.** `delete` is in this
   phase precisely to prevent that (§1). If it slipped, `rev` only ever moved
-  with `ord`, `pending_revs` was never genuinely needed, and the model is still
-  unexercised outside the spike — with every other box ticked.
+  with `ord`, the frontier table was never genuinely needed, and the model is
+  still unexercised outside the spike — with every other box ticked.
 - **The spike was rewritten rather than ported.** The assertions still pass
   because they were re-derived from the same prose that the implementation was
   re-derived from. The suite is mutation-tested against *its* implementation;

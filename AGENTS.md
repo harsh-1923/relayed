@@ -20,23 +20,32 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **Next.** [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) |
+| **2 — the sync core** | **In progress**, 4 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the two schemas** — the server's `spaces`/`chats`/`messages` tables
-and the replica's message schema, with no transport anywhere. That is step A of
-nine, sequenced in [`PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) §3, which carries
-what each step delivers and what "done" means for it.
+**Next task: the socket, both halves** — a connection that authenticates,
+heartbeats, reconnects and ignores frames it does not understand, carrying no
+product meaning yet. That is step 5 of fourteen in the sync build plan
+([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries what each step
+delivers, what "done" means for it, and the six goals the phase is measured
+against. `PHASE-2-SYNC.md` letters the same work step D.
 
-Two things there are easy to skim past and expensive to rediscover.
+**Done so far:** the two schemas, allocation and idempotency, the domain ops,
+and the event log — steps 1 to 4, all server-side, no transport anywhere.
+
+Three things are easy to skim past and expensive to rediscover.
 `spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
 assertions, mutation-tested, and it disagrees with intuition in several places;
-port it rather than rewriting it. And the socket already has a seam:
-`guardConnect` exists, and the boundary rule `network/no-ungated-socket` permits
-`new WebSocket` only under `sync/transport/`, a directory that does not exist
-yet.
+port it rather than rewriting it. The socket already has a seam: `guardConnect`
+exists, and the boundary rule `network/no-ungated-socket` permits `new WebSocket`
+only under `sync/transport/`, a directory that does not exist yet — so that rule
+passes vacuously today and stops doing so the moment step 5 begins. And both
+deferred decisions fire in that same step: **XState** at the connection machine
+(with a kill criterion) and **Zod** at the first wire format, where a
+`z.discriminatedUnion` on the frame envelope would break the requirement that an
+unknown frame type is ignored rather than fatal (invariant 43).
 
-Green as of the last commit: **161 tests**, 103 spike assertions, 8 boundary
-rules over 165 files, typecheck across four packages, production build.
+Green as of the last commit: **284 tests**, 103 spike assertions, 9 boundary
+rules over 179 files, typecheck across four packages, production build.
 
 ## Documentation
 
@@ -50,7 +59,8 @@ rules over 165 files, typecheck across four packages, production build.
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
-| [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | **Next phase**: the sync core. Start here for what to build and what already exists to build on. |
+| [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
+| [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) | **Start here for sync.** The six goals with their completeness checks, the fourteen-step build plan, and every flow end to end with data shapes. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
@@ -215,9 +225,9 @@ confusion twice — check `ps` before concluding a change did not apply.
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 70 invariants; the reasoning for 37–47 lives
+Full list in `docs/DESIGN.md` §14 — 71 invariants; the reasoning for 37–47 lives
 in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, and for 55–70 in
-`docs/FRONTEND.md` §12, each paired with the failure it prevents. Eight are
+`docs/FRONTEND.md` §12, each paired with the failure it prevents. Nine are
 enforced by `pnpm check:boundaries` rather than by being remembered. The ones
 most easily broken by a reasonable-looking change:
 
@@ -239,6 +249,7 @@ most easily broken by a reasonable-looking change:
 | Every renderer read goes through the **live-query client** | A read issued straight at the bridge is invisible to the invalidation registry, so nothing refreshes it (FRONTEND §5) |
 | The write and read sides share **one topic vocabulary** | They drift, a push wakes nobody, and every open surface goes stale in silence (§14, invariant 68) |
 | The renderer holds **no telemetry SDK** | A renderer flush timer is throttled to ~1 tick/minute when hidden, so telemetry stops draining when it is least observed (OBSERVABILITY §3) |
+| An **actor write is paired with `recordActor`** | A person exists on the server and on nobody's client — their messages render as a monogram with no name, for ever, and no reconnect repairs it (SYNC-FLOWS §9.1) |
 
 ## Conventions
 

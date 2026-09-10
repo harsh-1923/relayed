@@ -945,7 +945,7 @@ Track two watermarks and never confuse them:
 "I have it" and "I know it exists" are different facts. Keeping them separate is
 what makes R2 cheap (§12).
 
-#### Tracking the frontier: `pending_revs`
+#### Tracking the frontier explicitly
 
 Advancing the cursor requires answering "have I received rev N?" — and **that
 question is not answerable from the message rows.** This is not obvious and was
@@ -984,6 +984,54 @@ on receive(rev R):
 
 Fast path worth having: when `R == synced_through_rev + 1` (the overwhelmingly
 common case) advance directly and skip the table entirely.
+
+#### Correction: a rev is not enough — retain the envelope
+
+Everything above is right about *why* the table has to exist and wrong about
+*what it holds*. Recording only `(chat_id, rev)` loses data, and the two rules
+that combine to lose it are each individually mandatory:
+
+```
+frontier 5.  Message M was created at rev 7, which this client does not hold.
+
+  live: rev 9 = message.edited(M)
+        M is absent → the domain apply is a legitimate no-op
+        pending_revs = {9};  frontier stays 5
+
+  catchup(from_rev = 5) returns 6, 7, 8, 9
+        apply 6 → frontier 6
+        apply 7 → M created → frontier 7
+        apply 8 → frontier 8, then pending_revs has 9 → frontier 9
+        apply 9 → rev 9 <= frontier 9 → DROPPED AS A DUPLICATE
+                                        ↑ the edit is lost, permanently,
+                                          with no symptom anywhere
+```
+
+Duplicate suppression is mandatory under at-least-once delivery. Recording the
+rev is what keeps the frontier moving past events with no local effect. Together
+they discard an event that was received, acknowledged and never applied.
+
+So `pending_revs` becomes `staged_events`, holding the whole envelope:
+
+```sql
+CREATE TABLE staged_events (
+  stream_kind TEXT    NOT NULL,
+  stream_id   TEXT    NOT NULL,
+  rev         INTEGER NOT NULL,
+  event_type  TEXT    NOT NULL,
+  payload     TEXT    NOT NULL,       -- the envelope, retained
+  PRIMARY KEY (stream_kind, stream_id, rev)
+);
+```
+
+The retention property is unchanged: it holds only what is above the frontier,
+and collapses to empty whenever the client is caught up. Draining now *applies*
+the staged event rather than merely counting its rev.
+
+This is a Phase 2 replica migration, sequenced as step 8 (the apply loop and the
+frontier) of [`SYNC-FLOWS.md`](SYNC-FLOWS.md) §2 (the build plan), and the trace
+above is written as a test that must **fail** against the rev-only table before
+it passes against this one.
 
 ### 8.2 Threads
 
@@ -1222,14 +1270,22 @@ CREATE TABLE chat_state (
   last_activity_at   INTEGER                      -- catch-up prioritization
 );
 
--- Revs received ABOVE the contiguous frontier. Required because "have I seen
+-- Events received ABOVE the contiguous frontier. Required because "have I seen
 -- rev N?" is NOT derivable from message rows (§8.1) — an edit overwrites the
 -- rev it replaced, and a delete for an unheld message writes nothing at all.
 -- Collapses to empty whenever the client is caught up.
-CREATE TABLE pending_revs (
-  chat_id TEXT    NOT NULL,
-  rev     INTEGER NOT NULL,
-  PRIMARY KEY (chat_id, rev)
+--
+-- Version 2 of the replica ships this as pending_revs(chat_id, rev). That is
+-- the shape §8.1's correction replaces: a rev alone lets duplicate suppression
+-- discard a staged event that was never applied. Version 3 widens it to the
+-- envelope below, and to streams other than chats.
+CREATE TABLE staged_events (
+  stream_kind TEXT    NOT NULL,       -- 'chat' | 'space' | 'workspace'
+  stream_id   TEXT    NOT NULL,
+  rev         INTEGER NOT NULL,
+  event_type  TEXT    NOT NULL,
+  payload     TEXT    NOT NULL,
+  PRIMARY KEY (stream_kind, stream_id, rev)
 );
 
 -- ─── Outbox ──────────────────────────────────────────────────────────────────
@@ -1373,17 +1429,37 @@ server → client
 { "t": "welcome",
   "now": 1757280000000,
   "actor": { ... },                   -- the caller's own actor record
+  "spaces": [ ... ],                  -- JOINED only; see below
   "chats": [
     { "c": "chat_eng",
       "head_rev": 8140, "head_ord": 5521,
       "chat_unread": 6, "thread_unread": 2, "mention_count": 1 },
     ...
   ],
-  "actors": [ ... ], "memberships": [ ... ] }
+  "memberships": [ ... ],             -- the CALLER's own, not everyone's
+  "streams": [                        -- cursors for the non-chat streams
+    { "kind": "workspace", "id": "ws_01J...", "rev": 4821 }
+  ] }
 ```
 
-At ~150 chats this is roughly 3 KB up, ~18 KB down — **one round trip**. See
-§9.9 for the paging ceiling.
+There is no `actor` cursor, and that is a decision rather than an omission from
+the example. An actor is a delivery **address**, not an ordered stream:
+everything sent to one — read state from another device, counter snapshots — is
+a max-register or a projection, so it converges without ordering and repairs
+itself from the next `welcome`. Nothing needs a cursor over it, so `actors` has
+no revision counter (`SYNC-FLOWS.md` §5).
+
+**Two collections are deliberately absent**, and both omissions are the whole
+reason this stays one round trip.
+
+**Spaces the actor has not joined.** Public means discoverable, not synced
+(§7.4). A workspace may hold three hundred public channels and rooms while an
+actor belongs to forty; `welcome` carries the forty. Browsing the rest is a
+server query against the directory, fetched on open.
+
+**The actor directory.** It used to be an `actors` array here. It is a
+`workspace` stream instead — see §9.9, which is where costing it changed the
+answer.
 
 **After this single exchange, every badge in the sidebar is correct**, before a
 single message body has been fetched. That is R2 satisfied, cheaply. Message
@@ -1546,32 +1622,98 @@ needs connection draining as well as client-side jitter.
 
 ### 9.9 The `welcome` ceiling
 
-R2 means the client tracks every chat it can access, so **cursor count scales
-with chats, not rooms** — and rooms multiply chats. This is the one place where
-the Rooms model has a real cost.
+**Corrected, by measurement.** This section previously costed only the chat
+rows, at ~120 bytes each, and concluded the ceiling was ~500 chats. Both numbers
+were wrong, and more importantly the wrong term was being counted.
 
-At roughly 120 bytes per chat row in the `welcome` frame:
+Measured against realistic payloads — prefixed ULIDs, real handles, real avatar
+URLs — a 1,600-member workspace where the actor has joined 300 spaces:
 
-| Shape | Chats | `welcome` |
+| | rows | bytes | per row |
+|---|---|---|---|
+| spaces | 300 | 53.5 KB | 183 B |
+| chats | 450 | 80.0 KB | 182 B |
+| **actors (the directory)** | **1,600** | **345.2 KB** | **221 B** |
+| memberships (the caller's own) | 300 | 24.3 KB | 83 B |
+| **total** | | **503 KB** | |
+
+The chat rows are 182 bytes, not 120 — ids are prefixed ULIDs and there are more
+fields than the original estimate allowed. But that correction barely matters
+next to the real one:
+
+> **The directory is 69% of the frame, and it is the one term that scales with
+> the WORKSPACE rather than with the actor.**
+
+Chats-per-actor is bounded by what a person joins. Members-per-workspace is not
+bounded by anything the actor does — it grows because the company hired someone.
+An actor in forty channels of a 5,000-person company pays for 4,960 people they
+have never spoken to, on every reconnect.
+
+#### The directory becomes a stream
+
+It is replicated state that changes rarely, which makes re-sending it on every
+reconnect the worst possible shape: maximum bytes, minimum information.
+
+So it moves to a `workspace:<id>` stream carrying `actor.created`,
+`actor.updated` and `actor.deactivated`, with the same cursor, catch-up and gap
+machinery as any chat:
+
+```
+steady state      one actor changes  → one event → one row on every client
+reconnect         cursor 4,819, head 4,821 → catch-up returns 2 rows
+fresh device      cursor 0, far behind → gap → paged snapshot, keyset on
+                  actor id, ~500 at a time
+```
+
+A workspace-wide stream is used **only** here, and only because every member is
+authorised to see all of it — so the cursor can actually become contiguous. A
+general workspace-wide revision as the primary cursor would be the opposite: it
+would force unrelated features into one sequence and punch permanent holes for
+every actor not entitled to most of the events (§8.1's contiguity rule cannot
+hold across a stream you are only partly allowed to read).
+
+One product consequence, stated so it is a decision rather than a discovery: on
+a **fresh** device the directory arrives after first paint, so an author may
+render as a monogram for a moment before their name lands. That is the same
+fallback avatars already use (§13.3), and it is the cost of not blocking the
+first frame on a collection sized by the company.
+
+#### What the frame costs once it is gone
+
+| | frame | gzipped |
 |---|---|---|
-| 50 channels only | 50 | ~6 KB — one frame |
-| 50 channels + 20 rooms × 4 chats | 130 | ~16 KB — one frame |
-| 50 channels + 100 rooms × 6 chats | 650 | ~78 KB — **needs paging** |
+| design target — 150 chats, ~100 members | ~30 KB | ~4 KB |
+| 300 spaces, 1,600 members, directory included | 503 KB | 45 KB |
+| 300 spaces, 1,600 members, directory as a stream | **158 KB** | **16 KB** |
 
-**The ceiling is roughly 500 chats before `welcome` must page.** That is
-comfortably above the design target (§2), but it arrives via room proliferation
-rather than channel growth — which is precisely the axis this product
-encourages. Two things follow:
+#### Compress the frame, and note what that does not contradict
 
-- Track chats-per-actor as a product metric from day one. It is the number that
-  predicts when this breaks.
-- The fix is straightforward if anticipated: page `welcome` by
-  `last_activity_at` descending, sending head state for the most recent N chats
-  and a continuation cursor for the rest. Badges for older chats arrive a beat
-  later rather than never. Do **not** retrofit this by dropping chats from
-  `welcome` — a silently missing chat is a silently wrong badge.
+`welcome` is JSON with one repeated key set and a shared id prefix on every row,
+so it gzips about 10×. 158 KB becomes 16 KB — the size this section originally
+predicted, arrived at honestly.
 
----
+This does **not** reopen §13.9's decision to leave `permessage-deflate` off.
+That rule exists because *persistent* compression holds a zlib context per
+connection — ~189 KB, seventeen times the connection itself — for the life of
+the socket. A one-shot compression of a single frame allocates, compresses and
+frees. Different mechanism, different cost, opposite conclusion. Compress
+`welcome`; leave the steady-state stream uncompressed.
+
+#### Paging is the third lever, not the first
+
+Page `welcome` by `last_activity_at` descending when it is still too large,
+sending head state for the most recent N chats and a continuation cursor for the
+rest. Badges for older chats then arrive a beat later rather than never.
+
+Do **not** retrofit this by dropping chats from `welcome` — a silently missing
+chat is a silently wrong badge.
+
+#### The metrics that predict this
+
+Track **members-per-workspace** as well as chats-per-actor. The original section
+named only the second, which is why the first was never costed. Both belong on
+the dashboard, and `welcome` frame bytes belongs beside them as the number that
+actually breaks.
 
 ### 9.10 Forward compatibility
 
@@ -1591,11 +1733,13 @@ that predates it has two options:
 | Behaviour | Result |
 |---|---|
 | Ignore the event entirely | `synced_through_rev` **stalls at that rev forever.** The client silently stops receiving anything in that chat. |
-| Record the rev in `pending_revs`, skip applying | Cursor advances; the client is merely missing a feature. |
+| Account for the rev, skip applying | Cursor advances; the client is merely missing a feature. |
 
-Only the second is survivable. The rule: **`pending_revs` is written for every
-received rev, before and independently of whether the event can be applied**
-(§8.1). Parsing failure must never block the frontier.
+Only the second is survivable. The rule: **a received rev is accounted for
+before, and independently of, whether its event can be applied** (§8.1).
+Parsing failure must never block the frontier. An event *above* the frontier is
+staged whole in `staged_events`; an unknown type at the frontier advances it
+and is counted.
 
 The failure mode is nasty because it is delayed and silent — it appears months
 after launch, in old clients, the first time a new op type ships.
@@ -2522,6 +2666,7 @@ test.
 | 68 | The write side and the read side name dependencies from **one shared topic vocabulary** | They drift, a write announces a topic nobody subscribes to, and every open surface goes stale — with no error, no spinner and nothing in a log |
 | 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (§13.9), so telemetry stops draining exactly when it is least observed |
 | 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
+| 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined — 1,600 members was 69% of the frame and 20× the chats (§9.9) |
 
 ### Scenarios to test explicitly
 
@@ -2650,14 +2795,31 @@ items below into **nine sub-phases, A–I, in execution order**, each with what 
 delivers and what "done" means. It also records what already exists to build on: the 66-assertion executable model to port
 rather than rewrite, the `guardConnect` seam and the boundary rule that forces
 the socket through it, and nine telemetry events declared with no call sites.
-13. Server: spaces, chats, messages, atomic `ord`/`rev`, idempotent ops —
-    **including `delete`**, moved up from item 24. It is the only op in the
-    phase that takes a `rev` without an `ord`, so without it the two-counter
-    model ships exercised by nothing but the spike, and `pending_revs` is built
-    for a case that never occurs (`PHASE-2-SYNC.md` §1).
+
+**The end-to-end plan lives in [`SYNC-FLOWS.md`](SYNC-FLOWS.md)** — §1 (goals,
+and what counts as meeting them) states the six properties the phase is measured
+against, and §2 (the build plan) sequences thirteen steps that carry A–I forward
+and add three the earlier document did not anticipate: the event log, the
+registry and fanout split out of the transport, and the actor directory as a
+stream.
+13. ✅ **in part.** Server: spaces, chats, messages, atomic `ord`/`rev`,
+    idempotent ops — **including `delete`**, moved up from item 24. It is the
+    only op in the phase that takes a `rev` without an `ord`, so without it the
+    two-counter model ships exercised by nothing but the spike, and the frontier
+    table is built for a case that never occurs (`PHASE-2-SYNC.md` §1).
+    **What remains is `sync_events`**: a row records what is true *now* and
+    cannot record what *happened*, so catch-up derived from `messages` has no
+    path at all for a rename, a membership change or an actor update, and stops
+    being sound for messages the moment edits land
+    (`SYNC-FLOWS.md` §12.1).
 14. Protocol: `hello`/`welcome`, live events, `catchup`, `gap`, `traceparent`
-    in the frame envelope (`OBSERVABILITY.md` §4).
-15. Client cursors + **contiguity logic** incl. `pending_revs` (invariant 1).
+    in the frame envelope (`OBSERVABILITY.md` §4). Plus the two pieces the
+    stream model adds: **`audienceFor`**, which computes an event's recipients
+    from memberships at send time so there is no subscription to revoke, and the
+    **actor directory as a `workspace` stream** rather than a `welcome` array
+    (§9.9, the `welcome` ceiling).
+15. Client cursors + **contiguity logic** (invariant 1), staging events above
+    the frontier as whole envelopes rather than bare revs (§8.1's correction).
     `spikes/sync-model.mjs` is the executable reference; `spikes/sync-tests.mjs`
     is the acceptance suite — port it rather than rewriting it.
 16. Outbox with coalescing (invariant 6) and in-order replay (invariant 7).
@@ -2756,8 +2918,10 @@ ord/rev separation, cursor contiguity under out-of-order delivery, gap markers
 and their bounded tail, catch-up below threshold, keyset backfill paging,
 op idempotency, unread correctness while holding zero messages, max-register
 read state, reorder-on-ack, threads sharing the ord space, outbox coalescing,
-and removal-freeze / re-add-as-gap. The model found one design gap —
-`pending_revs` (§8.1) — which is now in the schema.
+and removal-freeze / re-add-as-gap. The model found one design gap — the need
+to track the frontier explicitly (§8.1) — which is now in the schema. The shape
+it first concluded with, a table of bare revs, is corrected in that same section:
+it must retain the envelope.
 
 **Resolved in Phase 1**, and recorded in [`STORAGE.md`](STORAGE.md) rather than
 here: whether one identity in two organizations is a supported state (yes — the

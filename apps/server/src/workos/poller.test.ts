@@ -9,6 +9,8 @@ import { db, pool } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { pollOnce } from './poller.ts';
 import { pendingJoins } from '../provisioning/join.ts';
+import { eventsSince } from '../sync/feed.ts';
+import { workspaceStream } from '../sync/events.ts';
 
 const BASE = process.env['SERVER_URL'] ?? 'http://127.0.0.1:8787';
 const reachable = await fetch(`${BASE}/health`, { signal: AbortSignal.timeout(1500) })
@@ -131,6 +133,17 @@ test('deactivation tombstones the actor, its membership and its sessions', opts,
   const session = await db.selectFrom('sessions').select('revoked_at')
     .where('refresh_hash', '=', refreshHash).executeTakeFirst();
   assert.ok(session?.revoked_at, 'the whole point of revocable refresh tokens: a delete, not a wait');
+
+  // The directory has to learn about this, or every other member's client keeps
+  // rendering them as active for ever. There is no error and no reconnect that
+  // repairs it: catch-up returns the events that were written, not the rows
+  // that were quietly changed without one.
+  const directory = await eventsSince(db, workspaceStream(ids.wsp), 0);
+  const tombstone = directory.at(-1);
+  assert.equal(tombstone?.type, 'actor.updated',
+    'an update, not a removal — the row survives so old messages keep an author');
+  assert.equal((tombstone?.payload as { id: string }).id, ids.act);
+  assert.equal((tombstone?.payload as { state: string }).state, 'deactivated');
 
   await db.deleteFrom('sessions').where('refresh_hash', '=', refreshHash).execute();
   await sql`SELECT 1`.execute(db);

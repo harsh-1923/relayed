@@ -20,6 +20,7 @@ import {
 } from './spaces.ts';
 import { send, deleteMessage, markRead, MessageNotFoundError } from './ops.ts';
 import { head, catchup, backfill, counters, welcome, eventsSince } from './feed.ts';
+import { chatStream } from './events.ts';
 
 const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
 const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
@@ -373,7 +374,12 @@ test('a delete authorizes against ONE snapshot, not two reads of it', opts, asyn
   // sending.queries() + 2, from loading grants and placement a second time.
   assert.equal(deleting.queries(), sending.queries(),
     'a delete costs what a send costs — not two authorization reads more');
-  assert.equal(sending.queries(), 7, 'and neither has quietly grown');
+  // Was 7 before the event log. Both sides gained exactly one statement — the
+  // append — so the equality above is untouched and this number moved by one.
+  // It is here to make a change like that deliberate rather than invisible: an
+  // op that starts costing two extra statements should fail a test, not show up
+  // as latency later.
+  assert.equal(sending.queries(), 8, 'and neither has quietly grown');
 });
 
 // ── the event stream ───────────────────────────────────────────────────────
@@ -381,6 +387,14 @@ test('a delete authorizes against ONE snapshot, not two reads of it', opts, asyn
 test('one stream carries messages and deletes, in revision order', opts, async () => {
   // The uniformity `rev` exists for: a client asks one question per chat rather
   // than one per kind of change.
+  //
+  // THE EXPECTATION HERE CHANGED when catch-up moved to the event log, and the
+  // change is the reason the log exists. Derived from message rows, this
+  // returned TWO events — `[[2,'msg'], [3,'del']]` — because the first
+  // message's row had been overwritten by its own deletion, so revision 1 was
+  // not recoverable from anywhere. The old assertion recorded that as intended.
+  // A client catching up from zero learned of a message only as the deletion of
+  // something it had never seen created (docs/SYNC-FLOWS.md §12.1).
   const { chatId } = await channel();
   const first = ulid('msg');
   await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: first, body: 'one' });
@@ -388,9 +402,10 @@ test('one stream carries messages and deletes, in revision order', opts, async (
                    messageId: ulid('msg'), body: 'two' });
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: first });
 
-  const events = await eventsSince(db, chatId, 0);
-  assert.deepEqual(events.map(e => [e.rev, e.op]), [[2, 'msg'], [3, 'del']],
-    'the deleted message appears once, at its DELETE revision, not at its send');
+  const events = await eventsSince(db, chatStream(chatId), 0);
+  assert.deepEqual(events.map(e => [e.rev, e.type]),
+    [[1, 'message.created'], [2, 'message.created'], [3, 'message.deleted']],
+    'every revision is recoverable, including the creation of a message later deleted');
 });
 
 // ── §9.3 catch-up below the gap threshold (the spike's numbers) ─────────────

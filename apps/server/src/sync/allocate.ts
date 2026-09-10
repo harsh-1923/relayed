@@ -1,5 +1,6 @@
 // Ordinal and revision allocation, and the idempotency ledger around it.
-// Phase 2 step B (PHASE-2-SYNC.md §3).
+// Allocation and idempotency — step 2 of the sync build plan
+// (docs/SYNC-FLOWS.md §2), the same work PHASE-2-SYNC.md §3 letters as step B.
 //
 // Twenty lines, and the most dangerous twenty in the phase: every guarantee the
 // sync core makes about ORDER rests on them, and both failure modes here are
@@ -8,25 +9,15 @@
 // idempotency check turns one lost ack into two messages, which is the single
 // most common offline-sync bug there is.
 //
-// No transport, no access checks, no product meaning. Step C composes these
-// into `send` and `delete` and adds the membership check; this file only knows
-// how to hand out numbers exactly once.
+// No transport, no access checks, no product meaning. The domain ops — `send`,
+// `delete` and the space operations — compose these and add the membership
+// check; this file only knows how to hand out numbers exactly once.
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../db/schema.ts';
-
-/**
- * What one mutation was allocated.
- *
- * `ord` is null for a mutation that is not a new message — a delete, and in
- * Phase 4 an edit or a reaction. That is the two-counter model in a type: only
- * a new message takes an ordinal, while EVERY mutation takes a revision
- * (DESIGN.md §8.1). A caller that reaches for `ord` on a delete has to handle
- * the null, which is the point.
- */
-export interface Allocation {
-  ord: number | null;
-  rev: number;
-}
+import {
+  chatStream, streamName,
+  type ChatAllocation, type SpaceStream, type StreamAllocation, type WorkspaceStream,
+} from './events.ts';
 
 /**
  * Take the next ordinal and revision for a chat.
@@ -43,10 +34,20 @@ export interface Allocation {
  * when it resumes it re-reads the committed value and adds to THAT. Read-then-
  * write instead and two senders both read 4 and both write 5 — asserted in the
  * tests, both directions.
+ *
+ * `ord` is null for a mutation that is not a new message — a delete, and in
+ * Phase 4 an edit or a reaction. That is the two-counter model in a type: only
+ * a new message takes an ordinal, while EVERY mutation takes a revision
+ * (DESIGN.md §8.1). A caller that reaches for `ord` on a delete has to handle
+ * the null, which is the point.
+ *
+ * The workspace comes back from this same statement rather than from a second
+ * read, so an event written against this allocation cannot be filed under the
+ * wrong tenant (`events.ts`, on `StreamAllocation`).
  */
-export async function allocate(
+export async function allocateChat(
   trx: Transaction<DB>, chatId: string, withOrd: boolean,
-): Promise<Allocation> {
+): Promise<ChatAllocation> {
   const row = await trx.updateTable('chats')
     .set({
       next_rev: sql<number>`next_rev + 1`,
@@ -58,16 +59,68 @@ export async function allocate(
     // `updated_at` is deliberately untouched: on a chat it is the LWW clock for
     // the chat's own attributes (its name), not a last-activity marker. Bumping
     // it here would make every message look like a rename.
-    .returning(['next_ord', 'next_rev'])
+    .returning(['next_ord', 'next_rev', 'workspace_id'])
     .executeTakeFirst();
 
   // No row means no such chat. Thrown rather than returned, because a caller
-  // that got here has already decided this chat exists — step C checks
+  // that got here has already decided this chat exists — the domain ops check
   // membership first, and membership implies the chat. Returning undefined
   // would let `ord` reach an INSERT as undefined.
   if (!row) throw new UnknownChatError(chatId);
 
-  return { ord: withOrd ? row.next_ord : null, rev: row.next_rev };
+  return {
+    stream: chatStream(chatId),
+    ord: withOrd ? row.next_ord : null,
+    rev: row.next_rev,
+    workspaceId: row.workspace_id,
+  };
+}
+
+/**
+ * Take the next revision for a stream that has no ordinal — a space, or the
+ * workspace directory.
+ *
+ * A SEPARATE function rather than a `kind` parameter on `allocateChat`, for the
+ * same reason `spaces.ts` has `createChannel` instead of `createSpace(kind, …)`:
+ * only a chat has an ordinal, so a single entry point would have to accept a
+ * parameter that is meaningless for two of its three arguments, or return a
+ * field that is always null. Two functions ARE that discriminated union, and
+ * `allocateStream` has no `withOrd` to misuse.
+ *
+ * What is deliberately NOT different is the SQL. Both use the same
+ * `SET next_rev = next_rev + 1 … RETURNING`, and the temptation to give a space
+ * a read-then-write counter because spaces are low-traffic must be resisted: a
+ * lost update is a lost update at any rate, and on a revision it silently
+ * REUSES one — two different events claiming the same position in a cursor,
+ * which is worse than losing a position.
+ */
+export async function allocateStream<S extends SpaceStream | WorkspaceStream>(
+  // Generic over the stream rather than taking the union, so the narrowing
+  // survives the call. Returning the wide `Stream` would hand `appendEvent` a
+  // value that might be a chat, and the catalogue's whole job is to reject a
+  // space event aimed at a chat stream.
+  trx: Transaction<DB>, stream: S,
+): Promise<StreamAllocation & { stream: S }> {
+  if (stream.kind === 'space') {
+    const row = await trx.updateTable('spaces')
+      .set({ next_rev: sql<number>`next_rev + 1` })
+      .where('id', '=', stream.id)
+      .returning(['next_rev', 'workspace_id'])
+      .executeTakeFirst();
+    if (!row) throw new UnknownStreamError(stream);
+    return { stream, rev: row.next_rev, workspaceId: row.workspace_id };
+  }
+
+  const row = await trx.updateTable('workspaces')
+    .set({ next_rev: sql<number>`next_rev + 1` })
+    .where('id', '=', stream.id)
+    // A workspace IS its own workspace. Returned explicitly rather than reusing
+    // `stream.id`, so the value in the event comes from the committed row like
+    // every other allocation's does.
+    .returning(['next_rev', 'id'])
+    .executeTakeFirst();
+  if (!row) throw new UnknownStreamError(stream);
+  return { stream, rev: row.next_rev, workspaceId: row.id };
 }
 
 export class UnknownChatError extends Error {
@@ -76,6 +129,16 @@ export class UnknownChatError extends Error {
     super(`no chat ${chatId}`);
     this.name = 'UnknownChatError';
     this.chatId = chatId;
+  }
+}
+
+/** No such space or workspace. The non-chat sibling of `UnknownChatError`. */
+export class UnknownStreamError extends Error {
+  readonly stream: SpaceStream | WorkspaceStream;
+  constructor(stream: SpaceStream | WorkspaceStream) {
+    super(`no stream ${streamName(stream)}`);
+    this.name = 'UnknownStreamError';
+    this.stream = stream;
   }
 }
 

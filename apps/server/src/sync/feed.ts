@@ -7,6 +7,7 @@
 // or uses SQLite spellings, and each is named where it changed.
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
+import { chatStream, type Stream } from './events.ts';
 
 /** How far behind a client may be before catch-up becomes a gap marker. */
 export const GAP_THRESHOLD = 500;
@@ -33,9 +34,21 @@ export interface MessageRow {
   parentId: string | null;
 }
 
-export type Event =
-  | { rev: number; op: 'msg'; message: MessageRow }
-  | { rev: number; op: 'del'; messageId: string };
+/**
+ * One entry from the log, in the shape it goes on the wire.
+ *
+ * `type` is a plain string rather than the writer's closed union on purpose:
+ * this is a READ, and a reader of an old row must tolerate an event type that
+ * has since been added or retired. The client is required to do the same — an
+ * unknown event type still advances the cursor (invariant 32) — and typing the
+ * read side as a closed union here would be the server making a promise the
+ * protocol explicitly refuses to make.
+ */
+export interface Event {
+  rev: number;
+  type: string;
+  payload: unknown;
+}
 
 export type Catchup =
   | { kind: 'replay'; chatId: string; fromRev: number; toRev: number; events: Event[] }
@@ -49,31 +62,42 @@ export async function head(db: Kysely<DB>, chatId: string): Promise<Head> {
 }
 
 /**
- * Every change with `rev > fromRev`, in revision order.
+ * Every change with `rev > fromRev`, in revision order, from the log.
  *
- * One stream carrying both new messages and deletes, which is the whole reason
- * `rev` exists apart from `ord`: catch-up is uniform, so a client asks one
- * question per chat rather than one per kind of change (DESIGN.md §8.1).
+ * One stream carrying every kind of change, which is the whole reason `rev`
+ * exists apart from `ord`: catch-up is uniform, so a client asks one question
+ * per stream rather than one per kind of change (DESIGN.md §8.1).
  *
- * A delete is recognised by its `deleted` flag rather than by a separate table.
- * The spike also distinguished 'edit' by a null ordinal; edits are Phase 4 and
- * that branch is deliberately absent rather than carried unexercised.
+ * READS THE LOG, not the rows it describes, and the difference is not an
+ * optimisation. Derived from `messages` — which is what this did before the log
+ * existed — a chat where m1 was created at rev 1 and edited at rev 3 returns
+ * ONE row carrying rev 3, and revision 1 exists nowhere: the creation was
+ * overwritten by its own edit. Worse in this phase, a space rename or a
+ * membership change is not in `messages` at all and had no catch-up path
+ * whatsoever (docs/SYNC-FLOWS.md §12.1).
+ *
+ * Generic over streams for the same reason: a chat, a space and the workspace
+ * directory are all just sequences of events, so one query serves all three.
+ *
+ * The limit is a floor under a pathological read, not paging: `catchup` decides
+ * gap-versus-replay first, so a replay is already bounded by the threshold.
  */
 export async function eventsSince(
-  db: Kysely<DB>, chatId: string, fromRev: number,
+  db: Kysely<DB>, stream: Stream, fromRev: number, limit = GAP_THRESHOLD,
 ): Promise<Event[]> {
-  const rows = await db.selectFrom('messages')
-    .select(['id', 'ord', 'rev', 'author_id', 'body', 'deleted', 'parent_id'])
-    .where('chat_id', '=', chatId)
-    .where('rev', '>', fromRev)
-    .orderBy('rev')
+  const rows = await db.selectFrom('sync_events')
+    .select(['stream_rev', 'event_type', 'payload'])
+    .where('stream_kind', '=', stream.kind)
+    .where('stream_id', '=', stream.id)
+    .where('stream_rev', '>', fromRev)
+    // An exact prefix seek on the unique index, which is why there is no second
+    // index on these columns (008_sync_events.sql).
+    .orderBy('stream_rev')
+    .limit(limit)
     .execute();
 
-  return rows.map((row): Event => row.deleted
-    ? { rev: row.rev, op: 'del', messageId: row.id }
-    : { rev: row.rev, op: 'msg', message: {
-        id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
-        body: row.body, parentId: row.parent_id } });
+  return rows.map((row): Event =>
+    ({ rev: row.stream_rev, type: row.event_type, payload: row.payload }));
 }
 
 /**
@@ -108,8 +132,25 @@ export async function catchup(
     };
   }
 
-  return { kind: 'replay', chatId, fromRev, toRev: headRev,
-           events: await eventsSince(db, chatId, fromRev) };
+  const events = await eventsSince(db, chatStream(chatId), fromRev);
+
+  // `toRev` is what the client's frontier BECOMES once this batch applies, so
+  // it is derived from what was actually delivered — never from the head.
+  //
+  // Those are the same number today only because the replay threshold and
+  // `eventsSince`'s limit happen to be the same constant. They are two
+  // constants, and step 9 of the plan exists partly to retune the first with
+  // real traffic (docs/SYNC-FLOWS.md §2). Tune it upward against a fixed limit
+  // and `toRev: headRev` would tell a client its frontier had reached the head
+  // when only the first 500 events were sent — advancing it past events it
+  // never received, which is a silent permanent hole and the exact failure the
+  // contiguity rule exists to prevent (invariant 1).
+  //
+  // Empty falls back to `fromRev`, not `headRev`: nothing arrived, so nothing
+  // moves.
+  const toRev = events.length > 0 ? (events.at(-1) as Event).rev : fromRev;
+
+  return { kind: 'replay', chatId, fromRev, toRev, events };
 }
 
 /**

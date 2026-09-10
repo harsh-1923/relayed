@@ -13,6 +13,7 @@
 import { emit, count, histogram } from '@relayed/telemetry';
 import { sql } from 'kysely';
 import { db } from '../db/client.ts';
+import { recordActor } from '../sync/directory.ts';
 import { listEvents, type WorkOSEvent } from './management.ts';
 
 /** One page at a time; a backlog drains over several ticks rather than one. */
@@ -135,8 +136,28 @@ async function deactivate(workosUserId: string, workosOrgId: string | null): Pro
   const ids = actors.map(a => a.id);
 
   await db.transaction().execute(async (tx) => {
-    await tx.updateTable('actors').set({ state: 'deactivated', updated_at: sql`now()` })
-      .where('id', 'in', ids).execute();
+    const tombstoned = await tx.updateTable('actors')
+      .set({ state: 'deactivated', updated_at: sql`now()` })
+      .where('id', 'in', ids)
+      .returning(['id', 'workspace_id', 'type', 'handle', 'display_name',
+                  'avatar_url', 'state'])
+      .execute();
+
+    // One directory event per workspace this identity had an actor in. A single
+    // WorkOS user can hold actors in several workspaces, and each of those is a
+    // separate stream with its own cursor — so this is a loop rather than one
+    // event, and the returning clause above is what keeps it from being a
+    // second read.
+    //
+    // `actor.updated`, not a removal: the actor is tombstoned rather than
+    // deleted so their past messages still render, offline included.
+    for (const actor of tombstoned) {
+      await recordActor(tx, 'actor.updated', {
+        id: actor.id, workspaceId: actor.workspace_id, type: actor.type,
+        handle: actor.handle, displayName: actor.display_name,
+        avatarUrl: actor.avatar_url, state: actor.state,
+      });
+    }
     // Membership is a row, so removal is a tombstone on that row (AUTHZ.md §4).
     await tx.updateTable('memberships').set({ left_at: sql`now()` })
       .where('actor_id', 'in', ids).where('left_at', 'is', null).execute();

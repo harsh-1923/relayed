@@ -16,11 +16,13 @@
 // with this one — a transaction inserting a space, its chat, and the founding
 // membership — which is worth extracting THEN, with two callers to shape it,
 // rather than now with one.
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { can, workspace as workspaceTarget, space as spaceTarget } from '@relayed/authz';
 import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { spacePlacement } from './placement.ts';
+import { allocateStream } from './allocate.ts';
+import { appendEvent, spaceStream } from './events.ts';
 import { ulid } from '../db/ulid.ts';
 
 export interface NewChannel {
@@ -88,6 +90,8 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
   const chatId = ulid('cht');
   const visibility = input.visibility ?? 'public';
 
+  const membershipPolicy = visibility === 'public' ? 'open' : 'invite';
+
   try {
     await db.transaction().execute(async (trx) => {
       await trx.insertInto('spaces').values({
@@ -96,7 +100,7 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
         visibility,
         // Public means discoverable and joinable, NOT auto-joined — membership
         // stays explicit either way (DESIGN.md §7.2).
-        membership_policy: visibility === 'public' ? 'open' : 'invite',
+        membership_policy: membershipPolicy,
         created_by_actor_id: input.createdBy,
       }).execute();
 
@@ -109,6 +113,31 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
         scope_type: 'space', scope_id: spaceId, actor_id: input.createdBy,
         role: 'admin',
       }).execute();
+
+      // THREE events, not one composite, and the extra revisions are the point.
+      // `chat.created` and `space.member_added` have to exist anyway — the
+      // first for rooms, the second for every join — so a client that handles
+      // them handles creation with no additional code. One composite event
+      // would buy two revisions and cost a special case on every recipient,
+      // which is the trade the ack/event symmetry already refuses elsewhere.
+      //
+      // The audience is the founder alone: an event on `space:<id>` goes to
+      // that space's members, and right now that is one person. Everyone else
+      // learns of a public space by browsing the directory, and of a space they
+      // join through the ordinary gap path (DESIGN.md §7.2).
+      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+        'space.created', {
+          id: spaceId, kind: 'channel', name: input.name,
+          slug: input.slug ?? null, visibility,
+          membership_policy: membershipPolicy, lifecycle: 'active',
+        });
+
+      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+        'chat.created',
+        { id: chatId, space_id: spaceId, kind: 'sole', name: null });
+
+      await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+        'space.member_added', { actor_id: input.createdBy, role: 'admin' });
     });
   } catch (err) {
     if (isConstraint(err, 'space_slug')) throw new SlugTakenError(input.slug ?? '');
@@ -133,7 +162,7 @@ export async function joinSpace(
   db: Kysely<DB>, spaceId: string, actorId: string,
 ): Promise<void> {
   await requireSpace(db, actorId, spaceId, 'join');
-  await grantMembership(db, spaceId, actorId, 'member');
+  await db.transaction().execute(trx => addMember(trx, spaceId, actorId, 'member'));
 }
 
 /**
@@ -148,7 +177,7 @@ export async function addToSpace(
   role: 'member' | 'admin' = 'member',
 ): Promise<void> {
   await requireSpace(db, by, spaceId, 'add_member');
-  await grantMembership(db, spaceId, actorId, role);
+  await db.transaction().execute(trx => addMember(trx, spaceId, actorId, role));
 }
 
 /**
@@ -161,7 +190,7 @@ export async function addToSpace(
 export async function leaveSpace(
   db: Kysely<DB>, spaceId: string, actorId: string,
 ): Promise<void> {
-  await tombstoneMembership(db, spaceId, actorId);
+  await db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
 }
 
 /**
@@ -178,7 +207,7 @@ export async function removeFromSpace(
   db: Kysely<DB>, spaceId: string, actorId: string, by: string,
 ): Promise<void> {
   if (by !== actorId) await requireSpace(db, by, spaceId, 'remove_member');
-  await tombstoneMembership(db, spaceId, actorId);
+  await db.transaction().execute(trx => removeMember(trx, spaceId, actorId));
 }
 
 /** Members of a space who have not left. The fanout set for every chat in it. */
@@ -192,38 +221,61 @@ export async function spaceMembers(db: Kysely<DB>, spaceId: string): Promise<str
 }
 
 /**
- * Write the membership row.
+ * Write the membership row, and record that it changed.
  *
  * Idempotent, and re-joining CLEARS `left_at` rather than inserting a second
  * row. That is what makes re-adding a removed member the gap case rather than a
  * special case: the membership resumes, the cursor is behind, and the existing
  * backfill machinery heals it (DESIGN.md §6.6).
+ *
+ * Takes a `Transaction` because the row and its event must commit together.
+ * Membership is the one piece of state that decides who receives everything
+ * else, so a membership that landed without its event would leave every other
+ * member's copy of the member list permanently wrong, with nothing to repair it
+ * short of a full resync.
  */
-async function grantMembership(
-  db: Kysely<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
+async function addMember(
+  trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
 ): Promise<void> {
-  await db.insertInto('memberships')
+  await trx.insertInto('memberships')
     .values({ scope_type: 'space', scope_id: spaceId, actor_id: actorId, role })
     .onConflict(oc => oc.columns(['scope_type', 'scope_id', 'actor_id'])
       .doUpdateSet({ left_at: null, joined_at: sql`now()` }))
     .execute();
+
+  await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+    'space.member_added', { actor_id: actorId, role });
 }
 
 /**
  * A tombstone, never a delete. "Was Alice ever in this space" stays answerable,
  * and the local copy on her device freezes rather than being recalled — removal
  * stops new data, it is not a retroactive recall (DESIGN.md §6.6).
+ *
+ * The event is appended whether or not the UPDATE matched a row, which is the
+ * same call `deleteMessage` makes for an already-deleted message: the event is
+ * idempotent where it lands, so short-circuiting would buy a branch and a
+ * second round trip to discover something no recipient can tell apart.
  */
-async function tombstoneMembership(
-  db: Kysely<DB>, spaceId: string, actorId: string,
+async function removeMember(
+  trx: Transaction<DB>, spaceId: string, actorId: string,
 ): Promise<void> {
-  await db.updateTable('memberships')
+  await trx.updateTable('memberships')
     .set({ left_at: sql`now()` })
     .where('scope_type', '=', 'space')
     .where('scope_id', '=', spaceId)
     .where('actor_id', '=', actorId)
     .where('left_at', 'is', null)
     .execute();
+
+  // Worth knowing about this event: the actor it names does NOT receive it.
+  // Fanout resolves an audience from committed membership state, and by then
+  // they are not a member — which is the whole point of computing the audience
+  // per event instead of holding a subscription (docs/SYNC-FLOWS.md §7). They
+  // learn of it the next time they reconnect and the space is absent from
+  // `welcome`; until then their local copy simply freezes.
+  await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
+    'space.member_removed', { actor_id: actorId });
 }
 
 /** Load grants and placement once, then ask can() a single question. */

@@ -38,6 +38,11 @@ function catalogueOps() {
  * `where` narrows the files a rule applies to; `allow` exempts the module that
  * legitimately owns the thing being banned — a rule with no owner is a rule
  * nobody can satisfy.
+ *
+ * `requires` turns a rule inside out: `pattern` stops being a ban and becomes an
+ * OBLIGATION, and the violation is `requires` not matching anywhere in the same
+ * file. Use it where the thing to enforce is "these two always travel together"
+ * rather than "this never appears" — a pairing no line-by-line rule can see.
  */
 const RULES = [
   {
@@ -138,6 +143,26 @@ const RULES = [
     where: [/apps\/desktop\//],
     allow: [],
   },
+  {
+    id: 'sync/actor-write-records-directory',
+    doc: 'SYNC-FLOWS.md §9.1 — the directory replicates as workspace-stream events',
+    why: 'An actor written without recordActor() is a person who exists on the '
+       + 'server and on nobody’s client. There is no error: their messages '
+       + 'render with a monogram and no name, for ever, on every device — and '
+       + 'the next reconnect does not repair it, because catch-up returns the '
+       + 'events that were written rather than the rows that were not '
+       + 'announced. Enforced here rather than by a test because two of the '
+       + 'three write sites reach WorkOS before they reach the database, so an '
+       + 'integration test for them costs a network stub — while the pairing '
+       + 'itself is a property of the file and needs no engine to check.',
+    pattern: /\.(?:insertInto|updateTable)\(\s*['"]actors['"]\s*\)/,
+    requires: /\brecordActor\s*\(/,
+    where: [/apps\/server\/src\//],
+    // Fixtures set up state; they do not perform the product operation. A test
+    // that wanted the event would call recordActor explicitly, as events.test.ts
+    // does — and it is the product write paths this rule exists to hold.
+    allow: [/\.test\.ts$/],
+  },
 ];
 
 function walk(dir) {
@@ -153,24 +178,46 @@ function walk(dir) {
 const files = SOURCES.flatMap(d => { try { return walk(join(ROOT, d)); } catch { return []; } });
 const violations = [];
 
+/**
+ * Comments describe a rule as often as they break it: this file, can.ts and the
+ * replica schema all quote the banned form in order to explain why it is
+ * banned. Strip every comment style in play — line, block, JSDoc continuation,
+ * and SQL inside a migration's template literal. Returns null for a line that
+ * is entirely comment.
+ */
+function codeOf(line) {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith('*') || trimmed.startsWith('--') || trimmed.startsWith('//')) return null;
+  return line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
+}
+
 for (const file of files) {
   const rel = relative(ROOT, file);
   const lines = readFileSync(file, 'utf8').split('\n');
   for (const rule of RULES) {
     if (rule.where && !rule.where.some(w => w.test(rel))) continue;
     if (rule.allow.some(a => a.test(rel))) continue;
+
+    // A `requires` rule inverts the usual reading: the pattern is not a ban but
+    // an OBLIGATION, and the violation is the absence of its companion
+    // somewhere in the same file. That is a file-level question, so the first
+    // match is held rather than reported, and answered after the whole file.
+    let obligated = null;
     lines.forEach((line, i) => {
-      // Comments describe a rule as often as they break it: this file, can.ts
-      // and the replica schema all quote the banned form in order to explain
-      // why it is banned. Strip every comment style in play — line, block,
-      // JSDoc continuation, and SQL inside a migration's template literal.
-      const trimmed = line.trimStart();
-      if (trimmed.startsWith('*') || trimmed.startsWith('--') || trimmed.startsWith('//')) return;
-      const code = line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
-      if (rule.pattern.test(code)) {
-        violations.push({ rule, file: rel, line: i + 1, text: line.trim().slice(0, 96) });
-      }
+      const code = codeOf(line);
+      if (code === null || !rule.pattern.test(code)) return;
+      const found = { rule, file: rel, line: i + 1, text: line.trim().slice(0, 96) };
+      if (rule.requires) obligated ??= found;
+      else violations.push(found);
     });
+
+    if (obligated) {
+      const satisfied = lines.some(line => {
+        const code = codeOf(line);
+        return code !== null && rule.requires.test(code);
+      });
+      if (!satisfied) violations.push(obligated);
+    }
   }
 }
 

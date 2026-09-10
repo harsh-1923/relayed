@@ -1,4 +1,5 @@
-// Allocation and idempotency (allocate.ts), Phase 2 step B.
+// Allocation and idempotency (allocate.ts) — step 2 of the sync build plan
+// (docs/SYNC-FLOWS.md §2), lettered step B by PHASE-2-SYNC.md §3.
 //
 // The two failures guarded here are both silent, so both are asserted against a
 // real engine with real concurrency rather than reasoned about:
@@ -16,7 +17,9 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, pool } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
-import { allocate, applyOnce, UnknownChatError, OpOwnershipError } from './allocate.ts';
+import {
+  allocateChat, applyOnce, UnknownChatError, OpOwnershipError,
+} from './allocate.ts';
 
 const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
 const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
@@ -74,8 +77,13 @@ const counters = async (chat: string) =>
 
 test('the first message takes ordinal 1 and revision 1', opts, async () => {
   const chat = await freshChat();
-  const first = await db.transaction().execute(trx => allocate(trx, chat, true));
-  assert.deepEqual(first, { ord: 1, rev: 1 });
+  const first = await db.transaction().execute(trx => allocateChat(trx, chat, true));
+  // The stream and the workspace ride along, from this same statement rather
+  // than a second read: they are what an event is filed under, and reading them
+  // separately is one more pair of values that can disagree (`events.ts`).
+  assert.deepEqual(first, {
+    ord: 1, rev: 1, stream: { kind: 'chat', id: chat }, workspaceId: wsp,
+  });
 });
 
 test('a mutation takes a revision and NO ordinal', opts, async () => {
@@ -83,8 +91,8 @@ test('a mutation takes a revision and NO ordinal', opts, async () => {
   // not consume an ordinal — display order, read cursors and retention all key
   // on `ord`, and a delete changes none of them.
   const chat = await freshChat();
-  await db.transaction().execute(trx => allocate(trx, chat, true));
-  const mutation = await db.transaction().execute(trx => allocate(trx, chat, false));
+  await db.transaction().execute(trx => allocateChat(trx, chat, true));
+  const mutation = await db.transaction().execute(trx => allocateChat(trx, chat, false));
 
   assert.equal(mutation.ord, null, 'a mutation reports no ordinal at all');
   assert.equal(mutation.rev, 2);
@@ -100,7 +108,7 @@ test('interleaved sends and deletes diverge the two counters', opts, async () =>
   const chat = await freshChat();
   const allocations = [];
   for (const isMessage of [true, false, true, false, true]) {
-    allocations.push(await db.transaction().execute(trx => allocate(trx, chat, isMessage)));
+    allocations.push(await db.transaction().execute(trx => allocateChat(trx, chat, isMessage)));
   }
   assert.deepEqual(allocations.map(a => a.ord), [1, null, 2, null, 3]);
   assert.deepEqual(allocations.map(a => a.rev), [1, 2, 3, 4, 5]);
@@ -112,7 +120,7 @@ test('ordinals and revisions are numbers, not strings', opts, async () => {
   // "51" rather than 51 would be invisible everywhere except in the ordering it
   // silently destroys.
   const chat = await freshChat();
-  const { ord, rev } = await db.transaction().execute(trx => allocate(trx, chat, true));
+  const { ord, rev } = await db.transaction().execute(trx => allocateChat(trx, chat, true));
   assert.equal(typeof ord, 'number');
   assert.equal(typeof rev, 'number');
 });
@@ -120,7 +128,7 @@ test('ordinals and revisions are numbers, not strings', opts, async () => {
 test('allocating in a chat that does not exist throws, and writes nothing', opts, async () => {
   // Returning undefined here would let `ord: undefined` reach an INSERT.
   await assert.rejects(
-    () => db.transaction().execute(trx => allocate(trx, 'cht_nonexistent', true)),
+    () => db.transaction().execute(trx => allocateChat(trx, 'cht_nonexistent', true)),
     (err: Error) => {
       assert.ok(err instanceof UnknownChatError);
       return true;
@@ -206,7 +214,7 @@ test('many concurrent allocations produce no duplicates and no holes', opts, asy
   // uniqueness and their coverage are guaranteed.
   const chat = await freshChat();
   const results = await Promise.all(Array.from({ length: 25 }, () =>
-    db.transaction().execute(trx => allocate(trx, chat, true))));
+    db.transaction().execute(trx => allocateChat(trx, chat, true))));
 
   const ords = results.map(r => r.ord).sort((a, b) => (a ?? 0) - (b ?? 0));
   assert.deepEqual(ords, Array.from({ length: 25 }, (_, i) => i + 1));
@@ -223,7 +231,7 @@ const claimFor = (chat: string, opId: string, actorId = actor) =>
 function sendWork(chat: string, messageId: string, ran: { count: number }) {
   return async (trx: Parameters<Parameters<typeof applyOnce>[2]>[0]) => {
     ran.count += 1;
-    const { ord, rev } = await allocate(trx, chat, true);
+    const { ord, rev } = await allocateChat(trx, chat, true);
     await trx.insertInto('messages').values({
       id: messageId, chat_id: chat, parent_id: null, ord: ord as number, rev,
       author_id: actor, body: 'hello' } as never).execute();
@@ -315,7 +323,7 @@ test('work that fails burns NO ordinal — the allocation rolls back with it', o
   // and every client's unread arithmetic stays one too high for ever.
   const chat = await freshChat();
   await assert.rejects(() => applyOnce(db, claimFor(chat, ulid('op')), async (trx) => {
-    await allocate(trx, chat, true);
+    await allocateChat(trx, chat, true);
     throw new Error('the write failed after allocating');
   }), /the write failed after allocating/);
 
@@ -349,7 +357,7 @@ test('the RETRY path, deterministically: a conflict then a replay', opts, async 
         op_id: opId, actor_id: actor, chat_id: chat, kind: 'send',
         result: JSON.stringify(winner) } as never).execute();
     }
-    const { ord, rev } = await allocate(trx, chat, true);
+    const { ord, rev } = await allocateChat(trx, chat, true);
     // Collides with the winner's row on the first attempt.
     await trx.insertInto('messages').values({
       id: messageId, chat_id: chat, parent_id: null, ord: ord as number, rev,

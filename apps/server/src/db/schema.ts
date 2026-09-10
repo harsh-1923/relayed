@@ -20,6 +20,11 @@ export interface WorkspacesTable {
   name: string;
   slug: string;
   avatar_url: string | null;
+  /**
+   * Revision counter for the `workspace:<id>` stream, which carries the actor
+   * directory and nothing else (DESIGN.md §9.9, the `welcome` ceiling).
+   */
+  next_rev: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -103,6 +108,12 @@ export interface SpacesTable {
   lifecycle: Generated<'active' | 'dormant' | 'archived'>;
   created_by_actor_id: string | null;
   last_activity_at: Generated<Timestamp>;
+  /**
+   * Revision counter for the `space:<id>` stream — renames, membership changes,
+   * chats appearing and disappearing. None of these live in `messages`, which
+   * is why they had no catch-up path before the event log existed.
+   */
+  next_rev: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -179,6 +190,27 @@ export interface ChatReadStateTable {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * The event log — what happened, in order, per stream (docs/SYNC-FLOWS.md §5).
+ *
+ * The domain tables answer "what is true now"; this one answers "what changed".
+ * They are not redundant: a row cannot record its own history, because every
+ * mutation overwrites the evidence of the previous one.
+ */
+export interface SyncEventsTable {
+  event_id: string;
+  workspace_id: string;
+  /** No `actor`: an actor stream is a delivery address, not an ordered stream. */
+  stream_kind: 'chat' | 'space' | 'workspace';
+  stream_id: string;
+  /** 1-based. A counter starts at 0, so rev 0 can never name an event. */
+  stream_rev: number;
+  event_type: string;
+  /** A wire shape, never a row dump. */
+  payload: unknown;
+  created_at: Generated<Timestamp>;
+}
+
 export interface DB {
   organizations: OrganizationsTable;
   workspaces: WorkspacesTable;
@@ -192,4 +224,5 @@ export interface DB {
   messages: MessagesTable;
   ops: OpsTable;
   chat_read_state: ChatReadStateTable;
+  sync_events: SyncEventsTable;
 }

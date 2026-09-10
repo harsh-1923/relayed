@@ -1166,6 +1166,7 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 | 68 | The write side and the read side name dependencies from **one shared topic vocabulary** | They drift, a write announces a topic nobody subscribes to, and every open surface goes stale — with no error, no spinner and nothing in a log |
 | 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (DESIGN §13.9), so telemetry stops draining exactly when it is least observed |
 | 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
+| 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined (`DESIGN.md` §9.9) |
 
 ---
 

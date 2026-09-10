@@ -15,6 +15,7 @@ import { emit, count } from '@relayed/telemetry';
 import type { DB } from '../db/schema.ts';
 import { ulid } from '../db/ulid.ts';
 import { listMemberships } from '../workos/management.ts';
+import { recordActor } from '../sync/directory.ts';
 import { suggestHandles, type Identity } from './provision.ts';
 
 export interface PendingJoin {
@@ -135,6 +136,16 @@ export async function joinWorkspace(
       identity_kind: 'workos_user', identity_id: id.workosUserId,
       owner_actor_id: null, provisioned_by: 'invite', state: 'active',
     }).execute();
+
+    // Every existing member of this workspace learns about the new arrival from
+    // this one event — one row on each client, rather than a re-send of the
+    // whole directory. That difference is the entire reason the directory is a
+    // stream (docs/SYNC-FLOWS.md §9.1).
+    await recordActor(tx, 'actor.created', {
+      id: actorId, workspaceId, type: 'human', handle,
+      displayName: id.displayName, avatarUrl: id.avatarUrl, state: 'active',
+    });
+
     // A member, not an admin. Being invited grants belonging, never authority
     // (AUTHZ.md §6) — a new joiner who could immediately invite would make the
     // admin gate on invite meaningless.

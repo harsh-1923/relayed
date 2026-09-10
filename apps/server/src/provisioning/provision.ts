@@ -13,6 +13,7 @@ import {
 } from "../workos/management.ts";
 import { ulid } from "../db/ulid.ts";
 import type { DB } from "../db/schema.ts";
+import { recordActor } from "../sync/directory.ts";
 import { handleCandidates } from "./handle.ts";
 import type { Role } from "@relayed/authz";
 
@@ -251,6 +252,21 @@ export async function createWorkspace(
         state: "active",
       })
       .execute();
+
+    // The founding row of this workspace's directory, at revision 1 of its
+    // stream. There is nobody to deliver it to yet — the audience is the
+    // workspace's members and this actor is the only one — but the event has to
+    // exist so that a later member's catch-up over the directory returns the
+    // founder rather than starting from whoever joined second.
+    await recordActor(tx, "actor.created", {
+      id: actorId,
+      workspaceId,
+      type: "human",
+      handle: opts.handle,
+      displayName: id.displayName,
+      avatarUrl: id.avatarUrl,
+      state: "active",
+    });
 
     // The founder owns the workspace. A permission is a row (AUTHZ.md §4), so
     // this is what makes them able to invite — not a column, and not the fact

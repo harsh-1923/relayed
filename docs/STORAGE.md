@@ -68,9 +68,9 @@ Measured cost of an open SQLite handle, real schema, 2k rows written:
 
 The deciding factor is code coupling. At the time of writing, everything that
 touches the database handle is 273 lines across five files, and the replica
-holds two rows (`schema_origin`, `device_id`). Phase 2 — cursors, `pending_revs`,
-gap markers, outbox, eviction — is precisely the code that would have to be
-threaded, and none of it is written.
+holds two rows (`schema_origin`, `device_id`). Phase 2 — cursors, staged
+events, gap markers, outbox, eviction — is precisely the code that would have to
+be threaded, and none of it is written.
 
 There is also a defect already present and merely unobservable at N=1:
 `device_id` lives in the workspace replica, so two workspaces would mint two
@@ -190,16 +190,21 @@ independent of the workspace replica's.
 
 ## 7. Cursor placement
 
-`rev` is per-chat (§8.1) and `pending_revs` is keyed `(chat_id, rev)`. A chat
-belongs to exactly one workspace. Therefore every cursor is already
-workspace-local and **nothing needs to change to make cursors multi-workspace
-safe**.
+`rev` is per-**stream** and staged events are keyed
+`(stream_kind, stream_id, rev)`. Every stream — a chat, a space, an actor, and
+the workspace directory itself — belongs to exactly one workspace. Therefore
+every cursor is already workspace-local and **nothing needs to change to make
+cursors multi-workspace safe**.
+
+That argument was originally made about chats alone, and it is worth noting that
+widening it to four stream kinds did not weaken it: the property being relied on
+is containment, and all four are contained.
 
 | State | Lives in | Scope | Crosses? |
 |---|---|---|---|
-| `synced_through_rev` | workspace replica | per chat | no |
-| `pending_revs` | workspace replica | per chat | no |
-| `server_head_rev` | workspace replica | per chat | no |
+| `synced_through_rev` | workspace replica | per stream | no |
+| `staged_events` | workspace replica | per stream | no |
+| `server_head_rev` | workspace replica | per stream | no |
 | `last_read_ord` (max-register) | workspace replica | per chat | no |
 | unread / mention counters | workspace replica | per chat | no |
 | `has_gap` | workspace replica | per chat | no |
