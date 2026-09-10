@@ -858,3 +858,159 @@ test('head_rev rides along, so a completed snapshot knows its cursor', opts, asy
   assert.equal(typeof page.head_rev, 'number');
   peer.socket.close();
 });
+
+// ─── writes ─────────────────────────────────────────────────────────────────
+
+test('an op is acked to the sender AND fanned out as an event', opts, async () => {
+  // Both, deliberately. The ack reconciles the sender's outbox row; the event
+  // travels the same apply path as on every other device, so there is one
+  // convergence mechanism rather than a special case for "mine".
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `op-${ulid('x')}`, createdBy: me,
+  });
+  await addToSpace(db, space.spaceId, outsider, me);
+
+  const author = await connect();
+  author.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await author.next('welcome');
+  const other = await connect();
+  other.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await other.next('welcome');
+
+  const opId = ulid('op');
+  const messageId = ulid('msg');
+  author.send('op', {
+    op_id: opId, kind: 'send', c: space.chatId, target: messageId,
+    m: { parent_id: null, body: 'over the wire' },
+  });
+
+  const ack = await author.next('ack') as {
+    op_id: string; id: string; ord: number; rev: number; created_at: string;
+  };
+  assert.equal(ack.op_id, opId);
+  assert.equal(ack.id, messageId);
+  assert.equal(ack.ord, 1);
+
+  const ev = await other.next('ev') as { payload: { body: string; created_at: string } };
+  assert.equal(ev.payload.body, 'over the wire');
+  assert.equal(ev.payload.created_at, ack.created_at,
+    'the same timestamp — one message must not render at two different times');
+
+  author.socket.close();
+  other.socket.close();
+});
+
+test('a RETRIED op returns the same ack and fans out nothing new', opts, async () => {
+  // The single most common offline-sync bug: send, lose the connection before
+  // the ack, retry, and get two messages. The ledger returns the stored ack,
+  // and the absent event is what stops every OTHER device seeing a duplicate.
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `rt-${ulid('x')}`, createdBy: me,
+  });
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  const opId = ulid('op');
+  const messageId = ulid('msg');
+  const op = {
+    op_id: opId, kind: 'send', c: space.chatId, target: messageId,
+    m: { parent_id: null, body: 'once' },
+  };
+  peer.send('op', op);
+  const first = await peer.next('ack') as { ord: number; rev: number };
+
+  peer.send('op', op);
+  const deadline = Date.now() + 1_000;
+  while (peer.frames.filter(f => f.t === 'ack').length < 2 && Date.now() < deadline) {
+    await sleep(5);
+  }
+
+  const acks = peer.frames.filter(f => f.t === 'ack')
+    .map(f => f.body as { ord: number; rev: number });
+  assert.equal(acks.length, 2, 'both were answered');
+  assert.deepEqual(acks[1], acks[0], 'with the SAME ordinal, not a second one');
+  assert.equal(peer.frames.filter(f => f.t === 'ev').length, 1,
+    'and the replay fanned out nothing');
+  void first;
+
+  const rows = await db.selectFrom('messages').select('id')
+    .where('chat_id', '=', space.chatId).execute();
+  assert.equal(rows.length, 1, 'one message, not two');
+  peer.socket.close();
+});
+
+test('a delete over the wire acks with a rev and NO ordinal', opts, async () => {
+  // The two-counter model reaching the wire: a delete takes a revision and no
+  // ordinal, so nothing is renumbered and the gap it leaves is normal.
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `del-${ulid('x')}`, createdBy: me,
+  });
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  const messageId = ulid('msg');
+  peer.send('op', {
+    op_id: ulid('op'), kind: 'send', c: space.chatId, target: messageId,
+    m: { parent_id: null, body: 'doomed' },
+  });
+  const sent = await peer.next('ack') as { ord: number; rev: number };
+
+  peer.send('op', { op_id: ulid('op'), kind: 'delete', c: space.chatId, target: messageId });
+  const deadline = Date.now() + 2_000;
+  while (peer.frames.filter(f => f.t === 'ack').length < 2 && Date.now() < deadline) {
+    await sleep(5);
+  }
+  const acks = peer.frames.filter(f => f.t === 'ack')
+    .map(f => f.body as { ord: number | null; rev: number });
+
+  assert.equal(acks[1]?.ord, null, 'no ordinal');
+  assert.ok((acks[1]?.rev ?? 0) > sent.rev, 'but the revision advanced');
+  peer.socket.close();
+});
+
+test('a write into a chat the actor cannot reach is a NON-retryable nack',
+  opts, async () => {
+    // It will never succeed. Retrying it silently for ever is worse than an
+    // error, because the person sees a message that looks queued and never
+    // learns it will not go.
+    const theirs = await createChannel(db, {
+      workspaceId: wsp, name: `no-${ulid('x')}`, visibility: 'private',
+      createdBy: outsider,
+    });
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    peer.send('op', {
+      op_id: ulid('op'), kind: 'send', c: theirs.chatId, target: ulid('msg'),
+      m: { parent_id: null, body: 'not mine to send' },
+    });
+    const nack = await peer.next('nack') as {
+      code: string; retryable: boolean; message: string;
+    };
+
+    assert.equal(nack.retryable, false, 'permanent, so the client stops');
+    assert.equal(nack.code, 'forbidden');
+    assert.ok(nack.message.length > 0, 'and says something a person can read');
+    assert.equal(peer.socket.readyState, peer.socket.OPEN, 'the connection survives');
+    peer.socket.close();
+  });
+
+test('deleting a message that does not exist is a non-retryable nack', opts, async () => {
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `nf-${ulid('x')}`, createdBy: me,
+  });
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('op', {
+    op_id: ulid('op'), kind: 'delete', c: space.chatId, target: 'msg_never_existed',
+  });
+  const nack = await peer.next('nack') as { code: string; retryable: boolean };
+  assert.equal(nack.code, 'not_found');
+  assert.equal(nack.retryable, false);
+  peer.socket.close();
+});

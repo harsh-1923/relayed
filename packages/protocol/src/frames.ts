@@ -228,11 +228,38 @@ export const DirectoryRequest = z.object({
 });
 export type DirectoryRequest = z.infer<typeof DirectoryRequest>;
 
+/**
+ * A write. The only frame that changes anything.
+ *
+ * `op_id` is CLIENT-generated and is what makes a retry safe: the server's
+ * ledger returns the stored ack rather than doing the work twice, so a client
+ * that sends, loses the connection before the ack, and retries produces one
+ * message rather than two (invariant 5). That is the single most common
+ * offline-sync bug there is.
+ *
+ * Writes ride the socket rather than HTTPS: one ordered connection, one
+ * authentication, and an ack that correlates to an outbox row (`DESIGN.md` §9.5).
+ */
+export const OpFrame = z.object({
+  op_id: z.string().min(1),
+  kind: z.enum(['send', 'delete']),
+  /** The chat. Short, because bytes on a socket are a different concern. */
+  c: z.string().min(1),
+  /** The message this acts on — client-generated for a send (§10.1). */
+  target: z.string().min(1),
+  /** Present for a send. A delete needs nothing but its target. */
+  m: z.object({
+    parent_id: z.string().nullable().optional(),
+    body: z.string(),
+  }).optional(),
+});
+export type OpFrame = z.infer<typeof OpFrame>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
   catchup: CatchupRequest, backfill: BackfillRequest,
-  directory: DirectoryRequest,
+  directory: DirectoryRequest, op: OpFrame,
 };
 
 // ─── Server → client ────────────────────────────────────────────────────────
@@ -451,11 +478,50 @@ export const DirectoryOk = z.object({
 });
 export type DirectoryOk = z.infer<typeof DirectoryOk>;
 
+/**
+ * The write succeeded, and here is what the server decided.
+ *
+ * Delivered to the sender IN ADDITION to the `ev` frame everyone else gets —
+ * including the sender. The ack reconciles the outbox row; the event travels
+ * the same apply path as on every other device, so there is one convergence
+ * mechanism rather than a special case for "mine".
+ *
+ * `ord` is null for a delete, which is the two-counter model reaching the wire:
+ * a delete takes a revision and no ordinal, so nothing is renumbered and the
+ * gap it leaves is normal rather than something to repair.
+ */
+export const AckFrame = z.object({
+  op_id: z.string(),
+  id: z.string(),
+  c: z.string(),
+  ord: z.number().int().nullable(),
+  rev: z.number().int().nonnegative(),
+  created_at: z.string(),
+});
+export type AckFrame = z.infer<typeof AckFrame>;
+
+/**
+ * The write was refused.
+ *
+ * `retryable` is the field that matters, and the distinction is not cosmetic. A
+ * send into a chat somebody was removed from will NEVER succeed — retrying it
+ * silently for ever is worse than an error, because they see a message that
+ * looks queued and never learn it will not go. A terminal failure is surfaced
+ * with retry and discard, which are the only two things anyone can do about it.
+ */
+export const NackFrame = z.object({
+  op_id: z.string(),
+  code: z.string(),
+  retryable: z.boolean(),
+  message: z.string(),
+});
+export type NackFrame = z.infer<typeof NackFrame>;
+
 /** Every frame this client accepts. */
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
-  directory_ok: DirectoryOk,
+  directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
 };
 
 /** Serialise a frame. The one place `t` is attached, so it cannot be forgotten. */

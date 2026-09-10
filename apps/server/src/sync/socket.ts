@@ -18,6 +18,7 @@ import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
   type Hello, type CatchupRequest, type BackfillRequest, type DirectoryRequest,
+  type OpFrame,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
 import { loadGrants } from '../authz/can.ts';
@@ -28,6 +29,8 @@ import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import { parseStream, type AppendedEvent, type Stream } from './events.ts';
 import { welcome, catchup, backfill, streamHead, directoryPage } from './feed.ts';
+import { send, deleteMessage, MessageNotFoundError } from './ops.ts';
+import { Forbidden } from '../authz/can.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -193,6 +196,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     if (read.t === 'directory') {
       await onDirectory(state, read.body as DirectoryRequest); return;
     }
+    if (read.t === 'op') { await onOp(state, read.body as OpFrame); return; }
 
     if (read.t === 'ping') {
       // The heartbeat is CLIENT-initiated, which is one mechanism serving both
@@ -332,6 +336,51 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       complete: page.complete,
       head_rev: headRev,
     });
+  }
+
+  /**
+   * A write, and the only frame that changes anything.
+   *
+   * The ack goes to the SENDER and the event goes to the audience — including
+   * the sender, whose other devices need it and whose own client applies it
+   * down the same path as every other. One convergence mechanism rather than a
+   * special case for "mine".
+   *
+   * FANNED OUT AFTER THE TRANSACTION COMMITS, never inside: a rollback would
+   * otherwise have already told every client about something that never
+   * happened, and nothing afterwards looks wrong.
+   */
+  async function onOp(state: ConnectionState, frame: OpFrame): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+
+    try {
+      const applied = frame.kind === 'send'
+        ? await send(deps.db, {
+            opId: frame.op_id, chatId: frame.c, actorId: claims.actorId,
+            messageId: frame.target, body: frame.m?.body ?? '',
+            parentId: frame.m?.parent_id ?? null,
+          })
+        : await deleteMessage(deps.db, {
+            opId: frame.op_id, chatId: frame.c, actorId: claims.actorId,
+            messageId: frame.target,
+          });
+
+      state.send('ack', {
+        op_id: frame.op_id,
+        id: applied.ack.messageId, c: applied.ack.chatId,
+        ord: applied.ack.ord, rev: applied.ack.rev,
+        created_at: applied.ack.createdAt,
+      });
+
+      // Absent on a REPLAY, which is the whole reason the ops report it: the
+      // retried op returned the stored ack without doing the work, so fanning
+      // out here would deliver a duplicate to every other device while the
+      // sender's own ack correctly reported one.
+      if (applied.event) await fanout(deps.db, registry, applied.event);
+    } catch (err) {
+      state.send('nack', nackFor(frame.op_id, err));
+    }
   }
 
   async function onHello(state: ConnectionState, hello: Hello): Promise<void> {
@@ -498,4 +547,37 @@ class ConnectionState implements Delivery {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
   }
+}
+
+/**
+ * Turn a refusal into something a client can act on.
+ *
+ * `retryable` is the field that decides between backoff and a terminal failure,
+ * and getting it wrong in either direction is bad in a different way. Mark a
+ * permanent refusal retryable and the client spins for ever on a message that
+ * will never send; mark a transient one terminal and it gives up on a message
+ * that would have gone through a second later.
+ *
+ * So the default is RETRYABLE. An error nobody has classified is far more likely
+ * to be a database hiccup than a permanent rule — and the cost of retrying
+ * something permanent is visible, while the cost of discarding something
+ * transient is a message the person believes they sent.
+ */
+function nackFor(opId: string, err: unknown): Record<string, unknown> {
+  if (err instanceof Forbidden) {
+    return {
+      op_id: opId, code: 'forbidden', retryable: false,
+      message: 'You do not have permission to do that here.',
+    };
+  }
+  if (err instanceof MessageNotFoundError) {
+    return {
+      op_id: opId, code: 'not_found', retryable: false,
+      message: 'That message no longer exists.',
+    };
+  }
+  return {
+    op_id: opId, code: 'unavailable', retryable: true,
+    message: (err as Error)?.message ?? 'Temporarily unavailable.',
+  };
 }

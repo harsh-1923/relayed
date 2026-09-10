@@ -20,27 +20,26 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 10 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 11 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the outbox** — coalescing on enqueue, in-order replay per chat,
-and the ack applied in one transaction with the outbox row it clears. That is
-step 11 of fourteen in the sync build plan
-([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), and the first thing a user can break
-by being offline.
+**Next task: retention, and the residue we accept** — a bounded sweep over
+`sync_events`, the horizon a stale cursor gets a gap beyond, and an honest
+statement of what one node does not close. That is step 12 of fourteen in the
+sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
 
-The sharpest rule there is a correctness requirement rather than an
-optimisation: **compose then delete offline must produce ZERO network ops**, not
-two that fail — `delete` targets a message the server has never heard of, so the
-pair is dropped entirely and never touches the wire. That is why the outbox
-indexes `target_id`.
+The sweep keys on `event_id` rather than `created_at`, deliberately: a ULID is
+time-ordered with a constant prefix, so "older than T" is a keyset range over
+the PRIMARY KEY — no second index, and no second index to add later on the table
+most likely to be large by the time anyone wants one. That reasoning is recorded
+in `008_sync_events.sql`.
 
-**Done so far:** steps 1 to 10. A client connects, paints correct badges,
-applies what arrives, asks for what it missed, and hydrates its directory over
-the socket — `sync/link.ts` is what assembles those into a running engine. What
-it cannot yet do is write.
+**Done so far:** steps 1 to 11. A client connects, paints correct badges,
+applies what arrives, asks for what it missed, hydrates its directory, and now
+writes — offline included, in the order typed, with compose-then-delete never
+touching the wire.
 
-Green as of the last commit: **436 tests**, 103 spike assertions, 9 boundary
-rules over 192 files, typecheck across five packages, production build.
+Green as of the last commit: **459 tests**, 103 spike assertions, 9 boundary
+rules over 194 files, typecheck across five packages, production build.
 
 ## Documentation
 

@@ -137,7 +137,7 @@ referenced from other documents and neither gets renumbered.
 | 8 — the apply loop and the frontier | F | 14, 15 | ✅ |
 | 9 — catch-up, gap and backfill | G | 14 | ✅ |
 | 10 — the directory as a stream | *new* | 14 | ✅ |
-| 11 — the outbox | H | 16 | ☐ |
+| 11 — the outbox | H | 16 | ✅ |
 | 12 — retention, and the residue we accept | *new* | 14 | ☐ |
 | 13 — the instrumentation pass | *new* | 14 | ☐ |
 | 14 — the milestone | I | 17 | ☐ |
@@ -691,9 +691,13 @@ not landed yet.
 
 ---
 
-### Step 11 — The outbox
+### Step 11 — The outbox ✅
 
 `Phase 2 step H · DESIGN.md item 16 · G1, G4`
+
+**Built.** `sync/outbox.ts` (coalescing, ordering, ack, nack, retry, discard),
+the `op` / `ack` / `nack` frames, the server's write handler, and the drainer in
+`sync/link.ts`. Twenty-three tests.
 
 The write path, and the first thing a user can break by being offline.
 
@@ -710,12 +714,30 @@ The write path, and the first thing a user can break by being offline.
 
 **Done when**
 
-- [ ] Compose-then-delete offline produces **zero** network ops, not two that
-      fail.
-- [ ] Three messages typed offline arrive in the order typed.
-- [ ] The ack stamps the message row and deletes the outbox row in **one**
-      transaction.
-- [ ] A non-retryable nack surfaces in the UI with retry and discard.
+- [x] Compose-then-delete offline produces **zero** network ops, not two that
+      fail — and the optimistic row goes with them. It was never sent, so there
+      is nothing to tombstone; leaving a deleted row behind would render a
+      message no other device has ever seen.
+- [x] Three messages typed offline arrive in the order typed. The sequence is
+      derived from the table rather than held in memory, because the outbox
+      outlives the process — a counter reset on restart would hand a new op a
+      number below one already queued.
+- [x] The ack stamps the message row and deletes the outbox row in **one**
+      transaction, and the server's own timestamp replaces the optimistic one.
+- [x] A non-retryable nack marks both the op **and the message**, so a surface
+      can show *which* message failed rather than a banner about an op id
+      nobody has seen. `retry` and `discard` are the two things a person can do
+      about it, and retry goes to the **back** of the queue: its original
+      sequence is long past, so re-inserting there would put an hour-old
+      message ahead of this morning's.
+- [x] **Added while building:** discarding a failed *delete* leaves the message
+      alone. The person wanted it gone and could not have it — removing it
+      locally would be the app doing the thing the server refused, and the next
+      reconnect would bring it straight back.
+- [x] **Added while building:** an unclassified error defaults to **retryable**.
+      Getting it wrong in either direction is bad in a different way, and the
+      costs are asymmetric: retrying something permanent is visible, while
+      discarding something transient is a message the person believes they sent.
 
 ---
 
@@ -1947,7 +1969,8 @@ than an item without an owner.
 | `catchup` generalised across stream kinds, `catchup`/`backfill` frames | **Built** | 9 |
 | `workspace` stream for the directory, paged `directory` fetch | **Built** — replaced `GET /actors` | 10 |
 | `sync/link.ts` — the engine's end of the socket, routing frames into the replica | **Built** | 10 (unassigned by the plan) |
-| Outbox drainer and coalescing | New | 11 |
+| Outbox drainer and coalescing | **Built** | 11 |
+| `op` / `ack` / `nack` frames, and the server's write handler | **Built** | 11 |
 | Event retention sweep | New | 12 |
 
 ---

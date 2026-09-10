@@ -26,6 +26,7 @@ import {
   directorySnapshotComplete, directoryOwed,
   type MessageRow, type DirectoryRow,
 } from './catchup.ts';
+import { ready, markInflight, applyAck, applyNack, type Ack } from './outbox.ts';
 
 export interface LinkDeps {
   url: string;
@@ -48,6 +49,8 @@ export interface LinkDeps {
 export interface Link {
   start(): void;
   stop(): void;
+  /** Send whatever the outbox has ready. Called after an enqueue. */
+  drain(): void;
   /** Reconnect now — waking from sleep, or a freshly refreshed token. */
   retryNow(): void;
   readonly state: LinkState;
@@ -96,6 +99,7 @@ export function createLink(deps: LinkDeps): Link {
       });
       scheduler.sweep();
       void hydrateDirectory();
+      drain();
     },
 
     onFrame: (t, body) => { route(t, body); },
@@ -152,11 +156,70 @@ export function createLink(deps: LinkDeps): Link {
       return;
     }
 
+    if (t === 'ack') {
+      const frame = body as {
+        op_id: string; id: string; c: string; ord: number | null;
+        rev: number; created_at: string;
+      };
+      const ack: Ack = {
+        messageId: frame.id, chatId: frame.c, ord: frame.ord,
+        rev: frame.rev, createdAt: frame.created_at,
+      };
+      deps.invalidate(applyAck(db, frame.op_id, ack));
+      // The next op for that chat, immediately. One in flight per chat means
+      // the queue only moves when the previous one settles — so a drain that
+      // did not restart here would stop after the first message.
+      drain();
+      return;
+    }
+
+    if (t === 'nack') {
+      const frame = body as {
+        op_id: string; code: string; retryable: boolean; message: string;
+      };
+      const result = applyNack(db, frame.op_id, frame.retryable, frame.code);
+      deps.onEvent?.('outbox.op.failed', {
+        code: frame.code, retryable: frame.retryable, outcome: result.outcome,
+      });
+      // A terminal failure changes what a surface renders — the message is
+      // marked failed and needs its retry-or-discard affordance. A retryable one
+      // changes nothing rendered, so it wakes nothing.
+      if (result.topics.length > 0) deps.invalidate(result.topics);
+      drain();
+      return;
+    }
+
     if (t === 'directory_ok') {
       const resolve = awaitingPage;
       awaitingPage = null;
       resolve?.(body as DirectoryOk);
       return;
+    }
+  }
+
+  /**
+   * Send whatever is ready, at most one op per chat.
+   *
+   * Called on `welcome` and after every settled op rather than on a timer. A
+   * timer would be a second source of truth about when the queue moves, and the
+   * queue already knows — an op settles, the next one for that chat is ready.
+   *
+   * Nothing is queued in memory: `ready` reads the table every time, so an op
+   * enqueued while the socket was down is picked up by the next drain without
+   * anything having had to remember it.
+   */
+  function drain(): void {
+    const db = deps.db();
+    if (!db) return;
+    for (const op of ready(db)) {
+      const sent = connection.send('op', {
+        op_id: op.opId, kind: op.kind, c: op.chatId, target: op.targetId,
+        ...(op.kind === 'send' ? { m: op.payload } : {}),
+      });
+      // Marked in flight only if it actually went. A socket that closed between
+      // reading the queue and writing would otherwise leave the op inflight
+      // with nothing coming back, and it would never be retried.
+      if (sent) markInflight(db, op.opId);
     }
   }
 
@@ -214,6 +277,7 @@ export function createLink(deps: LinkDeps): Link {
 
   return {
     start: () => { connection.start(); },
+    drain,
     stop: () => {
       // The pager may be waiting on a page that will never arrive now. Settling
       // it is the difference between a stopped link and a stopped link holding
