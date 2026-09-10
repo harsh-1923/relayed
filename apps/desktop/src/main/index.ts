@@ -1,7 +1,10 @@
 // Main process: windows, lifecycle, and brokering the renderer <-> sync-engine
 // handshake. Deliberately thin — it does NOT own the database or the socket
 // (DESIGN.md §5).
-import { app, BrowserWindow, ipcMain, nativeTheme, shell, utilityProcess, MessageChannelMain } from 'electron';
+import {
+  app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, shell, utilityProcess,
+  MessageChannelMain,
+} from 'electron';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
@@ -164,6 +167,22 @@ app.whenReady().then(() => {
   if (process.env['RELAYED_VERIFY_DEEPLINK']) {
     console.log(JSON.stringify({ phase1: 'deeplink', registered: isRegistered(), setOk: protocolOk }));
   }
+
+  // Waking from sleep, forwarded because `powerMonitor` is a main-process API
+  // and the socket lives in the utility process.
+  //
+  // Worth the hop rather than waiting for TCP to notice. After a lid closes,
+  // the connection is dead and the operating system will not find out for
+  // minutes — so a machine that has just woken is the only prompt signal there
+  // is that the socket needs replacing (invariant 30). Without this the app
+  // looks connected and silently receives nothing.
+  // Two events, listed separately because Electron types each one and a union
+  // matches no single overload. `unlock-screen` is here as well as `resume`
+  // because a machine can wake without the lid ever having closed — the screen
+  // locks, the network changes, and `resume` never fires.
+  const wake = (): void => { syncProcess?.postMessage({ type: 'net:resume' }); };
+  powerMonitor.on('resume', wake);
+  powerMonitor.on('unlock-screen', wake);
 
   // The handshake. A MessagePort does NOT survive a renderer reload, so the
   // renderer asks for one on every load and main mints a fresh channel. Main

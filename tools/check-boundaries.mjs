@@ -99,6 +99,12 @@ const RULES = [
        + 'simulating at all because it looks like it worked. '
        + 'Route it through sync/transport, which calls guardConnect first.',
     pattern: /new\s+WebSocket\s*\(|from\s+['"]ws['"]|require\(\s*['"]ws['"]\s*\)/,
+    // SCOPED TO THE DESKTOP, and it was not until the server grew a socket.
+    // The rule is about ONE gate on ONE process's outbound calls — R3 and
+    // simulated offline are properties of the client. The server has no gate to
+    // route through, so applying this there would have been a rule with no way
+    // to satisfy it, which is how a checker teaches people to add exemptions.
+    where: [/apps\/desktop\//],
     // The transport module is the one place allowed to open one — and the gate
     // is allowed to name the type in its own signature.
     allow: [/apps\/desktop\/src\/sync\/transport\//, /apps\/desktop\/src\/sync\/network\.ts$/],

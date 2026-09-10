@@ -6,8 +6,9 @@ import { authRoutes } from './auth/routes.ts';
 import { invitationRoutes } from './auth/invitations.ts';
 import { landingRoutes } from './web/landing.ts';
 import { directoryRoutes } from './auth/directory.ts';
-import { pool } from './db/client.ts';
+import { pool, db } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
+import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 
 useOtlpIfConfigured('server');
 
@@ -36,6 +37,15 @@ await app.register(invitationRoutes);
 await app.register(landingRoutes);
 await app.register(directoryRoutes);
 
+// The sync socket, on Fastify's own HTTP server rather than a second listener:
+// one port, one TLS terminator, and an upgrade that a proxy already knows how
+// to route. Attached before `listen` so no connection can arrive first.
+const sync = attachSyncSocket(app.server, {
+  db,
+  onEvent: (name, detail) => { app.log.debug({ ...detail }, name); },
+});
+app.log.info({ path: SYNC_PATH }, 'sync socket attached');
+
 const applied = await migrate();
 if (applied.length) app.log.info({ applied }, 'migrations applied');
 
@@ -50,5 +60,15 @@ await app.listen({ port: env.port, host: '127.0.0.1' });
 emit('app.boot', { to_first_render: 0, from_local: false });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { void app.close().then(() => pool.end()).then(() => process.exit(0)); });
+  process.once(sig, () => {
+    // Sockets first, and told WHY. A deploy that just drops connections leaves
+    // every client discovering it at its next heartbeat — up to a minute of
+    // silence that looks exactly like a network fault. Closing with a code lets
+    // them reconnect immediately, on a jittered delay so they do not arrive
+    // together (invariant 31).
+    void sync.close()
+      .then(() => app.close())
+      .then(() => pool.end())
+      .then(() => process.exit(0));
+  });
 }

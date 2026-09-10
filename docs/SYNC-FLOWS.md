@@ -131,7 +131,7 @@ referenced from other documents and neither gets renumbered.
 | 2 — allocation and idempotency | B | 13 | ✅ |
 | 3 — the domain ops | C | 13 | ✅ |
 | 4 — the event log | *new* | 13 completed, 14 assumed it | ✅ |
-| 5 — the socket, both halves | D | 14 | ☐ |
+| 5 — the socket, both halves | D | 14 | ✅ |
 | 6 — the registry and fanout | *new* | 14 | ☐ |
 | 7 — `hello` and `welcome` | E | 14 | ☐ |
 | 8 — the apply loop and the frontier | F | 14, 15 | ☐ |
@@ -276,9 +276,19 @@ transaction as its effect; `eventsSince` reading the log.
 
 ---
 
-### Step 5 — The socket, both halves
+### Step 5 — The socket, both halves ✅
 
 `Phase 2 step D · DESIGN.md item 14 · G4, G6`
+
+**Built.** `packages/protocol` (the wire contract, shared so the two sides
+cannot disagree), `apps/server/src/sync/socket.ts`, and
+`apps/desktop/src/sync/transport/connection.ts`. Fifty-four tests across the
+three. Four things came out differently from the sketch below, each recorded
+where it belongs: frames are **flat** rather than `{ t, body }`; `hello` carries
+**no** workspace or device id; `too_old` was pulled forward from the `welcome`
+step because that is where `hello` is parsed; and the socket boundary rule was
+**scoped to the desktop**, having been silently over-broad until the server grew
+a socket of its own.
 
 A connection that carries no product meaning yet: it connects, authenticates,
 stays alive, reconnects, and ignores frames it does not understand. Separating
@@ -317,13 +327,32 @@ and invariant 43 requires ignoring it.
 
 **Done when**
 
-- [ ] A client survives a server restart, a laptop sleep and a network change.
-- [ ] An unrecognised frame `t` is delivered, counted and ignored, and the
-      connection stays open.
-- [ ] `pnpm check:boundaries` is clean **with `sync/transport/` existing** — the
-      rule stops passing vacuously for the first time.
-- [ ] The XState decision is recorded either way, with the line count that
-      decided it.
+- [x] A client survives a server restart, a laptop sleep and a network change.
+
+      Restart and network loss are asserted over a real socket. **Sleep is
+      asserted at the seam, not end to end**, and that is worth being explicit
+      about: `powerMonitor` is a main-process API and the socket lives in the
+      utility process, so main forwards `resume` and `unlock-screen` and the
+      transport exposes `retryNow`. Both halves have tests; the lid closing does
+      not, because nothing in a test runner closes a lid.
+- [x] An unrecognised frame `t` is delivered, counted and ignored, and the
+      connection stays open — asserted from **both** sides, because a server
+      that dropped a newer client's frame would make every rollout a partial
+      outage for whoever updated first.
+- [x] `pnpm check:boundaries` is clean **with `sync/transport/` existing** — the
+      rule stops passing vacuously for the first time. Proved by putting a rogue
+      socket outside the transport and watching it fail.
+- [x] The XState decision is recorded either way, with the line count that
+      decided it. **129 lines, which is over the ~60 threshold, and it was
+      dropped anyway** — the deciding reason is the coupled `session.ts` port
+      that has already been tried and reverted, not the count
+      (`FRONTEND.md` §7.4).
+- [x] **Added while building:** a deadline on the anonymous half of the
+      handshake. Authenticating on `hello` rather than on the upgrade means an
+      unauthenticated socket exists for a moment, and without a deadline that
+      moment is unbounded — opening sockets and saying nothing would be a free
+      way to hold server memory. Pinging does **not** postpone it, which is the
+      part worth a test: a deadline anything can extend is not a deadline.
 
 ---
 
@@ -899,16 +928,28 @@ row.
 ### Client → server
 
 ```json
-{ "t": "hello", "protocol": 4,
+{ "t": "hello", "protocol": 1,
   "access_token": "eyJ…",
-  "workspace_id": "wsp_01M234E35Y8WYEKFQSA03JD3BY",
-  "device_id":    "dev_01M2340RRWNR2WMH1BXSTM3W3Z",
   "cursors": [
     { "kind": "chat",  "id": "cht_01M244GW79BBXYFPJS6J7AYNQ0", "rev": 8134 },
     { "kind": "space", "id": "spc_01M244GW79Y0PXWXJ7B4Q1TR5K", "rev": 31 },
     { "kind": "workspace", "id": "wsp_01M234E35Y8WYEKFQSA03JD3BY", "rev": 4819 }
   ] }
 ```
+
+**No `workspace_id`, no `device_id`, and no actor.** All three are claims in the
+verified token, and a field that is present but ignored is an invitation to
+trust it one day. Earlier drafts of this section carried two of them; they are
+removed rather than accepted-and-discarded, and a test asserts their absence.
+
+Frames are **flat**: the envelope keys and the body's keys share one object.
+That makes `t` and `traceparent` reserved — no body may declare them — which is
+asserted over the frame tables rather than left as a rule to remember.
+
+A connection that is ended rather than answered carries a **close code**, so the
+client can tell the cases apart without parsing anything: `4001` the token was
+refused, `4002` no `hello` arrived, `4003` too old (preceded by the frame),
+`4004` the server is going away.
 
 ```json
 { "t": "op", "op_id": "op_01M2451Q8CE4T7Z1J0B9WQ2MZX",
@@ -1761,7 +1802,10 @@ than an item without an owner.
 | Every domain op appending its event in the same transaction | **Built** | 4 |
 | `eventsSince` reading events rather than rows | **Built** | 4 |
 | Directory events on the workspace stream, from all three actor write sites | **Built** | 4 |
-| WebSocket transport, heartbeat carrying stream heads, permissive parse | New | 5 |
+| `packages/protocol` — the wire contract, shared between both processes | **Built** | 5 |
+| WebSocket transport, client-initiated heartbeat, permissive parse | **Built** | 5 |
+| `hello` → `welcome` handshake, close codes, `too_old` | **Built** | 5 (`welcome` grows at 7) |
+| Stream heads on the heartbeat reply | New | 6 |
 | Connection registry, `audienceFor`, fanout, slow-consumer drop | New | 6 |
 | `hello`/`welcome`/`ev`/`ack`/`nack` frames, `too_old` | New | 7 |
 | One-shot gzip of the `welcome` frame | New | 7 |

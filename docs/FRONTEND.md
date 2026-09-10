@@ -696,6 +696,45 @@ longest-lived resource in the app.
 machine, then estimate the hand-rolled equivalent. If it is under ~60 lines with
 no timer-cancellation subtlety, the dependency has not paid — drop it.
 
+#### The measurement, and the call — the transport has landed
+
+**Hand-rolled: 129 lines of machine** (319 total, 167 of code; the rest is types,
+a pure backoff function and comments). Six states, three `setTimeout` call
+sites, all funnelled through two private methods.
+
+**That is over the threshold, and the criterion does not settle it.** Under
+sixty with no subtlety says drop; 129 lines *with* subtlety says nothing
+directly, and there is subtlety — a stale socket's `close` arriving after its
+replacement had connected would reset the successor's backoff, which is how a
+reconnect loop becomes a hot loop. That is precisely the cancel-on-exit class
+`invoke` makes structural, and it needed a generation counter checked in every
+handler instead.
+
+**Dropped anyway, and the deciding reason is not the line count.** It is §7.4a:
+adopting XState here means either two idioms in one process — which this section
+explicitly set out to avoid — or porting `session.ts` alongside it, and that
+port has already been tried and reverted at the cost of two regressions that
+only the existing tests caught. Paying that again to remove a generation counter
+is not a trade this codebase is short of evidence about.
+
+What replaces the structural guarantee, since something has to:
+
+- **One `#enter`, and every transition goes through it.** It clears the timer
+  before doing anything else, so there is exactly one place a timer can leak
+  rather than one per exit path. That is the property `invoke` would have given,
+  bought with about fifteen lines.
+- **One timer handle, re-armed.** The handshake deadline, the heartbeat and the
+  read deadline are the same question at different stages, so they share a
+  field — there is no way to clear one and leak another.
+- **A test per cleanup path**: stop mid-flight, a hung handshake, a zombie, a
+  stale socket speaking after its successor is live. Twenty-seven in all.
+
+**What would reopen this.** A second machine-shaped concern in the same process
+— the outbox drainer growing states, or catch-up turning out to be a region
+after all rather than a loop over a table. Two hand-rolled machines is the point
+at which the idiom argument flips, because then the dependency is replacing two
+things instead of one.
+
 Not before. Rewriting a working auth machine now buys three bugs we have
 already fixed by hand. The connection lifecycle is a different matter, because
 it is genuinely beyond what an enum and `#set()` survive:
@@ -950,6 +989,20 @@ propagating four layers inward.
 invariant 43**, which says an unknown top-level frame `t` is ignored and never
 fatal — the property that lets us add frame types without breaking clients in
 the field (DESIGN §9.10).
+
+> **Built, and flat rather than nested.** The sketch below shows
+> `{ t, body }`; the wire uses `{ "t": "hello", "protocol": 1, … }` with the
+> body's fields at the top level. Flat won because it is what
+> [`SYNC-FLOWS.md`](SYNC-FLOWS.md) §8 documents in detail with a worked example
+> for every frame, because it is smaller on a wire whose frame size we have
+> measured and care about, and because it matches the short-key exception the
+> naming rule already carves out for the protocol.
+>
+> The cost is that envelope and body share one namespace, so **`t` and
+> `traceparent` are reserved** — no body may declare them. That is asserted
+> over both frame tables rather than left as a rule to remember. Everything
+> below about *how* to parse is unchanged and is what shipped, in
+> `packages/protocol`.
 
 The correct shape parses the envelope strictly and dispatches leniently:
 

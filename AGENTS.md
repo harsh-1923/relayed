@@ -20,32 +20,32 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 4 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 5 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the socket, both halves** — a connection that authenticates,
-heartbeats, reconnects and ignores frames it does not understand, carrying no
-product meaning yet. That is step 5 of fourteen in the sync build plan
-([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries what each step
-delivers, what "done" means for it, and the six goals the phase is measured
-against. `PHASE-2-SYNC.md` letters the same work step D.
+**Next task: the registry and fanout** — `audienceFor`, which computes an
+event's recipients from memberships at send time so there is no subscription to
+revoke, plus the connection registry and the slow-consumer rule. That is step 6
+of fourteen in the sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2),
+which carries what each step delivers, what "done" means for it, and the six
+goals the phase is measured against.
 
 **Done so far:** the two schemas, allocation and idempotency, the domain ops,
-and the event log — steps 1 to 4, all server-side, no transport anywhere.
+the event log, and the socket — steps 1 to 5. The socket authenticates and stays
+alive but carries no product meaning yet; nothing is fanned out to it.
 
 Three things are easy to skim past and expensive to rediscover.
 `spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
 assertions, mutation-tested, and it disagrees with intuition in several places;
-port it rather than rewriting it. The socket already has a seam: `guardConnect`
-exists, and the boundary rule `network/no-ungated-socket` permits `new WebSocket`
-only under `sync/transport/`, a directory that does not exist yet — so that rule
-passes vacuously today and stops doing so the moment step 5 begins. And both
-deferred decisions fire in that same step: **XState** at the connection machine
-(with a kill criterion) and **Zod** at the first wire format, where a
-`z.discriminatedUnion` on the frame envelope would break the requirement that an
-unknown frame type is ignored rather than fatal (invariant 43).
+port it rather than rewriting it. The wire contract lives in
+`packages/protocol` and is shared by both processes, so a frame added on one
+side cannot silently differ on the other — and frames are parsed permissively:
+an unknown `t` is ignored and an unknown field is dropped, never fatal. And
+**both deferred decisions have now fired**: Zod was adopted at the wire format,
+and XState was measured at 129 lines against a ~60 line criterion and dropped
+anyway, for reasons `FRONTEND.md` §7.4 records.
 
-Green as of the last commit: **284 tests**, 103 spike assertions, 9 boundary
-rules over 179 files, typecheck across four packages, production build.
+Green as of the last commit: **343 tests**, 103 spike assertions, 9 boundary
+rules over 184 files, typecheck across five packages, production build.
 
 ## Documentation
 
@@ -62,6 +62,10 @@ rules over 179 files, typecheck across four packages, production build.
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) | **Start here for sync.** The six goals with their completeness checks, the fourteen-step build plan, and every flow end to end with data shapes. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
+
+Workspace packages: `@relayed/authz` (one `can()`, shared so client and server
+cannot disagree), `@relayed/protocol` (the wire format, shared for the same
+reason), `@relayed/telemetry` (the typed event catalogue).
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
 rationale is the part that tells you whether a change is safe** — the two-counter
