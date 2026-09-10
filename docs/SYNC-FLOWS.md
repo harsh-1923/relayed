@@ -134,7 +134,7 @@ referenced from other documents and neither gets renumbered.
 | 5 — the socket, both halves | D | 14 | ✅ |
 | 6 — the registry and fanout | *new* | 14 | ✅ |
 | 7 — `hello` and `welcome` | E | 14 | ✅ |
-| 8 — the apply loop and the frontier | F | 14, 15 | ☐ |
+| 8 — the apply loop and the frontier | F | 14, 15 | ✅ |
 | 9 — catch-up, gap and backfill | G | 14 | ☐ |
 | 10 — the directory as a stream | *new* | 14 | ☐ |
 | 11 — the outbox | H | 16 | ☐ |
@@ -498,9 +498,17 @@ fetched.
 
 ---
 
-### Step 8 — The apply loop and the frontier
+### Step 8 — The apply loop and the frontier ✅
 
 `Phase 2 step F · DESIGN.md items 14 and 15 · G1, G6`
+
+**Built.** Replica version 3, `sync/apply.ts` (the three-case rule and the
+drain), `sync/effects.ts` (what each event type means locally), and the topic
+vocabulary the invalidations use. Twenty-one tests. One thing came out larger
+than the sketch: `synced_through_rev` lived on `chat_state`, so a space or the
+directory had **nowhere to keep a cursor** and their events could not be applied
+at all — every stream's frontier now lives in one `stream_state` table, which
+also removes a branch from the hottest correctness path in the client.
 
 Where the spike earns its keep, and the most expensive failure mode in the
 system. It lands before anything that produces volume, deliberately.
@@ -512,7 +520,7 @@ system. It lands before anything that produces volume, deliberately.
 | `sync/migrations/workspace.ts` version 3 | `staged_events` replaces `pending_revs` |
 | `apps/desktop/src/sync/apply.ts` *(new)* | the three cases of §11 (receiving an event, and the frontier) |
 | `apps/desktop/src/sync/invalidate.ts` | a topic per event type |
-| `DESIGN.md`, `STORAGE.md`, `OBSERVABILITY.md` | all three name `pending_revs` and all three need the replacement |
+| `DESIGN.md`, `STORAGE.md`, `OBSERVABILITY.md` | all three named `pending_revs`; all three now describe the replacement |
 
 **Traps**
 
@@ -526,14 +534,29 @@ system. It lands before anything that produces volume, deliberately.
 
 **Done when**
 
-- [ ] The lost-edit trace of §11.1 is a test that **fails** against a rev-only
-      table and passes against `staged_events`. Write it against `pending_revs`
-      first and watch it fail — a test that has never failed has proved nothing.
-- [ ] Out-of-order events injected during catch-up leave the frontier correct.
-- [ ] An unknown `event_type` advances the cursor and a later known event still
-      applies.
-- [ ] `staged_events` is empty whenever the client is caught up, asserted — a
+- [x] The lost-edit trace of §11.1 is a test — **and it is a stronger shape than
+      this criterion asked for.** Rather than one test that used to fail, there
+      are two: the first rebuilds the rev-only rules and asserts the edit is
+      *lost*, the second runs the identical trace against `staged_events` and
+      asserts it survives. Both stay in the suite for ever, so the bug cannot be
+      reintroduced by reverting — where a test that merely used to fail leaves
+      no record of the old behaviour at all.
+- [x] Out-of-order events injected during catch-up leave the frontier correct.
+      A batch is sorted before applying, so a server free to return events in
+      any order cannot produce a different result.
+- [x] An unknown `event_type` advances the cursor and a later known event still
+      applies (invariant 32).
+- [x] `staged_events` is empty whenever the client is caught up, asserted — a
       staging table that never drains is a slow leak with no symptom.
+- [x] **Added while building:** the effect and the cursor advance are one
+      transaction, *including the drain*. A handler that throws halfway through
+      unblocking twenty events rolls all twenty-one back — a partial drain would
+      leave the frontier claiming revisions whose effects were undone, which is
+      the same silent hole arrived at by a different route.
+- [x] **Added while building:** a v1 replica upgrades all the way and keeps its
+      place. The migration rebuilds `chat_state` to move three columns out, and
+      losing a frontier there would silently re-fetch everything — or worse,
+      leave the client believing it holds history it discarded.
 
 ---
 
@@ -1872,8 +1895,8 @@ than an item without an owner.
 | The `ev` frame | **Built** | 6 |
 | `hello`/`welcome`/`ev`/`ack`/`nack` frames, `too_old` | New | 7 |
 | One-shot gzip of the `welcome` frame | New | 7 |
-| `pending_revs` → `staged_events` | Replica migration, fixes the lost-edit bug of §11.1 | 8 |
-| Client apply loop and staging | New | 8 |
+| `pending_revs` → `staged_events` | **Built** — replica v3, fixes the lost-edit bug of §11.1 | 8 |
+| Client apply loop, staging, and one `stream_state` for every frontier | **Built** | 8 |
 | Catch-up scheduler, gap handling, lazy backfill | New | 9 |
 | `workspace` stream for the directory, paged `directory` fetch | New — replaces `GET /actors` | 10 |
 | Outbox drainer and coalescing | New | 11 |

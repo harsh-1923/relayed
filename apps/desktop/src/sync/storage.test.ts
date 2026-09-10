@@ -455,7 +455,7 @@ const welcomePayload = (over: Partial<Parameters<Storage['applyWelcome']>[0]> = 
   actorId: 'act_me',
   spaces: [{
     id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering',
-    visibility: 'public', membershipPolicy: 'open', lifecycle: 'active',
+    visibility: 'public', membershipPolicy: 'open', lifecycle: 'active', rev: 31,
   }],
   chats: [{
     id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null,
@@ -482,7 +482,13 @@ test('welcome makes every badge correct with NO messages held', () => {
   assert.equal(state['mention_count'], 1);
   assert.equal(state['thread_unread'], 2);
   assert.equal(state['head_ord'], 5521);
-  assert.equal(state['server_head_rev'], 8140);
+
+  // The cursor lives in `stream_state`, with every other stream's — one home,
+  // so the apply loop never has to ask which table holds this one.
+  const cursor = db.prepare(
+    "SELECT * FROM stream_state WHERE stream_kind='chat' AND stream_id=?").get('cht_eng') as
+    Record<string, number>;
+  assert.equal(cursor['server_head_rev'], 8140);
 
   const messages = db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number };
   assert.equal(messages.n, 0, 'and not one message body was fetched');
@@ -501,10 +507,11 @@ test('welcome does NOT advance the contiguity frontier', () => {
   storage.applyWelcome(welcomePayload());
 
   const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
-  const state = db.prepare('SELECT * FROM chat_state WHERE chat_id = ?').get('cht_eng') as
+  const cursor = db.prepare(
+    "SELECT * FROM stream_state WHERE stream_kind='chat' AND stream_id=?").get('cht_eng') as
     Record<string, number>;
-  assert.equal(state['synced_through_rev'], 0, 'nothing has been applied yet');
-  assert.equal(state['server_head_rev'], 8140, 'but we know how much is owed');
+  assert.equal(cursor['synced_through_rev'], 0, 'nothing has been applied yet');
+  assert.equal(cursor['server_head_rev'], 8140, 'but we know how much is owed');
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -519,8 +526,10 @@ test('a second welcome keeps the frontier and the gap marker it found', () => {
 
   const path = join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db');
   let db = new DatabaseSync(path);
-  db.prepare('UPDATE chat_state SET synced_through_rev = ?, has_gap = 1, oldest_local_ord = ? WHERE chat_id = ?')
-    .run(8100, 5000, 'cht_eng');
+  db.prepare(`UPDATE stream_state SET synced_through_rev = ?, has_gap = 1
+               WHERE stream_kind='chat' AND stream_id = ?`).run(8100, 'cht_eng');
+  db.prepare('UPDATE chat_state SET oldest_local_ord = ? WHERE chat_id = ?')
+    .run(5000, 'cht_eng');
   db.close();
 
   storage.applyWelcome(welcomePayload({
@@ -531,12 +540,16 @@ test('a second welcome keeps the frontier and the gap marker it found', () => {
   }));
 
   db = new DatabaseSync(path);
+  const cursor = db.prepare(
+    "SELECT * FROM stream_state WHERE stream_kind='chat' AND stream_id=?").get('cht_eng') as
+    Record<string, number>;
+  assert.equal(cursor['synced_through_rev'], 8100, 'progress survived');
+  assert.equal(cursor['has_gap'], 1, 'and so did the gap marker');
+  assert.equal(cursor['server_head_rev'], 8200, 'while the head moved on');
+
   const state = db.prepare('SELECT * FROM chat_state WHERE chat_id = ?').get('cht_eng') as
     Record<string, number>;
-  assert.equal(state['synced_through_rev'], 8100, 'progress survived');
-  assert.equal(state['has_gap'], 1, 'and so did the gap marker');
   assert.equal(state['oldest_local_ord'], 5000);
-  assert.equal(state['server_head_rev'], 8200, 'while the head moved on');
   assert.equal(state['chat_unread'], 9);
   db.close();
   rmSync(dir, { recursive: true, force: true });

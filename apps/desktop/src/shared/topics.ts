@@ -38,6 +38,14 @@ export const INVALIDATE_CHANNEL = 'invalidate' as const;
 export const topic = {
   /** The workspace directory: every actor in it. */
   actors: (): string => 'actors',
+  /** One chat's message list. */
+  messages: (chatId: string): string => `chat:${chatId}:messages`,
+  /** One chat's badge — head, unread, mentions. Separate from its messages. */
+  chatState: (chatId: string): string => `chat:${chatId}:state`,
+  /** One space: its name, its chats, who is in it. */
+  space: (spaceId: string): string => `space:${spaceId}`,
+  /** The sidebar's own list of spaces. Woken by a join or a leave. */
+  spaces: (): string => 'spaces',
 } as const;
 
 /**

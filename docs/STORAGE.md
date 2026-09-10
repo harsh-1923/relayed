@@ -202,12 +202,12 @@ is containment, and all four are contained.
 
 | State | Lives in | Scope | Crosses? |
 |---|---|---|---|
-| `synced_through_rev` | workspace replica | per stream | no |
+| `synced_through_rev` | workspace replica (`stream_state`) | per stream | no |
 | `staged_events` | workspace replica | per stream | no |
-| `server_head_rev` | workspace replica | per stream | no |
+| `server_head_rev` | workspace replica (`stream_state`) | per stream | no |
 | `last_read_ord` (max-register) | workspace replica | per chat | no |
 | unread / mention counters | workspace replica | per chat | no |
-| `has_gap` | workspace replica | per chat | no |
+| `has_gap` | workspace replica (`stream_state`) | per stream | no |
 | `outbox` | workspace replica | per workspace | no |
 | `drafts` | workspace replica | per chat | no |
 | **activity hints** | **`account.db`** | per workspace, coarse | **yes — the only one** |

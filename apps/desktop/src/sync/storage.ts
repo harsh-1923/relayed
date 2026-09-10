@@ -182,6 +182,7 @@ export interface WelcomePayload {
   spaces: {
     id: string; kind: string; name: string | null; slug: string | null;
     visibility: string | null; membershipPolicy: string; lifecycle: string;
+    rev: number;
   }[];
   chats: {
     id: string; spaceId: string; kind: string; name: string | null;
@@ -569,26 +570,44 @@ export class Storage {
           space_id = excluded.space_id, kind = excluded.kind,
           name = excluded.name, updated_at = excluded.updated_at
       `);
-      // The counters and the head, per chat. `chat_state` is upserted rather
-      // than replaced so a row that already carries a frontier and a gap marker
-      // keeps them — this frame knows what the SERVER holds and nothing about
-      // what this device has applied.
+      // Counters and the ordinal head, which are chat-specific.
       const state = db.prepare(`
-        INSERT INTO chat_state (chat_id, server_head_rev, head_ord,
+        INSERT INTO chat_state (chat_id, head_ord,
                                 chat_unread, thread_unread, mention_count)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(chat_id) DO UPDATE SET
-          server_head_rev = excluded.server_head_rev,
           head_ord        = excluded.head_ord,
           chat_unread     = excluded.chat_unread,
           thread_unread   = excluded.thread_unread,
           mention_count   = excluded.mention_count
       `);
+
+      // The CURSOR, which is not. Every stream's frontier lives in one table so
+      // the apply loop never has to ask which one holds this stream's — and
+      // `synced_through_rev` is conspicuously absent from this statement, which
+      // is the whole point of the comment above.
+      const cursor = db.prepare(`
+        INSERT INTO stream_state (stream_kind, stream_id, server_head_rev)
+        VALUES ('chat', ?, ?)
+        ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+          server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev)
+      `);
+
       for (const row of payload.chats) {
         chat.run(row.id, workspaceId, row.spaceId, row.kind, row.name, now, now);
-        state.run(row.id, row.headRev, row.headOrd,
+        state.run(row.id, row.headOrd,
                   row.chatUnread, row.threadUnread, row.mentionCount);
+        cursor.run(row.id, row.headRev);
       }
+
+      // Space cursors, so a reconnect knows how far behind each space stream is.
+      const spaceCursor = db.prepare(`
+        INSERT INTO stream_state (stream_kind, stream_id, server_head_rev)
+        VALUES ('space', ?, ?)
+        ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+          server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev)
+      `);
+      for (const row of payload.spaces) spaceCursor.run(row.id, row.rev);
 
       // The caller's OWN memberships — the grants can() evaluates for their own
       // affordances. Replaced wholesale, because a membership absent from this

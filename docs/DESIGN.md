@@ -962,6 +962,8 @@ So `MAX(rev)` over messages under-reports, and the cursor stalls permanently
 behind a rev it actually received. The fix is a small explicit table:
 
 ```sql
+-- SUPERSEDED. Keep reading: the correction below replaces this with a table
+-- that retains the whole envelope, because a bare revision loses an event.
 CREATE TABLE pending_revs (
   chat_id TEXT NOT NULL,
   rev     INTEGER NOT NULL,
@@ -976,16 +978,24 @@ of the current out-of-order window rather than by history.
 
 ```
 on receive(rev R):
-    store the change
-    INSERT OR IGNORE INTO pending_revs
-    while pending_revs contains synced_through_rev + 1:  synced_through_rev++
-    DELETE FROM pending_revs WHERE rev <= synced_through_rev
+    R <= frontier      → duplicate; drop it
+    R == frontier + 1  → apply the effect, advance, then DRAIN:
+                           while staged_events holds frontier + 1:
+                             APPLY it (not merely count it), advance
+                           DELETE FROM staged_events WHERE rev <= frontier
+    R >  frontier + 1  → stage the whole envelope; the frontier does not move
 ```
+
+The drain **applies** what it finds rather than counting it. That one word is
+the whole of the correction below.
 
 Fast path worth having: when `R == synced_through_rev + 1` (the overwhelmingly
 common case) advance directly and skip the table entirely.
 
 #### Correction: a rev is not enough — retain the envelope
+
+**Built** as replica version 3, with the trace below reproduced as a test
+against the old design so it cannot be reintroduced by reverting.
 
 Everything above is right about *why* the table has to exist and wrong about
 *what it holds*. Recording only `(chat_id, rev)` loses data, and the two rules
@@ -1028,10 +1038,30 @@ The retention property is unchanged: it holds only what is above the frontier,
 and collapses to empty whenever the client is caught up. Draining now *applies*
 the staged event rather than merely counting its rev.
 
-This is a Phase 2 replica migration, sequenced as step 8 (the apply loop and the
-frontier) of [`SYNC-FLOWS.md`](SYNC-FLOWS.md) §2 (the build plan), and the trace
-above is written as a test that must **fail** against the rev-only table before
-it passes against this one.
+#### And one home for every frontier
+
+Built alongside it, because the same step exposed the second half of the problem:
+`synced_through_rev` lived on `chat_state`, so a **space** or the **workspace
+directory** had nowhere to keep a cursor and their events could not be applied
+at all.
+
+Every stream's cursor now lives in one table:
+
+```sql
+CREATE TABLE stream_state (
+  stream_kind        TEXT    NOT NULL,      -- 'chat' | 'space' | 'workspace'
+  stream_id          TEXT    NOT NULL,
+  synced_through_rev INTEGER NOT NULL DEFAULT 0,
+  server_head_rev    INTEGER NOT NULL DEFAULT 0,
+  has_gap            INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (stream_kind, stream_id)
+);
+```
+
+`chat_state` keeps what is genuinely chat-specific — ordinals, read state and
+counters. The branch is what this buys away: the apply loop is where a silent
+permanent hole comes from, and "which table holds this stream's frontier" is a
+question it should never have to ask.
 
 ### 8.2 Threads
 
@@ -1275,9 +1305,9 @@ CREATE TABLE chat_state (
 -- rev it replaced, and a delete for an unheld message writes nothing at all.
 -- Collapses to empty whenever the client is caught up.
 --
--- Version 2 of the replica ships this as pending_revs(chat_id, rev). That is
+-- Version 2 of the replica shipped this as pending_revs(chat_id, rev). That is
 -- the shape §8.1's correction replaces: a rev alone lets duplicate suppression
--- discard a staged event that was never applied. Version 3 widens it to the
+-- discard a staged event that was never applied. Version 3 widened it to the
 -- envelope below, and to streams other than chats.
 CREATE TABLE staged_events (
   stream_kind TEXT    NOT NULL,       -- 'chat' | 'space' | 'workspace'

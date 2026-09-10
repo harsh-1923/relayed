@@ -271,4 +271,109 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE INDEX outbox_target ON outbox(target_id);
     `,
   },
+  {
+    version: 3,
+    name: 'frontier',
+    up: `
+      -- The contiguity frontier, given one home and a memory.
+      -- Step 8 of the sync build plan (docs/SYNC-FLOWS.md §2).
+
+      -- ─── staged_events, replacing pending_revs ─────────────────────────────
+      --
+      -- The old table held (chat_id, rev) — "I saw rev N". That is not enough,
+      -- and the failure is silent and permanent. Trace it (SYNC-FLOWS.md §11.1):
+      --
+      --   frontier 5. Message M was created at rev 7, which we do not hold.
+      --   live: rev 9 = message.edited(M) → M absent → apply is a no-op
+      --         pending_revs = {9}; frontier stays 5
+      --   catchup(from 5) returns 6, 7, 8, 9
+      --         apply 6 → 6;  apply 7 → M created → 7
+      --         apply 8 → 8, then pending_revs has 9 → frontier jumps to 9
+      --         apply 9 → rev 9 <= frontier 9 → DROPPED AS A DUPLICATE
+      --
+      -- The edit is gone, for good, with nothing to indicate it. Each rule is
+      -- individually mandatory: duplicate suppression is required under
+      -- at-least-once delivery, and recording the rev is what keeps the frontier
+      -- moving past events with no local effect. TOGETHER they lose data.
+      --
+      -- Retaining the whole envelope is the fix: a staged event is APPLIED when
+      -- the frontier reaches it, rather than merely counted.
+      DROP TABLE pending_revs;
+
+      CREATE TABLE staged_events (
+        stream_kind TEXT    NOT NULL,
+        stream_id   TEXT    NOT NULL,
+        rev         INTEGER NOT NULL,
+        event_type  TEXT    NOT NULL,
+        -- The envelope, retained. JSON text rather than a shredded shape,
+        -- because an event this client does not understand must survive being
+        -- stored and replayed by one that does not know its fields.
+        payload     TEXT    NOT NULL,
+        PRIMARY KEY (stream_kind, stream_id, rev)
+      );
+
+      -- ─── stream_state: ONE home for every frontier ─────────────────────────
+      --
+      -- Chats had theirs in \`chat_state\`; spaces and the workspace directory had
+      -- nowhere at all, which is why they could not be applied. Rather than add
+      -- a second cursor table and a branch, every stream's cursor lives here.
+      --
+      -- The branch is what this is really buying away. The apply loop is where a
+      -- silent permanent hole comes from, and "which table holds this stream's
+      -- frontier" is a question it should never have to ask.
+      CREATE TABLE stream_state (
+        stream_kind        TEXT    NOT NULL,
+        stream_id          TEXT    NOT NULL,
+
+        -- "I hold every change up to here, CONTIGUOUSLY." Never advanced across
+        -- a hole, and never advanced by being told a head exists (invariant 1).
+        synced_through_rev INTEGER NOT NULL DEFAULT 0,
+        -- "The server says this much exists." The difference between the two is
+        -- exactly the catch-up that is owed.
+        server_head_rev    INTEGER NOT NULL DEFAULT 0,
+        -- Set when the frontier was jumped deliberately, past history that was
+        -- never received. Backfill lowers the floor and eventually clears it.
+        has_gap            INTEGER NOT NULL DEFAULT 0,
+
+        PRIMARY KEY (stream_kind, stream_id)
+      );
+
+      -- Carry the chat cursors across. A replica that already synced keeps its
+      -- place rather than re-fetching everything.
+      INSERT INTO stream_state (stream_kind, stream_id, synced_through_rev,
+                                server_head_rev, has_gap)
+        SELECT 'chat', chat_id, synced_through_rev, server_head_rev, has_gap
+          FROM chat_state;
+
+      -- ─── chat_state, narrowed to what is CHAT-specific ─────────────────────
+      --
+      -- Ordinals, counters and read state — the things a stream that carries no
+      -- messages has no use for. Rebuilt rather than altered: three columns
+      -- leave, and a rebuild is one statement whose result is obvious where a
+      -- sequence of drops is three chances to leave a stale column behind.
+      CREATE TABLE chat_state_new (
+        chat_id          TEXT PRIMARY KEY,
+        head_ord         INTEGER NOT NULL DEFAULT 0,
+        -- A MAX-register, never LWW (DESIGN.md §4). A device asleep for an hour
+        -- would otherwise un-read a chat when it syncs.
+        last_read_ord    INTEGER NOT NULL DEFAULT 0,
+        -- The backfill floor and the eviction mark. Without it, eviction is
+        -- indistinguishable from data loss to the person looking at it.
+        oldest_local_ord INTEGER,
+
+        chat_unread      INTEGER NOT NULL DEFAULT 0,
+        thread_unread    INTEGER NOT NULL DEFAULT 0,
+        mention_count    INTEGER NOT NULL DEFAULT 0,
+
+        muted            INTEGER NOT NULL DEFAULT 0,
+        last_activity_at INTEGER
+      );
+      INSERT INTO chat_state_new
+        SELECT chat_id, head_ord, last_read_ord, oldest_local_ord,
+               chat_unread, thread_unread, mention_count, muted, last_activity_at
+          FROM chat_state;
+      DROP TABLE chat_state;
+      ALTER TABLE chat_state_new RENAME TO chat_state;
+    `,
+  },
 ];

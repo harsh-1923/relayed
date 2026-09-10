@@ -51,7 +51,7 @@ function insertSpace(db: DatabaseSync, over: Record<string, unknown> = {}) {
 
 // ── the migration itself ────────────────────────────────────────────────────
 
-test('version 2 applies, and auto_vacuum SURVIVES it', () => {
+test('every migration applies, and auto_vacuum SURVIVES them all', () => {
   // Invariant 11, re-asserted after the migration rather than only at open.
   // The pragma is silently ignored if anything materialises the header first,
   // and the symptom — a replica that grows for ever because eviction can never
@@ -60,7 +60,9 @@ test('version 2 applies, and auto_vacuum SURVIVES it', () => {
   const row = db.prepare('SELECT * FROM pragma_auto_vacuum()').get() as Record<string, number>;
   assert.equal(Object.values(row)[0], 2);
   const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-  assert.equal(version.user_version, 2);
+  // Read off the list rather than hard-coded, so adding a migration does not
+  // fail a test about auto_vacuum for a reason unrelated to auto_vacuum.
+  assert.equal(version.user_version, workspaceMigrations.at(-1)!.version);
 });
 
 test('every Phase 2 table exists, and the later-phase ones deliberately do not', () => {
@@ -68,7 +70,8 @@ test('every Phase 2 table exists, and the later-phase ones deliberately do not',
   const names = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as
     { name: string }[]).map(r => r.name);
   for (const table of ['meta', 'actors', 'spaces', 'chats', 'memberships',
-                       'messages', 'chat_state', 'pending_revs', 'outbox']) {
+                       'messages', 'chat_state', 'stream_state', 'staged_events',
+                       'outbox']) {
     assert.ok(names.includes(table), `missing ${table}`);
   }
   // Named rather than merely absent: each belongs to the phase that writes it,
@@ -78,7 +81,7 @@ test('every Phase 2 table exists, and the later-phase ones deliberately do not',
   }
 });
 
-test('migrating an EXISTING version 1 replica reaches version 2', () => {
+test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () => {
   // The case that actually happens in the field: reinstalling replaces the app
   // and leaves userData intact, so new code always meets an old database.
   const dir = mkdtempSync(join(tmpdir(), 'relayed-upgrade-'));
@@ -93,7 +96,7 @@ test('migrating an EXISTING version 1 replica reaches version 2', () => {
 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
-  assert.deepEqual(result, { from: 1, to: 2, applied: ['2:sync'] });
+  assert.deepEqual(result, { from: 1, to: 3, applied: ['2:sync', '3:frontier'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])
@@ -213,11 +216,10 @@ test('message state is a closed set', () => {
 test('chat_state starts at zero, so a new chat is behind rather than caught up', () => {
   const db = replica();
   db.prepare('INSERT INTO chat_state (chat_id) VALUES (?)').run('cht_1');
-  const row = db.prepare(`SELECT synced_through_rev, server_head_rev, head_ord,
-    last_read_ord, has_gap FROM chat_state WHERE chat_id='cht_1'`).get() as
+  const row = db.prepare(`SELECT head_ord, last_read_ord, chat_unread
+    FROM chat_state WHERE chat_id='cht_1'`).get() as
     Record<string, number>;
-  assert.deepEqual({ ...row }, { synced_through_rev: 0, server_head_rev: 0, head_ord: 0,
-                                 last_read_ord: 0, has_gap: 0 });
+  assert.deepEqual({ ...row }, { head_ord: 0, last_read_ord: 0, chat_unread: 0 });
   // oldest_local_ord is the one that is deliberately NULL: "we have never
   // evicted anything" is a different fact from "we hold from ordinal 0".
   const floor = db.prepare(
@@ -225,17 +227,49 @@ test('chat_state starts at zero, so a new chat is behind rather than caught up',
   assert.equal(floor.o, null);
 });
 
-test('pending_revs holds one row per rev and rejects a duplicate', () => {
+test('staged_events holds one row per rev per stream, and the envelope with it', () => {
+  // Replaces `pending_revs`, which held only `(chat_id, rev)`. That shape loses
+  // an event permanently — duplicate suppression drops it later as a duplicate
+  // of a revision that was counted but never applied. The trace is in
+  // `apply.test.ts`, reproduced against the old design so it cannot come back.
   const db = replica();
-  db.prepare('INSERT INTO pending_revs VALUES (?,?)').run('cht_1', 501);
-  db.prepare('INSERT INTO pending_revs VALUES (?,?)').run('cht_1', 502);
-  // The same rev twice is a redelivery, not a second change.
-  rejects(() => db.prepare('INSERT INTO pending_revs VALUES (?,?)').run('cht_1', 501),
-          /UNIQUE constraint failed/);
-  // The same rev in a different chat is an entirely different change.
-  db.prepare('INSERT INTO pending_revs VALUES (?,?)').run('cht_2', 501);
-  const n = db.prepare('SELECT COUNT(*) n FROM pending_revs').get() as { n: number };
+  db.prepare('INSERT INTO staged_events VALUES (?,?,?,?,?)')
+    .run('chat', 'cht_1', 501, 'message.created', '{"id":"msg_1"}');
+  db.prepare('INSERT INTO staged_events VALUES (?,?,?,?,?)')
+    .run('chat', 'cht_1', 502, 'message.deleted', '{"id":"msg_1"}');
+
+  rejects(() => db.prepare('INSERT INTO staged_events VALUES (?,?,?,?,?)')
+    .run('chat', 'cht_1', 501, 'message.created', '{}'),
+    /UNIQUE|PRIMARY KEY/);   // one row per revision per stream
+
+  // Per STREAM, not per chat: a space and a chat may both be at revision 501.
+  db.prepare('INSERT INTO staged_events VALUES (?,?,?,?,?)')
+    .run('space', 'spc_1', 501, 'space.member_added', '{}');
+  const n = db.prepare('SELECT COUNT(*) n FROM staged_events').get() as { n: number };
   assert.equal(n.n, 3);
+  db.close();
+});
+
+test('stream_state is the ONE home for a frontier, whatever the stream', () => {
+  // Chats had theirs in `chat_state`; spaces and the directory had nowhere, so
+  // their events could not be applied at all. The apply loop must never have to
+  // ask which table holds this stream's cursor — that question, asked in the
+  // hottest correctness path, is where a silent hole comes from.
+  const db = replica();
+  for (const [kind, id] of [['chat', 'cht_1'], ['space', 'spc_1'],
+                            ['workspace', 'wsp_1']] as const) {
+    db.prepare('INSERT INTO stream_state (stream_kind, stream_id) VALUES (?,?)')
+      .run(kind, id);
+  }
+  rejects(() => db.prepare('INSERT INTO stream_state (stream_kind, stream_id) VALUES (?,?)')
+    .run('chat', 'cht_1'), /UNIQUE|PRIMARY KEY/);   // one cursor per stream
+
+  const row = db.prepare(`SELECT synced_through_rev, server_head_rev, has_gap
+    FROM stream_state WHERE stream_id='cht_1'`).get() as Record<string, number>;
+  assert.deepEqual({ ...row },
+    { synced_through_rev: 0, server_head_rev: 0, has_gap: 0 },
+    'a stream never heard of is at zero, not null');
+  db.close();
 });
 
 // ── the outbox ─────────────────────────────────────────────────────────────
@@ -277,4 +311,46 @@ test('outbox state is a closed set', () => {
     target_id, payload, created_at, state) VALUES (?,?,?,?,?,?,?,?)`)
     .run('op_x', 1, 'send', 'cht_1', 'msg_1', '{}', 1, 'sent'),
     /CHECK constraint failed/);
+});
+
+test('upgrading carries a chat cursor across into stream_state', () => {
+  // The migration rebuilds `chat_state` and moves three columns out of it. A
+  // replica that has already synced must keep its place — losing a frontier
+  // here would silently re-fetch everything, or worse, leave the client
+  // believing it holds history it discarded.
+  const dir = mkdtempSync(join(tmpdir(), 'relayed-carry-'));
+  const file = join(dir, 'relayed.db');
+
+  const before = openDatabase(file);
+  migrate(before, workspaceMigrations.filter(m => m.version <= 2));
+  before.prepare(`INSERT INTO spaces (id, workspace_id, kind, name, slug, topic,
+      visibility, membership_policy, created_by_actor_id, created_at, updated_at)
+      VALUES ('spc_1','wsp_1','channel','general',NULL,NULL,'public','open',NULL,1,1)`).run();
+  before.prepare(`INSERT INTO chats (id, workspace_id, space_id, kind, name,
+      created_by_actor_id, created_at, updated_at)
+      VALUES ('cht_1','wsp_1','spc_1','sole',NULL,NULL,1,1)`).run();
+  before.prepare(`INSERT INTO chat_state
+      (chat_id, synced_through_rev, server_head_rev, head_ord, last_read_ord,
+       oldest_local_ord, chat_unread, has_gap)
+      VALUES ('cht_1', 8134, 8140, 5521, 5000, 4000, 6, 1)`).run();
+  before.close();
+
+  const after = openDatabase(file);
+  migrate(after, workspaceMigrations);
+
+  const cursor = after.prepare(
+    "SELECT * FROM stream_state WHERE stream_kind='chat' AND stream_id='cht_1'")
+    .get() as Record<string, number>;
+  assert.equal(cursor['synced_through_rev'], 8134, 'the frontier survived the rebuild');
+  assert.equal(cursor['server_head_rev'], 8140);
+  assert.equal(cursor['has_gap'], 1, 'and so did the gap marker');
+
+  const state = after.prepare("SELECT * FROM chat_state WHERE chat_id='cht_1'")
+    .get() as Record<string, number>;
+  assert.equal(state['head_ord'], 5521, 'the chat-specific columns stayed put');
+  assert.equal(state['last_read_ord'], 5000);
+  assert.equal(state['oldest_local_ord'], 4000);
+  assert.equal(state['chat_unread'], 6);
+  assert.equal('synced_through_rev' in state, false, 'and the moved ones are gone');
+  after.close();
 });

@@ -1,0 +1,101 @@
+// What each event type does to the replica, and which surfaces it wakes.
+// Step 8 of the sync build plan (docs/SYNC-FLOWS.md §2).
+//
+// Split from the frontier logic deliberately. `apply.ts` decides WHETHER an
+// event is applied — the three-case rule that must never be wrong — and this
+// decides WHAT applying it means. Keeping them apart means a new event type is
+// one entry here and touches nothing that could stall a cursor.
+//
+// EVERY HANDLER MAY LEGITIMATELY DO NOTHING. A delete for a message never
+// backfilled, an edit below the eviction floor, an event type this build has
+// never heard of: all three are normal, and all three still account for their
+// revision. That is invariant 32, and it is why an empty topic list is a
+// success rather than a failure (docs/SYNC-FLOWS.md §11.2).
+import type { DatabaseSync } from 'node:sqlite';
+import { topic } from '../shared/topics.ts';
+import type { Effect, Stream, Envelope } from './apply.ts';
+
+interface MessageCreated {
+  id: string; ord: number; parent_id: string | null;
+  author_id: string; body: string; created_at: string;
+}
+
+/**
+ * The replica's handlers, as one function `applyEvent` can call.
+ *
+ * `onUnknown` is called for a type with no entry. It is NOT an error path: a
+ * client from three months ago is meeting a server that has shipped since, and
+ * updates are opt-in, so that is the ordinary state of the fleet.
+ */
+export function replicaEffect(onUnknown?: (type: string) => void): Effect {
+  return (db: DatabaseSync, stream: Stream, event: Envelope): string[] => {
+    switch (event.type) {
+      case 'message.created': return messageCreated(db, stream, event);
+      case 'message.deleted': return messageDeleted(db, stream, event);
+
+      // Space topology. The rows already arrive in `welcome`; these keep them
+      // current between reconnects, which is the whole reason a space is a
+      // stream rather than a snapshot.
+      case 'space.member_added':
+      case 'space.member_removed':
+      case 'space.created':
+      case 'chat.created':
+        return [topic.space(stream.id), topic.spaces()];
+
+      default:
+        onUnknown?.(event.type);
+        return [];
+    }
+  };
+}
+
+function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
+  const body = event.payload as MessageCreated;
+
+  // UPSERT, not insert. The sender receives its own message twice — once as the
+  // ack that stamps its optimistic row, once as this event travelling the same
+  // path as on every other device. One convergence mechanism rather than a
+  // special case for "mine" is worth the conflict clause.
+  db.prepare(`
+    INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
+                          created_at, state, local_only)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0)
+    ON CONFLICT(id) DO UPDATE SET
+      ord = excluded.ord, rev = excluded.rev, body = excluded.body,
+      created_at = excluded.created_at, state = 'acked'
+  `).run(body.id, stream.id, body.parent_id, body.ord, event.rev,
+         body.author_id, body.body, Date.parse(body.created_at));
+
+  // `head_ord` is a MAX for the same reason `last_read_ord` is: events can
+  // arrive after a `welcome` that already reported a higher head, and walking
+  // it backwards would make the chat look shorter than it is.
+  db.prepare(`
+    INSERT INTO chat_state (chat_id, head_ord) VALUES (?, ?)
+    ON CONFLICT(chat_id) DO UPDATE SET
+      head_ord = MAX(chat_state.head_ord, excluded.head_ord)
+  `).run(stream.id, body.ord);
+
+  return [topic.messages(stream.id), topic.chatState(stream.id)];
+}
+
+function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
+  const { id } = event.payload as { id: string };
+
+  // A TOMBSTONE, and the row keeps its ordinal. The gap it leaves in the
+  // sequence is normal and permanent — `ord` is never renumbered or reused, or
+  // read cursors and scroll positions corrupt on every client that saw the
+  // original (invariant 2).
+  const result = db.prepare(
+    "UPDATE messages SET deleted = 1, body = '' WHERE id = ? AND chat_id = ?",
+  ).run(id, stream.id);
+
+  // NO ROW IS THE INTERESTING CASE, not the error case. A delete for a message
+  // this client never held — never backfilled, or evicted under retention —
+  // writes nothing at all. Its revision still has to be accounted for, and a
+  // client that treated "nothing to update" as a failure would stall its own
+  // frontier permanently while looking perfectly healthy. This is the exact
+  // case that forced the frontier to be tracked explicitly.
+  if (result.changes === 0) return [];
+
+  return [topic.messages(stream.id), topic.chatState(stream.id)];
+}

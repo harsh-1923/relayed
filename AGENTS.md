@@ -20,40 +20,31 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 7 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 8 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the apply loop and the frontier** — `applyEvent`'s three cases
-(duplicate, at-the-frontier, above-it), and replacing `pending_revs` with
-`staged_events` so an event above the frontier is retained **whole** rather than
-as a bare revision. That is step 8 of fourteen in the sync build plan
+**Next task: catch-up, gap and backfill** — the client's scheduler asking for
+what it is behind on, one coalesced request per stream; the gap marker plus a
+recent tail for a client too far behind to replay; and lazy backfill on open.
+That is step 9 of fourteen in the sync build plan
 ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2), which carries what each step
 delivers, what "done" means for it, and the six goals the phase is measured
 against.
 
-It has the most expensive failure mode in the system, and the trap is written
-down: duplicate suppression and rev-only staging are each individually mandatory
-and **lose an edit permanently when combined** (`SYNC-FLOWS.md` §11.1). Write
-that trace as a test against `pending_revs` FIRST and watch it fail — a test
-that has never failed has proved nothing.
+Two things there are already written down. `catchup` is still **chat-shaped** —
+its gap branch returns a materialised tail of *messages*, which is meaningless
+for a space or the directory, so each stream kind needs its own answer to "what
+does a client render while it is behind". And the ~500-rev gap threshold is a
+separate constant from `eventsSince`'s limit; they are equal today, and raising
+one alone truncates a replay — which `toRev` reports honestly, but which also
+means a second round is needed to finish.
 
 **Done so far:** the two schemas, allocation and idempotency, the domain ops,
-the event log, the socket, fanout, and `hello`/`welcome` — steps 1 to 7. A
-client now connects, authenticates, and receives head state and counters for
-every chat it can reach; what it cannot yet do is apply an event that arrives.
+the event log, the socket, fanout, `hello`/`welcome`, and the apply loop —
+steps 1 to 8. A client now connects, receives correct badges, and can apply an
+event that arrives; what it cannot yet do is ask for the ones it missed.
 
-Three things are easy to skim past and expensive to rediscover.
-`spikes/sync-model.mjs` is the **acceptance suite**, not a sketch — 66
-assertions, mutation-tested, and it disagrees with intuition in several places;
-port it rather than rewriting it. The wire contract lives in
-`packages/protocol` and is shared by both processes, so a frame added on one
-side cannot silently differ on the other — and frames are parsed permissively:
-an unknown `t` is ignored and an unknown field is dropped, never fatal. And
-**both deferred decisions have now fired**: Zod was adopted at the wire format,
-and XState was measured at 129 lines against a ~60 line criterion and dropped
-anyway, for reasons `FRONTEND.md` §7.4 records.
-
-Green as of the last commit: **377 tests**, 103 spike assertions, 9 boundary
-rules over 187 files, typecheck across five packages, production build.
+Green as of the last commit: **398 tests**, 103 spike assertions, 9 boundary
+rules over 190 files, typecheck across five packages, production build.
 
 ## Documentation
 
