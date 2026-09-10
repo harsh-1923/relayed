@@ -20,26 +20,31 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 11 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 12 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: retention, and the residue we accept** — a bounded sweep over
-`sync_events`, the horizon a stale cursor gets a gap beyond, and an honest
-statement of what one node does not close. That is step 12 of fourteen in the
-sync build plan ([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
+**Next task: the instrumentation pass** — every marker for the whole sync path
+decided in one sitting, rather than nine decisions made six steps apart. That is
+step 13 of fourteen in the sync build plan
+([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
 
-The sweep keys on `event_id` rather than `created_at`, deliberately: a ULID is
-time-ordered with a constant prefix, so "older than T" is a keyset range over
-the PRIMARY KEY — no second index, and no second index to add later on the table
-most likely to be large by the time anyone wants one. That reasoning is recorded
-in `008_sync_events.sql`.
+It is a departure from working rule 8 below, agreed deliberately and recorded
+with its reasoning: the nine declared events cannot be forgotten (the build
+fails for an unmarked metric with no call site), and one pass buys a coherent
+picture of a request crossing the whole path instead of markers that each answer
+a local question. **It must land before the milestone** — a step that ships
+uninstrumented is a step debugged by `console.log` until this one arrives.
 
-**Done so far:** steps 1 to 11. A client connects, paints correct badges,
-applies what arrives, asks for what it missed, hydrates its directory, and now
-writes — offline included, in the order typed, with compose-then-delete never
-touching the wire.
+Read [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) first, and propose each
+marker with **the question it answers** rather than what it counts. Proposing
+*not* to instrument something is a legitimate answer.
 
-Green as of the last commit: **459 tests**, 103 spike assertions, 9 boundary
-rules over 194 files, typecheck across five packages, production build.
+**Done so far:** steps 1 to 12. The sync core is functionally complete — a
+client connects, paints correct badges, applies what arrives, asks for what it
+missed, hydrates its directory, writes offline, and is told when it has fallen
+past the retention horizon.
+
+Green as of the last commit: **471 tests**, 103 spike assertions, 9 boundary
+rules over 196 files, typecheck across five packages, production build.
 
 ## Documentation
 

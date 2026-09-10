@@ -172,7 +172,19 @@ export const Hello = z.object({
 });
 export type Hello = z.infer<typeof Hello>;
 
-export const Ping = z.object({});
+/**
+ * The heartbeat, carrying where this client thinks each stream has got to.
+ *
+ * Cursors ride along so the reply can say what the server thinks instead —
+ * which is what closes the one hole in delivering fanout in-process. See `Pong`.
+ */
+export const Ping = z.object({
+  cursors: z.array(z.object({
+    kind: z.string(),
+    id: z.string(),
+    rev: z.number().int().nonnegative(),
+  })).optional(),
+});
 export type Ping = z.infer<typeof Ping>;
 
 /** A stream reference, as it appears in both directions. */
@@ -350,7 +362,28 @@ export const Welcome = z.object({
 });
 export type Welcome = z.infer<typeof Welcome>;
 
-export const Pong = z.object({});
+/**
+ * The heartbeat reply, carrying the heads of any stream the client is behind on.
+ *
+ * THIS IS WHAT CLOSES THE COMMIT-TO-SOCKET RESIDUE. Fanout happens in-process
+ * after the transaction commits, so a server that dies between `COMMIT` and the
+ * socket write leaves an event durable and undelivered. It mostly self-repairs
+ * — the next event in that stream arrives above the client's frontier and
+ * triggers catch-up — but the LAST event before a silence has nothing after it
+ * to expose it, and a quiet channel could sit one message behind indefinitely.
+ *
+ * Comparing heads on every heartbeat bounds that to one interval. Only streams
+ * where the server is ahead are listed, so a caught-up client gets an empty
+ * reply and the frame stays small — which matters at one per connection per
+ * twenty-five seconds.
+ */
+export const Pong = z.object({
+  behind: z.array(z.object({
+    kind: z.string(),
+    id: z.string(),
+    rev: z.number().int().nonnegative(),
+  })).optional(),
+});
 export type Pong = z.infer<typeof Pong>;
 
 /**

@@ -1014,3 +1014,92 @@ test('deleting a message that does not exist is a non-retryable nack', opts, asy
   assert.equal(nack.retryable, false);
   peer.socket.close();
 });
+
+// ─── the residue we accept, measured ────────────────────────────────────────
+
+test('THE COMMIT-TO-SOCKET RESIDUE: a lost event is exposed by the next heartbeat',
+  opts, async () => {
+    // The one hole in delivering fanout in-process, closed to within a heartbeat
+    // rather than asserted away.
+    //
+    // Fanout runs after the transaction commits, so a server that dies between
+    // `COMMIT` and the socket write leaves an event durable and undelivered. It
+    // mostly self-repairs — the next event in that stream lands above the
+    // client's frontier and triggers catch-up — but the LAST event before a
+    // silence has nothing after it to expose it. A quiet chat would sit one
+    // message behind until somebody happened to post.
+    //
+    // Simulated by committing WITHOUT fanning out, which is exactly the state a
+    // crash in that window leaves behind.
+    const space = await createChannel(db, {
+      workspaceId: wsp, name: `res-${ulid('x')}`, createdBy: me,
+    });
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    // The event that never reaches the socket.
+    await send(db, {
+      opId: ulid('op'), chatId: space.chatId, actorId: me,
+      messageId: ulid('msg'), body: 'lost between commit and write',
+    });
+    await sleep(50);
+    assert.equal(peer.frames.some(f => f.t === 'ev'), false,
+      'nothing was delivered — this is the hole');
+
+    // The client's next heartbeat carries where it thinks it is.
+    peer.send('ping', { cursors: [{ kind: 'chat', id: space.chatId, rev: 0 }] });
+    const pong = await peer.next('pong') as {
+      behind?: { kind: string; id: string; rev: number }[];
+    };
+
+    assert.deepEqual(pong.behind, [{ kind: 'chat', id: space.chatId, rev: 1 }],
+      'the heartbeat says the server is ahead, so catch-up is triggered');
+    peer.socket.close();
+  });
+
+test('a caught-up client gets an EMPTY pong, so the frame stays small', opts, async () => {
+  // One of these per connection every twenty-five seconds. A reply that listed
+  // every stream regardless would be a steady-state cost paid by everybody to
+  // tell almost all of them nothing.
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `lvl-${ulid('x')}`, createdBy: me,
+  });
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  const welcome = await peer.next('welcome') as {
+    chats: { id: string; head_rev: number }[];
+  };
+  const head = welcome.chats.find(c => c.id === space.chatId)?.head_rev ?? 0;
+
+  peer.send('ping', { cursors: [{ kind: 'chat', id: space.chatId, rev: head }] });
+  const pong = await peer.next('pong') as { behind?: unknown[] };
+  assert.equal(pong.behind, undefined, 'level, so nothing is listed');
+  peer.socket.close();
+});
+
+test('a heartbeat with no cursors is still answered', opts, async () => {
+  // Older clients send a bare ping. It must stay a liveness check rather than
+  // becoming an error, or adding cursors would have broken every client in the
+  // field for a change that costs them nothing.
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+  peer.send('ping');
+  await peer.next('pong');
+  assert.equal(peer.socket.readyState, peer.socket.OPEN);
+  peer.socket.close();
+});
+
+test('a heartbeat naming a stream kind we do not have is ignored, not fatal',
+  opts, async () => {
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+    peer.send('ping', { cursors: [{ kind: 'banana', id: 'nope', rev: 0 }] });
+    const pong = await peer.next('pong') as { behind?: unknown[] };
+    assert.equal(pong.behind, undefined);
+    assert.equal(peer.socket.readyState, peer.socket.OPEN);
+    peer.socket.close();
+  });

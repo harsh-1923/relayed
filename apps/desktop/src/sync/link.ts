@@ -156,6 +156,23 @@ export function createLink(deps: LinkDeps): Link {
       return;
     }
 
+    if (t === 'pong') {
+      // The server is ahead on these. Recording the head is what makes the
+      // scheduler notice — `behind` is derived from the two watermarks, so
+      // moving one is the whole trigger.
+      const frame = body as { behind?: { kind: string; id: string; rev: number }[] };
+      for (const ahead of frame.behind ?? []) {
+        db.prepare(`
+          INSERT INTO stream_state (stream_kind, stream_id, server_head_rev)
+          VALUES (?, ?, ?)
+          ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+            server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev)
+        `).run(ahead.kind, ahead.id, ahead.rev);
+      }
+      if ((frame.behind ?? []).length > 0) scheduler?.sweep();
+      return;
+    }
+
     if (t === 'ack') {
       const frame = body as {
         op_id: string; id: string; c: string; ord: number | null;

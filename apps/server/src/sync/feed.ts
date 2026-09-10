@@ -9,6 +9,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { type Stream } from './events.ts';
 import { spaceMembers } from './spaces.ts';
+import { retainedFrom } from './retention.ts';
 
 /**
  * How far behind a client may be before catch-up becomes a gap marker.
@@ -205,6 +206,23 @@ export async function catchup(
 
   if (headRev - fromRev > threshold) {
     return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, stream) };
+  }
+
+  // TOO FAR BEHIND IS NOT ONLY ABOUT DISTANCE. A client can be well inside the
+  // threshold and still unreplayable, because retention swept the events it
+  // needs. Revisions are gapless per stream, so "is rev fromRev + 1 still
+  // here" settles it completely.
+  //
+  // Without this check the failure is silent and permanent: the client gets a
+  // replay starting above its frontier, finds a hole, stages it, and asks
+  // again — for ever. Swept entirely it is worse, an EMPTY replay whose
+  // `to_rev` equals the cursor that was sent, which reads exactly like being
+  // caught up while the head runs away.
+  if (headRev > fromRev) {
+    const oldest = await retainedFrom(db, stream);
+    if (oldest === null || oldest > fromRev + 1) {
+      return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, stream) };
+    }
   }
 
   const events = await eventsSince(db, stream, fromRev);

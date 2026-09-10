@@ -18,7 +18,7 @@ import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
   type Hello, type CatchupRequest, type BackfillRequest, type DirectoryRequest,
-  type OpFrame,
+  type OpFrame, type Ping,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
 import { loadGrants } from '../authz/can.ts';
@@ -70,6 +70,15 @@ const READ_TIMEOUT_MS = 70_000;
  * below and stays text.
  */
 const COMPRESS_ABOVE_BYTES = 8_192;
+
+/**
+ * How many cursors one heartbeat may ask about.
+ *
+ * A cap rather than a limit anybody will reach: a person in 150 chats sends 150,
+ * and this stops a modified client turning a twenty-five-second heartbeat into
+ * an unbounded read.
+ */
+const PING_CURSOR_LIMIT = 500;
 
 export interface SocketDeps {
   db: Kysely<DB>;
@@ -202,12 +211,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // The heartbeat is CLIENT-initiated, which is one mechanism serving both
       // directions: the client learns the server is alive from this reply, and
       // the server learns the client is alive from the ping that caused it.
-      //
-      // The step that adds fanout puts stream heads on this reply. That is what
-      // closes the one hole in delivering in-process: an event lost between
-      // COMMIT and the socket write is otherwise invisible until the next event
-      // in that stream, so the last event before a silence would never arrive.
-      state.send('pong');
+      await onPing(state, read.body as Ping);
     }
   }
 
@@ -381,6 +385,42 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     } catch (err) {
       state.send('nack', nackFor(frame.op_id, err));
     }
+  }
+
+  /**
+   * Answer the heartbeat, and say which streams the client is behind on.
+   *
+   * THE RESIDUE THIS CLOSES. Fanout runs in-process after the transaction
+   * commits, so a server that dies between `COMMIT` and the socket write leaves
+   * an event durable and undelivered. It mostly self-repairs — the next event
+   * in that stream lands above the client's frontier and triggers catch-up —
+   * but the LAST event before a silence has nothing after it to expose it. A
+   * quiet channel would sit one message behind until somebody happened to post.
+   *
+   * Comparing heads here bounds that to one heartbeat interval. Bounded to what
+   * the client actually asked about, and only the streams where the server is
+   * ahead come back — a caught-up client gets an empty reply, which matters at
+   * one of these per connection every twenty-five seconds.
+   */
+  async function onPing(state: ConnectionState, ping: Ping): Promise<void> {
+    const cursors = ping.cursors ?? [];
+    if (cursors.length === 0) { state.send('pong'); return; }
+
+    const behind: { kind: string; id: string; rev: number }[] = [];
+    // Capped, so a client cannot turn its heartbeat into an unbounded read by
+    // naming every stream it has ever heard of.
+    for (const cursor of cursors.slice(0, PING_CURSOR_LIMIT)) {
+      const stream = parseStream(cursor);
+      if (!stream) continue;
+      const head = await streamHead(deps.db, stream);
+      if (head > cursor.rev) behind.push({ kind: stream.kind, id: stream.id, rev: head });
+    }
+
+    // No authorization check, and none is needed: a head revision is a COUNT of
+    // changes, not their content, and the client already holds a cursor for
+    // every stream it names. Telling somebody a number they could reach by
+    // asking for catch-up — which IS gated — discloses nothing new.
+    state.send('pong', behind.length > 0 ? { behind } : {});
   }
 
   async function onHello(state: ConnectionState, hello: Hello): Promise<void> {

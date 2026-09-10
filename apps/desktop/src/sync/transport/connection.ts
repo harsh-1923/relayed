@@ -300,7 +300,13 @@ export class Connection {
     // rather than on `pong` alone. A busy connection should not be killed for
     // failing to answer a heartbeat it never needed to send.
     if (this.#state === 'live') this.#beat();
-    if (read.t !== 'pong') this.#deps.onFrame?.(read.t, read.body);
+
+    // `pong` is forwarded like everything else. It used to be swallowed here as
+    // pure liveness, and that was right until it started carrying the stream
+    // heads that bound the commit-to-socket residue — a frame with a payload
+    // that never reaches its handler is a silent no-op, which is exactly the
+    // shape of bug this whole layer exists to avoid.
+    this.#deps.onFrame?.(read.t, read.body);
   }
 
   /**
@@ -315,7 +321,12 @@ export class Connection {
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = null; }
     this.#after(this.#deps.heartbeatMs ?? HEARTBEAT_MS, () => {
       if (this.#state !== 'live') return;
-      this.#socket?.send(frame('ping'));
+      // Cursors ride the heartbeat so the reply can say which streams the
+      // server is ahead on. That is what bounds the commit-to-socket residue to
+      // one interval: an event lost between COMMIT and the socket write has
+      // nothing after it to expose it, so a quiet chat would otherwise sit one
+      // message behind until somebody happened to post.
+      this.#socket?.send(frame('ping', { cursors: this.#deps.cursors?.() ?? [] }));
       this.#after(this.#deps.readTimeoutMs ?? READ_TIMEOUT_MS, () => {
         // Open but dead. Indistinguishable from quiet without this deadline,
         // and the app would sit for ever believing it was synced.

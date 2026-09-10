@@ -138,7 +138,7 @@ referenced from other documents and neither gets renumbered.
 | 9 — catch-up, gap and backfill | G | 14 | ✅ |
 | 10 — the directory as a stream | *new* | 14 | ✅ |
 | 11 — the outbox | H | 16 | ✅ |
-| 12 — retention, and the residue we accept | *new* | 14 | ☐ |
+| 12 — retention, and the residue we accept | *new* | 14 | ✅ |
 | 13 — the instrumentation pass | *new* | 14 | ☐ |
 | 14 — the milestone | I | 17 | ☐ |
 
@@ -741,9 +741,13 @@ The write path, and the first thing a user can break by being offline.
 
 ---
 
-### Step 12 — Retention, and the residue we accept
+### Step 12 — Retention, and the residue we accept ✅
 
 `new · DESIGN.md item 14 · G2, G6`
+
+**Built.** `sync/retention.ts` (the bounded sweep, the retained floor, the
+hourly job), the retention guard in `catchup`, and stream heads on the
+heartbeat. Twelve tests.
 
 The sweep, the horizon, and an honest statement of what one node does not close.
 
@@ -752,16 +756,38 @@ comparison from step 5, and the operational notes in `OBSERVABILITY.md`.
 
 **Done when**
 
-- [ ] A cursor older than the horizon receives a **gap**, not an error and not
+- [x] A cursor older than the horizon receives a **gap**, not an error and not
       an empty replay that looks like being caught up.
-- [ ] The sweep is bounded and holds no long transaction.
-- [ ] The horizon is a number with a reason, stated beside the gap threshold it
-      interacts with (open question 2, event retention horizon).
-- [ ] The commit-to-socket residue is **measured rather than asserted**: kill
-      the server between commit and write, and confirm the heartbeat's head
-      comparison closes it within one interval.
-- [ ] `LISTEN/NOTIFY` plus a sweep is written down as the multi-node shape and
-      explicitly **not built** (open question 5, multi-node fanout).
+
+      **Too far behind is not only about distance**, which is the part that
+      would have been missed. A client can be well inside the gap threshold and
+      still unreplayable because retention took the events it needs — so
+      `catchup` asks whether revision `fromRev + 1` is still retained, which is
+      a complete answer because revisions are gapless per stream. Without it the
+      client gets a replay starting above its frontier, finds a hole, stages it
+      and asks again, for ever; swept entirely it is worse, an empty replay
+      whose `to_rev` equals the cursor that was sent.
+- [x] The sweep is bounded and holds no long transaction — batches of 5,000,
+      yielding between passes, hourly, with the first tick delayed so a server
+      does not do its heaviest database work at the moment every client is
+      reconnecting after the deploy that restarted it.
+- [x] **The horizon is seven days, chosen against the gap threshold rather than
+      independently.** It answers "how long may somebody be away and still
+      resume exactly where they were" — a holiday, a broken laptop, a machine
+      asleep over a weekend. Beyond it nothing is lost, which is why it can be
+      short: the gap path delivers current state and backfill repairs the
+      history below. A short horizon costs a gap; a long one costs a table that
+      only grows, on the hottest read path in the system.
+- [x] The commit-to-socket residue is **measured rather than asserted**. The
+      test commits an event WITHOUT fanning it out — exactly the state a crash
+      in that window leaves — confirms nothing reached the socket, then sends a
+      heartbeat carrying the client's cursors and asserts the reply names the
+      stream and its head. Bounded to one heartbeat interval.
+- [x] `LISTEN/NOTIFY` plus an unpublished sweep is written down in
+      `sync/retention.ts` and explicitly **not built**, with the trigger stated:
+      the first time a second server process holds connections. Availability
+      alone does not force it — two nodes where only one accepts sockets is
+      still one fanout tier.
 
 ---
 
@@ -1971,7 +1997,8 @@ than an item without an owner.
 | `sync/link.ts` — the engine's end of the socket, routing frames into the replica | **Built** | 10 (unassigned by the plan) |
 | Outbox drainer and coalescing | **Built** | 11 |
 | `op` / `ack` / `nack` frames, and the server's write handler | **Built** | 11 |
-| Event retention sweep | New | 12 |
+| Event retention sweep, and the retained-floor guard on catch-up | **Built** | 12 |
+| Stream heads on the heartbeat, bounding the commit-to-socket residue | **Built** | 12 |
 
 ---
 
@@ -1984,10 +2011,12 @@ it is filed.
    `DESIGN.md` §9.5 (writes) says the socket and this document follows it.
    HTTPS would give ordinary middleware and retry semantics at the cost of a
    second authenticated path.
-2. **Event retention horizon.** *(answered by step 12, retention.)* How long
-   `sync_events` rows live before a stale cursor gets a gap instead. Interacts
-   with the ~500-rev gap threshold, which step 9 (catch-up, gap and backfill)
-   replaces with a measurement.
+2. ~~**Event retention horizon.**~~ **Answered in step 12: seven days.** Chosen
+   against the gap threshold rather than independently — it answers "how long
+   may somebody be away and still resume exactly where they were", and beyond
+   it nothing is lost because the gap path delivers current state. What remains
+   open is only the *number*, which wants real traffic: a short horizon costs a
+   gap, a long one costs a table that only grows.
 3. **Audience cache invalidation.** *(deferred past step 6, the registry and
    fanout, with a trigger: the membership query showing up in a fanout latency
    profile.)* Whether space → members is memoised in process, and how it is
@@ -2001,8 +2030,13 @@ it is filed.
    action in the product the busiest stream in the workspace. `actors` therefore
    has no `next_rev`, and `sync_events` does not admit the kind. Asserted:
    `markRead` appends nothing, and an `actor` row is rejected by the CHECK.
-5. **Multi-node fanout.** *(written down by step 12, not built.)* Not needed at
-   one node. `LISTEN/NOTIFY` plus a sweep is the shape when it is.
+5. **Multi-node fanout.** *(Written down in `sync/retention.ts` by step 12, and
+   deliberately not built.)* `LISTEN/NOTIFY` on commit — which fires only if the
+   transaction commits, and that ordering is the whole reason to prefer it over
+   an application bus — plus a sweep over unpublished events as the safety net.
+   That second half is what the AppSync proposal's `published_at`,
+   `publish_attempts` and `next_publish_at` are for; they earn their place at
+   the first second server process holding connections, and not before.
 6. **Directory retention on the client.** *(measured by step 10, the directory
    as a stream; decided later.)* A 1,600-actor directory is ~345 KB in
    the replica, and every member holds a full copy. Fine at 1,600, a question at

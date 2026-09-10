@@ -8,6 +8,7 @@ import { landingRoutes } from './web/landing.ts';
 import { pool, db } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
 import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
+import { startRetention } from './sync/retention.ts';
 
 useOtlpIfConfigured('server');
 
@@ -50,8 +51,15 @@ if (applied.length) app.log.info({ applied }, 'migrations applied');
 // Reconciles what WorkOS knows into our mirror. Started after listen so a slow
 // or unreachable WorkOS delays no request; the first tick is a second out.
 const stopPoller = startPoller(Number(process.env['WORKOS_POLL_MS'] ?? 30_000));
+
+// Trims `sync_events` past the retention horizon, hourly, in bounded passes.
+// Nothing depends on it having run: the worst case of a missed sweep is a
+// larger table and, eventually, a client getting a gap where it would have got
+// a replay.
+const stopRetention = startRetention(db, Number(process.env['RETENTION_MS'] ?? 3_600_000),
+  (deleted, passes) => { app.log.info({ deleted, passes }, 'retention swept'); });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { stopPoller(); void pool.end(); process.exit(0); });
+  process.once(sig, () => { stopPoller(); stopRetention(); void pool.end(); process.exit(0); });
 }
 
 await app.listen({ port: env.port, host: '127.0.0.1' });
@@ -64,6 +72,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     // silence that looks exactly like a network fault. Closing with a code lets
     // them reconnect immediately, on a jittered delay so they do not arrive
     // together (invariant 31).
+    stopRetention();
     void sync.close()
       .then(() => app.close())
       .then(() => pool.end())
