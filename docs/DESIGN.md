@@ -753,10 +753,22 @@ the agent every chat in the room would be a wider grant than her action implies.
 
 | Action | Who |
 |---|---|
+| **Join** a public room | anyone in the workspace — public means joinable |
 | Add a member (public or private room) | any member |
+| **Remove another member** | **admin only** |
+| Leave | always permitted, and never checked |
 | Create a public or private chat | any member |
 | **Convert private room → public** | **admin only** |
 | Promote another member to admin | admin |
+
+`join` is the one space action that cannot require space membership, since
+membership is what it creates; the workspace conjunct above it still holds, and
+the space's own policy decides the rest.
+
+Removal is admin-only for the same reason conversion is: adding one person is
+reversible by that person, and removing one is not. Leaving is not that action
+at all — a rule that could refuse to let someone leave would be a rule that
+traps them in a conversation.
 
 The asymmetry is deliberate. Adding one person and exposing everything to the
 entire workspace have very different blast radii, and "any member can add" plus
@@ -1065,7 +1077,7 @@ CREATE TABLE spaces (
   workspace_id        TEXT NOT NULL,
   kind                TEXT NOT NULL,  -- 'channel'|'dm'|'group_dm'|'room'
   name                TEXT,           -- NULL for dm/group_dm (derived from members)
-  slug                TEXT,           -- channels only
+  slug                TEXT,           -- named kinds: channel and room
   topic               TEXT,
   visibility          TEXT,           -- 'public'|'private'; NULL for dm/group_dm
   membership_policy   TEXT NOT NULL,  -- 'open'|'invite'|'sealed'
@@ -1814,6 +1826,18 @@ check and a fallback if a counter is ever missing.
 At team scale this is trivial server-side state: chats × actors, updated
 on write. And once it exists, threads get their unread separation for free —
 which is what collapsed the threads decision in §8.2.
+
+**As built in Phase 2, the counts are computed on read rather than updated on
+write** (`PHASE-2-SYNC.md` step C). The values are identical and the server is
+still the authority — what changed is where the work happens. Maintaining them
+on write means one statement touching every member row per message, plus four
+invalidation paths (send, delete, read, join) each able to be quietly wrong in a
+number nobody audits; a count over an indexed range is correct by construction.
+
+Measured rather than assumed: counting 50,000 unread in one chat is 7.7 ms, and
+a `welcome` over 150 chats holding 60k messages with nothing read is 8 ms — as
+ONE query. The columns exist and are unwritten, so materialising is a change to
+one function rather than a migration, but nothing currently argues for it.
 
 ### Read state convergence
 

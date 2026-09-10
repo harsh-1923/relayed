@@ -1,0 +1,16 @@
+-- `chats` is read by workspace on the two hottest read paths, and was scanned.
+--
+-- `welcome` and `workspacePlacement` both filter on workspace_id, and EXPLAIN
+-- showed a Seq Scan for both: cheap at a few hundred chats, but the cost is
+-- O(every chat in the installation) rather than O(chats in this workspace), so
+-- it grows with every OTHER tenant rather than with this one.
+--
+-- Not indexed on (workspace_id, kind) despite `welcome` also filtering
+-- `kind <> 'private'`: an inequality cannot be used to seek, so the second
+-- column would only widen the index. Revisit with a measurement, not a guess.
+--
+-- NOTE for whoever adds an index to a large table later: this runner wraps each
+-- migration file in a transaction, and CREATE INDEX CONCURRENTLY cannot run
+-- inside one. A concurrent build needs the runner to learn about it first —
+-- which is a change worth making before it is needed at 3am, not during.
+CREATE INDEX chat_workspace ON chats (workspace_id);

@@ -17,7 +17,8 @@ export type Scope = (typeof SCOPES)[number];
 
 export const ACTIONS = {
   workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership'],
-  space:     ['read', 'add_member', 'create_chat', 'make_public', 'promote'],
+  space:     ['read', 'join', 'add_member', 'remove_member', 'create_chat',
+              'make_public', 'promote'],
   chat:      ['read', 'post', 'edit_own', 'delete_own', 'delete_any'],
 } as const;
 
@@ -46,11 +47,18 @@ export const REQUIRES: Record<string, Role | null> = {
   'workspace:transfer_ownership':  'owner',
   'workspace:create_space':        null,
 
-  'space:read':         null,
-  'space:add_member':   null,   // deliberate asymmetry with make_public (§6)
-  'space:create_chat':  null,
-  'space:make_public':  'admin',
-  'space:promote':      'admin',
+  'space:read':          null,
+  // Joining is the ONE space action that cannot require space membership —
+  // membership is what it creates. `null` here means "no role needed"; the real
+  // gate is the space's own policy, and can() applies it (§6).
+  'space:join':          null,
+  'space:add_member':    null,   // deliberate asymmetry with make_public (§6)
+  // Removing SOMEBODY ELSE is moderation. Leaving is not this action at all —
+  // an actor removing themselves needs no permission and never reaches here.
+  'space:remove_member': 'admin',
+  'space:create_chat':   null,
+  'space:make_public':   'admin',
+  'space:promote':       'admin',
 
   'chat:read':        null,
   'chat:post':        null,

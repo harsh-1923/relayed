@@ -130,6 +130,36 @@ test('space_dm_lifecycle rejects an archived DM', opts, async () => {
     'space_dm_lifecycle');
 });
 
+test('a ROOM may carry a slug — slugs are for named kinds, not for channels only',
+  opts, async () => {
+  // 005 said "channels only", following the design. Too narrow: a room is
+  // named, addressable and worth linking to for the same reasons, and nothing
+  // about the column resisted it (006).
+  const slug = `room-${ulid('s').slice(-8).toLowerCase()}`;
+  await insertSpace({ kind: 'room', membership_policy: 'invite', name: 'launch', slug });
+});
+
+test('a channel and a room share ONE slug namespace per workspace', opts, async () => {
+  // Correct rather than incidental: a slug is how a space is named in a URL or
+  // a mention, so two spaces answering to the same name would be ambiguous
+  // whichever kinds they happened to be.
+  const slug = `shared-${ulid('s').slice(-8).toLowerCase()}`;
+  await insertSpace({ slug });
+  await rejects(
+    () => insertSpace({ kind: 'room', membership_policy: 'invite', name: 'r', slug }),
+    'space_slug');
+});
+
+test('space_slug_named rejects a slug on a kind that has no name', opts, async () => {
+  // A DM derives its name from its members and has nowhere to put a slug, so
+  // one on a DM is meaningless — and meaningless is the state these constraints
+  // exist to make unreachable.
+  await rejects(
+    () => insertSpace({ kind: 'dm', name: null, visibility: null,
+                        membership_policy: 'sealed', slug: 'dm-slug' }),
+    'space_slug_named');
+});
+
 test('space_slug is unique per workspace, and only where a slug exists', opts, async () => {
   const slug = `dup-${ulid('s').slice(-8).toLowerCase()}`;
   await insertSpace({ slug });

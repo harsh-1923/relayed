@@ -27,6 +27,15 @@ export interface Placement {
   /** space id -> workspace id */
   workspaceOf?: Readonly<Record<string, string>>;
   privateChats?: ReadonlySet<string>;
+  /**
+   * Spaces anyone in the workspace may join without being invited — a public
+   * channel or a public room (DESIGN.md §7.2).
+   *
+   * A property of the object rather than of a membership, like `privateChats`
+   * above, and here for the same reason: `join` is the one action whose answer
+   * cannot come from the asker's grants, because the grant is what it creates.
+   */
+  openSpaces?: ReadonlySet<string>;
 }
 
 /** Can `actor` (described by `grants`) perform `action` on `target`? */
@@ -47,6 +56,11 @@ export function can(
     // Containment: a space membership without the workspace membership above it
     // grants nothing. The leading conjunct, one level up.
     if (!ws || !grants.has(grantKey('workspace', ws))) return false;
+    // Joining is deliberately NOT a membership test — it is how membership
+    // begins, so requiring it would make every public space unjoinable. The
+    // workspace conjunct above still holds, and the space's own policy decides
+    // the rest: public means discoverable and joinable, private means invited.
+    if (action === 'join') return placement.openSpaces?.has(id) ?? false;
     return holds(grants, 'space', id, needed);
   }
 

@@ -155,10 +155,25 @@ what stops authorization becoming a policy language by accretion.
 | workspace | `create_space` | any member |
 | workspace | `transfer_ownership` | owner |
 | space | `read` | any member (of the space) |
+| space | `join` | anyone in the workspace, where the space's policy is `open` |
 | space | `add_member` | any member — §7.3, deliberate |
+| space | `remove_member` | admin only — the mirror of `add_member`'s openness |
 | space | `create_chat` | any member |
 | space | `make_public` | admin only — §7.3, deliberate asymmetry |
 | space | `promote` | admin |
+
+`join` is the exception to the shape every other row here follows: it is the one
+space action that **cannot** be a membership test, because membership is what it
+creates. Requiring one would make every public space unjoinable. The containment
+conjunct above it still applies — you cannot walk into a space in a workspace you
+do not belong to — and the space's own `membership_policy` decides the rest,
+which is why `Placement` carries `openSpaces` alongside `privateChats`. Both are
+properties of the object rather than of a membership.
+
+`remove_member` is admin-only while `add_member` is open, and the asymmetry is
+the same one `make_public` has: adding a person is reversible by that person,
+removing one is not. Leaving is not this action — an actor removing themselves
+needs no permission and never reaches the evaluator.
 | chat | `read` | derived (§7) |
 | chat | `post` | derived |
 | chat | `edit_own`, `delete_own` | the author |

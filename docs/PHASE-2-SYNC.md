@@ -303,6 +303,52 @@ against this schema rather than against an idea of it.
 Postgres rather than against the spike's in-memory SQLite — same assertions, new
 engine.
 
+**Built** as `sync/placement.ts` (containment for `can()`), `sync/spaces.ts`
+(create a channel, join, leave), `sync/ops.ts` (send, delete, markRead) and
+`sync/feed.ts` (head, events, catch-up, gap, backfill, counters, welcome).
+
+The spike's numbers are kept identical — 8, 400, 50, 237, four pages, 202
+unread, 2 mentions — because matching values across two engines and two
+implementations is evidence the behaviour transferred, where fresh numbers would
+only be evidence that something ran.
+
+Three places the port is faithful rather than literal, each named at its call
+site: `MAX(a,b)` becomes `GREATEST` (a different engine's spelling of the same
+register); the spike's `@actorId` mention match becomes the product's `<@id>`
+markup, since the spike was matching its own fixtures; and its `'edit'` branch
+is absent rather than carried unexercised, because edits are Phase 4.
+
+**Counters are COMPUTED, not materialised — a narrowing of `DESIGN.md` §12.**
+
+That section says "updated on write", and this phase counts on read instead.
+Maintaining a counter per member per message means a write touching every member
+row and four separate invalidation paths — send, delete, read, join — each of
+which is a chance to be quietly wrong in a number nobody audits. A count over an
+indexed range is correct by construction and needs none of them.
+
+`chat_read_state` already carries the columns, so materialising later is a
+change to one function rather than a migration.
+
+**Measured, and the trigger this originally named was the wrong one.** The
+concern was `welcome` latency under a large backlog. The counting is not where
+the cost is:
+
+| | |
+|---|---|
+| counters over 400 unread, one chat | 0.15 ms |
+| counters over 50,000 unread, one chat | 7.7 ms |
+| welcome over 150 chats, 60k messages, nothing read | 8 ms |
+| welcome over 151 chats, one holding a 50,000 backlog | 45 ms |
+
+The cost was **round trips**: the first implementation issued 1 + 2N statements,
+301 for 150 chats, for about 18 ms of actual work. Rewritten as one query with a
+`LATERAL` it is 1 statement and 8 ms, and a query-count test now holds it there.
+
+So the trigger is not latency-under-backlog, which has three orders of magnitude
+of headroom. Materialise only if per-actor fan-out becomes the bottleneck under
+real concurrency — and measure it the way this was measured, at the reconnect
+storm rather than on one call.
+
 ---
 
 ### D. The transport skeleton — item 14
@@ -363,6 +409,14 @@ The first exchange that means something, and the one that satisfies R2.
 **Done when:** a client with empty cursors receives a `welcome`, writes
 `chat_state` for every chat, and the sidebar badge count matches the server's —
 with the message tables still empty. That last clause is the whole point.
+
+**One statement, whatever the chat count.** The server half is built and is a
+single `LATERAL` query, held there by a test. Reconnects arrive together after a
+deploy — that is what the jitter window exists for — so an N+1 here multiplies
+by every client at once: at the ~333 reconnects/second §9.8 plans for, 301
+statements each is ~100k statements/second. Measured on a laptop after the
+rewrite: 756 welcomes/second against 150-chat workspaces, with 50 arriving
+concurrently.
 
 ---
 

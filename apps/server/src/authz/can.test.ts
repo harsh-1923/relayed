@@ -10,6 +10,8 @@ import { World } from '../../../../spikes/authz-model.mjs';
 interface Fixture {
   workspaces: string[];
   spaces: Record<string, string>;                    // space -> workspace
+  /** Spaces whose policy is `open` — the ones anyone in the workspace may join. */
+  openSpaces?: string[];
   chats: Record<string, { space: string; private: boolean }>;
   members: [Scope, string, string, Role][];          // scope, id, actor, role
   left?: [Scope, string, string][];
@@ -18,7 +20,14 @@ interface Fixture {
 function build(f: Fixture) {
   const w = new World();
   for (const ws of f.workspaces) w.workspace(ws);
-  for (const [s, ws] of Object.entries(f.spaces)) w.space(s, ws);
+  const open = new Set(f.openSpaces ?? []);
+  // The model reads visibility where the shipped evaluator reads `openSpaces`;
+  // they must describe the same space or the equivalence below is comparing two
+  // different worlds. Previously both spaces defaulted to public here, which
+  // nothing noticed until `join` gave the two sides something to disagree about.
+  for (const [s, ws] of Object.entries(f.spaces)) {
+    w.space(s, ws, open.has(s) ? 'public' : 'private');
+  }
   for (const [c, meta] of Object.entries(f.chats)) w.chat(c, meta.space, meta.private ? 'private' : 'public');
   for (const [scope, id, actor, role] of f.members) w.join(scope, id, actor, role);
   for (const [scope, id, actor] of f.left ?? []) w.leave(scope, id, actor);
@@ -27,6 +36,7 @@ function build(f: Fixture) {
     workspaceOf: f.spaces,
     spaceOf: Object.fromEntries(Object.entries(f.chats).map(([c, m]) => [c, m.space])),
     privateChats: new Set(Object.entries(f.chats).filter(([, m]) => m.private).map(([c]) => c)),
+    openSpaces: open,
   };
   const gone = new Set((f.left ?? []).map(([s, i, a]) => `${s}:${i}:${a}`));
   const grantsFor = (actor: string): Grants => new Map(
@@ -41,6 +51,7 @@ function build(f: Fixture) {
 const FIXTURE: Fixture = {
   workspaces: ['W'],
   spaces: { S_pub: 'W', S_priv: 'W' },
+  openSpaces: ['S_pub'],
   chats: {
     C_pub:  { space: 'S_pub',  private: false },
     C_priv: { space: 'S_priv', private: true },
@@ -97,7 +108,13 @@ test('the shipped evaluator agrees with the validated model, exhaustively', () =
   assert.deepEqual(disagreements, []);
   // A control on the control: two evaluators that both always deny agree
   // perfectly and prove nothing.
-  assert.equal(checks, ACTORS.length * (4 + 5 * 2 + 5 * 3));
+  // Derived from the vocabulary rather than written out, so widening ACTIONS
+  // cannot leave this asserting a stale total. It still guards what it is for:
+  // that the loop enumerated every target, not that the vocabulary is a size.
+  assert.equal(checks, ACTORS.length * (
+    ACTIONS.workspace.length * FIXTURE.workspaces.length
+    + ACTIONS.space.length * Object.keys(FIXTURE.spaces).length
+    + ACTIONS.chat.length * Object.keys(FIXTURE.chats).length));
   assert.ok(allowed > 20 && allowed < checks - 20, `${allowed}/${checks} allowed — suspiciously uniform`);
 });
 

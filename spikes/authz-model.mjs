@@ -25,7 +25,8 @@ export const results = () => ({ pass, fail, fails });
 export const ROLES = ['owner', 'admin', 'member'];
 export const ACTIONS = {
   workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership'],
-  space:     ['read', 'add_member', 'create_chat', 'make_public', 'promote'],
+  space:     ['read', 'join', 'add_member', 'remove_member', 'create_chat',
+              'make_public', 'promote'],
   chat:      ['read', 'post', 'edit_own', 'delete_own', 'delete_any'],
 };
 
@@ -95,6 +96,10 @@ export class World {
       // AUTHZ §7: space membership REQUIRES workspace membership. A workspace
       // role grants nothing here — no admin inheritance (invariant 51).
       if (!this.#row('workspace', space.workspaceId, actorId)) return false;
+      // Joining is how membership BEGINS, so it is decided ABOVE the membership
+      // test rather than below it — requiring membership would make every
+      // public space unjoinable.
+      if (action === 'join') return space.visibility === 'public';
       const m = this.#row('space', objectId, actorId);
       if (!m) return false;
       switch (action) {
@@ -102,7 +107,8 @@ export class World {
         case 'add_member':
         case 'create_chat':  return true;
         case 'make_public':
-        case 'promote':      return m.role === 'admin';
+        case 'promote':
+        case 'remove_member': return m.role === 'admin';
         default: return false;
       }
     }
@@ -172,9 +178,14 @@ export class World {
       if (!space) return false;
       // tuple-to-userset: membership of the parent, reached through containment
       if (!has(`workspace:${space.workspaceId}`, anyRole)) return false;
+      // Joining is how membership BEGINS, so it cannot require membership. The
+      // space's own policy decides it, above the membership test rather than
+      // below it.
+      if (action === 'join') return space.visibility === 'public';
       const obj = `space:${objectId}`;
       if (!has(obj, anyRole)) return false;
-      if (action === 'make_public' || action === 'promote') return has(obj, ['admin']);
+      if (action === 'make_public' || action === 'promote'
+          || action === 'remove_member') return has(obj, ['admin']);
       return ['read', 'add_member', 'create_chat'].includes(action);
     }
 
