@@ -33,27 +33,43 @@ const TRAFFIC_LIGHTS = 78;
 
 export function TopBar() {
   const { state } = useSession();
+  const { isMobile } = useSidebar();
   const { canBack, canForward, back, forward } = useBackForward();
 
   // Asked of the sidebar itself rather than worked out from the URL: a toggle
   // for a panel that is not on screen reports on nothing, and the route table
   // is not something to restate here (sidebar/use-sidebar-presence.ts).
   const hasSidebar = useSidebarPresent();
+  const alignNavigationToSidebar = hasSidebar && !isMobile;
 
   return (
     <header
-      className="drag-region relative z-60 flex h-10 shrink-0 items-center gap-1 border-b border-border/60
-                 bg-sidebar px-2 text-sidebar-foreground"
-      style={state.platform === 'darwin' ? { paddingLeft: TRAFFIC_LIGHTS } : undefined}
+      className="drag-region relative z-60 flex h-10 shrink-0 items-center border-b border-border/60
+                 bg-sidebar pr-2 text-sidebar-foreground"
     >
-      {hasSidebar && <SidebarToggle />}
+      <div
+        className={cn(
+          'flex h-full shrink-0 items-center gap-1 pr-2',
+          alignNavigationToSidebar && 'min-w-max',
+        )}
+        style={{
+          paddingLeft: state.platform === 'darwin' ? TRAFFIC_LIGHTS : 8,
+          width: alignNavigationToSidebar
+            ? 'var(--workspace-sidebar-width, var(--sidebar-width))'
+            : undefined,
+        }}
+      >
+        {hasSidebar && <SidebarToggle />}
 
-      <Bare label="Back" onClick={back} disabled={!canBack}>
-        <ChevronLeft className="size-4" />
-      </Bare>
-      <Bare label="Forward" onClick={forward} disabled={!canForward}>
-        <ChevronRight className="size-4" />
-      </Bare>
+        <div className={cn('flex items-center gap-1', alignNavigationToSidebar && 'ml-auto')}>
+          <Bare label="Back" onClick={back} disabled={!canBack}>
+            <ChevronLeft className="size-4" />
+          </Bare>
+          <Bare label="Forward" onClick={forward} disabled={!canForward}>
+            <ChevronRight className="size-4" />
+          </Bare>
+        </div>
+      </div>
 
       {/* The empty middle IS the handle. Nothing lives here yet — search and
           the current space's name are the candidates — and until something

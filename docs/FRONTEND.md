@@ -1399,6 +1399,15 @@ are referenced from four documents.
    existing shadcn Sheet remains the sidebar and slides over the route, offset
    below the 40px window title bar.
 
+   On desktop workspace routes the title bar's leading region follows the live
+   sidebar width: the sidebar toggle remains beside the window controls while
+   Back and Forward stay end-aligned to the sidebar edge. Collapsing the body
+   sidebar does not collapse that title-bar region past the controls' intrinsic
+   width, so navigation never moves underneath the macOS traffic lights. The
+   width crosses from the resizable panel to the root-level title bar as a CSS
+   custom property, not React state, because pointer movement must not rerender
+   the application tree on every pixel.
+
 2. ✅ **Transition table, and `awaiting_browser` as a status** (§7.2). **Done.**
    No dependency. Six statuses, twenty-two declared edges asserted at `#set()`,
    and `AppState.awaitingBrowser` removed from the IPC contract. Two edges the

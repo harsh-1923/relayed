@@ -64,6 +64,11 @@ export function AppShell() {
   }, [isMobile, open, sidebarPanelRef, state.workspaceId]);
 
   function handleSidebarResize(panelSize: PanelSize) {
+    document.documentElement.style.setProperty(
+      '--workspace-sidebar-width',
+      `${panelSize.inPixels}px`,
+    );
+
     const resizedOpen = panelSize.inPixels > 0;
     if (resizedOpen !== open) setOpen(resizedOpen);
   }
