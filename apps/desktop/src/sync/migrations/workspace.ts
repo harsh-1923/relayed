@@ -419,4 +419,53 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE stream_state ADD COLUMN swept_at_rev INTEGER;
     `,
   },
+  {
+    version: 6,
+    name: 'workspace-membership',
+    up: `
+      -- Let the replica hold a WORKSPACE membership, which it never could.
+      --
+      -- THE BUG, and it made the app useless rather than degraded. \`welcome\`
+      -- has carried the caller's own memberships since step 7, and a workspace
+      -- membership is among them — it is the LEADING conjunct of the access
+      -- predicate (invariant 50), so it is the most important one rather than an
+      -- unusual one. This table's CHECK was written in version 1, before any of
+      -- that existed, and allowed only 'space' and 'chat'.
+      --
+      -- So every \`welcome\` threw \`CHECK constraint failed\` partway through its
+      -- transaction. It rolled back — correctly — taking the spaces, the chats
+      -- and every stream cursor with it, and the next statements in the handler
+      -- never ran: no catch-up scheduler, no directory hydration, no drain. A
+      -- signed-in client with a live socket and a completely empty replica,
+      -- whose Directory screen said "sign in once while online".
+      --
+      -- WHY NOTHING CAUGHT IT. Both sides had tests and both passed, because
+      -- each built its own fixtures: the server's welcome tests assert what it
+      -- SENDS, the storage tests fed \`applyWelcome\` memberships they had
+      -- written themselves — as 'space' rows, which the constraint allows. The
+      -- same shape as the gap-snapshot casing bug: a seam where each side
+      -- agreed with itself.
+      --
+      -- SQLite cannot alter a CHECK, so the table is rebuilt. Existing rows are
+      -- all 'space' or 'chat' by construction and carry across unchanged.
+      CREATE TABLE memberships_new (
+        scope_type TEXT    NOT NULL,
+        scope_id   TEXT    NOT NULL,
+        actor_id   TEXT    NOT NULL,
+        role       TEXT    NOT NULL,
+        joined_at  INTEGER NOT NULL,
+        left_at    INTEGER,
+        PRIMARY KEY (scope_type, scope_id, actor_id),
+        -- All three the server can produce (003_memberships.sql), and no more:
+        -- a scope this client cannot reason about is a grant it must not honour.
+        CHECK (scope_type IN ('workspace','space','chat'))
+      );
+      INSERT INTO memberships_new
+        SELECT scope_type, scope_id, actor_id, role, joined_at, left_at
+          FROM memberships;
+      DROP TABLE memberships;
+      ALTER TABLE memberships_new RENAME TO memberships;
+      CREATE INDEX membership_actor ON memberships(actor_id) WHERE left_at IS NULL;
+    `,
+  },
 ];

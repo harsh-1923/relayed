@@ -97,7 +97,8 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 5, applied: ['2:sync', '3:frontier', '4:trace', '5:stall'] });
+    { from: 1, to: 6,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])

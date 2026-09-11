@@ -462,8 +462,46 @@ const welcomePayload = (over: Partial<Parameters<Storage['applyWelcome']>[0]> = 
     headOrd: 5521, headRev: 8140,
     chatUnread: 6, threadUnread: 2, mentionCount: 1,
   }],
-  memberships: [{ scopeType: 'space', scopeId: 'spc_eng', role: 'admin' }],
+  // THE WORKSPACE ROW IS FIRST ON PURPOSE. It is what the server actually
+  // sends — the workspace membership is the leading conjunct of the access
+  // predicate (invariant 50) — and a fixture that carried only `space` rows is
+  // precisely why a replica that could not store it shipped.
+  memberships: [
+    { scopeType: 'workspace', scopeId: 'wsp_1', role: 'owner' },
+    { scopeType: 'space', scopeId: 'spc_eng', role: 'admin' },
+  ],
   ...over,
+});
+
+test('A WORKSPACE MEMBERSHIP FROM WELCOME IS STORED', () => {
+  // The bug this exists for, and it made the app useless rather than degraded.
+  // The replica's CHECK was written in migration 1 and allowed only 'space' and
+  // 'chat'; `welcome` has carried the caller's workspace membership since step 7.
+  // So every welcome threw partway through its transaction and rolled back —
+  // taking the spaces, the chats and every stream cursor with it — and nothing
+  // after it in the handler ran: no catch-up, no directory, no drain. A
+  // signed-in client with a live socket and a completely empty replica.
+  //
+  // Both sides had tests and both passed, because each built its own fixtures.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  assert.doesNotThrow(() => { storage.applyWelcome(welcomePayload()); });
+
+  const db = new DatabaseSync(
+    join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const rows = db.prepare(
+    'SELECT scope_type, scope_id, role FROM memberships ORDER BY scope_type').all() as
+      { scope_type: string; scope_id: string; role: string }[];
+  assert.deepEqual(rows.map(r => ({ ...r })), [
+    { scope_type: 'space', scope_id: 'spc_eng', role: 'admin' },
+    { scope_type: 'workspace', scope_id: 'wsp_1', role: 'owner' },
+  ]);
+
+  // And the rest of the transaction survived, which is the half that made this
+  // invisible: a partial welcome is not a smaller welcome, it is no welcome.
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM spaces').get() as { n: number }).n, 1);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM chats').get() as { n: number }).n, 1);
+  db.close();
 });
 
 test('welcome makes every badge correct with NO messages held', () => {
@@ -574,7 +612,9 @@ test('a membership dropped from welcome is removed, not left stale', () => {
   const db = new DatabaseSync(join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
   const rows = db.prepare('SELECT scope_id FROM memberships WHERE actor_id = ?')
     .all('act_me') as { scope_id: string }[];
-  assert.deepEqual(rows.map(r => r.scope_id), ['spc_eng']);
+  // `wsp_1` survives because the second welcome still carries it — which is the
+  // point of the rule: what is IN the frame stays, what is absent goes.
+  assert.deepEqual(rows.map(r => r.scope_id).toSorted(), ['spc_eng', 'wsp_1']);
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
