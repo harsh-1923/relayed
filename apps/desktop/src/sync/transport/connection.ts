@@ -138,8 +138,43 @@ export class Connection {
    * path can end one it is still carrying (invariant 54).
    */
   #connectSpan: OpenSpan | null = null;
+  /** Stops listening to the gate. Called on `stop`, so a link cannot outlive it. */
+  #unwatchGate: (() => void) | null = null;
 
-  constructor(deps: ConnectionDeps) { this.#deps = deps; }
+  constructor(deps: ConnectionDeps) {
+    this.#deps = deps;
+
+    // THE NETWORK GOING AWAY MUST DROP A LIVE SOCKET.
+    //
+    // `guardConnect` refuses to OPEN one, which was the whole of "offline"
+    // while the only network calls were fetches and nothing stayed connected.
+    // A WebSocket that is already established never asks again — it does not
+    // go through `fetch`, and nothing was closing it — so simulated offline
+    // cut new connections and left the existing one syncing happily. Composing
+    // "offline" went straight out over the wire and the outbox never held a
+    // thing, which is exactly the path the toggle exists to exercise.
+    //
+    // Coming back is `retryNow` rather than waiting out a backoff: the network
+    // returning is the same event as waking from sleep, and it has the same
+    // answer.
+    this.#unwatchGate = deps.gate.onOffline?.((offline) => {
+      if (this.#state === 'stopped') return;
+      if (offline) {
+        // NO MARKER HERE. `#retry` drops the socket, which closes it with 1000
+        // and produces `ws.disconnected` → `ws.closed{close=client_stop}` on
+        // the way out; `dev.setOffline` already emits `dev.offline` for the
+        // toggle itself. A third record of one event would be the duplicate
+        // counting the catalogue declines elsewhere.
+        //
+        // Through `#retry`, not `#drop`: the socket goes AND the machine is
+        // left in `backoff`, where every attempt is refused by the gate until
+        // it lifts. A bare drop would leave it in `live` with no socket.
+        this.#retry();
+      } else {
+        this.retryNow();
+      }
+    }) ?? null;
+  }
 
   /**
    * Record a marker, and let a test see it too.
@@ -167,7 +202,15 @@ export class Connection {
    * Phase 1 bugs in this area were cleanup that did not run on an exit path,
    * which is why teardown is one call rather than a sequence a caller composes.
    */
-  stop(): void { this.#enter('stopped'); }
+  stop(): void {
+    // Unsubscribed FIRST: a stopped link that still hears the gate would
+    // resurrect itself the moment the network came back, which is the shape of
+    // leak invariant 54 is about — a teardown that does not settle everything
+    // it holds.
+    this.#unwatchGate?.();
+    this.#unwatchGate = null;
+    this.#enter('stopped');
+  }
 
   /**
    * Reconnect NOW, without waiting out a backoff.

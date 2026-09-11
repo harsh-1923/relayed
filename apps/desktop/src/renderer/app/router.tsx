@@ -17,6 +17,7 @@ import { CreateWorkspace } from '@/routes/CreateWorkspace';
 import { JoinWorkspace } from '@/routes/JoinWorkspace';
 import { WorkspaceHome } from '@/routes/WorkspaceHome';
 import { People } from '@/routes/People';
+import { Chat } from '@/routes/Chat';
 import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
@@ -47,6 +48,11 @@ export function Router() {
             workspace.switch (invariant 56). */}
         <Route path="/w/:wsId" element={<WorkspaceGate />}>
           <Route index element={<WorkspaceHome />} />
+          {/* §4.6 settles the space route as /w/:wsId/s/:spaceId. A chat is
+              addressed directly because that is what the sidebar links to and
+              what a person means by "open #general" — the space is derivable
+              from the chat, and the reverse needs a second lookup. */}
+          <Route path="c/:chatId" element={<Chat />} />
           <Route path="people" element={<People />} />
           <Route path="settings" element={<Settings />}>
             <Route index element={<Navigate to="members" replace />} />

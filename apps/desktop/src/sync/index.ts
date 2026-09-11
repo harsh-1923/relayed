@@ -18,6 +18,7 @@ import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
 import { newId } from './ids.ts';
+import { enqueue } from './outbox.ts';
 import { installNetworkGate } from './network.ts';
 import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
 import { createInvalidator } from './invalidate.ts';
@@ -152,12 +153,31 @@ function adoptSession(s: OurSession): void {
   // ends with a usable workspace — boot, switch, sign-in, join — so calling
   // them at those four call sites as well only duplicated the work.
   void setBlobAccount(storage.accountId);
+  // Whatever this replica ALREADY holds. On a fresh one that is nothing, which
+  // is the whole reason `avatarsWanted` exists below: the directory arrives
+  // over the socket seconds later, and this call cannot see it.
   void fillAvatars();
   // The directory arrives over the socket now, page by page, and the link is
   // what asks for it. `fetchActors` and `GET /actors` are gone: a client that
   // has just connected needs the directory anyway, so fetching it over HTTP as
   // well was a second path to the same data.
   link.start();
+}
+
+/**
+ * Ask for the avatars, at most once per burst.
+ *
+ * The directory pages in — one invalidation per page, and another per
+ * `actor.updated` — so a fetch per invalidation would start the same work
+ * several times over. A short debounce collapses a snapshot into one pass, and
+ * `prefetchAvatars` is idempotent anyway: it links bytes already held rather
+ * than downloading them again.
+ */
+let avatarTimer: ReturnType<typeof setTimeout> | null = null;
+function avatarsWanted(): void {
+  if (avatarTimer) clearTimeout(avatarTimer);
+  avatarTimer = setTimeout(() => { avatarTimer = null; void fillAvatars(); }, 400);
+  avatarTimer.unref?.();
 }
 
 /** §13.3: avatars are fetched eagerly, always. Failures are silent and retried. */
@@ -197,7 +217,24 @@ const link = createLink({
   db: () => (storage.hasWorkspace ? storage.workspace : null),
   workspaceId: () => storage.workspaceId,
   token: async () => session.accessToken,
-  invalidate: (topics) => { invalidate(topics); },
+  invalidate: (topics) => {
+    invalidate(topics);
+    // NEW ACTORS MEAN NEW PICTURES, and this is the only place that can know.
+    //
+    // `fillAvatars` used to run once per session, in `adoptSession` — which was
+    // right when the directory arrived synchronously over HTTP and wrong the
+    // moment it started arriving over the socket. On a fresh replica the actors
+    // table is empty at that point, so the prefetch found nothing, the
+    // directory landed seconds later, and nobody ever went back for the bytes.
+    // Every face stayed a monogram for the life of the install.
+    //
+    // Driven off the topic rather than off a directory callback so it covers
+    // both ways an actor can appear: a page of the snapshot, and an
+    // `actor.created` event arriving live.
+    if (topics.some(t => t === topic.actors() || t.startsWith(`${topic.actors()}:`))) {
+      avatarsWanted();
+    }
+  },
   onWelcome: (body) => {
     storage.applyWelcome({
       actorId: body.actor.id,
@@ -311,11 +348,19 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
    */
   'dev.setOffline': async (params) => {
     if (!devTools) throw new Error('development builds only');
+    // The gate notifies the transport, which drops any live socket rather than
+    // merely refusing the next one — see `network.ts`. Nothing to stop here.
     net.setOffline(Boolean((params as { offline?: boolean })?.offline));
     emit('dev.offline', { offline: net.offline });
     push();
     if (!net.offline && storage.workspaceId) {
       await session.activate(storage.workspaceId);
+      // AFTER the token, and deliberately a second nudge. Lifting the gate
+      // already asked the transport to retry, but that happened before
+      // `activate` had a credential — so a session that went stale while the
+      // network was cut would reconnect with nothing and land in
+      // `unauthorised`, where it waits for exactly this call.
+      link.retryNow();
       push();
     }
     return view();
@@ -323,6 +368,72 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
 
   /** The workspace directory, straight from the replica — no network. */
   'actors.list': () => (storage.hasWorkspace ? storage.actors() : []),
+
+  /** The sidebar: spaces this actor is in, each with its chats. */
+  'chats.list': () => (storage.hasWorkspace ? storage.spaces() : []),
+
+  /** One chat's tail. Everything below it is backfill's job, on demand. */
+  'messages.list': (params) => {
+    const chatId = (params as { chatId?: string } | undefined)?.chatId;
+    if (!chatId || !storage.hasWorkspace) return [];
+    return storage.messages(chatId);
+  },
+
+  /**
+   * Compose a message.
+   *
+   * THE FIRST CALLER THE OUTBOX HAS EVER HAD. Everything below this line was
+   * built in step 11 and exercised only by tests and the load run; this is the
+   * path a person takes.
+   *
+   * Returns once the row is ON DISK, never when it is sent. The outbox is
+   * durable and the socket is not — waiting on the network here would make
+   * composing fail while offline, which is the one thing this app must not do
+   * (DESIGN.md §10). `drain` puts it on the wire if there is a wire.
+   *
+   * The optimistic row and the outbox entry are written in ONE transaction
+   * (invariant 40). A crash between them leaves a message that looks sent and
+   * never will be — indistinguishable, to the person who wrote it, from having
+   * been delivered.
+   */
+  'messages.send': async (params) => {
+    const { chatId, body } = (params ?? {}) as { chatId?: string; body?: string };
+    const text = (body ?? '').trim();
+    if (!chatId || text.length === 0) throw new Error('chatId and body required');
+    if (!storage.hasWorkspace) throw new Error('no workspace open');
+    // From the workspace ROW, not the session: the replica is the source of
+    // truth for who I am in this workspace, and it is what every other read
+    // here joins against. A session-derived id would be a second answer.
+    const actorId = storage.workspaces()
+      .find(w => w.workspaceId === storage.workspaceId)?.actorId;
+    if (!actorId) throw new Error('not signed in');
+
+    const db = storage.workspace;
+    const messageId = newId('msg');
+
+    // A span per composed message, and the ROOT of the send's trace: the
+    // server's `sync.op` becomes a child of it through the traceparent stored
+    // on the outbox row, so "user pressed send" and "server assigned the
+    // ordinal" are one trace rather than two that happen to be near in time.
+    await span('ui.compose', () => {
+      enqueue(db, {
+        opId: newId('op'), kind: 'send', chatId, targetId: messageId,
+        payload: { body: text, parent_id: null },
+      }, (tx) => {
+        tx.prepare(`
+          INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
+                                created_at, state, local_only)
+          VALUES (?, ?, NULL, NULL, 0, ?, ?, ?, 'pending', 0)
+        `).run(messageId, chatId, actorId, text, Date.now());
+      });
+    }, { attributes: { chat_id: chatId, op_kind: 'send' } });
+
+    // The surface repaints from the replica, exactly as it would for a message
+    // that arrived from somebody else. One path, not a special case for "mine".
+    invalidate([topic.messages(chatId), topic.chatState(chatId)]);
+    link.drain();
+    return { id: messageId };
+  },
 
   'db.info': () => {
     if (!storage.hasWorkspace) return { open: false };
@@ -483,8 +594,22 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const t0 = performance.now();
     let result: 'ok' | 'error' = 'ok';
     try {
-      // Step 3 closes the socket — none exists until Phase 2. Steps 2, 4 and 5
-      // are storage's, and commit `last_workspace` before touching a handle.
+      // STEP 3: CLOSE THE SOCKET, and it must happen BEFORE the replica moves.
+      //
+      // The comment here used to say "none exists until Phase 2", which stopped
+      // being true and stopped being noticed. What it left is worse than the
+      // empty directory that exposed it: the link resolves its database through
+      // `storage.workspace`, so a connection still authenticated for the old
+      // workspace goes on delivering that workspace's events INTO THE NEW
+      // REPLICA. Rows from a tenant you are no longer looking at, written to a
+      // tenant you are — with the frontier advancing as if they belonged.
+      //
+      // Stopping first makes that window empty rather than small. The token for
+      // the next workspace does not exist yet anyway (step 7 mints it), so
+      // there is nothing to reconnect with until `activate` resolves.
+      link.stop();
+      // Steps 2, 4 and 5 are storage's, and commit `last_workspace` before
+      // touching a handle.
       storage.switchWorkspace(workspaceId);
     } catch (e) {
       result = 'error';
@@ -503,6 +628,18 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
       .then((state) => {
         histogram('workspace.switch', Math.round(performance.now() - t1),
                   { phase: 'authorized', result: state.status === 'stale' ? 'error' : 'ok' });
+        // STEP 8: reconnect, now that there is a credential for this workspace.
+        //
+        // Only on success. A `stale` session has no usable token, and starting
+        // the link would open a socket that can only be refused — a reconnect
+        // loop against a server already saying no. It stays down until
+        // something with a better token calls `retryNow`, which is what the
+        // aeroplane toggle and waking from sleep already do.
+        //
+        // `welcome` is what fills the new replica: spaces, chats, every stream
+        // cursor and the directory. Without this the workspace you switched to
+        // stays empty for ever, which is exactly how this was found.
+        if (state.status !== 'stale') link.start();
       });
     return view();
   },

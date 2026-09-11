@@ -531,3 +531,89 @@ test('the second socket says hello once IT opens', async () => {
   await new Promise(r => setTimeout(r, 5));
   assert.deepEqual(h.sockets[1]!.frames.map(f => f.t), ['hello'], 'and it did');
 });
+
+// ─── simulated offline must cut a LIVE socket ───────────────────────────────
+
+test('GOING OFFLINE DROPS AN ESTABLISHED SOCKET, not just the next one', async () => {
+  // The bug, and it made the aeroplane switch a lie. `guardConnect` refuses to
+  // OPEN a connection, which was the whole of "offline" while the only network
+  // calls were fetches and nothing stayed connected. A WebSocket already
+  // established never asks again — it does not go through `fetch`, and nothing
+  // closed it — so the app went on syncing with the switch on, and composing
+  // "offline" went straight out over the wire.
+  const gate = installNetworkGate({ fetch: globalThis.fetch }, { allowOffline: true });
+  gate.uninstall();
+  const h = harness({ gate });
+
+  h.connection.start();
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  h.latest().deliver('welcome', WELCOME);
+  assert.equal(h.connection.state, 'live');
+
+  gate.setOffline(true);
+
+  assert.notEqual(h.connection.state, 'live', 'the connection is no longer live');
+  assert.equal(h.sockets[0]!.closedWith, 1000, 'and the socket was actually closed');
+});
+
+test('while offline, a reconnect is REFUSED rather than attempted', async () => {
+  // The half that already worked, asserted so the fix cannot break it: the
+  // backoff keeps firing and the gate keeps saying no, which is what a machine
+  // with no network actually does.
+  const gate = installNetworkGate({ fetch: globalThis.fetch }, { allowOffline: true });
+  gate.uninstall();
+  const h = harness({ gate });
+
+  h.connection.start();
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  h.latest().deliver('welcome', WELCOME);
+
+  const before = h.sockets.length;
+  gate.setOffline(true);
+  h.connection.retryNow();
+
+  assert.equal(h.sockets.length, before, 'no new socket was opened');
+  assert.notEqual(h.connection.state, 'live');
+});
+
+test('coming back reconnects without waiting out the backoff', async () => {
+  const gate = installNetworkGate({ fetch: globalThis.fetch }, { allowOffline: true });
+  gate.uninstall();
+  const h = harness({ gate });
+
+  h.connection.start();
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  h.latest().deliver('welcome', WELCOME);
+
+  gate.setOffline(true);
+  const cut = h.sockets.length;
+
+  gate.setOffline(false);
+  assert.ok(h.sockets.length > cut, 'a fresh socket, immediately');
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  h.latest().deliver('welcome', WELCOME);
+  assert.equal(h.connection.state, 'live');
+});
+
+test('a STOPPED link does not resurrect itself when the network returns', () => {
+  // The leak this could have been: a teardown that leaves a listener behind is
+  // a link that comes back from the dead on an event it should no longer hear
+  // (invariant 54).
+  const gate = installNetworkGate({ fetch: globalThis.fetch }, { allowOffline: true });
+  gate.uninstall();
+  const h = harness({ gate });
+
+  h.connection.start();
+  h.connection.stop();
+  const after = h.sockets.length;
+
+  gate.setOffline(true);
+  gate.setOffline(false);
+
+  assert.equal(h.sockets.length, after, 'nothing reopened');
+  assert.equal(h.connection.state, 'stopped');
+});

@@ -48,6 +48,50 @@ export interface ReplicaActor {
   updatedAt: number;
 }
 
+/** One chat in the sidebar. `name` is null for a space's sole chat. */
+export interface ReplicaChat {
+  id: string;
+  spaceId: string;
+  kind: string;
+  name: string | null;
+  unread: number;
+  mentions: number;
+}
+
+/** A space and the chats inside it — the sidebar, as the replica holds it. */
+export interface ReplicaSpace {
+  id: string;
+  kind: string;
+  name: string | null;
+  slug: string | null;
+  visibility: string;
+  chats: ReplicaChat[];
+}
+
+/**
+ * A message, joined to its author.
+ *
+ * `state` is the one field the surface must not ignore: `pending` is an
+ * optimistic row the server has not acknowledged, `failed` is one it refused,
+ * and rendering the three identically is how a message that never sent looks
+ * exactly like one that did (DESIGN.md §10.2).
+ */
+export interface ReplicaMessage {
+  id: string;
+  chatId: string;
+  parentId: string | null;
+  /** Null while pending: the server has not assigned one yet. */
+  ord: number | null;
+  authorId: string;
+  authorName: string;
+  authorHandle: string | null;
+  authorAvatarBlob: string | null;
+  body: string;
+  createdAt: number;
+  deleted: boolean;
+  state: string;
+}
+
 export type AuthState =
   | { status: "signed_out" }
   /** Binding the loopback socket. Nothing to cancel yet, and no link to open. */
@@ -147,6 +191,20 @@ export interface RelayedApi {
   query(op: "auth.reopenBrowser"): Promise<{ reopened: boolean }>;
   query(op: "dev.setOffline", params: { offline: boolean }): Promise<AppState>;
   query(op: "actors.list"): Promise<ReplicaActor[]>;
+  query(op: "chats.list"): Promise<ReplicaSpace[]>;
+  query(
+    op: "messages.list",
+    params: { chatId: string },
+  ): Promise<ReplicaMessage[]>;
+  /**
+   * Queue a message. Returns as soon as it is on disk, NOT when it is sent —
+   * the outbox is durable and the socket is not, so waiting on the network here
+   * would make composing fail when offline (DESIGN.md §10).
+   */
+  query(
+    op: "messages.send",
+    params: { chatId: string; body: string },
+  ): Promise<{ id: string }>;
   query(op: "auth.signOut"): Promise<AppState>;
   query(op: "auth.configured"): Promise<{ clientId: string | null }>;
   query(

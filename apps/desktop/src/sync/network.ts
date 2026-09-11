@@ -34,6 +34,19 @@ export interface Gate {
    * production build cannot be talked into it by an IPC message.
    */
   setOffline(on: boolean): void;
+  /**
+   * Told when the network is cut or restored. Returns an unsubscribe.
+   *
+   * WHY A NOTIFICATION AND NOT JUST A FLAG. `guardConnect` refuses to OPEN a
+   * socket, which was the whole of "offline" when the only network calls were
+   * fetches and nothing stayed connected. A long-lived WebSocket never asks
+   * again: it is established, it does not go through `fetch`, and nothing was
+   * closing it — so the app went on syncing with the aeroplane switch on.
+   *
+   * Cutting a live connection is something only its owner can do, so the gate
+   * says WHEN and the transport decides HOW.
+   */
+  onOffline(listener: (offline: boolean) => void): () => void;
   readonly offline: boolean;
   /** True when this build can simulate offline at all. */
   readonly canGoOffline: boolean;
@@ -58,6 +71,7 @@ export function installNetworkGate(
   let paintable = false;
   let offline = false;
   const before: string[] = [];
+  const listeners = new Set<(offline: boolean) => void>();
 
   const countIfEarly = (args: Parameters<typeof fetch>): void => {
     if (paintable) return;
@@ -85,11 +99,23 @@ export function installNetworkGate(
 
   return {
     markPaintable() { paintable = true; },
-    setOffline(on: boolean) { if (allowOffline) offline = on; },
+    setOffline(on: boolean) {
+      if (!allowOffline || offline === on) return;
+      offline = on;
+      // A listener that throws must not stop the others hearing, and must not
+      // leave the gate half-switched.
+      for (const listener of listeners) {
+        try { listener(on); } catch { /* a transport's problem, not the gate's */ }
+      }
+    },
+    onOffline(listener) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
     get offline() { return offline; },
     get canGoOffline() { return allowOffline; },
     get callsBeforePaint() { return before; },
-    uninstall() { target.fetch = real; },
+    uninstall() { target.fetch = real; listeners.clear(); },
   };
 }
 

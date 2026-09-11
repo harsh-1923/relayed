@@ -15,6 +15,7 @@ import {
 } from '../provisioning/provision.ts';
 import { validateHandle } from '../provisioning/handle.ts';
 import { pendingJoins, joinWorkspace } from '../provisioning/join.ts';
+import { seedWorkspace, joinPublicSpaces } from '../provisioning/onboard.ts';
 
 interface ExchangeBody {
   workos_access_token: string;
@@ -189,6 +190,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       if (!deviceId) return reply.code(400).send({ error: 'device_id required' });
 
       const created = await createWorkspace(db, identity, { workspaceName: workspace_name, handle });
+      // A workspace with nowhere to talk is not a workspace. Fire-and-forget
+      // relative to the response: a channel that failed to appear is repaired
+      // by the next sign-in, and is not a reason to fail a sign-up that has
+      // already created an organisation at WorkOS.
+      try { await seedWorkspace(db, created.workspaceId, created.actorId); }
+      catch (e) { req.log.warn({ err: e }, 'default channel not created'); }
       const memberships = await resolveMemberships(db, identity.workosUserId);
       return reply.send({
         needs_workspace: false,
@@ -278,6 +285,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const joined = await joinWorkspace(db, identity, workspace_id, handle);
+      if (typeof joined === 'object') {
+        // Public means everyone in the workspace, and this is where that becomes
+        // true rather than documented: `welcome` joins spaces on MEMBERSHIP, so
+        // without these rows a joiner sees an empty workspace.
+        try { await joinPublicSpaces(db, workspace_id, joined.actorId); }
+        catch (e) { req.log.warn({ err: e }, 'public spaces not joined'); }
+      }
       if (joined === 'not_invited') {
         return reply.code(403).send({ error: 'not_invited' });
       }

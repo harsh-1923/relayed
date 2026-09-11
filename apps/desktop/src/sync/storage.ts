@@ -67,6 +67,53 @@ export interface ReplicaActor {
   updatedAt: number;
 }
 
+/** One chat in the sidebar. `name` is null for a space's sole chat. */
+export interface ReplicaChat {
+  id: string;
+  spaceId: string;
+  kind: string;
+  name: string | null;
+  unread: number;
+  mentions: number;
+}
+
+/** A space and the chats inside it — the sidebar, as the replica holds it. */
+export interface ReplicaSpace {
+  id: string;
+  kind: string;
+  name: string | null;
+  slug: string | null;
+  visibility: string;
+  chats: ReplicaChat[];
+}
+
+/**
+ * A message, joined to its author.
+ *
+ * `state` is the one field a surface must not ignore: `pending` is optimistic
+ * and unacknowledged, `failed` is refused, and rendering the three identically
+ * is how a message that never sent looks exactly like one that did.
+ *
+ * The author is joined in rather than looked up per row. A message whose author
+ * is not in the directory yet still renders — with their handle — because the
+ * alternative is a chat that goes blank while the directory pages in.
+ */
+export interface ReplicaMessage {
+  id: string;
+  chatId: string;
+  parentId: string | null;
+  /** Null while pending: the server has not assigned one yet. */
+  ord: number | null;
+  authorId: string;
+  authorName: string;
+  authorHandle: string | null;
+  authorAvatarBlob: string | null;
+  body: string;
+  createdAt: number;
+  deleted: boolean;
+  state: string;
+}
+
 /**
  * A directory row as the SERVER sends it.
  *
@@ -675,6 +722,91 @@ export class Storage {
       db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  /**
+   * The sidebar: every space this actor is in, with its chats.
+   *
+   * TWO QUERIES, NOT A JOIN, and not one per space. A join would return the
+   * space columns once per chat and the caller would have to un-flatten them;
+   * a query per space is the N+1 that `welcome` was rebuilt to avoid
+   * (SYNC-FLOWS.md §4). Both are small and indexed, and the shape the surface
+   * wants is a tree.
+   */
+  spaces(): ReplicaSpace[] {
+    const spaces = this.workspace.prepare(`
+      SELECT id, kind, name, slug, visibility, lifecycle
+        FROM spaces WHERE lifecycle = 'active' ORDER BY name
+    `).all() as Record<string, unknown>[];
+
+    const chats = this.workspace.prepare(`
+      SELECT c.id, c.space_id, c.kind, c.name,
+             COALESCE(s.chat_unread, 0)   AS unread,
+             COALESCE(s.mention_count, 0) AS mentions
+        FROM chats c LEFT JOIN chat_state s ON s.chat_id = c.id
+       ORDER BY c.id
+    `).all() as Record<string, unknown>[];
+
+    return spaces.map(space => ({
+      id: String(space['id']),
+      kind: String(space['kind']),
+      name: (space['name'] as string | null) ?? null,
+      slug: (space['slug'] as string | null) ?? null,
+      visibility: String(space['visibility'] ?? 'public'),
+      chats: chats
+        .filter(chat => chat['space_id'] === space['id'])
+        .map(chat => ({
+          id: String(chat['id']),
+          spaceId: String(chat['space_id']),
+          kind: String(chat['kind']),
+          name: (chat['name'] as string | null) ?? null,
+          unread: Number(chat['unread'] ?? 0),
+          mentions: Number(chat['mentions'] ?? 0),
+        })),
+    }));
+  }
+
+  /**
+   * One chat's messages, oldest first.
+   *
+   * BOUNDED, because a chat is unbounded. The tail is what a surface opens on;
+   * everything below it is backfill's job, and asking for all of it here would
+   * make opening a busy chat slower the longer it has existed.
+   *
+   * Tombstones are kept and marked rather than filtered out. A deleted message
+   * still occupies its ordinal — ordinals are never renumbered or reused — and
+   * a gap the UI cannot explain reads as data loss.
+   */
+  messages(chatId: string, limit = 200): ReplicaMessage[] {
+    const rows = this.workspace.prepare(`
+      SELECT m.id, m.chat_id, m.parent_id, m.ord, m.author_id, m.body,
+             m.created_at, m.deleted, m.state,
+             a.display_name, a.handle, a.avatar_blob
+        FROM messages m
+        LEFT JOIN actors a ON a.id = m.author_id
+       WHERE m.chat_id = ?
+       -- Pending rows have no ordinal yet, so they sort last by construction:
+       -- a message you just typed belongs at the bottom until the ack says
+       -- exactly where.
+       ORDER BY COALESCE(m.ord, 1e15), m.created_at
+       LIMIT ?
+    `).all(chatId, limit) as Record<string, unknown>[];
+
+    return rows.map(row => ({
+      id: String(row['id']),
+      chatId: String(row['chat_id']),
+      parentId: (row['parent_id'] as string | null) ?? null,
+      ord: row['ord'] === null ? null : Number(row['ord']),
+      authorId: String(row['author_id']),
+      authorName: (row['display_name'] as string | null)
+        ?? `@${String(row['handle'] ?? 'unknown')}`,
+      authorHandle: (row['handle'] as string | null) ?? null,
+      authorAvatarBlob: (row['avatar_blob'] as string | null) ?? null,
+      body: String(row['body']),
+      createdAt: Number(row['created_at'] ?? 0),
+      deleted: Number(row['deleted'] ?? 0) === 1,
+      state: String(row['state']),
+    }));
   }
 
   actors(): ReplicaActor[] {

@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router';
 import { useSession } from './state';
 import { WorkspaceRail } from './WorkspaceRail';
+import { ChannelList } from '@/features/chat/ChannelList';
 import { useQueryInvalidation } from '@/lib/query';
 
 export function AppShell() {
@@ -31,11 +32,15 @@ export function AppShell() {
   }, [stranded, navigate]);
 
   return (
-    <div className="flex min-h-svh bg-background text-foreground">
+    <div className="flex h-svh bg-background text-foreground">
       <WorkspaceRail />
+      {/* Only inside a workspace: the channel list reads the workspace replica,
+          and /account is account-tier where no replica is open (STORAGE.md §5).
+          Rendering it there would be a read against a database that is not. */}
+      {state.workspaceId && <ChannelList />}
       {/* DevStrip is NOT here. It is fixed-position at the root, so it stays
           reachable from /signin and /onboarding too — see its own comment. */}
-      <main className="min-w-0 flex-1 space-y-6 p-10"><Outlet /></main>
+      <main className="min-w-0 flex-1 overflow-y-auto p-10"><Outlet /></main>
     </div>
   );
 }

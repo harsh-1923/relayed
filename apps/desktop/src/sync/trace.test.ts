@@ -568,3 +568,60 @@ test('a good event after a bad one still applies', async () => {
   assert.equal(frontierOf(h.db, { kind: 'chat', id: CHAT }), 1, 'the good one landed');
   h.stop();
 });
+
+// ─── a workspace switch must not leak across replicas ───────────────────────
+
+test('AN EVENT FOR THE OLD WORKSPACE IS NOT WRITTEN INTO THE NEW REPLICA', async () => {
+  // What a switch that forgot to close the socket does, and it is worse than
+  // the empty directory that exposed it. The link resolves its database through
+  // `storage.workspace`, so a connection still authenticated for the previous
+  // workspace goes on delivering THAT workspace's events into the replica of
+  // the one you just opened — rows from a tenant you are no longer looking at,
+  // with the frontier advancing as though they belonged.
+  //
+  // Modelled the way the engine does it: the same link, a `db()` that starts
+  // returning a different database, and `stop()` in between.
+  const before = replica();
+  const after = replica();
+  let current = before;
+
+  const socket = new FakeSocket();
+  collect();
+  const link = createLink({
+    url: 'ws://127.0.0.1:1/sync',
+    gate: installNetworkGate({ fetch: globalThis.fetch }),
+    db: () => current,
+    workspaceId: () => 'wsp_before',
+    token: async () => 'tok',
+    invalidate: () => {},
+    onWelcome: () => {},
+    open: () => socket,
+  });
+  link.start();
+  socket.accept();
+  await new Promise(resolve => setImmediate(resolve));
+  socket.deliver('welcome', WELCOME as unknown as Record<string, unknown>);
+
+  // The switch: socket down FIRST, then the replica moves underneath.
+  link.stop();
+  current = after;
+
+  // A frame from the old connection, arriving late. It must reach nothing.
+  socket.deliver('ev', {
+    stream: { kind: 'chat', id: CHAT }, rev: 1,
+    type: 'message.created',
+    payload: {
+      id: 'msg_leak', ord: 1, parent_id: null, author_id: 'act_1',
+      body: 'belongs to the previous workspace',
+      created_at: '2026-09-11T10:00:00.000Z',
+    },
+  });
+
+  const leaked = (after.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n;
+  assert.equal(leaked, 0, 'the new replica is untouched');
+  assert.equal(frontierOf(after, { kind: 'chat', id: CHAT }), 0,
+    'and its frontier did not move for somebody else’s revision');
+
+  before.close();
+  after.close();
+});
