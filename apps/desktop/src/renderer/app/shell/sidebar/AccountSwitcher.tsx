@@ -13,7 +13,7 @@
 // fires partway through it (routes/Account.tsx). A second copy of that
 // reasoning in a dropdown is a second place for it to drift.
 import { Link, useParams } from 'react-router';
-import { ChevronsUpDown, IdCard, LogOut, Users } from 'lucide-react';
+import { ChevronsUpDown, IdCard, LogOut, Settings, Users } from 'lucide-react';
 import { useSession } from '../../state';
 import { blobSrc, initials } from '@/lib/ipc';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -75,6 +75,10 @@ export function AccountSwitcher() {
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 {others.length > 0 ? `Account · ${others.length} more on this device` : 'Account'}
               </DropdownMenuLabel>
+              <DropdownMenuItem render={<Link to="/settings/general" />}>
+                <Settings className="size-4 text-muted-foreground" />
+                Settings
+              </DropdownMenuItem>
               <DropdownMenuItem render={<Link to="/account" />}>
                 <LogOut className="size-4 text-muted-foreground" />
                 Account and sign out

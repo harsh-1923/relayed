@@ -44,8 +44,8 @@ export function TopBar() {
 
   return (
     <header
-      className="drag-region relative z-60 flex h-10 shrink-0 items-center border-b border-border/60
-                 bg-sidebar pr-2 text-sidebar-foreground"
+      className="drag-region relative z-60 flex h-10 shrink-0 items-center
+                 bg-window-glass pr-2 text-sidebar-foreground"
     >
       <div
         className={cn(

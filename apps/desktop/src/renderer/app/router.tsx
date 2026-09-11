@@ -23,6 +23,11 @@ import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
 import { Account } from '@/routes/Account';
+import { AccountSettings } from '@/routes/AccountSettings';
+import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
+import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
+import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
+import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
 import { NotFound } from '@/routes/NotFound';
 
 export function Router() {
@@ -48,6 +53,13 @@ export function Router() {
           scroll container (see shell/Page.tsx). */}
       <Route element={<AppShell />}>
         <Route path="/account" element={<Page><Account /></Page>} />
+        <Route path="/settings" element={<Page><AccountSettings /></Page>}>
+          <Route index element={<Navigate to="general" replace />} />
+          <Route path="general" element={<AccountSettingsGeneral />} />
+          <Route path="appearance" element={<AccountSettingsAppearance />} />
+          <Route path="notifications" element={<AccountSettingsNotifications />} />
+          <Route path="advanced" element={<AccountSettingsAdvanced />} />
+        </Route>
 
         {/* The gate turns a URL into a switch, and is the ONLY caller of
             workspace.switch (invariant 56). */}

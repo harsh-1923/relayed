@@ -128,10 +128,18 @@ function startSyncEngine(): Electron.UtilityProcess {
 }
 
 function createWindow(): BrowserWindow {
+  // The native material is the full-window canvas. Renderer surfaces decide
+  // where it remains visible; `transparent: true` is deliberately avoided
+  // because Electron transparent windows lose normal resizing behavior.
+  const windowBackground = process.platform === 'darwin'
+    ? '#00000000'
+    : nativeTheme.shouldUseDarkColors
+      ? '#0a0a0a'
+      : '#ffffff';
+
   const win = new BrowserWindow({
     width: 1000, height: 700, show: false,
-    // Paints before the renderer loads, so launch does not flash white.
-    backgroundColor: '#0a0a0a',
+    backgroundColor: windowBackground,
     // THE TOP BAR IS THE TITLE BAR. `hiddenInset` removes the bar and keeps the
     // traffic lights, so the strip they sit in is ours to paint — and ours to
     // mark draggable, which the renderer does with `-webkit-app-region`.
@@ -145,7 +153,11 @@ function createWindow(): BrowserWindow {
     // renders below it rather than replacing it: correct, just not yet the
     // whole idea.
     ...(process.platform === 'darwin'
-      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 13, y: 14 } }
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 13, y: 14 },
+          vibrancy: 'menu' as const,
+        }
       : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -231,10 +243,8 @@ const protocolOk = registerProtocol();
 // `.then` with no `.catch` is an unhandled rejection if anything in the body
 // throws, and the body is the whole of startup.
 app.whenReady().then(() => {
-  // Match the renderer default so native chrome — the window frame, menus and
-  // any OS-drawn control — is dark too, rather than a light frame around a
-  // dark app.
-  nativeTheme.themeSource = 'dark';
+  // Native material and renderer tokens follow one source of truth.
+  nativeTheme.themeSource = 'system';
 
   // Dev only, macOS only: unpackaged Electron shows its own icon in the Dock,
   // because the real one is baked into the .app bundle at package time. This

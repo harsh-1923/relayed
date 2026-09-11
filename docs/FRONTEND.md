@@ -283,15 +283,19 @@ loop.
 /onboarding/create               → pre-workspace; today's needs_workspace form
 /onboarding/join/:wsId?          → pending invitations; today's PendingJoins
 /account                         → sign out, devices, workspaces
+/settings/general                → app-wide behavior
+/settings/appearance             → system theme and window material
+/settings/notifications          → app-wide notification preferences
+/settings/advanced               → local data and diagnostics preferences
 ```
 
 Three things the shape encodes:
 
-- **The path mirrors the storage tiers.** `/account` and `/onboarding` sit
-  outside `/w/` because they are account-tier; everything under `/w/:wsId` is
-  workspace-tier and unresolvable without that replica open (`STORAGE.md` §5).
-  A route that cannot be answered from the tier its path names is a bug the
-  layout makes visible.
+- **The path mirrors the storage tiers.** `/account`, `/settings` and
+  `/onboarding` sit outside `/w/` because they are account- or device-tier;
+  everything under `/w/:wsId` is workspace-tier and unresolvable without that
+  replica open (`STORAGE.md` §5). A route that cannot be answered from the tier
+  its path names is a bug the layout makes visible.
 - **One route for one table.** `/s/:spaceId` covers all four kinds, because
   `spaces` is one table discriminated by `kind`. An earlier draft split it into
   `/c/:chatId` and `/r/:spaceId`, which reintroduced at the URL exactly the
@@ -302,6 +306,12 @@ Three things the shape encodes:
   membership the leading conjunct. For a channel, DM or group DM the `sole`
   chat id is an implementation detail the user never sees; putting it in a
   shared link leaked structure for nothing.
+
+Account settings keep the same `AppShell` and replace only the sidebar's
+contents. The resizable panel, mobile Sheet, title-bar toggle and account footer
+therefore remain stable while `/settings/*` swaps the workspace directory for
+settings navigation. The selected settings item is URL-derived, and each item
+is a nested route, so Back and Forward traverse settings pages normally.
 
 `/w/:wsId` bare resolves to that workspace's remembered location, held in
 `account.db` beside `outbox_hint` and `mention_hint`. So the rail still returns
@@ -543,6 +553,7 @@ renderer/
         use-back-forward.test.ts
       sidebar/
         AppSidebar.tsx  header / directory / footer
+        SettingsSidebar.tsx account settings navigation in the same panel
         WorkspaceSwitcher.tsx
         AccountSwitcher.tsx
         use-sidebar-presence.ts
@@ -1225,18 +1236,31 @@ the constructs used above are stable across 3 and 4.
 
 ---
 
-## 9. Theming, deferred explicitly
+## 9. System theme and window materials
 
-Dark-only, as today: `index.html` sets `class="dark"`, and `index.css` sets
-`color-scheme` so the engine paints chrome to match.
+Light and dark follow the operating-system preference. The renderer mirrors
+`prefers-color-scheme` onto the root `dark` class before React paints, while
+Electron's `nativeTheme` follows the same system source. Components still do
+not hardcode colours: every colour comes from a semantic token, so both themes
+remain one token system rather than two component audits.
 
-Recorded as a deferral rather than left implicit, because half-building light
-mode is how token systems end up written twice. Until the trigger fires, **no
-component may hardcode a colour** — every colour comes from a shadcn token, so
-that adding light mode later is a token file rather than an audit.
+The window is a layered material rather than one background colour:
 
-**Trigger:** the first person outside the team uses it, or a screenshot has to
-go in a document with a light background.
+- `window-canvas` is transparent. On macOS it reveals Electron's native
+  full-window vibrancy; on platforms without that material, the BrowserWindow
+  supplies a light or dark solid fallback.
+- `window-glass` is a translucent tint for chrome that should retain the native
+  material. The desktop sidebar and title bar use it.
+- `window-solid` is the ordinary content surface. Route content keeps using the
+  equivalent `background` token today, while the named material is available
+  to flows that need to compose full-window scenes explicitly.
+
+The native material is configured once at window creation. Routes reveal or
+cover it with these renderer surfaces; they do not recreate the window or send
+per-route IPC. That makes a future onboarding scene able to expose the whole
+canvas and place glass or solid islands on it without coupling a visual state
+to the main process. When the operating system requests reduced transparency,
+both the canvas and glass tokens become solid.
 
 ---
 
@@ -1407,6 +1431,11 @@ are referenced from four documents.
    width crosses from the resizable panel to the root-level title bar as a CSS
    custom property, not React state, because pointer movement must not rerender
    the application tree on every pixel.
+
+   The desktop title bar and inline sidebar use the shared translucent window
+   material, while the route inset remains a solid content surface. The mobile
+   Sheet remains solid: it overlays live content, where translucency would
+   reduce legibility rather than reveal the desktop window canvas.
 
 2. ✅ **Transition table, and `awaiting_browser` as a status** (§7.2). **Done.**
    No dependency. Six statuses, twenty-two declared edges asserted at `#set()`,

@@ -33,8 +33,8 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
     <Sidebar
       collapsible={inline ? 'none' : 'offcanvas'}
       className={cn(
-        'border-border/60',
-        inline && 'h-full w-full border-r',
+        // 'border-border/60',
+        inline && 'h-full w-full border-r bg-window-glass',
         inline && !open && 'invisible',
       )}
     >
@@ -46,7 +46,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
         <SpaceDirectory />
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-border/60">
+      <SidebarFooter className="border-t border-border/40">
         <AccountSwitcher />
       </SidebarFooter>
     </Sidebar>

@@ -9,9 +9,10 @@
 // outside this shell (see ./TopBar.tsx).
 import { useEffect, useRef } from 'react';
 import { usePanelRef, type PanelSize } from 'react-resizable-panels';
-import { Outlet, useNavigate } from 'react-router';
+import { Outlet, useLocation, useNavigate } from 'react-router';
 import { useSession } from '../state';
 import { AppSidebar } from './sidebar/AppSidebar';
+import { SettingsSidebar } from './sidebar/SettingsSidebar';
 import {
   ResizableHandle, ResizablePanel, ResizablePanelGroup,
 } from '@/components/ui/resizable';
@@ -27,8 +28,12 @@ export function AppShell() {
   const { state } = useSession();
   const { isMobile, open, setOpen, toggleSidebar } = useSidebar();
   const navigate = useNavigate();
+  const location = useLocation();
   const sidebarPanelRef = usePanelRef();
   const sidebarPointerDownX = useRef<number | null>(null);
+  const isAccountSettings = location.pathname === '/settings'
+    || location.pathname.startsWith('/settings/');
+  const hasSidebar = isAccountSettings || state.workspaceId !== null;
 
   // Connects the live-query registry to the engine's invalidations, once for
   // the whole tree. Here rather than at module load so the subscription has a
@@ -54,14 +59,14 @@ export function AppShell() {
   // owns the title-bar button, keyboard shortcut, and mobile sheet, so these two
   // small bridges keep those controls aligned with drag-to-collapse.
   useEffect(() => {
-    if (isMobile || !state.workspaceId) return;
+    if (isMobile || !hasSidebar) return;
 
     const sidebarPanel = sidebarPanelRef.current;
     if (!sidebarPanel) return;
 
     if (open) sidebarPanel.expand();
     else sidebarPanel.collapse();
-  }, [isMobile, open, sidebarPanelRef, state.workspaceId]);
+  }, [hasSidebar, isMobile, open, sidebarPanelRef]);
 
   function handleSidebarResize(panelSize: PanelSize) {
     document.documentElement.style.setProperty(
@@ -93,10 +98,10 @@ export function AppShell() {
 
   // Mobile keeps shadcn's Sheet: it overlays the route instead of taking width
   // from it, and AppSidebar offsets the sheet below the window title bar.
-  if (isMobile || !state.workspaceId) {
+  if (isMobile || !hasSidebar) {
     return (
       <>
-        {state.workspaceId && <AppSidebar />}
+        {hasSidebar && (isAccountSettings ? <SettingsSidebar /> : <AppSidebar />)}
         {route}
       </>
     );
@@ -120,7 +125,7 @@ export function AppShell() {
         onResize={handleSidebarResize}
         className="min-w-0 overflow-hidden"
       >
-        <AppSidebar inline />
+        {isAccountSettings ? <SettingsSidebar inline /> : <AppSidebar inline />}
       </ResizablePanel>
 
       <ResizableHandle
@@ -133,7 +138,7 @@ export function AppShell() {
         onPointerCancel={() => {
           sidebarPointerDownX.current = null;
         }}
-        className="z-20 bg-sidebar-border/60 after:w-3 hover:after:bg-sidebar-border/40
+        className="z-20  after:w-3
                    focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       />
 

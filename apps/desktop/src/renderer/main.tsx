@@ -8,6 +8,21 @@ import { Telemetry } from '@/app/Telemetry';
 import { TopBar } from '@/app/shell/TopBar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 
+const systemDarkTheme = window.matchMedia('(prefers-color-scheme: dark)');
+
+function syncSystemTheme(theme: MediaQueryList | MediaQueryListEvent): void {
+  document.documentElement.classList.toggle('dark', theme.matches);
+}
+
+syncSystemTheme(systemDarkTheme);
+systemDarkTheme.addEventListener('change', syncSystemTheme);
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    systemDarkTheme.removeEventListener('change', syncSystemTheme);
+  });
+}
+
 // Hash history, not browser history (FRONTEND.md §4.4). The production renderer
 // loads from file://, where pushState paths break on reload; the hash survives
 // it, and survives it identically under the dev server. One code path in both,
