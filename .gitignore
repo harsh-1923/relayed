@@ -23,3 +23,6 @@ coverage/
 
 # generated from docs/DESIGN.md by extract-schema.mjs
 schema.sql
+
+# local editable sync-flow canvases (generated with tldraw offline)
+/docs/sync-whiteboards/

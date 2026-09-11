@@ -42,7 +42,7 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "targets": [
@@ -79,9 +79,9 @@
       },
       "description": "A refusal is one nack on one socket and one red message for one person. `nack_code` says which rule refused it; the parent trace says who was sending and into which chat.",
       "gridPos": {
-        "x": 12,
+        "x": 8,
         "y": 1,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "targets": [
@@ -92,6 +92,45 @@
           },
           "queryType": "traceql",
           "query": "{ name = \"sync.op\" && status = error }",
+          "limit": 20,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 997,
+      "title": "Reconnect \u2014 hello \u2192 welcome",
+      "type": "table",
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "The client span that opens when a socket attempt begins and closes when `welcome` lands, with `hello` and `welcome` as marks inside it. Click through for the server half: `sync.hello` carries the actor, the workspace, the negotiated protocol and how big the welcome frame was. A slow reconnect is visible here as one span rather than as an absence.",
+      "gridPos": {
+        "x": 16,
+        "y": 1,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "queryType": "traceql",
+          "query": "{ name = \"sync.connect\" } | by(trace:id) | select(span.attempt)",
           "limit": 20,
           "refId": "A"
         }
