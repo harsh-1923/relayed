@@ -132,6 +132,21 @@ function createWindow(): BrowserWindow {
     width: 1000, height: 700, show: false,
     // Paints before the renderer loads, so launch does not flash white.
     backgroundColor: '#0a0a0a',
+    // THE TOP BAR IS THE TITLE BAR. `hiddenInset` removes the bar and keeps the
+    // traffic lights, so the strip they sit in is ours to paint — and ours to
+    // mark draggable, which the renderer does with `-webkit-app-region`.
+    //
+    // `trafficLightPosition` is not cosmetic here: the default places the lights
+    // for a standard-height title bar, which leaves them riding high in a 40px
+    // one. These co-ordinates and that height are a pair — changing the bar's
+    // height without changing this is how they end up half out of it.
+    //
+    // macOS only for now. Windows and Linux keep their own frame, so the bar
+    // renders below it rather than replacing it: correct, just not yet the
+    // whole idea.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 13, y: 14 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,   // non-negotiable (§13.2)

@@ -171,3 +171,21 @@
     color-scheme: dark;
   }
 }
+/* ─── The top bar is the title bar ────────────────────────────────────────
+   `-webkit-app-region` is what makes a region of the page behave like a
+   window's title bar: drag moves the window, a double-click zooms it. It has
+   no Tailwind utility and it is needed in exactly two flavours, so they are
+   declared once here rather than spelled as an arbitrary property at every
+   call site.
+
+   THE PAIR IS THE POINT. A drag region swallows clicks — every control inside
+   one is inert until it opts back out, which is how a button in a title bar
+   ends up doing nothing at all while looking perfectly normal.
+   ---------------------------------------------------------------------- */
+@utility drag-region {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}

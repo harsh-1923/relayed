@@ -9,7 +9,7 @@ import { buttonVariants } from '@/components/ui/button';
 export function NotFound() {
   const { pathname } = useLocation();
   return (
-    <main className="grid min-h-svh place-items-center bg-background p-10 text-foreground">
+    <main className="grid min-h-0 flex-1 place-items-center overflow-y-auto bg-background p-10 text-foreground">
       <div className="max-w-md space-y-3 text-center">
         <h1 className="text-lg font-semibold">Nothing here</h1>
         <p className="text-sm text-muted-foreground">

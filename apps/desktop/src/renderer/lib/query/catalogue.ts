@@ -14,7 +14,7 @@ import { topic } from '../../../shared/topics.ts';
 /** Every read the live-query client owns: its arguments and its row type. */
 export interface Queries {
   'actors.list': { args: undefined; rows: ReplicaActor[] };
-  'chats.list': { args: undefined; rows: ReplicaSpace[] };
+  'spaces.list': { args: undefined; rows: ReplicaSpace[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
 }
 
@@ -28,7 +28,7 @@ export const TOPICS: TopicsFor = {
   // a space topic is per-space and this read spans all of them, so it depends
   // on the coarse one. A chat arriving in a space I am in wakes it through
   // `spaces`, which is what `chat.created` invalidates alongside.
-  'chats.list': () => [topic.spaces()],
+  'spaces.list': () => [topic.spaces()],
   // Only this chat's messages. `chatState` is NOT here: a read cursor moving
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.

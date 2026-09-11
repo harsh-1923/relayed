@@ -334,6 +334,7 @@ function view() {
     devTools,
     offline: net.offline,
     canGoOffline: net.canGoOffline,
+    platform: process.platform,
   };
 }
 
@@ -408,7 +409,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   'actors.list': () => (storage.hasWorkspace ? storage.actors() : []),
 
   /** The sidebar: spaces this actor is in, each with its chats. */
-  'chats.list': () => (storage.hasWorkspace ? storage.spaces() : []),
+  'spaces.list': () => (storage.hasWorkspace ? storage.spaces() : []),
 
   /** One chat's tail. Everything below it is backfill's job, on demand. */
   'messages.list': (params) => {

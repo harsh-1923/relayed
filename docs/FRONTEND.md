@@ -527,21 +527,133 @@ Feature-first below the shell, type-first only where a library owns the folder.
 
 ```
 renderer/
-  app/          shell: router, providers, layout frames, error boundaries
-  routes/       one file per route in §4.6; thin — composition, not logic
+  main.tsx          the root: HashRouter, the state provider, the top bar, the router
+  app/              application-wide and ROUTE-INDEPENDENT
+    state.tsx         AppState enters here; useSession, useActiveWorkspace
+    router.tsx        the route table (§4.6)
+    Telemetry.tsx     renders nothing; route and first paint
+    RootRedirect.tsx  where you belong, decided from state
+    WorkspaceGate.tsx the only legal caller of workspace.switch (invariant 56)
+    shell/            the chrome every signed-in surface sits in
+      AppShell.tsx      the layout route
+      Page.tsx          padding and the scroll container, opted into per route
+      TopBar.tsx        the window's title bar
+      use-back-forward/ whether Back and Forward lead anywhere (§6.1b)
+        use-back-forward.ts
+        use-back-forward.test.ts
+      sidebar/
+        AppSidebar.tsx  header / directory / footer
+        WorkspaceSwitcher.tsx
+        AccountSwitcher.tsx
+        use-sidebar-presence.ts
+  routes/           one file per route in §4.6; thin — composition, not logic
   features/
-    chat/       message list, composer, thread pane
-    directory/  people, profiles
-    settings/   members, invitations, profile
-    identity/   sign-in, onboarding, account
-  components/ui shadcn. Untouched, unwrapped, not themed indirectly.
-  lib/          the live-query client, blob helpers, formatting
-  hooks/        cross-feature hooks only
+    chat/           the space directory, the message list, the composer
+    identity/       sign-in, onboarding, account
+    settings/       members, invitations, profile
+    dev/            development-only controls
+  components/
+    ui/             shadcn. Untouched, unwrapped, not themed indirectly.
+    <shared>/       ours, used by more than one feature
+  lib/
+    ipc.ts          the narrow bridge to the preload surface
+    query/          the live-query client, its registry and its catalogue
+    hooks/          hooks that belong to no particular thing
+    utils.ts        formatting and class helpers
 ```
 
-`main.tsx`'s five components move out as they are: `Switcher` → `app/`,
-`Identity` / `WorkspaceForm` / `PendingJoins` → `features/identity/`,
-`Invitations` → `features/settings/`.
+`app/` gained `shell/` because it is the part that grows. The sidebar's two
+switchers exist only because `AppSidebar` composes them, and loose beside
+`router.tsx` they read as peers of the route table. A search field in the top bar
+goes in `shell/`; a space-creation menu goes in `shell/sidebar/`.
+
+### 6.1a Naming
+
+**PascalCase names a component you place in a tree. kebab-case names a module
+you import from.**
+
+`Telemetry.tsx` is PascalCase because `main.tsx` writes `<Telemetry />`.
+`state.tsx` is not, even though it exports `AppStateProvider`: nobody places it
+— it is mounted once and its twenty importers all want `useSession`. `router.tsx`
+is the same shape. What the file IS decides the case, not what it happens to
+export.
+
+**A module whose subject is a hook is named `use-<subject>.ts`**, matching the
+shadcn convention already in the tree (`use-mobile.ts` exporting `useIsMobile`).
+The file names the subject, not one export — `use-sidebar-presence.ts` holds both
+`useAnnounceSidebar` and `useSidebarPresent`, which are two halves of one fact.
+
+### 6.1b One unit, one file — until it needs a second
+
+**A unit is a single file until it has more than one file. Then it becomes a
+directory named after the unit, and every file inside carries the unit's name.**
+
+```
+use-back-forward/
+  use-back-forward.ts
+  use-back-forward.test.ts
+
+Composer/                 (when it gets there)
+  Composer.tsx
+  Composer.types.ts
+  Composer.test.tsx
+```
+
+Components, hooks and utilities alike — one rule, not three.
+
+**No `index.ts` barrels.** So the import stutters:
+`./use-back-forward/use-back-forward`. That is the price, and it is the cheaper
+one: a barrel costs tree-shaking under Vite, and naming the inner file `index`
+costs an editor full of tabs that all say `index`.
+
+**Not unconditionally.** Twenty-eight renderer components have neither a test nor
+a types file. A directory each would be twenty-eight folders holding one file,
+with every path repeating its own name. The directory is what a unit EARNS by
+outgrowing a file, and nothing is gained by granting it in advance.
+
+**`.types.ts` is available, not required.** There are none in the repository
+today and the reason is structural rather than neglect: component props here are
+three-to-five line inline object types, read in the same glance as the function
+that takes them, and the types that actually matter — `AppState`,
+`WorkspaceRow`, `ReplicaSpace` — are the sync engine's contract and live in
+`preload/api.d.ts` and `sync/storage.ts`. A renderer `.types.ts` would either
+duplicate one of those or separate a props interface from its only consumer.
+
+**Two things this rule does not reach.**
+
+`components/ui/` is flat and stays flat. shadcn writes those files and
+`add --overwrite` rewrites them; a structure imposed there is undone by the next
+component update (§6.1).
+
+`lib/query/` is already a unit that is a directory — `index.ts`, `registry.ts`,
+`catalogue.ts` and `registry.test.ts` are its PARTS, not units in their own
+right. Applying the rule to a part would give `lib/query/registry/registry.ts`,
+which is the nesting this rule exists to avoid.
+
+**A hook lives with the thing it is about.** That is the rule, and the folders
+follow from it rather than the other way round: `useSession` is in
+`app/state.tsx` because it is the provider's public surface, `useQuery` is in
+`lib/query/` because it is the client's, and `useBackForward` and
+`useSidebarPresent` are in `app/` because they exist only to make the shell's
+top bar and sidebar agree with each other. `lib/hooks/` is not "all the hooks" —
+it is the ones with no subject to sit beside.
+
+Two published conventions are worth knowing here, because both were weighed:
+[Bulletproof React](https://github.com/alan2207/bulletproof-react/blob/master/docs/project-structure.md)
+and [Feature-Sliced Design](https://feature-sliced.design). They disagree about
+folder names and agree about two things — a feature owns everything about
+itself, including its hooks, and imports flow one way, enforced by a tool rather
+than remembered. The second is `tools/check-boundaries.mjs`, which already pins
+`workspace.switch` to `app/WorkspaceGate.tsx` and every engine read to
+`lib/query/`. Folder names are the cheap half of this problem.
+
+**`lib/hooks/`, not `hooks/`, and the alias moves with it.** shadcn's CLI writes
+hooks to whatever `components.json` names — its default is `@/hooks`, which is
+how `use-mobile.ts` came to sit alone at the top level. A folder shared between
+the CLI and us has two owners and two naming conventions, and the next
+`shadcn add` drops files beside ours. `components.json` now says
+`"hooks": "@/lib/hooks"`, so the generated import in `components/ui/sidebar.tsx`
+survives a regeneration instead of being silently reverted.
 
 ### 6.2 The three-state matrix
 

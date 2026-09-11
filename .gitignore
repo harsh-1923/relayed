@@ -26,3 +26,6 @@ schema.sql
 
 # local editable sync-flow canvases (generated with tldraw offline)
 /docs/sync-whiteboards/
+
+# local Graphify output
+/graphify-out/

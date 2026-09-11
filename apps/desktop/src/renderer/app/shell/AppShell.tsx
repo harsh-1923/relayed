@@ -1,13 +1,17 @@
-// The frame every signed-in surface sits in: rail on the left, route in the
-// middle, development strip at the bottom.
+// The frame every signed-in surface sits in: sidebar on the left, route in the
+// inset beside it.
 //
-// A pathless layout route, so it adds no path segment. /account and
-// /w/:wsId both nest under it and both get the rail.
+// A pathless layout route, so it adds no path segment. /account and /w/:wsId
+// both nest under it.
+//
+// The TOP BAR is not here. It is at the root, above the router, because once it
+// is also the window's title bar every screen needs it — including the ones
+// outside this shell (see ./TopBar.tsx).
 import { useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router';
-import { useSession } from './state';
-import { WorkspaceRail } from './WorkspaceRail';
-import { ChannelList } from '@/features/chat/ChannelList';
+import { useSession } from '../state';
+import { AppSidebar } from './sidebar/AppSidebar';
+import { SidebarInset } from '@/components/ui/sidebar';
 import { useQueryInvalidation } from '@/lib/query';
 
 export function AppShell() {
@@ -32,15 +36,18 @@ export function AppShell() {
   }, [stranded, navigate]);
 
   return (
-    <div className="flex h-svh bg-background text-foreground">
-      <WorkspaceRail />
-      {/* Only inside a workspace: the channel list reads the workspace replica,
+    <>
+      {/* Only inside a workspace: the directory reads the workspace replica,
           and /account is account-tier where no replica is open (STORAGE.md §5).
           Rendering it there would be a read against a database that is not. */}
-      {state.workspaceId && <ChannelList />}
-      {/* DevStrip is NOT here. It is fixed-position at the root, so it stays
-          reachable from /signin and /onboarding too — see its own comment. */}
-      <main className="min-w-0 flex-1 overflow-y-auto p-10"><Outlet /></main>
-    </div>
+      {state.workspaceId && <AppSidebar />}
+      {/* `min-h-0` so a route that fills its height — the chat scroller — is
+          bounded by the window rather than growing past it. Without it a flex
+          child's `min-height: auto` lets the message list push the composer
+          off the bottom of the screen. */}
+      <SidebarInset className="min-h-0">
+        <Outlet />
+      </SidebarInset>
+    </>
   );
 }

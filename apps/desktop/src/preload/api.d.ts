@@ -154,6 +154,16 @@ export interface AppState {
   offline: boolean;
   /** This build can simulate offline. False in production, where the code is absent. */
   canGoOffline: boolean;
+  /**
+   * The host platform, as `process.platform` reports it.
+   *
+   * The renderer needs it for chrome that genuinely differs by OS — the macOS
+   * traffic lights sit inside our top bar and the left of that bar has to be
+   * left empty for them. Read from the process rather than sniffed from the
+   * user agent, because a string parsed out of a UA is a guess about a fact we
+   * already hold.
+   */
+  platform: string;
 }
 
 export interface FileNode {
@@ -191,7 +201,7 @@ export interface RelayedApi {
   query(op: "auth.reopenBrowser"): Promise<{ reopened: boolean }>;
   query(op: "dev.setOffline", params: { offline: boolean }): Promise<AppState>;
   query(op: "actors.list"): Promise<ReplicaActor[]>;
-  query(op: "chats.list"): Promise<ReplicaSpace[]>;
+  query(op: "spaces.list"): Promise<ReplicaSpace[]>;
   query(
     op: "messages.list",
     params: { chatId: string },

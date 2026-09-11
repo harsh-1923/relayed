@@ -48,7 +48,7 @@ export function SignIn() {
   }, []);
 
   return (
-    <main className="grid min-h-svh place-items-center bg-background p-10 text-foreground">
+    <main className="grid min-h-0 flex-1 place-items-center overflow-y-auto bg-background p-10 text-foreground">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Relayed</CardTitle>

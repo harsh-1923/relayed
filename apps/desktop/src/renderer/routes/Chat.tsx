@@ -43,9 +43,12 @@ export function Chat() {
   const { rows: messages, status } = useQuery('messages.list', { chatId: chatId ?? '' });
 
   return (
-    // Sized here rather than by stretching the shell, so every other route
-    // keeps the padding it was written against.
-    <div className="-m-10 flex h-svh min-h-0 flex-col">
+    // Fills the pane. The shell pads nothing — a route opts into padding by
+    // being wrapped in `Page` in the route table, and this one deliberately is
+    // not (app/shell/Page.tsx). The first version cancelled the shell's padding with
+    // `-m-10` and pinned itself to `h-svh`, which is a layout arguing with
+    // itself and was wrong by the height of the top bar the moment one existed.
+    <div className="flex min-h-0 flex-1 flex-col">
       <MessageScrollerProvider autoScroll>
         <MessageScroller>
           <MessageScrollerViewport>

@@ -10,34 +10,36 @@ export function Onboarding() {
   const returning = state.workspaces.some(w => w.state === 'active');
 
   return (
-    <main className="mx-auto min-h-svh max-w-xl space-y-6 bg-background p-10 text-foreground">
-      <div>
-        <h1 className="text-lg font-semibold">Relayed</h1>
-        <p className="text-sm text-muted-foreground">
-          {returning ? 'Add another workspace' : 'One more step'}
-        </p>
+    <main className="min-h-0 flex-1 overflow-y-auto bg-background p-10 text-foreground">
+      <div className="mx-auto max-w-xl space-y-6">
+        <div>
+          <h1 className="text-lg font-semibold">Relayed</h1>
+          <p className="text-sm text-muted-foreground">
+            {returning ? 'Add another workspace' : 'One more step'}
+          </p>
+        </div>
+
+        {joins.length > 0 && (
+          <nav className="flex gap-1 border-b text-sm">
+            {([['create', 'Create one'], ['join', `Join (${joins.length})`]] as const).map(([to, label]) => (
+              <NavLink key={to} to={to} className={({ isActive }) =>
+                `-mb-px border-b-2 px-3 py-2 ${isActive
+                  ? 'border-primary font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        )}
+
+        <Outlet />
+
+        {returning && (
+          <NavLink to="/" className="text-sm text-muted-foreground hover:text-foreground">
+            ← Back
+          </NavLink>
+        )}
       </div>
-
-      {joins.length > 0 && (
-        <nav className="flex gap-1 border-b text-sm">
-          {([['create', 'Create one'], ['join', `Join (${joins.length})`]] as const).map(([to, label]) => (
-            <NavLink key={to} to={to} className={({ isActive }) =>
-              `-mb-px border-b-2 px-3 py-2 ${isActive
-                ? 'border-primary font-medium text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-      )}
-
-      <Outlet />
-
-      {returning && (
-        <NavLink to="/" className="text-sm text-muted-foreground hover:text-foreground">
-          ← Back
-        </NavLink>
-      )}
     </main>
   );
 }
