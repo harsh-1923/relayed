@@ -1392,6 +1392,13 @@ are referenced from four documents.
    R3 holds through the router — and the redirect chain executing end to end,
    `/` → `/w/:wsId` → shell → rail.
 
+   The workspace sidebar is a pixel-constrained resizable panel on desktop:
+   256px initially, 224px minimum and 480px maximum. Dragging below the minimum
+   collapses it to zero; the separator, title-bar control and keyboard shortcut
+   all drive the same shadcn sidebar state. Below the desktop breakpoint the
+   existing shadcn Sheet remains the sidebar and slides over the route, offset
+   below the 40px window title bar.
+
 2. ✅ **Transition table, and `awaiting_browser` as a status** (§7.2). **Done.**
    No dependency. Six statuses, twenty-two declared edges asserted at `#set()`,
    and `AppState.awaitingBrowser` removed from the IPC contract. Two edges the

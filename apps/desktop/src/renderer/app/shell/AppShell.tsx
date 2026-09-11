@@ -7,16 +7,28 @@
 // The TOP BAR is not here. It is at the root, above the router, because once it
 // is also the window's title bar every screen needs it — including the ones
 // outside this shell (see ./TopBar.tsx).
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { usePanelRef, type PanelSize } from 'react-resizable-panels';
 import { Outlet, useNavigate } from 'react-router';
 import { useSession } from '../state';
 import { AppSidebar } from './sidebar/AppSidebar';
-import { SidebarInset } from '@/components/ui/sidebar';
+import {
+  ResizableHandle, ResizablePanel, ResizablePanelGroup,
+} from '@/components/ui/resizable';
+import { SidebarInset, useSidebar } from '@/components/ui/sidebar';
 import { useQueryInvalidation } from '@/lib/query';
+
+const SIDEBAR_DEFAULT_WIDTH = 256;
+const SIDEBAR_MIN_WIDTH = 224;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_CLICK_SLOP_PX = 4;
 
 export function AppShell() {
   const { state } = useSession();
+  const { isMobile, open, setOpen, toggleSidebar } = useSidebar();
   const navigate = useNavigate();
+  const sidebarPanelRef = usePanelRef();
+  const sidebarPointerDownX = useRef<number | null>(null);
 
   // Connects the live-query registry to the engine's invalidations, once for
   // the whole tree. Here rather than at module load so the subscription has a
@@ -38,19 +50,93 @@ export function AppShell() {
     if (stranded) void navigate('/', { replace: true });
   }, [stranded, navigate]);
 
+  // The panel owns desktop width and collapse mechanics. The provider still
+  // owns the title-bar button, keyboard shortcut, and mobile sheet, so these two
+  // small bridges keep those controls aligned with drag-to-collapse.
+  useEffect(() => {
+    if (isMobile || !state.workspaceId) return;
+
+    const sidebarPanel = sidebarPanelRef.current;
+    if (!sidebarPanel) return;
+
+    if (open) sidebarPanel.expand();
+    else sidebarPanel.collapse();
+  }, [isMobile, open, sidebarPanelRef, state.workspaceId]);
+
+  function handleSidebarResize(panelSize: PanelSize) {
+    const resizedOpen = panelSize.inPixels > 0;
+    if (resizedOpen !== open) setOpen(resizedOpen);
+  }
+
+  // Pointer Events do not guarantee that a drag suppresses the following
+  // click. A drag leaves the panel where it was dropped; a click toggles it.
+  function handleSidebarClick(event: React.MouseEvent) {
+    const pointerDownX = sidebarPointerDownX.current;
+    sidebarPointerDownX.current = null;
+
+    if (pointerDownX === null
+        || Math.abs(event.clientX - pointerDownX) <= SIDEBAR_CLICK_SLOP_PX) {
+      toggleSidebar();
+    }
+  }
+
+  const route = (
+    <SidebarInset className="h-full min-h-0 min-w-0">
+      <Outlet />
+    </SidebarInset>
+  );
+
+  // Mobile keeps shadcn's Sheet: it overlays the route instead of taking width
+  // from it, and AppSidebar offsets the sheet below the window title bar.
+  if (isMobile || !state.workspaceId) {
+    return (
+      <>
+        {state.workspaceId && <AppSidebar />}
+        {route}
+      </>
+    );
+  }
+
   return (
-    <>
-      {/* Only inside a workspace: the directory reads the workspace replica,
-          and /account is account-tier where no replica is open (STORAGE.md §5).
-          Rendering it there would be a read against a database that is not. */}
-      {state.workspaceId && <AppSidebar />}
-      {/* `min-h-0` so a route that fills its height — the chat scroller — is
-          bounded by the window rather than growing past it. Without it a flex
-          child's `min-height: auto` lets the message list push the composer
-          off the bottom of the screen. */}
-      <SidebarInset className="min-h-0">
-        <Outlet />
-      </SidebarInset>
-    </>
+    <ResizablePanelGroup
+      id="workspace-shell"
+      orientation="horizontal"
+      className="min-h-0 flex-1"
+    >
+      <ResizablePanel
+        id="workspace-sidebar"
+        panelRef={sidebarPanelRef}
+        defaultSize={SIDEBAR_DEFAULT_WIDTH}
+        minSize={SIDEBAR_MIN_WIDTH}
+        maxSize={SIDEBAR_MAX_WIDTH}
+        collapsedSize={0}
+        collapsible
+        groupResizeBehavior="preserve-pixel-size"
+        onResize={handleSidebarResize}
+        className="min-w-0 overflow-hidden"
+      >
+        <AppSidebar inline />
+      </ResizablePanel>
+
+      <ResizableHandle
+        aria-label="Resize or toggle sidebar"
+        title="Drag to resize, click to toggle"
+        onPointerDown={(event) => {
+          sidebarPointerDownX.current = event.clientX;
+        }}
+        onClick={handleSidebarClick}
+        onPointerCancel={() => {
+          sidebarPointerDownX.current = null;
+        }}
+        className="z-20 bg-sidebar-border/60 after:w-3 hover:after:bg-sidebar-border/40
+                   focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+      />
+
+      {/* `min-h-0` bounds a route-height scroller; `min-w-0` lets narrow
+          windows shrink the route instead of forcing the sidebar past max. */}
+      <ResizablePanel id="workspace-content" className="min-h-0 min-w-0">
+        {route}
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }

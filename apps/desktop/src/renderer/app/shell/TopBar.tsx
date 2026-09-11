@@ -42,7 +42,7 @@ export function TopBar() {
 
   return (
     <header
-      className="drag-region flex h-10 shrink-0 items-center gap-1 border-b border-border/60
+      className="drag-region relative z-60 flex h-10 shrink-0 items-center gap-1 border-b border-border/60
                  bg-sidebar px-2 text-sidebar-foreground"
       style={state.platform === 'darwin' ? { paddingLeft: TRAFFIC_LIGHTS } : undefined}
     >

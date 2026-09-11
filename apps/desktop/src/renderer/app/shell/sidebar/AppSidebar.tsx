@@ -15,21 +15,29 @@ import { useAnnounceSidebar } from './use-sidebar-presence';
 import { AccountSwitcher } from './AccountSwitcher';
 import { SpaceDirectory } from '@/features/chat/SpaceDirectory';
 import {
-  Sidebar, SidebarContent, SidebarFooter, SidebarHeader,
+  Sidebar, SidebarContent, SidebarFooter, SidebarHeader, useSidebar,
 } from '@/components/ui/sidebar';
+import { cn } from '@/lib/utils';
 
-export function AppSidebar() {
+export function AppSidebar({ inline = false }: { inline?: boolean }) {
+  const { open } = useSidebar();
+
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
   useAnnounceSidebar();
 
   return (
-    // THE PANEL IS `fixed inset-y-0 h-svh` inside the component, pinned to the
-    // VIEWPORT rather than to its parent — so without this it slides under the
-    // top bar, which owns the first 40px of the window. `className` lands on
-    // that panel, and tailwind-merge resolves the later `top`/`h` against the
-    // component's own `inset-y-0 h-svh`.
-    <Sidebar className="top-10 h-[calc(100svh-2.5rem)] border-border/60">
+    // Desktop is inline because the resizable panel owns its width. Mobile is
+    // still shadcn's off-canvas Sheet; Sidebar offsets it below the 40px title
+    // bar so the same top-level controls remain visible while it is open.
+    <Sidebar
+      collapsible={inline ? 'none' : 'offcanvas'}
+      className={cn(
+        'border-border/60',
+        inline && 'h-full w-full border-r',
+        inline && !open && 'invisible',
+      )}
+    >
       <SidebarHeader className="border-b border-border/60">
         <WorkspaceSwitcher />
       </SidebarHeader>

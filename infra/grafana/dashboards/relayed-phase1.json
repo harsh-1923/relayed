@@ -255,7 +255,7 @@
       "gridPos": {
         "x": 0,
         "y": 7,
-        "w": 8,
+        "w": 6,
         "h": 6
       },
       "targets": [
@@ -304,9 +304,9 @@
       },
       "description": "Sampled at every session exchange. The distribution multi-workspace was built for \u2014 and unrecoverable later, since the logs behind it are gone in 14 days.",
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 7,
-        "w": 8,
+        "w": 6,
         "h": 6
       },
       "targets": [
@@ -366,9 +366,9 @@
       },
       "description": "The onboarding funnel. needs_workspace is someone who authenticated and has not finished; a rising share means onboarding is losing people.",
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 7,
-        "w": 8,
+        "w": 6,
         "h": 6
       },
       "targets": [
@@ -380,6 +380,57 @@
           "editorMode": "code",
           "expr": "sum by (outcome) (count_over_time({service_name=\"relayed-desktop\"} | metric_name=\"auth.signin\" [$__auto]))",
           "legendFormat": "{{outcome}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 204,
+      "title": "Screens visited, by route",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "ui.route.changed, with each ULID segment collapsed to :id so /w/<id>/c/<chatA> and /w/<id>/c/<chatB> count as the same screen instead of fragmenting into one line per chat.",
+      "gridPos": {
+        "x": 18,
+        "y": 7,
+        "w": 6,
+        "h": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by (screen) (count_over_time({service_name=\"relayed-desktop\"} | event_name=\"ui.route.changed\" | label_format screen=`{{ regexReplaceAll \"/[0-9A-Za-z]{20,}\" .to \"/:id\" }}` [$__auto]))",
+          "legendFormat": "{{screen}}",
           "queryType": "range",
           "refId": "A"
         }
