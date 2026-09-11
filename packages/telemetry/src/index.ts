@@ -29,6 +29,53 @@ export type Service = 'desktop' | 'server' | 'agents';
 /** Loose shape for the transport. Call sites go through the typed helpers. */
 export type MetricLabels = Record<string, string | number | boolean>;
 
+/**
+ * Context every record should carry, split by what it costs.
+ *
+ * THE SPLIT IS THE WHOLE DESIGN, and it is not ours — it is what the OTel
+ * semantic conventions separate resource attributes from record attributes
+ * for. Both halves belong on logs and traces. Only one may go near a metric.
+ */
+export interface Identity {
+  /**
+   * BOUNDED, so it is safe on every signal including metrics.
+   *
+   * Platform, architecture, release channel: a handful of values across the
+   * whole fleet, which is what makes them free to put in a resource. They
+   * answer "is this only happening on Windows" — a question no per-record id
+   * can answer, because you cannot group by something unbounded.
+   *
+   * `version` is the exception that proves it and is deliberately absent:
+   * updates are opt-in, so many versions run at once, and ten live versions
+   * multiplies EVERY metric by ten (OBSERVABILITY.md §5). It rides the
+   * `client.info` gauge instead, which is one series per version rather than
+   * one per version per metric.
+   */
+  os?: string;
+  arch?: string;
+  env?: string;
+  version?: string;
+
+  /**
+   * UNBOUNDED, so it goes on events and spans and NOWHERE ELSE.
+   *
+   * These are the fields that make "why did THIS person's message hang"
+   * answerable, and exactly the ones that would end the series budget if a
+   * metric carried them: 100 actors × 150 chats is 15,000 series for one
+   * metric (§5). Logs and traces are indexed for high cardinality; metrics
+   * are not.
+   *
+   * They are merged by the SINK rather than declared per event, because a
+   * context that each call site has to remember is a context half the call
+   * sites will not have.
+   */
+  install?: string;
+  device?: string;
+  actor?: string;
+  workspace?: string;
+  account?: string;
+}
+
 export interface Sink {
   event<N extends EventName>(name: N, fields: EventFields<N>): void;
   count(metric: string, labels?: MetricLabels, by?: number): void;
@@ -36,6 +83,8 @@ export interface Sink {
   histogram(metric: string, value: number, labels?: MetricLabels): void;
   /** A finished span. Sinks that do not trace may ignore it. */
   recordSpan?(span: FinishedSpan): void;
+  /** Attach context to everything sent from here on. Merged, not replaced. */
+  identify?(who: Identity): void;
 }
 
 /** Development sink. Replaced by the OTLP/pino sink in Phase 2. */
@@ -98,6 +147,11 @@ export function useOtlpIfConfigured(service: 'desktop' | 'server' | 'agents'): O
     gauge: (m, v, l) => { console_.gauge(m, v, l); otlp.gauge(m, v, l); },
     histogram: (m, v, l) => { console_.histogram(m, v, l); otlp.histogram(m, v, l); },
     recordSpan: (sp) => { console_.recordSpan?.(sp); otlp.recordSpan(sp); },
+    // EVERY METHOD, and this one was missed. A tee that forwards four of five
+    // is silently lossy: `identify` returned without error, and every record
+    // went out with no device, no actor and no platform — indistinguishable
+    // from not having called it. Found by looking at Loki, not by a test.
+    identify: (who) => { console_.identify?.(who); otlp.identify(who); },
   };
   onSpanEnd(sp => { sink.recordSpan?.(sp); });
 
@@ -158,6 +212,17 @@ export function gauge<N extends MetricName>(
  * labels — traces are indexed for high cardinality and metrics are not — which
  * is what makes "why did THIS person's message hang" answerable at all (§5).
  */
+/**
+ * Say who this process is.
+ *
+ * Called once an account is open, and again on a switch — the device is a
+ * property of the install and the actor is not, so both change and both matter.
+ * Records emitted BEFORE this carry no identity, which is honest: at boot
+ * nothing has identified itself yet, and inventing a placeholder would make
+ * "unknown" a value you could group by.
+ */
+export const identify = (who: Identity): void => { sink.identify?.(who); };
+
 export const span = <T>(
   n: string, fn: () => Promise<T> | T, opts?: SpanOptions,
 ): Promise<T> => startSpan(n, fn, opts);

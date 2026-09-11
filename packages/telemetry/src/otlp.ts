@@ -9,7 +9,7 @@
 // client telemetry through our own server so it can be scrubbed and validated
 // against the catalogue before leaving the machine (OBSERVABILITY.md §3).
 import type { EventName, EventFields } from './events.ts';
-import type { MetricLabels, Sink } from './index.ts';
+import type { MetricLabels, Sink, Identity } from './index.ts';
 import type { FinishedSpan } from './trace.ts';
 
 const nano = () => String(Date.now() * 1e6);
@@ -60,10 +60,28 @@ export class OtlpSink implements Sink {
   #queue: object[] = [];
   #spans: object[] = [];
   #timer: ReturnType<typeof setInterval> | null = null;
+  readonly #service: string;
+  #bounded: Record<string, unknown> = {};
   readonly #logsEndpoint: string;
   readonly #tracesEndpoint: string;
-  readonly #resource: object;
+  /**
+   * NOT readonly: the bounded half of the identity arrives after construction.
+   *
+   * The sink is built synchronously at module load — deliberately, because an
+   * async setup loses every event emitted before it resolves, and the most
+   * interesting ones happen in the first milliseconds. The device is in
+   * `account.db`, which is not open yet. So the resource starts with what is
+   * knowable and is rebuilt when `identify` is called.
+   */
+  #resource: object;
   readonly #max: number;
+  /**
+   * The unbounded half, merged into every EVENT and SPAN and no metric.
+   *
+   * Held here rather than declared per event, because a context each call site
+   * has to remember is one half the call sites will not have.
+   */
+  #who: Record<string, unknown> = {};
   /** Records the buffer refused since the last flush, by signal. */
   #dropped = { logs: 0, spans: 0 };
 
@@ -75,9 +93,45 @@ export class OtlpSink implements Sink {
     // read, which is what the old `span()` was doing.
     this.#tracesEndpoint = `${base}/v1/traces`;
     this.#max = opts.maxQueue ?? MAX_QUEUE;
-    this.#resource = { attributes: attrs({ 'service.name': `relayed-${opts.service}` }) };
+    this.#service = `relayed-${opts.service}`;
+    this.#resource = { attributes: attrs({ 'service.name': this.#service }) };
     this.#timer = setInterval(() => void this.flush(), opts.flushMs ?? FLUSH_MS);
     this.#timer.unref?.();
+  }
+
+  /**
+   * Attach context, split by what each signal can afford.
+   *
+   * The bounded half joins the RESOURCE, which every signal carries — and which
+   * a Prometheus-shaped backend turns into part of a metric's identifying label
+   * set, so only a handful of values may ever go here. The unbounded half is
+   * merged per record on events and spans, where it arrives as structured
+   * metadata rather than a stream label (verified against Loki, which reports
+   * `service_name` as its only label).
+   *
+   * `version` is bounded in principle and excluded in practice: opt-in updates
+   * mean many live versions, and one on the resource multiplies every metric by
+   * however many are in the field (§5). It goes out once as `client.info`.
+   */
+  identify(who: Identity): void {
+    const { os, arch, env, version, ...rest } = who;
+    const bounded = { 'os.type': os, 'host.arch': arch, 'deployment.environment': env };
+    this.#bounded = {
+      ...this.#bounded,
+      ...Object.fromEntries(Object.entries(bounded).filter(([, v]) => v !== undefined)),
+    };
+    this.#resource = {
+      attributes: attrs({ 'service.name': this.#service, ...this.#bounded }),
+    };
+    this.#who = {
+      ...this.#who,
+      ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)),
+    };
+    // ONE SERIES PER VERSION, rather than one per version per metric. The trap
+    // §5 names by name, kept out of the resource for exactly that reason.
+    if (version !== undefined) {
+      this.#metric('gauge', 'client.info', 1, { version } as unknown as MetricLabels);
+    }
   }
 
   #push(record: object): void {
@@ -92,7 +146,11 @@ export class OtlpSink implements Sink {
     this.#push({
       timeUnixNano: nano(), severityNumber: 9, severityText: 'INFO',
       body: { stringValue: name },
-      attributes: attrs({ 'event.name': name, ...(fields as Record<string, unknown>) }),
+      // Identity FIRST, so a field an event declares itself always wins — an
+      // event that names its own `actor` means that one, not the signed-in one.
+      attributes: attrs({
+        ...this.#who, 'event.name': name, ...(fields as Record<string, unknown>),
+      }),
     });
   }
 
@@ -127,7 +185,9 @@ export class OtlpSink implements Sink {
       kind: 1,
       startTimeUnixNano: String(startNano),
       endTimeUnixNano: String(endNano),
-      attributes: attrs(clean(span.attributes)),
+      // Same merge as events, and for the same reason: a span is where an id
+      // belongs, and one the caller set explicitly outranks the ambient one.
+      attributes: attrs(clean({ ...this.#who, ...span.attributes })),
       events: span.events.map(event => ({
         timeUnixNano: String(BigInt(event.atMs) * 1_000_000n),
         name: event.name,

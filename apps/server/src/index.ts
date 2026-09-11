@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
+import { emit, identify, useOtlpIfConfigured } from '@relayed/telemetry';
 import { env } from './env.ts';
 import { migrate } from './db/migrate.ts';
 import { authRoutes } from './auth/routes.ts';
@@ -11,6 +11,17 @@ import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 import { startRetention } from './sync/retention.ts';
 
 useOtlpIfConfigured('server');
+
+// The bounded half only. A server has no device and no signed-in actor — the
+// identity that matters here belongs to whoever is on the other end of a
+// socket, and that is already on the spans (`sync.hello` carries actor and
+// workspace). Attaching a process-level identity would say nothing true.
+identify({
+  os: process.platform,
+  arch: process.arch,
+  env: process.env['NODE_ENV'] === 'production' ? 'production' : 'development',
+  version: process.env['npm_package_version'] ?? 'dev',
+});
 
 const app = Fastify({ logger: { level: process.env['LOG_LEVEL'] ?? 'info' } });
 

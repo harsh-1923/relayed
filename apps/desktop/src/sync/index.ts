@@ -9,7 +9,7 @@
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
 import {
-  emit, count, histogram, span, useOtlpIfConfigured,
+  emit, count, histogram, span, identify, useOtlpIfConfigured, type Identity,
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
@@ -32,6 +32,27 @@ type Reply =
   | { id: number; ok: false; error: string; epoch: number };
 
 useOtlpIfConfigured('desktop');
+
+/**
+ * The BOUNDED half of the identity, known before anything is opened.
+ *
+ * Platform, architecture and channel are a handful of values across the whole
+ * fleet, which is what makes them safe on every signal — including metrics,
+ * where a resource attribute becomes part of the identifying label set. They
+ * answer the question no per-record id can: "is this only happening on
+ * Windows", which needs something you can group by.
+ *
+ * Sent here rather than with the rest, because none of it waits on a database
+ * and the first events are emitted milliseconds from now.
+ */
+identify({
+  os: process.platform,
+  arch: process.arch,
+  env: process.env['RELAYED_DEV'] ? 'development' : 'production',
+  // One series per build, on `client.info` alone — never on the resource,
+  // where it would multiply every metric by the number of live versions (§5).
+  version: process.env['npm_package_version'] ?? 'dev',
+});
 
 /**
  * R3, asserted rather than observed (STORAGE.md §17.4, OBSERVABILITY.md §9).
@@ -152,6 +173,23 @@ function adoptSession(s: OurSession): void {
   // Both run HERE and nowhere else: adoptSession is reached by every path that
   // ends with a usable workspace — boot, switch, sign-in, join — so calling
   // them at those four call sites as well only duplicated the work.
+  // THE UNBOUNDED HALF, now that there is something to say. Merged into every
+  // event and span from here on, and onto no metric — which is what makes
+  // "why did THIS device stall" answerable without touching the series budget.
+  //
+  // Repeated on every adoption rather than set once: the actor and workspace
+  // change on a switch, and stale identity is worse than none because it looks
+  // authoritative.
+  const active = storage.workspaces()
+    .find(w => w.workspaceId === storage.workspaceId);
+  // Built by assignment rather than spread: `exactOptionalPropertyTypes` draws
+  // a real distinction between a field that is absent and one that is
+  // `undefined`, and only the first means "nothing to say".
+  const who: Identity = { install: storage.installId, device: storage.deviceId };
+  if (storage.accountId) who.account = storage.accountId;
+  if (active) { who.actor = active.actorId; who.workspace = active.workspaceId; }
+  identify(who);
+
   void setBlobAccount(storage.accountId);
   // Whatever this replica ALREADY holds. On a fresh one that is nothing, which
   // is the whole reason `avatarsWanted` exists below: the directory arrives

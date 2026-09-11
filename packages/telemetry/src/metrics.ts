@@ -105,6 +105,19 @@ export interface LabelValues {
   /** Which OTLP signal a dropped record belonged to. */
   signal: 'records' | 'spans';
   /**
+   * THE ONE PLACE A VERSION IS ALLOWED, and the reason it is a label here and
+   * nowhere else. Updates are opt-in (RELEASE.md), so many versions run at
+   * once; on the resource it would multiply EVERY metric by however many are
+   * in the field, and 2,900 series becomes 29,000 (§5). On one gauge it is one
+   * series per version, which is what makes per-version attribution affordable
+   * at all.
+   *
+   * Not a closed set in the usual sense — it grows with releases — so it is
+   * counted against the budget as a generous fixed allowance rather than an
+   * enumeration.
+   */
+  version: string;
+  /**
    * Where the engine threw. Six places, because they are six different bugs:
    * an apply that cannot write is not a pager that lost its page.
    */
@@ -148,6 +161,9 @@ export const labelValues = {
   frame: ['unknown', 'malformed', 'denied'],
   settled: ['acked', 'retrying', 'failed', 'coalesced', 'discarded'],
   signal: ['records', 'spans'],
+  // Not enumerable: a version is minted by a release, not declared here. The
+  // number is the allowance the series budget reserves for live versions.
+  version: Array.from({ length: 12 }, (_, i) => `v${i}`) as unknown as string[],
   stage: ['frame', 'apply', 'catchup', 'directory', 'drain', 'welcome'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
@@ -561,6 +577,15 @@ export const metrics = {
        + 'record was a stack trace on somebody\'s stderr. A caught failure '
        + 'leaves the frontier where it was, so a persistent one becomes '
        + 'sync.cursor.stalled a heartbeat later — read the two together.',
+  },
+  'client.info': {
+    kind: 'gauge', labels: ['version'],
+    doc: 'One series per running build, carrying nothing but its version. The '
+       + 'shape §5 prescribes for the `client_version` trap: per-version '
+       + 'attribution has to come from somewhere, and everywhere is the wrong '
+       + 'answer — a version label on every metric multiplies the whole '
+       + 'catalogue by the number of releases in the field. Join on it when a '
+       + 'regression looks version-shaped.',
   },
   'telemetry.dropped': {
     kind: 'counter', labels: ['signal'],
