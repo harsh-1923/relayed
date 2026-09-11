@@ -557,7 +557,18 @@ export const OUTBOUND: Bodies = {
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
 };
 
-/** Serialise a frame. The one place `t` is attached, so it cannot be forgotten. */
-export function frame(t: string, body: Record<string, unknown> = {}): string {
-  return JSON.stringify({ t, ...body });
+/**
+ * Serialise a frame. The one place `t` is attached, so it cannot be forgotten.
+ *
+ * `traceparent` is attached here too, and omitted entirely when there is no
+ * active span — an `undefined` would serialise to nothing useful and a literal
+ * `null` would be a field every receiver has to know to ignore. The body is
+ * spread FIRST so a body that wrongly carries a reserved key loses to the
+ * envelope rather than shadowing it (the reserved-key rule, above).
+ */
+export function frame(
+  t: string, body: Record<string, unknown> = {}, traceparent?: string | undefined,
+): string {
+  return JSON.stringify(
+    traceparent === undefined ? { ...body, t } : { ...body, t, traceparent });
 }

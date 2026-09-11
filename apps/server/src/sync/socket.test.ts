@@ -12,15 +12,16 @@ import { gunzipSync } from 'node:zlib';
 import WebSocket from 'ws';
 import { frame, readFrame, OUTBOUND, CLOSE, PROTOCOL } from '@relayed/protocol';
 import { sql } from 'kysely';
-import { db, pool } from '../db/client.ts';
+import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
 import { createChannel, addToSpace } from './spaces.ts';
 import { send } from './ops.ts';
 import type { SessionClaims } from '../auth/tokens.ts';
+import { setSink, type FinishedSpan } from '@relayed/telemetry';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 const org = ulid('org');
 const wsp = ulid('wsp');
@@ -43,7 +44,7 @@ let sync: SyncSocket;
 let url: string;
 
 before(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await db.insertInto('organizations')
     .values({ id: org, workos_org_id: `test_${org}`, name: 'Socket' }).execute();
   await db.insertInto('workspaces')
@@ -75,7 +76,7 @@ before(async () => {
 });
 
 after(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await sync.close();
   await new Promise<void>(resolve => { server.close(() => { resolve(); }); });
   await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();
@@ -105,7 +106,7 @@ async function connect(target = url): Promise<Peer> {
 
   return {
     socket, frames, closed,
-    send: (t, body) => { socket.send(frame(t, body)); },
+    send: (t, body, traceparent) => { socket.send(frame(t, body, traceparent)); },
     async next(t) {
       const deadline = Date.now() + 2_000;
       for (;;) {
@@ -122,11 +123,42 @@ interface Peer {
   socket: WebSocket;
   frames: { t: string; body: unknown }[];
   closed: Promise<{ code: number; reason: string }>;
-  send(t: string, body?: Record<string, unknown>): void;
+  send(t: string, body?: Record<string, unknown>, traceparent?: string): void;
   next(t: string): Promise<unknown>;
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Capture every span this process finishes, through the public sink.
+ *
+ * `setSink` rather than reaching past it, because that is the path production
+ * uses — a test that hooked the span recorder directly would be asserting on
+ * wiring nothing else goes through.
+ */
+function collect(): FinishedSpan[] {
+  const spans: FinishedSpan[] = [];
+  setSink({
+    event: () => {}, count: () => {}, gauge: () => {}, histogram: () => {},
+    recordSpan: (span) => spans.push(span),
+  });
+  return spans;
+}
+
+/**
+ * Wait for the spans a frame produced to actually close.
+ *
+ * A reply is written INSIDE its span, so the frame arrives first and the span
+ * ends a moment later. Asserting straight after `next('ack')` is a race that
+ * passes until something unrelated changes the timing.
+ */
+const settled = () => sleep(60);
+
+/** Stop capturing. Silent rather than the console sink: nothing after this
+ *  reads spans, and the default one prints a line per span. */
+function restore(): void {
+  setSink({ event: () => {}, count: () => {}, gauge: () => {}, histogram: () => {} });
+}
 
 // ─── the handshake ──────────────────────────────────────────────────────────
 
@@ -630,12 +662,57 @@ test('a far-behind client gets a GAP with a tail, not a replay', opts, async () 
 
   peer.send('catchup', { stream: { kind: 'chat', id: space.chatId }, from_rev: 0 });
   const gap = await peer.next('gap') as {
-    head_rev: number; snapshot: { kind: string; headOrd: number; recent: unknown[] };
+    head_rev: number; snapshot: { kind: string; head_ord: number; recent: unknown[] };
   };
 
   assert.ok(gap.head_rev >= 900);
   assert.equal(gap.snapshot.kind, 'messages');
   assert.ok(gap.snapshot.recent.length <= 50, 'a bounded tail, not 900 events');
+  assert.equal(typeof gap.snapshot.head_ord, 'number', 'wire-shaped, not domain-shaped');
+  peer.socket.close();
+});
+
+test('A GAP TAIL AND A BACKFILL PAGE ARE THE SAME SHAPE ON THE WIRE', opts, async () => {
+  // The bug this exists for, and it was live on the one path that rescues a
+  // client that has fallen behind. `snapshotOf` returns the DOMAIN shape —
+  // camelCase, because nothing in `feed.ts` knows a socket exists — and the gap
+  // frame passed it through verbatim while the client read `author_id` and
+  // `parent_id`. Every gap carrying messages bound `undefined` into SQLite and
+  // threw.
+  //
+  // Both sides had tests and both passed: each built its own fixtures in its
+  // own convention, and `Gap.snapshot` is `.loose()` on purpose, so zod
+  // validated nothing inside it. Comparing the two frames is what closes it —
+  // two shapes for "a message on the wire" is what produced the bug.
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `shape-${ulid('x')}`, createdBy: me,
+  });
+  for (let i = 0; i < 3; i++) {
+    await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: me,
+                     messageId: ulid('msg'), body: `shape ${i}` });
+  }
+  await db.updateTable('chats').set({ next_rev: 900 })
+    .where('id', '=', space.chatId).execute();
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  peer.send('catchup', { stream: { kind: 'chat', id: space.chatId }, from_rev: 0 });
+  const gap = await peer.next('gap') as {
+    snapshot: { kind: string; recent: Record<string, unknown>[] };
+  };
+  peer.send('backfill', { c: space.chatId, before_ord: 99 });
+  const page = await peer.next('backfill_ok') as { rows: Record<string, unknown>[] };
+
+  const fromGap = gap.snapshot.recent[0];
+  const fromPage = page.rows[0];
+  assert.ok(fromGap && fromPage, 'both frames carried a message');
+  assert.deepEqual(Object.keys(fromGap).toSorted(), Object.keys(fromPage).toSorted(),
+    'the same keys, or one of the two consumers is reading undefined');
+  // Named explicitly as well, because a shared typo would satisfy the compare.
+  assert.deepEqual(Object.keys(fromGap).toSorted(),
+    ['author_id', 'body', 'id', 'ord', 'parent_id', 'rev']);
   peer.socket.close();
 });
 
@@ -1103,3 +1180,166 @@ test('a heartbeat naming a stream kind we do not have is ignored, not fatal',
     assert.equal(peer.socket.readyState, peer.socket.OPEN);
     peer.socket.close();
   });
+
+// ─── one trace, two processes ───────────────────────────────────────────────
+
+test('AN OP FRAME’S TRACEPARENT BECOMES THE PARENT OF THE SERVER’S SPANS',
+  opts, async () => {
+    // The step-13 criterion, from this end: a "user pressed send" span on the
+    // client links to the server span that assigned the `ord`. A WebSocket
+    // carries no headers, so unless the frame says so the two halves of one
+    // message are two traces that merely happen to be near each other in time.
+    const { chatId } = await createChannel(db, {
+      workspaceId: wsp, name: `trace-${ulid('x')}`, createdBy: me,
+    });
+    const spans = collect();
+
+    const peer = await connect();
+    peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+    await peer.next('welcome');
+
+    const traceId = 'aaaaaaaabbbbbbbbccccccccdddddddd';
+    const parentId = '1111222233334444';
+    peer.send('op', {
+      op_id: ulid('op'), kind: 'send', c: chatId, target: ulid('msg'),
+      m: { body: 'traced' },
+    }, `00-${traceId}-${parentId}-01`);
+    await peer.next('ack');
+    // The ack is written INSIDE the span, so it arrives before the span ends.
+    // Reading the list immediately is a race — it passed until an unrelated
+    // test changed the timing, which is the worst way to find out.
+    await settled();
+
+    const op = spans.find(s => s.name === 'sync.op');
+    const send_ = spans.find(s => s.name === 'ops.send');
+    const out = spans.find(s => s.name === 'sync.fanout');
+    assert.ok(op, 'the frame was traced');
+    assert.equal(op.traceId, traceId, 'in the CLIENT’s trace, not a new one');
+    assert.equal(op.parentSpanId, parentId, 'under the client’s span');
+
+    // And the work below it is under the frame rather than beside it — a flat
+    // list of spans sharing a trace id is not a path, and the path is the thing
+    // traces are for.
+    assert.equal(send_?.parentSpanId, op.spanId, 'the write is a child');
+    assert.equal(out?.parentSpanId, op.spanId, 'so is the fanout');
+    assert.equal(send_?.attributes['ord'] !== undefined, true,
+      'and the span that assigned the ordinal says what it assigned');
+
+    restore();
+    peer.socket.close();
+  });
+
+test('a frame with NO traceparent starts a trace rather than failing', opts, async () => {
+  // A client three months old sends no trace context at all (RELEASE.md — updates
+  // are opt-in). A missing link must never be an error.
+  const { chatId } = await createChannel(db, {
+    workspaceId: wsp, name: `untraced-${ulid('x')}`, createdBy: me,
+  });
+  const spans = collect();
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+  peer.send('op', {
+    op_id: ulid('op'), kind: 'send', c: chatId, target: ulid('msg'),
+    m: { body: 'untraced' },
+  });
+  await peer.next('ack');
+  await settled();
+
+  const op = spans.find(s => s.name === 'sync.op');
+  assert.ok(op, 'still traced, as a root');
+  assert.equal(op.parentSpanId, undefined);
+  assert.match(op.traceId, /^[0-9a-f]{32}$/);
+  restore();
+  peer.socket.close();
+});
+
+test('a REFUSED write is a failed span carrying the reason', opts, async () => {
+  // A trace that omits its failures is worse than no trace: it shows a path
+  // that looks complete. `outsider` is in the workspace and in no space.
+  const { chatId } = await createChannel(db, {
+    workspaceId: wsp, name: `refused-${ulid('x')}`, createdBy: me,
+  });
+  const spans = collect();
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await peer.next('welcome');
+  peer.send('op', {
+    op_id: ulid('op'), kind: 'send', c: chatId, target: ulid('msg'),
+    m: { body: 'nope' },
+  });
+  await peer.next('nack');
+  await settled();
+
+  const op = spans.find(s => s.name === 'sync.op');
+  assert.equal(op?.attributes['nack_code'], 'forbidden');
+  assert.equal(op?.attributes['retryable'], false);
+  restore();
+  peer.socket.close();
+});
+
+// ─── the error boundary ─────────────────────────────────────────────────────
+
+test('A HANDLER THAT THROWS DOES NOT TAKE DOWN THE SERVER', opts, async () => {
+  // `onMessage` is async and nothing awaits it, so a handler that throws — a
+  // database blip inside `welcome`, a driver error mid-catch-up — became an
+  // unhandled rejection and killed the process, disconnecting every client on
+  // it. A fault answering ONE frame is not a reason to end everybody's session.
+  //
+  // The failure comes from the database rather than from a stub inside the
+  // handler, so it travels the path a real one would.
+  const spans = collect();
+  const broken = {
+    selectFrom: () => { throw new Error('connection terminated unexpectedly'); },
+  } as unknown as typeof db;
+
+  const host = createServer();
+  const sick = attachSyncSocket(host, { db: broken, verify });
+  await new Promise<void>(r => { host.listen(0, '127.0.0.1', r); });
+  const port = (host.address() as { port: number }).port;
+
+  const peer = await connect(`ws://127.0.0.1:${port}${SYNC_PATH}`);
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await sleep(300);
+
+  // Still listening, still holding the socket. The client simply got no answer.
+  assert.equal(peer.socket.readyState, peer.socket.OPEN, 'the connection survived');
+  assert.equal(sick.size(), 1, 'and the server is still serving it');
+
+  const failed = spans.find(s => s.name === 'sync.failed');
+  assert.ok(failed, 'recorded, rather than lost to stderr');
+  assert.equal(failed.status, 'error');
+  assert.equal(failed.error, 'connection terminated unexpectedly');
+  assert.equal(failed.attributes['stage'], 'frame');
+
+  restore();
+  // TERMINATED, not closed. `wss.close` only calls back once its clients are
+  // gone, so awaiting it while one is still attached waits for the very thing
+  // this test is about to do — the deadlock this suite has hit before.
+  peer.socket.terminate();
+  await sleep(50);
+  await sick.close();
+  await new Promise<void>(r => { host.close(() => { r(); }); });
+});
+
+test('a healthy connection is unaffected by another one failing', opts, async () => {
+  // The blast radius, asserted. Before the boundary the answer was "everybody",
+  // because the process died.
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+
+  const noisy = await connect();
+  noisy.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await noisy.next('welcome');
+  noisy.send('catchup', { stream: { kind: 'chat', id: 'cht_does_not_exist' }, from_rev: 0 });
+  await sleep(200);
+
+  peer.send('ping');
+  await peer.next('pong');
+  assert.equal(peer.socket.readyState, peer.socket.OPEN);
+  peer.socket.close();
+  noisy.socket.close();
+});

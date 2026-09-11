@@ -15,6 +15,8 @@ import WebSocket from 'ws';
 import { gunzipSync } from 'node:zlib';
 import { frame, readFrame, OUTBOUND, PROTOCOL, CLOSE, type Welcome } from '@relayed/protocol';
 import { guardConnect, type Gate } from '../network.ts';
+import { traceparent, openSpan, type OpenSpan } from '@relayed/telemetry';
+import { observe } from '../observe.ts';
 
 /**
  * States, and what each is waiting for.
@@ -53,6 +55,12 @@ export interface ConnectionDeps {
   onWelcome?(body: Welcome): void;
   /** Every other recognised frame. Unknown ones never reach here. */
   onFrame?(t: string, body: unknown): void;
+  /**
+   * Called for anything worth a marker, IN ADDITION to telemetry rather than
+   * instead of it. Tests observe through this seam; production reads what
+   * `observe` records from the same call, so no test runs a path production
+   * does not.
+   */
   onEvent?(name: string, detail?: Record<string, unknown>): void;
   /**
    * How far this client has got, per stream, for `hello` to carry.
@@ -117,8 +125,32 @@ export class Connection {
   #attempt = 0;
   /** Guards against a stale socket's events being applied after a transition. */
   #generation = 0;
+  /** When this socket went live, for the uptime a disconnect reports. */
+  #liveSince = 0;
+  /** The last frame of any kind. What "the server stopped answering" is measured from. */
+  #lastHeard = 0;
+  /**
+   * The reconnect currently being attempted, as a span.
+   *
+   * `openSpan` rather than `startSpan` because the operation — hello, welcome,
+   * catch-up complete (OBSERVABILITY.md §4) — is not a function call: it starts
+   * on a socket event and ends on a frame arriving. Held here so the teardown
+   * path can end one it is still carrying (invariant 54).
+   */
+  #connectSpan: OpenSpan | null = null;
 
   constructor(deps: ConnectionDeps) { this.#deps = deps; }
+
+  /**
+   * Record a marker, and let a test see it too.
+   *
+   * One call site per event, teeing rather than choosing, so the telemetry path
+   * runs in every test that asserts on the seam.
+   */
+  #note(name: string, detail: Record<string, unknown> = {}): void {
+    observe(name, detail);
+    this.#deps.onEvent?.(name, detail);
+  }
 
   get state(): LinkState { return this.#state; }
   get attempt(): number { return this.#attempt; }
@@ -165,7 +197,11 @@ export class Connection {
    */
   send(t: string, body: Record<string, unknown> = {}): boolean {
     if (this.#state !== 'live' || !this.#socket) return false;
-    this.#socket.send(frame(t, body));
+    // The client's span rides the frame, so the server's handling of it becomes
+    // a CHILD rather than a second trace that happens to be nearby in time.
+    // A WebSocket carries no headers, which is why this is explicit and why
+    // `traceparent` is a reserved envelope key (OBSERVABILITY.md §4).
+    this.#socket.send(frame(t, body, traceparent()));
     return true;
   }
 
@@ -178,6 +214,14 @@ export class Connection {
   #enter(next: LinkState): void {
     if (this.#timer) { clearTimeout(this.#timer); this.#timer = null; }
     if (next !== 'live' && next !== 'connecting') this.#drop();
+    // A connect span still open at this point never reached `welcome`, so the
+    // attempt failed. Ended here rather than at each failure site because there
+    // are five of them and a missed one is a span that is never reported at all
+    // — the same reason every transition goes through this method.
+    if (next !== 'live' && next !== 'connecting' && this.#connectSpan) {
+      this.#connectSpan.end('error', next);
+      this.#connectSpan = null;
+    }
     this.#state = next;
     this.#deps.onState?.(next);
   }
@@ -201,13 +245,26 @@ export class Connection {
     this.#generation++;
     const generation = this.#generation;
 
+    // ONE SPAN PER ATTEMPT, and a root rather than a child: a reconnect is not
+    // caused by whatever happened to be running when the timer fired, and
+    // inheriting that trace would file an hour of backoff under one message.
+    this.#connectSpan?.end('error', 'superseded');
+    this.#connectSpan = openSpan('sync.connect', {
+      root: true, attributes: { attempt: this.#attempt },
+    });
+
     try {
       // The gate FIRST, before the constructor. Simulated offline has to refuse
       // a socket as decisively as it refuses a fetch, or half the network is
       // still up while the UI says it is not.
       guardConnect(this.#deps.gate, this.#deps.url);
       this.#socket = (this.#deps.open ?? defaultOpen)(this.#deps.url);
-    } catch {
+    } catch (e) {
+      // The GATE refusing counts as a failed attempt and is recorded as one.
+      // Simulated offline looks identical to a dead network here, which is the
+      // point of it, so the trace has to say the same thing about both.
+      this.#connectSpan?.end('error', e instanceof Error ? e.message : 'refused');
+      this.#connectSpan = null;
       this.#retry();
       return;
     }
@@ -219,7 +276,7 @@ export class Connection {
     const current = (): boolean =>
       generation === this.#generation && this.#socket === socket;
 
-    socket.on('open', (() => { if (current()) void this.#hello(); }) as never);
+    socket.on('open', (() => { if (current()) void this.#hello(current); }) as never);
     socket.on('message', ((raw: unknown, isBinary?: boolean) => {
       if (!current()) return;
       // BINARY MEANS COMPRESSED. There is no flag in the envelope saying so,
@@ -227,7 +284,7 @@ export class Connection {
       // decompressed yet.
       if (isBinary === true && Buffer.isBuffer(raw)) {
         try { this.#onMessage(gunzipSync(raw).toString('utf8')); }
-        catch { this.#deps.onEvent?.('sync.frame.malformed', { reason: 'bad_gzip' }); }
+        catch { this.#note('sync.frame.malformed', { reason: 'bad_gzip' }); }
         return;
       }
       this.#onMessage(String(raw));
@@ -240,13 +297,28 @@ export class Connection {
     socket.on('error', (() => {}) as never);
 
     this.#after(this.#deps.helloTimeoutMs ?? HELLO_TIMEOUT_MS, () => {
-      if (current()) { this.#deps.onEvent?.('ws.handshake.timeout'); this.#retry(); }
+      if (current()) { this.#note('ws.handshake.timeout'); this.#retry(); }
     });
   }
 
-  async #hello(): Promise<void> {
+  /**
+   * Send `hello`, once there is a token to send.
+   *
+   * `current` IS THE GUARD, not the state. Reading the token is asynchronous,
+   * and anything can happen across that await — most obviously `retryNow`,
+   * which abandons this socket and opens another. The state is `connecting`
+   * again a moment later, so a state check passes and the frame is written to
+   * the NEW socket, which has not opened yet: `WebSocket is not open:
+   * readyState 0`, thrown out of an async function nobody awaits, which is an
+   * unhandled rejection that takes the sync engine down.
+   *
+   * Every other handler in this class already checks the generation. This one
+   * did not, and its two callers — waking from sleep, and a freshly refreshed
+   * token — are exactly the moments that produce the race.
+   */
+  async #hello(current: () => boolean): Promise<void> {
     const token = await this.#deps.token();
-    if (this.#state !== 'connecting') return;
+    if (!current() || this.#state !== 'connecting') return;
     if (!token) {
       // No token is not a failure to connect; it is nothing to connect WITH.
       // Sitting in `unauthorised` rather than retrying means a signed-out app
@@ -254,6 +326,10 @@ export class Connection {
       this.#enter('unauthorised');
       return;
     }
+    this.#connectSpan?.mark('hello');
+    // Not through `send`: the state is `connecting`, and `send` deliberately
+    // refuses anything before `live`. The traceparent is attached by hand for
+    // the same reason — this is the ONE frame that goes out around it.
     this.#socket?.send(frame('hello', {
       protocol: PROTOCOL,
       access_token: token,
@@ -261,7 +337,7 @@ export class Connection {
       // server that does not know the word sends text, and nothing breaks.
       compression: ['gzip'],
       cursors: this.#deps.cursors?.() ?? [],
-    }));
+    }, traceparent(this.#connectSpan ?? undefined)));
   }
 
   #onMessage(raw: string): void {
@@ -270,28 +346,47 @@ export class Connection {
       // Invariant 43. The whole reason frames are looked up by `t` rather than
       // unioned: a server that ships a new frame type must not break a client
       // that predates it, and clients in the field are months old (RELEASE.md).
-      this.#deps.onEvent?.('sync.frame.unknown', { t: read.t });
+      this.#note('sync.frame.unknown', { t: read.t });
       return;
     }
     if (read.kind === 'malformed') {
-      this.#deps.onEvent?.('sync.frame.malformed', { reason: read.reason });
+      this.#note('sync.frame.malformed', { reason: read.reason });
       return;
     }
 
     if (read.t === 'too_old') {
       // Retrying cannot help: this build will never be new enough. Stopping is
       // the honest response, and the frame carries a message for the human.
-      this.#deps.onEvent?.('sync.socket.too_old');
+      this.#note('sync.socket.too_old');
       this.#deps.onFrame?.(read.t, read.body);
       this.#enter('stopped');
       return;
     }
 
     if (read.t === 'welcome') {
+      // READ BEFORE THE RESET. `ws.connected` declares an `attempt` field
+      // because "how many tries did that take" is the whole question — and it
+      // reported the value AFTER zeroing it, so it was always 0. The event has
+      // existed since step 5 and has never once said anything.
+      const attempt = this.#attempt;
       this.#attempt = 0;
+      this.#liveSince = Date.now();
       this.#enter('live');
-      this.#deps.onEvent?.('ws.connected', { attempt: this.#attempt });
-      this.#deps.onWelcome?.(read.body as Welcome);
+      this.#connectSpan?.annotate({ attempt });
+      this.#connectSpan?.mark('welcome');
+      this.#note('ws.connected', { attempt });
+      // Inside the connect span, so everything `welcome` sets off — the
+      // scheduler's first sweep, the directory hydration — hangs under the
+      // reconnect that caused it rather than floating as its own root.
+      if (this.#connectSpan) this.#connectSpan.run(() => {
+        this.#deps.onWelcome?.(read.body as Welcome);
+      });
+      else this.#deps.onWelcome?.(read.body as Welcome);
+      // Ended HERE rather than when catch-up finishes. Catch-up is scheduled
+      // per stream and settles at times this layer cannot see; holding the span
+      // open for it would mean holding it for a client that is a week behind.
+      this.#connectSpan?.end();
+      this.#connectSpan = null;
       this.#beat();
       return;
     }
@@ -299,6 +394,7 @@ export class Connection {
     // Any frame is evidence of life, so the deadline resets on all of them
     // rather than on `pong` alone. A busy connection should not be killed for
     // failing to answer a heartbeat it never needed to send.
+    this.#lastHeard = Date.now();
     if (this.#state === 'live') this.#beat();
 
     // `pong` is forwarded like everything else. It used to be swallowed here as
@@ -330,14 +426,23 @@ export class Connection {
       this.#after(this.#deps.readTimeoutMs ?? READ_TIMEOUT_MS, () => {
         // Open but dead. Indistinguishable from quiet without this deadline,
         // and the app would sit for ever believing it was synced.
-        this.#deps.onEvent?.('ws.zombie.detected', {});
+        this.#note('ws.zombie.detected', {
+          last_pong: this.#lastHeard === 0 ? 0 : Date.now() - this.#lastHeard,
+        });
         this.#retry();
       });
     });
   }
 
   #onClose(code: number): void {
-    this.#deps.onEvent?.('ws.disconnected', { code });
+    this.#note('ws.disconnected', {
+      code,
+      // Zero when the socket never went live — a handshake that failed has no
+      // uptime, and reporting the time spent connecting as uptime would make
+      // a failing server look like a stable one with short sessions.
+      uptime: this.#liveSince === 0 ? 0 : Date.now() - this.#liveSince,
+    });
+    this.#liveSince = 0;
     if (code === CLOSE.tooOld) { this.#enter('stopped'); return; }
     if (code === CLOSE.unauthenticated) {
       // Reconnecting with the same rejected token would be a tight loop against

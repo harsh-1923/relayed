@@ -15,14 +15,14 @@
 // that never had a race to lose.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, pool } from '../db/client.ts';
+import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import {
   allocateChat, applyOnce, UnknownChatError, OpOwnershipError,
 } from './allocate.ts';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 const org = ulid('org');
 const wsp = ulid('wsp');
@@ -30,7 +30,7 @@ const actor = ulid('act');
 const other = ulid('act');
 
 before(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await db.insertInto('organizations')
     .values({ id: org, workos_org_id: `test_${org}`, name: 'Allocate' }).execute();
   await db.insertInto('workspaces')
@@ -47,7 +47,7 @@ before(async () => {
 });
 
 after(async () => {
-  if (!reachable) return;
+  if (!up) return;
   // Spaces first: it cascades to chats, messages and ops. Deleting the org in
   // one statement would hit messages' RESTRICT on author_id.
   await db.deleteFrom('spaces').where('workspace_id', '=', wsp).execute();

@@ -13,6 +13,7 @@
 // thousand deletions to draw a scrollback.
 import type { DatabaseSync } from 'node:sqlite';
 import { applyBatch, behind, type ApplyDeps, type Stream, type Envelope } from './apply.ts';
+import { observe } from './observe.ts';
 
 /**
  * One catch-up request in flight per stream, and one queued behind it.
@@ -31,6 +32,17 @@ export class CatchupScheduler {
   #again = new Set<string>();
   #request: (stream: Stream, fromRev: number) => void;
   #db: DatabaseSync;
+  /**
+   * Streams whose catch-up reply landed since the last sweep.
+   *
+   * The other half of the definition, and the half that took a correction. The
+   * first version asked whether a request was outstanding — but `settled`
+   * immediately re-asks while a stream is still behind, so a struggling stream
+   * is ALWAYS outstanding and the signal could essentially never fire. What
+   * makes a stall unambiguous is that we asked, we were ANSWERED, and the
+   * frontier is still exactly where it was.
+   */
+  #answered = new Set<string>();
 
   constructor(db: DatabaseSync, request: (stream: Stream, fromRev: number) => void) {
     this.#db = db;
@@ -39,7 +51,43 @@ export class CatchupScheduler {
 
   /** Ask for everything currently owed. Safe to call as often as you like. */
   sweep(): void {
-    for (const owed of behind(this.#db)) this.want(owed.stream);
+    const owing = behind(this.#db);
+    let worstLag = 0;
+
+    for (const owed of owing) {
+      const key = keyOf(owed.stream);
+      const lag = owed.to - owed.from;
+      worstLag = Math.max(worstLag, lag);
+
+      // BEHIND IS NOT STALLED. A client returning from a week offline is a
+      // hundred thousand revisions behind and perfectly healthy — that is what
+      // catch-up is FOR, and a signal that fired on it would fire on the most
+      // ordinary event there is. Stalled is: behind at the last sweep, behind
+      // now, a reply came back in between, and the frontier is exactly where it
+      // was. That is a hole nothing is going to fill, and it is completely
+      // silent — no error, no spinner, just a client that has quietly stopped
+      // receiving messages.
+      const previous = sweptAt(this.#db, owed.stream);
+      if (previous !== null && previous === owed.from && this.#answered.has(key)) {
+        observe('sync.cursor.stalled', {
+          stream: owed.stream.kind, id: owed.stream.id,
+          cursor_rev: owed.from, head_rev: owed.to, lag,
+        });
+      }
+      markSwept(this.#db, owed.stream, owed.from);
+      this.#answered.delete(key);
+      this.want(owed.stream);
+    }
+
+    // A stream that caught up forgets its mark, or it would compare against a
+    // frontier from before it did and read as stalled the next time it fell
+    // behind by one event.
+    clearSweptForCaughtUp(this.#db);
+
+    // The pair invariant 1 is measured by, sampled per sweep rather than per
+    // event: how far behind the worst stream is, and how much is being held
+    // out of order waiting for a revision that may never arrive.
+    observe('sync.frontier', { lag: worstLag, staged: stagedDepth(this.#db) });
   }
 
   /** Ask for one stream, or remember to ask again if a request is already out. */
@@ -59,6 +107,7 @@ export class CatchupScheduler {
    */
   settled(stream: Stream): void {
     const key = keyOf(stream);
+    this.#answered.add(key);
     this.#inflight.delete(key);
     const wanted = this.#again.delete(key);
     if (wanted || stillBehind(this.#db, stream)) this.want(stream);
@@ -78,6 +127,36 @@ const frontier = (db: DatabaseSync, stream: Stream): number =>
 
 const stillBehind = (db: DatabaseSync, stream: Stream): boolean =>
   behind(db).some(owed => keyOf(owed.stream) === keyOf(stream));
+
+/**
+ * Events held out of order, across every stream.
+ *
+ * Expected at or near zero: staged events collapse the moment the revision
+ * before them lands, so a depth that never falls is the other face of a stalled
+ * cursor — the events arrived, and the one thing needed to apply them did not.
+ */
+/** Where this stream's frontier stood at the previous sweep. Null if never. */
+const sweptAt = (db: DatabaseSync, stream: Stream): number | null =>
+  (db.prepare(`SELECT swept_at_rev FROM stream_state
+               WHERE stream_kind = ? AND stream_id = ?`)
+    .get(stream.kind, stream.id) as { swept_at_rev: number | null } | undefined)
+    ?.swept_at_rev ?? null;
+
+const markSwept = (db: DatabaseSync, stream: Stream, rev: number): void => {
+  db.prepare(`UPDATE stream_state SET swept_at_rev = ?
+               WHERE stream_kind = ? AND stream_id = ?`)
+    .run(rev, stream.kind, stream.id);
+};
+
+/** Level streams forget their mark, so catching up cannot look like a stall. */
+const clearSweptForCaughtUp = (db: DatabaseSync): void => {
+  db.prepare(`UPDATE stream_state SET swept_at_rev = NULL
+               WHERE swept_at_rev IS NOT NULL AND server_head_rev <= synced_through_rev`)
+    .run();
+};
+
+const stagedDepth = (db: DatabaseSync): number =>
+  (db.prepare('SELECT COUNT(*) AS n FROM staged_events').get() as { n: number }).n;
 
 /**
  * Apply a catch-up reply, in bounded chunks.
@@ -130,7 +209,7 @@ export interface MessageRow {
  */
 export function applyGap(
   db: DatabaseSync, stream: Stream, headRev: number,
-  snapshot: { kind: string; headOrd?: number; recent?: MessageRow[] },
+  snapshot: { kind: string; head_ord?: number; recent?: MessageRow[] },
 ): string[] {
   db.exec('BEGIN');
   try {
@@ -159,7 +238,7 @@ export function applyGap(
           oldest_local_ord = MIN(
             COALESCE(chat_state.oldest_local_ord, excluded.oldest_local_ord),
             excluded.oldest_local_ord)
-      `).run(stream.id, snapshot.headOrd ?? 0, oldest);
+      `).run(stream.id, snapshot.head_ord ?? 0, oldest);
     }
 
     db.prepare(`
@@ -198,6 +277,7 @@ export function applyBackfill(
 ): string[] {
   if (rows.length === 0 && !complete) return [];
 
+  const started = performance.now();
   db.exec('BEGIN');
   try {
     const insert = db.prepare(`
@@ -233,6 +313,13 @@ export function applyBackfill(
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 
+  // Counted per PAGE, which is the unit somebody scrolling actually produces.
+  // Read against `sync.gap` it answers what a gap costs: a gap nobody scrolls
+  // back through is free, and one everybody does is not.
+  observe('sync.backfill.page', {
+    chat_id: chatId, rows: rows.length,
+    duration: Math.round(performance.now() - started),
+  });
   return [`chat:${chatId}:messages`];
 }
 

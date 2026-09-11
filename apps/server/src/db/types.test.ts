@@ -6,10 +6,10 @@
 // until read cursors start disagreeing between clients.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pool } from './client.ts';
+import { pool, reachable } from './client.ts';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 test('bigint arrives as a number, so arithmetic on it is arithmetic', opts, async () => {
   const { rows } = await pool.query('SELECT 5::bigint AS ord');
@@ -53,4 +53,4 @@ test('NULL survives the parser', opts, async () => {
 // In a hook rather than at the end of the last test: a test added below this
 // one would otherwise find the pool already closed, and the failure would point
 // at the new test rather than at the teardown.
-after(async () => { if (reachable) await pool.end(); });
+after(async () => { if (up) await pool.end(); });

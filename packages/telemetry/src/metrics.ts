@@ -64,9 +64,115 @@ export interface LabelValues {
    * stored one does not.
    */
   stored: 'stored' | 'linked' | 'skipped' | 'failed';
+
+  // ── sync (DESIGN §8, §9) ─────────────────────────────────────────────────
+  /**
+   * Which stream a sync event belongs to. Three kinds and no more, by design
+   * (DESIGN §8.1) — an actor is a delivery address, not an ordered stream, so
+   * there is no fourth value waiting to appear here.
+   */
+  stream: 'chat' | 'space' | 'workspace';
+  /**
+   * What catch-up answered with: the events themselves, or a marker saying the
+   * distance is unreplayable and here is a snapshot instead.
+   *
+   * The split is the point. A rising `gap` share means the threshold or the
+   * retention horizon is wrong, and every gap costs a client the history below
+   * the tail it was handed.
+   */
+  answer: 'replay' | 'gap';
+  /**
+   * Why a socket ended. Every path that closes one is a value here, which is
+   * what makes "a deploy" distinguishable from "everyone's token expired"
+   * without reading a log.
+   */
+  close: 'client_stop' | 'server_closing' | 'handshake_timeout' | 'hello_timeout'
+       | 'read_timeout' | 'zombie' | 'too_old' | 'unauthenticated'
+       | 'slow_consumer' | 'error';
+  /**
+   * Why a frame arrived and was not acted on. `unknown` is invariant 43 working
+   * — a newer peer naming something this build predates — and `malformed` is a
+   * bug somewhere; counting them under one name with different values is how
+   * the two stay comparable.
+   */
+  frame: 'unknown' | 'malformed' | 'denied';
+  /**
+   * How an op left the outbox. `coalesced` never reached the network at all
+   * (invariant 6), which is a success rather than a loss and so needs its own
+   * value rather than being counted as `acked`.
+   */
+  settled: 'acked' | 'retrying' | 'failed' | 'coalesced' | 'discarded';
+  /** Which OTLP signal a dropped record belonged to. */
+  signal: 'records' | 'spans';
+  /**
+   * Where the engine threw. Six places, because they are six different bugs:
+   * an apply that cannot write is not a pager that lost its page.
+   */
+  stage: 'frame' | 'apply' | 'catchup' | 'directory' | 'drain' | 'welcome';
 }
 
 export type LabelName = keyof LabelValues;
+
+/**
+ * The same closed sets, at RUNTIME.
+ *
+ * The interface above is the contract every call site is checked against, and
+ * it vanishes at compile time — so nothing could check a dashboard query, or
+ * telemetry arriving from a client we did not compile (§8).
+ *
+ * BOTH DIRECTIONS ARE PROVEN, and they need different mechanisms. `satisfies`
+ * below proves every value here is a member of its union. It cannot prove the
+ * reverse — a union member left OUT of an array compiles cleanly and silently
+ * shrinks the set anything checks against — so `Missing` underneath does that,
+ * and names the absent value in the error.
+ */
+export const labelValues = {
+  result: ['ok', 'error'],
+  op: ['send', 'edit', 'react', 'delete', 'read'],
+  phase: ['local', 'authorized'],
+  tier: ['account', 'workspace'],
+  via: ['self_signup', 'invite', 'sso_jit', 'scim', 'api', 'workos_event'],
+  path: ['refresh', 'switch'],
+  outcome: ['authenticated', 'needs_workspace', 'failed', 'cancelled'],
+  kind: ['avatar', 'attachment'],
+  serve: ['hit', 'miss', 'rejected'],
+  had_account: ['yes', 'no'],
+  stored: ['stored', 'linked', 'skipped', 'failed'],
+  trigger: ['mount', 'invalidate', 'epoch'],
+  surface: ['loading', 'empty', 'offline', 'live'],
+  stream: ['chat', 'space', 'workspace'],
+  answer: ['replay', 'gap'],
+  close: ['client_stop', 'server_closing', 'handshake_timeout', 'hello_timeout',
+          'read_timeout', 'zombie', 'too_old', 'unauthenticated',
+          'slow_consumer', 'error'],
+  frame: ['unknown', 'malformed', 'denied'],
+  settled: ['acked', 'retrying', 'failed', 'coalesced', 'discarded'],
+  signal: ['records', 'spans'],
+  stage: ['frame', 'apply', 'catchup', 'directory', 'drain', 'welcome'],
+} as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
+
+/** Union members not present in `labelValues`. `never` when the sets agree. */
+type Missing = {
+  [K in LabelName]: Exclude<LabelValues[K], (typeof labelValues)[K][number]>
+}[LabelName];
+
+/**
+ * The proof, and it is load-bearing rather than decorative.
+ *
+ * When the sets agree this is `true`, which is assignable, and this line
+ * disappears. When a value is missing the type becomes that value — so adding
+ * one to the union above and forgetting the array below fails the build with
+ * the missing string in the message, rather than passing and quietly narrowing
+ * what every dashboard check compares against.
+ */
+const _labelSetsAreExhaustive: Missing extends never ? true : Missing = true;
+void _labelSetsAreExhaustive;
+
+/** How many series each label multiplies a metric by. Derived, never counted. */
+export const cardinality: { readonly [K in LabelName]: number } =
+  Object.fromEntries(Object.entries(labelValues)
+    .map(([label, values]) => [label, values.length])) as
+    { readonly [K in LabelName]: number };
 
 export interface MetricSpec {
   readonly kind: 'counter' | 'histogram' | 'gauge';
@@ -275,6 +381,226 @@ export const metrics = {
        + 'woken. Zero here while the directory is syncing means the write path '
        + 'is not announcing itself and every open surface is quietly stale.',
   },
+  // ── the sync engine, server side (SYNC-FLOWS.md step 13) ─────────────────
+  //
+  // Decided in one pass rather than one at a time, so they answer a question
+  // TOGETHER: a message is appended, fanned out to an audience, missed by
+  // somebody who was offline, and replayed to them on reconnect. Each metric
+  // below names the question it exists for, and the ones deliberately NOT
+  // added are listed at the bottom of this block with the reason.
+  'sync.op': {
+    kind: 'counter', labels: ['op', 'result'],
+    doc: 'Writes the server accepted or refused, by kind. Answers "what share '
+       + 'of writes are we rejecting, and is it one op type" — a refusal is one '
+       + 'nack on one socket, so nothing else aggregates it, and a client shows '
+       + 'a permanent failure to exactly one person who may not report it.',
+  },
+  'sync.op.duration': {
+    kind: 'histogram', unit: 'ms', labels: ['op'],
+    doc: 'How long the server holds a write: gate, allocate, append, commit. '
+       + 'Answers "is send latency ours or the network\'s", which is the first '
+       + 'question anyone asks about a slow send and the one a client cannot '
+       + 'answer about itself.',
+  },
+  'sync.event.appended': {
+    kind: 'counter', labels: ['stream'],
+    doc: 'Events written to the log, by stream kind. Answers "how fast is the '
+       + 'log growing" — and read against sync.retention.swept it is the '
+       + 'table\'s actual growth rate, which is what sizes the sweep and the '
+       + 'disk. Split by kind because chat traffic and directory churn grow for '
+       + 'entirely different reasons.',
+  },
+  'sync.fanout.audience': {
+    kind: 'histogram', unit: 'count', labels: ['stream'],
+    doc: 'How many actors one event resolves an audience of. Answers "when '
+       + 'does fanout stop being a loop" — the design is O(audience) per event '
+       + 'and this is the number that says when that stops being free. A '
+       + 'workspace stream fans out to everyone, which is why kind is a label.',
+  },
+  'sync.fanout.duration': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'Commit to bytes on the wire. Answers "how much delivery latency is '
+       + 'ours after the write landed" — the half of the path no client can '
+       + 'see or report, because from the outside it is indistinguishable from '
+       + 'a slow network.',
+  },
+  'sync.fanout.dropped': {
+    kind: 'counter', labels: [],
+    doc: 'Connections disconnected mid-fanout for exceeding the backlog limit. '
+       + 'Answers "is anyone losing live delivery" — MUST be near zero. A '
+       + 'sustained rate is people silently falling back to catch-up on every '
+       + 'event, which feels like a laggy app and produces no error anywhere.',
+  },
+  'sync.catchup': {
+    kind: 'counter', labels: ['answer'],
+    doc: 'How reconnects were answered: replayed, or pushed into a gap '
+       + '(invariant 25). Answers "is the gap threshold right" — a rising gap '
+       + 'share means the threshold or the retention horizon is wrong, and a '
+       + 'gap costs the client every message below the tail it is handed.',
+  },
+  'sync.catchup.events': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'Events in one replay. Answers "how close do real clients run to the '
+       + '500-event threshold" — which is what makes 500 a measured number '
+       + 'rather than the one somebody picked. If p99 sits at the cap, the cap '
+       + 'is what is producing the gaps, not the clients.',
+  },
+  'sync.catchup.duration': {
+    kind: 'histogram', unit: 'ms', labels: ['answer'],
+    doc: 'Server time to answer catch-up. Answers "what does a reconnect storm '
+       + 'cost" — the load spike this system actually has is ten thousand '
+       + 'clients returning at once (invariant 31), and this is the per-request '
+       + 'number that storm multiplies.',
+  },
+  'sync.welcome.bytes': {
+    kind: 'histogram', unit: 'bytes', labels: [],
+    doc: 'The size of the welcome frame. Answers "how close is welcome to '
+       + 'needing to page" (DESIGN §9.9) — measured rather than assumed, and '
+       + 'the one number that decides it. p99 is the interesting one: the '
+       + 'largest workspace is the one that hits the ceiling first.',
+  },
+  'sync.chats_per_actor': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'Chats one actor can reach, sampled at every welcome. Answers "when '
+       + 'will welcome have to page" BEFORE anybody hits it — OBSERVABILITY §9 '
+       + 'asks for exactly this, as the example of a signal that gives advance '
+       + 'warning of a design limit rather than reporting it afterwards.',
+  },
+  'sync.retention.swept': {
+    kind: 'counter', labels: [],
+    doc: 'Events deleted past the horizon. Answers "is the sweep keeping up" — '
+       + 'appended minus swept is the log\'s net growth, and a sweep that falls '
+       + 'behind shows up here long before it shows up as disk.',
+  },
+  'ws.sessions': {
+    kind: 'gauge', labels: [],
+    doc: 'Authenticated sockets attached right now. The denominator for every '
+       + 'rate above — a fanout count means nothing without it — and the thing '
+       + 'that drops to zero in an outage while every other counter simply '
+       + 'stops emitting, which looks identical to a quiet night.',
+  },
+  'ws.closed': {
+    kind: 'counter', labels: ['close'],
+    doc: 'Sockets ending, by cause. Answers "why did everyone reconnect" in one '
+       + 'query: a deploy, expired tokens, clients being killed, and zombies '
+       + 'are four different incidents that look the same from a connection '
+       + 'count alone.',
+  },
+  'sync.frame.dropped': {
+    kind: 'counter', labels: ['frame'],
+    doc: 'Frames received and not acted on. Answers "is version skew real yet" '
+       + '(invariant 43): `unknown` climbing after a release is old clients '
+       + 'meeting new frames and is CORRECT, while `malformed` is a bug and '
+       + '`denied` is somebody asking for a stream they cannot read.',
+  },
+
+  // ── the sync engine, client side ─────────────────────────────────────────
+  'sync.cursor.lag': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'server_head_rev minus synced_through_rev, sampled per sweep '
+       + '(invariant 1). Answers "is the frontier keeping up" — the silent '
+       + 'failure this whole design has: a client that stops advancing shows no '
+       + 'error and no spinner, it just quietly stops receiving messages.',
+  },
+  'sync.staged.depth': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'Events held out of order awaiting the revision before them. Answers '
+       + '"is anything permanently stuck" — expected at or near zero, because '
+       + 'staged events collapse the moment the hole is filled. A depth that '
+       + 'never falls is a hole nothing is going to fill.',
+  },
+  'sync.apply.duration': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'Time to apply one batch to the replica. Answers "does catching up '
+       + 'make the app unresponsive" — it is the write that competes with the '
+       + 'reads in ui.query.duration, and the pair is what says whether '
+       + 'chunking the apply is still buying anything.',
+  },
+  'sync.gap': {
+    kind: 'counter', labels: ['stream'],
+    doc: 'Gap markers accepted by a client. Answers "how often does somebody '
+       + 'fall off the horizon" — the client-side half of sync.catchup, and the '
+       + 'only one that counts gaps a client actually acted on rather than ones '
+       + 'the server offered.',
+  },
+  'sync.backfill.page': {
+    kind: 'counter', labels: [],
+    doc: 'History pages pulled after a gap. Answers "what does a gap actually '
+       + 'cost" — pages per gap, read against sync.gap. A gap is cheap if '
+       + 'nobody scrolls back and expensive if everybody does, and that ratio '
+       + 'is the difference.',
+  },
+  'outbox.op': {
+    kind: 'counter', labels: ['op', 'settled'],
+    doc: 'How the user\'s writes left the queue. Answers "did my message send" '
+       + 'as an aggregate: acked is the happy path, failed is somebody looking '
+       + 'at a red message, and coalesced is a send-then-delete that correctly '
+       + 'never touched the network (invariant 6).',
+  },
+  'outbox.depth': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'Ops waiting, sampled at every drain. Answers "is the write path '
+       + 'draining" — a depth that grows while a socket is live means acks are '
+       + 'not coming back, which is invisible to a user until they notice '
+       + 'nothing they typed has a timestamp.',
+  },
+  'outbox.oldest.age': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'How long the oldest unsent op has been waiting. Answers "how stale '
+       + 'is the worst case" — depth alone cannot, because one op stuck for an '
+       + 'hour and sixty ops from the last minute are the same depth and very '
+       + 'different problems. Unbounded while offline, which is correct.',
+  },
+
+  'sync.failed': {
+    kind: 'counter', labels: ['stage'],
+    doc: 'The engine caught something it could not do and carried on. Answers '
+       + '"is anybody stuck, and where" — MUST be 0. Before the error boundary '
+       + 'existed this was not a metric at all: a throw inside the apply loop '
+       + 'reached a `ws` event handler and killed the process, so the only '
+       + 'record was a stack trace on somebody\'s stderr. A caught failure '
+       + 'leaves the frontier where it was, so a persistent one becomes '
+       + 'sync.cursor.stalled a heartbeat later — read the two together.',
+  },
+  'telemetry.dropped': {
+    kind: 'counter', labels: ['signal'],
+    doc: 'Records the OTLP buffer refused because it was full. Answers the one '
+       + 'question every other number on every dashboard depends on: IS THIS '
+       + 'COMPLETE. A load run dropped 86% of its telemetry and said nothing — '
+       + 'the shapes still looked right while every count was a twelfth of the '
+       + 'truth, which is the most dangerous way for instrumentation to be '
+       + 'wrong. MUST be 0; a counter at zero emits nothing, so an empty panel '
+       + 'is the healthy state and the alert is `> 0`. Added at FLUSH time so '
+       + 'it cannot be dropped by the buffer it reports on.',
+  },
+
+  // ── proposed and DECLINED, with the reason ───────────────────────────────
+  //
+  // Kept here rather than dropped, because "we thought about it and said no" is
+  // the part that does not survive in a diff — and the alternative is somebody
+  // adding one of these next year with no idea it was already considered.
+  // OBSERVABILITY §9 names the first three; they are declined anyway.
+  //
+  //   ws.heartbeat.missed — a missed beat that recovers is not a condition
+  //     anybody acts on, and one that does not recover IS ws.zombie.detected.
+  //     Two markers where the second already carries the actionable half.
+  //
+  //   sync.op.duplicate.rate — a duplicate is the CORRECT outcome of a retry
+  //     after a lost ack (invariant 5), so the rate has no healthy value to
+  //     compare against. The failure worth catching is a duplicate that was
+  //     not idempotent, which production cannot distinguish and tests can. The
+  //     per-message view is in the trace: two `op` frames, one op_id.
+  //
+  //   ws.reconnect.count — the same number as ws.closed with the reason thrown
+  //     away. Every reconnect is preceded by a close, and the close says why.
+  //
+  //   members_per_workspace — a proxy for audience size. sync.fanout.audience
+  //     measures the thing itself, including the part membership cannot
+  //     predict: how many of those members are connected.
+  //
+  //   directory.pages per sync — ceil(actors / DIRECTORY_PAGE), a deterministic
+  //     function of a number we already hold. The question worth asking is
+  //     whether the pager FINISHED, and directory.synced{result} answers it.
 } as const satisfies Record<string, MetricSpec>;
 
 export type MetricName = keyof typeof metrics;

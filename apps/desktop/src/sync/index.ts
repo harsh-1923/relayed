@@ -220,12 +220,10 @@ const link = createLink({
     // table still empty. Waking the surfaces is what makes that visible.
     invalidate([topic.spaces(), topic.actors()]);
   },
-  // Left unwired on purpose. Nine sync events are declared and have no call
-  // sites, and they are being wired in ONE pass rather than nine decisions made
-  // six steps apart — which is what buys a coherent picture of a request
-  // crossing the whole path instead of nine markers that each answer a local
-  // question (step 13 of the plan).
-  onEvent: () => {},
+  // `onEvent` is deliberately not passed. It is a test seam now, not the
+  // wiring: the engine records every marker through `sync/observe.ts` on the
+  // same call, so production needs nothing here and a test that wants to watch
+  // gets to without changing what production does (step 13 of the plan).
 });
 
 // ── the view the renderer renders ───────────────────────────────────────────

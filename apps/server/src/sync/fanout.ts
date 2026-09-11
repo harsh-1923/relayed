@@ -24,6 +24,8 @@ import type { DB } from '../db/schema.ts';
 import { CLOSE } from '@relayed/protocol';
 import type { Delivery, Registry } from './registry.ts';
 import { spaceMembers, chatMembers, workspaceMembers } from './spaces.ts';
+import { startSpan, annotate, mark } from '@relayed/telemetry';
+import { recordAppend, recordFanout, recordSlowConsumer } from './observe.ts';
 
 /**
  * How far behind a socket may fall before it is closed.
@@ -113,8 +115,29 @@ export async function audienceFor(
 export async function fanout(
   db: Kysely<DB>, registry: Registry, event: AppendedEvent,
 ): Promise<FanoutResult> {
+  return startSpan('sync.fanout', () => deliver(db, registry, event), {
+    attributes: {
+      stream_kind: event.stream.kind, stream_id: event.stream.id,
+      event_type: event.type, rev: event.rev,
+    },
+  });
+}
+
+async function deliver(
+  db: Kysely<DB>, registry: Registry, event: AppendedEvent,
+): Promise<FanoutResult> {
+  const started = performance.now();
+  // Counted HERE rather than in `appendEvent`, and the difference is not
+  // pedantic: an append runs inside the transaction that produced it, so
+  // counting there would count writes that rolled back. Fanout is the first
+  // point at which the event is known to have committed.
+  recordAppend(event.stream.kind);
   const audience = await audienceFor(db, event);
   const targets = registry.forActors(audience);
+  // Marked rather than made a child span: resolving the audience is a moment
+  // inside one delivery, and a span per moment would triple the span count of
+  // the busiest path in the system to record three timestamps.
+  mark('audience.resolved', { actors: audience.length });
 
   let delivered = 0;
   let dropped = 0;
@@ -127,6 +150,10 @@ export async function fanout(
 
     if (target.backlog > BACKLOG_LIMIT_BYTES) {
       target.drop(CLOSE.slowConsumer, 'too far behind');
+      // Counted HERE as well as by the socket's own close path, because this is
+      // the only place that knows the drop was a fanout decision rather than a
+      // client going away.
+      recordSlowConsumer();
       dropped++;
       continue;
     }
@@ -140,6 +167,9 @@ export async function fanout(
     delivered++;
   }
 
+  recordFanout(event.stream.kind, audience.length, dropped,
+               performance.now() - started);
+  annotate({ audience: audience.length, delivered, dropped });
   return { audience: audience.length, delivered, dropped };
 }
 

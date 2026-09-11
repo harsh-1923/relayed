@@ -9,6 +9,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { ulidFloor } from '../db/ulid.ts';
 import type { Stream } from './events.ts';
+import { startSpan, annotate, detached } from '@relayed/telemetry';
+import { recordSweep } from './observe.ts';
 
 /**
  * How long an event stays replayable.
@@ -115,7 +117,9 @@ export function startRetention(
 ): () => void {
   let stopped = false;
 
-  const tick = async (): Promise<void> => {
+  const tick = (): Promise<void> => detached(() => startSpan('sync.retention', sweep));
+
+  const sweep = async (): Promise<void> => {
     let deleted = 0;
     let passes = 0;
     try {
@@ -129,6 +133,8 @@ export function startRetention(
         // the connection it is running on.
         await new Promise(resolve => setTimeout(resolve, 100));
       }
+      recordSweep(deleted);
+      annotate({ deleted, passes });
       if (deleted > 0) onSwept?.(deleted, passes);
     } catch {
       // A failed sweep is not an incident. Nothing depends on it having run —

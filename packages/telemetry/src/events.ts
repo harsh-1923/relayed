@@ -21,21 +21,37 @@ export interface EventSpec {
 export const events = {
   // ── sync engine ──────────────────────────────────────────────────────────
   'sync.gap.entered': {
-    fields: { chat_id: 'id', head_rev: 'int', cursor_rev: 'int' },
-    doc: 'Server returned a gap marker instead of a replay (DESIGN §9.3).',
+    fields: { stream: 'enum', id: 'id', head_rev: 'int', cursor_rev: 'int' },
+    doc: 'Server returned a gap marker instead of a replay (DESIGN §9.3). Named '
+       + 'by stream rather than by chat: spaces and the workspace directory can '
+       + 'gap too, and an earlier `chat_id` field could not say which.',
   },
   'sync.event.unknown': {
-    fields: { rev: 'int' },
+    fields: { stream: 'enum', type: 'enum', rev: 'int' },
     doc: 'An unrecognised op advanced the cursor without being applied '
-       + '(invariant 32). Rising means old clients are meeting new op types.',
+       + '(invariant 32). Rising means old clients are meeting new op types — '
+       + 'and `type` is what says WHICH, without which the count cannot be '
+       + 'acted on.',
   },
   'sync.cursor.stalled': {
-    fields: { chat_id: 'id', cursor_rev: 'int', head_rev: 'int', lag: 'int' },
-    doc: 'Contiguity frontier behind the server head beyond threshold (invariant 1).',
+    fields: { stream: 'enum', id: 'id', cursor_rev: 'int', head_rev: 'int', lag: 'int' },
+    doc: 'The contiguity frontier did not move between two sweeps while the '
+       + 'server head was ahead and nothing was in flight (invariant 1). Not '
+       + 'merely "behind" — a client returning from a week offline is behind '
+       + 'and perfectly healthy. This is behind AND not catching up.',
   },
   'sync.backfill.page': {
     fields: { chat_id: 'id', rows: 'int', duration: 'ms' },
     doc: 'One keyset backfill page fetched (DESIGN §9.4).',
+  },
+
+  'sync.failed': {
+    fields: { stage: 'enum', frame: 'enum', id: 'id', rev: 'int' },
+    doc: 'The engine threw and the error boundary caught it. Carries WHICH '
+       + 'stream and revision, which is what makes one stuck client findable. '
+       + 'The error MESSAGE is deliberately not here — there is no free-text '
+       + 'field on any event (§6) — it rides the failed span instead, where '
+       + 'only `e.message` is ever recorded.',
   },
 
   // ── write path ───────────────────────────────────────────────────────────

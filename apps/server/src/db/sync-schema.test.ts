@@ -12,18 +12,18 @@
 // assuming the two engines behave alike.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, pool } from './client.ts';
+import { db, pool, reachable } from './client.ts';
 import { ulid } from './ulid.ts';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 const org = ulid('org');
 const wsp = ulid('wsp');
 const actor = ulid('act');
 
 before(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await db.insertInto('organizations')
     .values({ id: org, workos_org_id: `test_${org}`, name: 'Schema test' }).execute();
   await db.insertInto('workspaces')
@@ -38,7 +38,7 @@ before(async () => {
 });
 
 after(async () => {
-  if (!reachable) return;
+  if (!up) return;
   // Spaces FIRST, which cascades to chats and messages. Only then the org.
   //
   // Not incidental tidiness — see the "tearing an organization down" test

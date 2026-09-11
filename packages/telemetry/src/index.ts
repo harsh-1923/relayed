@@ -4,9 +4,19 @@
 import { events, type EventName, type EventFields } from './events.ts';
 import { metrics, type MetricName, type MetricLabelsFor } from './metrics.ts';
 import { OtlpSink } from './otlp.ts';
+import { startSpan, onSpanEnd, type FinishedSpan, type SpanOptions } from './trace.ts';
 
 export { events, type EventName, type EventFields };
-export { metrics, type MetricName, type MetricLabelsFor, type LabelValues } from './metrics.ts';
+export {
+  startSpan, openSpan, annotate, mark, detached, traceparent, parseTraceparent,
+  currentSpan, newTraceId, newSpanId,
+  type SpanContext, type SpanAttributes, type FinishedSpan, type SpanOptions,
+  type OpenSpan,
+} from './trace.ts';
+export {
+  metrics, labelValues,
+  type MetricName, type MetricLabelsFor, type LabelValues, type LabelName,
+} from './metrics.ts';
 export { OtlpSink } from './otlp.ts';
 
 // ── Metrics ────────────────────────────────────────────────────────────────
@@ -24,7 +34,8 @@ export interface Sink {
   count(metric: string, labels?: MetricLabels, by?: number): void;
   gauge(metric: string, value: number, labels?: MetricLabels): void;
   histogram(metric: string, value: number, labels?: MetricLabels): void;
-  span<T>(name: string, fn: () => Promise<T> | T): Promise<T>;
+  /** A finished span. Sinks that do not trace may ignore it. */
+  recordSpan?(span: FinishedSpan): void;
 }
 
 /** Development sink. Replaced by the OTLP/pino sink in Phase 2. */
@@ -46,21 +57,23 @@ class ConsoleSink implements Sink {
   histogram(metric: string, value: number, labels?: MetricLabels) {
     this.#emit('histogram', { metric, value, ...labels });
   }
-  async span<T>(name: string, fn: () => Promise<T> | T): Promise<T> {
-    const t0 = performance.now();
-    try {
-      const out = await fn();
-      this.#emit('span', { name, ms: +(performance.now() - t0).toFixed(2), result: 'ok' });
-      return out;
-    } catch (e) {
-      this.#emit('span', { name, ms: +(performance.now() - t0).toFixed(2), result: 'error' });
-      throw e;
-    }
+  recordSpan(span: FinishedSpan) {
+    // One line per span in a dev terminal, with the trace id — which is what
+    // makes "show me everything for this message" a grep rather than a query.
+    this.#emit('span', {
+      name: span.name, ms: span.durationMs, result: span.status,
+      trace: span.traceId, span: span.spanId, parent: span.parentSpanId,
+      ...span.attributes,
+    });
   }
 }
 
 let sink: Sink = new ConsoleSink();
-export const setSink = (s: Sink) => { sink = s; };
+export const setSink = (s: Sink) => { sink = s; onSpanEnd(sp => { sink.recordSpan?.(sp); }); };
+
+// The default sink traces to the console, so a dev terminal shows span lines
+// without a collector running.
+onSpanEnd(sp => { sink.recordSpan?.(sp); });
 
 /**
  * Send events to a local OTLP collector as well as the console, when one is
@@ -84,8 +97,9 @@ export function useOtlpIfConfigured(service: 'desktop' | 'server' | 'agents'): O
     count: (m, l, by) => { console_.count(m, l, by); otlp.count(m, l, by); },
     gauge: (m, v, l) => { console_.gauge(m, v, l); otlp.gauge(m, v, l); },
     histogram: (m, v, l) => { console_.histogram(m, v, l); otlp.histogram(m, v, l); },
-    span: (n, fn) => otlp.span(n, fn),
+    recordSpan: (sp) => { console_.recordSpan?.(sp); otlp.recordSpan(sp); },
   };
+  onSpanEnd(sp => { sink.recordSpan?.(sp); });
 
   // Anything still queued at exit is lost otherwise — and shutdown is exactly
   // when you want the last events.
@@ -136,11 +150,17 @@ export function gauge<N extends MetricName>(
 }
 
 /**
- * Time an operation as a span. Ids are permitted on spans and events — they are
- * indexed differently from metric labels — which is what makes "why did THIS
- * user's switch hang" answerable at all (§5).
+ * Run an operation inside a span.
+ *
+ * A REAL span now, not a timer: it carries a trace id, a parent, and a context
+ * that survives `await`, so two messages sent at once do not attribute one's
+ * database call to the other. Ids are permitted here and forbidden as metric
+ * labels — traces are indexed for high cardinality and metrics are not — which
+ * is what makes "why did THIS person's message hang" answerable at all (§5).
  */
-export const span = <T>(n: string, fn: () => Promise<T> | T) => sink.span(n, fn);
+export const span = <T>(
+  n: string, fn: () => Promise<T> | T, opts?: SpanOptions,
+): Promise<T> => startSpan(n, fn, opts);
 
 /** Metric names, for anything that needs to enumerate them (dashboards, tests). */
 export const metricNames = Object.keys(metrics) as MetricName[];

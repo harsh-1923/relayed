@@ -139,7 +139,7 @@ referenced from other documents and neither gets renumbered.
 | 10 — the directory as a stream | *new* | 14 | ✅ |
 | 11 — the outbox | H | 16 | ✅ |
 | 12 — retention, and the residue we accept | *new* | 14 | ✅ |
-| 13 — the instrumentation pass | *new* | 14 | ☐ |
+| 13 — the instrumentation pass | *new* | 14 | ✅ |
 | 14 — the milestone | I | 17 | ☐ |
 
 **Three steps are new against `PHASE-2-SYNC.md`'s A–I**, and each exists because
@@ -791,7 +791,7 @@ comparison from step 5, and the operational notes in `OBSERVABILITY.md`.
 
 ---
 
-### Step 13 — The instrumentation pass
+### Step 13 — The instrumentation pass ✅
 
 `new · DESIGN.md item 14 · G6`
 
@@ -830,15 +830,42 @@ members-per-workspace, directory page count, and the slow-consumer drop.
 
 **Done when**
 
-- [ ] Every marker is proposed with **the question it answers**, and each is
+- [x] Every marker is proposed with **the question it answers**, and each is
       agreed before it is added. "A counter of X" is not a justification.
-- [ ] Proposing *not* to instrument something is on the table and used at least
+      *Twenty-two metrics, each carrying its question in `metrics.ts`.*
+- [x] Proposing *not* to instrument something is on the table and used at least
       once — a marker nobody reads costs cardinality, ingest and attention.
-- [ ] All nine declared events have call sites.
-- [ ] No unbounded id is a metric label. 100 actors × 150 chats is 15k series
-      against a 10k cap, and it is enforced at compile time.
-- [ ] A "user pressed send" span on the client links to the server span that
-      assigned the `ord`.
+      *Four declined, three of them named by `OBSERVABILITY.md` §9; the reasons
+      are in the catalogue rather than only in a commit message.*
+- [x] All nine declared events have call sites. *Asserted by
+      `observe.test.ts`, which greps the engine rather than trusting a list.*
+- [x] No unbounded id is a metric label. 100 actors × 150 chats is 15k series
+      against a 10k cap, and it is enforced at compile time. *930 series from
+      the whole catalogue, and the count is now derived from the label sets
+      rather than hand-maintained — the hand-maintained one had drifted.*
+- [x] A "user pressed send" span on the client links to the server span that
+      assigned the `ord`. *Proven from both ends: `trace.test.ts` on the client,
+      and a real socket on the server.*
+
+**What it cost, and what it found.** The pass began by discovering that `span()`
+was **a timer, not a trace** — a duration line in Loki with no trace id, no
+parent and nothing crossing the socket, so Tempo had always been empty. Real
+tracing had to be built before "the full path" was expressible at all.
+
+Four bugs came out of wiring it, and every one of them was silent:
+
+| Found | Why it was invisible |
+|---|---|
+| `ws.connected` reported `attempt` **after** zeroing it | The event existed since step 5 and had never once said anything |
+| `stop()` settled the directory pager with a synthetic `{ complete: true }` | Stopping mid-hydration adopted the cursor for a snapshot that had only started; actors on later pages would render as monograms until they happened to change |
+| `frame()` let a body key shadow the envelope's `t` | The reserved-key rule was documented and not enforced |
+| `LABEL_CARDINALITY` had drifted from the unions (`via` 5 vs 6, `outcome` 3 vs 4) | The series-budget test — the thing standing between us and the 10k cap — had been under-counting |
+
+The dashboards were also unchecked against the catalogue in either direction,
+which is the same class of bug as the `app.boot` empty panel. `dashboards.test.ts`
+now fails a panel querying a name nothing emits, a filter on a label value
+outside its closed set, a unit that disagrees with the metric, and any sync
+metric displayed nowhere.
 
 ---
 
@@ -866,6 +893,23 @@ catch:
       land **before** this one rather than after it.
 - [ ] `PHASE-2-SYNC.md` §6 (done criteria) — its three "failed even with every
       box ticked" cases re-read deliberately, not skimmed.
+
+**One path still has no production caller**, and one that had none was fixed.
+Both were found while instrumenting them, and both stopped at the same place —
+the client never *asked*:
+
+| Path | State |
+|---|---|
+| `enqueue` → an op on the wire | The outbox has no caller. Compose is a later phase, so this is expected rather than a gap; the trace test drives `enqueue` directly. |
+| `backfill` → `backfill_ok` → `applyBackfill` | **Fixed in step 13.** `link.ts` neither sent the request nor routed the reply — step 9 built both ends and the assembly (which was never assigned a step) did not connect them. |
+
+The second was a real gap rather than a phase boundary, and flow 2 above walks
+straight into it: kill the server, scroll back past the tail, and there was no
+way to fetch what was below it. A gap the client cannot climb out of is exactly
+the failure the gap design exists to prevent — *missing-and-marked* is only
+better than *missing-and-unknown* if the mark can be acted on. `link.backfill()`
+now closes it, one request per chat at a time, and stops on its own when the
+beginning of history is reached.
 
 ### What this plan deliberately excludes
 

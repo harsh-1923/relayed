@@ -482,3 +482,52 @@ test('consecutive failures escalate, and a welcome resets them', async () => {
   assert.equal(h.connection.attempt, 0, 'success clears the debt');
   h.connection.stop();
 });
+
+// ─── the hello race ─────────────────────────────────────────────────────────
+
+test('A RETRY DURING A SLOW TOKEN READ DOES NOT WRITE TO THE NEW SOCKET', async () => {
+  // Found by a load run, and it took the sync engine down. Reading the token is
+  // asynchronous, and `retryNow` — waking from sleep, or a freshly refreshed
+  // token — abandons the socket mid-read and opens another. The state is
+  // `connecting` again a moment later, so a state check passes and the frame is
+  // written to a socket that has not opened yet:
+  //
+  //   Error: WebSocket is not open: readyState 0 (CONNECTING)
+  //
+  // Thrown out of an async function nobody awaits, which is an unhandled
+  // rejection rather than a caught error. Every other handler in the class
+  // already checked the generation; this one checked only the state.
+  // Initialised rather than nullable: the executor runs synchronously, but the
+  // compiler cannot see that and narrows an assignment made inside it away.
+  let release = (): void => {};
+  const slow = new Promise<void>(resolve => { release = resolve; });
+
+  const h = harness({ token: async () => { await slow; return 'tok'; } });
+  h.connection.start();
+  h.latest().accept();            // `open` fires; the token read is now pending
+
+  // The laptop wakes: this socket is abandoned and a second one opens.
+  h.connection.retryNow();
+  assert.equal(h.sockets.length, 2, 'a second socket, still CONNECTING');
+
+  release();
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.deepEqual(h.sockets[1]!.frames, [], 'nothing was written to it');
+  assert.equal(h.sockets[1]!.readyState, 0, 'because it has not opened');
+});
+
+test('the second socket says hello once IT opens', async () => {
+  // The other half: bailing out must not leave the connection mute. The new
+  // socket has its own `open`, and that is what sends its own hello.
+  const h = harness();
+  h.connection.start();
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual(h.sockets[0]!.frames.map(f => f.t), ['hello']);
+
+  h.connection.retryNow();
+  h.latest().accept();
+  await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual(h.sockets[1]!.frames.map(f => f.t), ['hello'], 'and it did');
+});

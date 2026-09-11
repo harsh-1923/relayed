@@ -180,7 +180,7 @@ test('an ack stamps the row and clears the queue entry, in ONE transaction', () 
   compose(db, 'msg_1', 'hello');
   const [op] = ready(db);
 
-  const topics = applyAck(db, op!.opId, {
+  const acked = applyAck(db, op!.opId, {
     messageId: 'msg_1', chatId: CHAT, ord: 5522, rev: 8141,
     createdAt: '2026-09-11T10:00:00.000Z',
   });
@@ -193,7 +193,7 @@ test('an ack stamps the row and clears the queue entry, in ONE transaction', () 
   assert.equal(row.created_at, Date.parse('2026-09-11T10:00:00.000Z'),
     'the SERVER’s clock replaced the optimistic one');
   assert.equal(depth(db).queued, 0, 'and the queue entry is gone');
-  assert.ok(topics.includes(`chat:${CHAT}:messages`));
+  assert.ok(acked.topics.includes(`chat:${CHAT}:messages`));
   db.close();
 });
 

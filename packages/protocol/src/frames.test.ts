@@ -178,3 +178,46 @@ test('close codes sit in the application-defined range', () => {
   assert.equal(new Set(Object.values(CLOSE)).size, Object.values(CLOSE).length,
     'two reasons sharing a code is a reason you cannot tell apart');
 });
+
+// ─── the envelope carries the trace, and nothing may shadow it ──────────────
+
+test('frame() attaches a traceparent when given one, and OMITS it when not', () => {
+  // A WebSocket carries no headers, so the frame is the only place trace
+  // context can ride (OBSERVABILITY.md §4). Omitted rather than sent as null
+  // when there is no active span: a null is a field every receiver has to know
+  // to ignore, and an older server would have to be taught about it.
+  const carried = JSON.parse(
+    frame('op', { op_id: 'op_1' }, '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'),
+  ) as Record<string, unknown>;
+  assert.equal(carried['traceparent'],
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01');
+
+  const bare = JSON.parse(frame('op', { op_id: 'op_1' })) as Record<string, unknown>;
+  assert.equal('traceparent' in bare, false, 'absent, not null');
+});
+
+test('a traceparent survives the round trip to the reader', () => {
+  const read = readFrame(
+    frame('hello', { protocol: 1, access_token: 'tok' },
+          '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01'),
+    INBOUND);
+  assert.equal(read.kind, 'frame');
+  if (read.kind !== 'frame') return;
+  assert.equal(read.traceparent,
+    '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01');
+  // And it is stripped from the body, because no body schema declares it.
+  assert.equal('traceparent' in (read.body as object), false);
+});
+
+test('A BODY CANNOT SHADOW A RESERVED ENVELOPE KEY', () => {
+  // The rule was documented — `t` and `traceparent` are reserved, no body may
+  // use them — and was not enforced: the serialiser spread the body AFTER `t`,
+  // so a body carrying `t` silently rewrote the frame type. Nothing would look
+  // wrong; the frame would simply be routed somewhere else, or ignored.
+  const out = JSON.parse(
+    frame('op', { t: 'hello', traceparent: 'nonsense', op_id: 'op_1' }, '00-a-b-01'),
+  ) as Record<string, unknown>;
+  assert.equal(out['t'], 'op', 'the envelope wins');
+  assert.equal(out['traceparent'], '00-a-b-01');
+  assert.equal(out['op_id'], 'op_1', 'and the rest of the body is untouched');
+});

@@ -16,6 +16,8 @@
 // never will be — which is indistinguishable, to the person who wrote it, from
 // the message having been delivered.
 import type { DatabaseSync } from 'node:sqlite';
+import { traceparent } from '@relayed/telemetry';
+import { observe } from './observe.ts';
 
 export type OpKind = 'send' | 'delete';
 
@@ -31,6 +33,15 @@ export interface Op {
 export interface QueuedOp extends Op {
   seq: number;
   attempts: number;
+  /**
+   * The trace this op belongs to, stored on the row.
+   *
+   * Stored rather than held in memory because the operation outlives the
+   * process: an op queued offline on Friday and acked on Monday is one send,
+   * and an in-memory span cannot span a restart. Null for rows written before
+   * the column existed, and for anything enqueued outside a span.
+   */
+  traceparent: string | null;
 }
 
 /** What enqueuing did. `coalesced` means the wire never hears about it. */
@@ -78,16 +89,24 @@ export function enqueue(
         .run(op.targetId, 'pending');
       withEcho?.(db);
       db.exec('COMMIT');
+      // Recorded here rather than by the caller, because the caller's view is
+      // that nothing happened — which is exactly the outcome worth counting.
+      // ZERO network operations, not two that fail (invariant 6).
+      observe('outbox.coalesced', { dropped: dropped.length });
       return { outcome: 'coalesced', dropped };
     }
 
     const seq = nextSeq(db);
     db.prepare(`
       INSERT INTO outbox (op_id, seq, kind, chat_id, target_id, payload,
-                          created_at, attempts, next_at, state)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'queued')
+                          created_at, attempts, next_at, state, traceparent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'queued', ?)
     `).run(op.opId, seq, op.kind, op.chatId, op.targetId,
-           JSON.stringify(op.payload), Date.now());
+           JSON.stringify(op.payload), Date.now(),
+           // The caller's span, captured at the moment of composing. This is
+           // what links "user pressed send" to the server span that assigns the
+           // ordinal, however long the two are apart.
+           traceparent() ?? null);
 
     withEcho?.(db);
     db.exec('COMMIT');
@@ -105,13 +124,14 @@ export function enqueue(
  */
 export function ready(db: DatabaseSync, now = Date.now()): QueuedOp[] {
   const rows = db.prepare(`
-    SELECT op_id, seq, kind, chat_id, target_id, payload, attempts
+    SELECT op_id, seq, kind, chat_id, target_id, payload, attempts, traceparent
       FROM outbox
      WHERE state = 'queued' AND next_at <= ?
      ORDER BY seq
   `).all(now) as {
     op_id: string; seq: number; kind: string; chat_id: string;
     target_id: string; payload: string; attempts: number;
+    traceparent: string | null;
   }[];
 
   const claimed = new Set<string>();
@@ -125,7 +145,7 @@ export function ready(db: DatabaseSync, now = Date.now()): QueuedOp[] {
       opId: row.op_id, seq: row.seq, kind: row.kind as OpKind,
       chatId: row.chat_id, targetId: row.target_id,
       payload: JSON.parse(row.payload) as Record<string, unknown>,
-      attempts: row.attempts,
+      attempts: row.attempts, traceparent: row.traceparent,
     });
   }
   return out;
@@ -137,10 +157,44 @@ export function markInflight(db: DatabaseSync, opId: string): void {
     .run(opId);
 }
 
+/**
+ * Put everything still in flight back on the queue. Called on every connect.
+ *
+ * THE BUG THIS CLOSES, found by a load run, and it is the exact failure the
+ * outbox exists to prevent. `inflight` means "written to a socket, waiting for
+ * a reply", and the reply arrives as an ack or a nack — both of which need a
+ * connection. If the socket dies in between, nothing moved the op back:
+ * `ready` selects `state = 'queued'`, so no drain would ever see it again. The
+ * message stayed `pending` on the sender's screen for ever, with no error, no
+ * retry and nothing anywhere saying so.
+ *
+ * SAFE TO RESEND, and that is what `op_id` is for. If the op did reach the
+ * server, the idempotency ledger returns the stored ack rather than doing the
+ * work twice (invariant 5) — which is precisely the "sent, lost the connection
+ * before the ack, retried" case the ledger was built for. Resending something
+ * that already landed costs one round trip; not resending something that did
+ * not costs the message.
+ *
+ * `attempts` is deliberately NOT bumped. A dropped connection is not the op
+ * failing, and counting it would push a perfectly good message toward a backoff
+ * it has not earned.
+ */
+export function requeueInflight(db: DatabaseSync): number {
+  const result = db.prepare(
+    "UPDATE outbox SET state = 'queued', next_at = 0 WHERE state = 'inflight'",
+  ).run();
+  return Number(result.changes);
+}
+
 /** What a refusal did, and which surfaces need redrawing because of it. */
 export interface NackResult {
   outcome: 'retrying' | 'failed';
   topics: string[];
+  /** What kind of op it was, for the counter. Null when the row was already gone. */
+  kind: OpKind | null;
+  attempts: number;
+  /** The trace it belongs to, so the failure lands in the send's own trace. */
+  traceparent: string | null;
 }
 
 export interface Ack {
@@ -160,7 +214,18 @@ export interface Ack {
  * applied, which is survivable (the idempotency ledger returns the same ack)
  * but writes a duplicate outbox attempt for no reason.
  */
-export function applyAck(db: DatabaseSync, opId: string, ack: Ack): string[] {
+export interface AckResult {
+  topics: string[];
+  kind: OpKind | null;
+  /** The trace the op was queued under, read BEFORE the row is deleted. */
+  traceparent: string | null;
+}
+
+export function applyAck(db: DatabaseSync, opId: string, ack: Ack): AckResult {
+  // Read first: the row is about to be deleted, and its trace context is the
+  // only link back to the moment somebody pressed return.
+  const row = db.prepare('SELECT kind, traceparent FROM outbox WHERE op_id = ?')
+    .get(opId) as { kind: string; traceparent: string | null } | undefined;
   db.exec('BEGIN');
   try {
     db.prepare(`
@@ -178,7 +243,11 @@ export function applyAck(db: DatabaseSync, opId: string, ack: Ack): string[] {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 
-  return [`chat:${ack.chatId}:messages`, `chat:${ack.chatId}:state`];
+  return {
+    topics: [`chat:${ack.chatId}:messages`, `chat:${ack.chatId}:state`],
+    kind: (row?.kind as OpKind | undefined) ?? null,
+    traceparent: row?.traceparent ?? null,
+  };
 }
 
 /** Backoff for attempt N, with full jitter. Same curve as the connection's. */
@@ -203,11 +272,25 @@ export function applyNack(
   db: DatabaseSync, opId: string, retryable: boolean, error: string,
   now = Date.now(), random: () => number = Math.random,
 ): NackResult {
-  const row = db.prepare('SELECT attempts, target_id, chat_id FROM outbox WHERE op_id = ?')
-    .get(opId) as { attempts: number; target_id: string; chat_id: string } | undefined;
+  const row = db.prepare(`SELECT attempts, target_id, chat_id, kind, traceparent
+                            FROM outbox WHERE op_id = ?`)
+    .get(opId) as {
+      attempts: number; target_id: string; chat_id: string;
+      kind: string; traceparent: string | null;
+    } | undefined;
   // An op that is no longer here settled some other way — an ack that raced it,
   // or a discard. Nothing to do, and nothing to wake.
-  if (!row) return { outcome: 'failed', topics: [] };
+  if (!row) {
+    return { outcome: 'failed', topics: [], kind: null, attempts: 0, traceparent: null };
+  }
+  const settled = {
+    kind: row.kind as OpKind,
+    // The count AFTER this failure. `attempts` on the row is what came before,
+    // so reporting it unchanged would say "0 attempts" about an op that has
+    // just failed once.
+    attempts: row.attempts + 1,
+    traceparent: row.traceparent,
+  };
 
   if (retryable) {
     db.prepare(`UPDATE outbox SET state = 'queued', attempts = attempts + 1,
@@ -215,7 +298,7 @@ export function applyNack(
       .run(retryAt(row.attempts, now, random), error, opId);
     // Nothing rendered changes: the message is still pending and still going to
     // be sent. Waking a surface to redraw an identical row is noise.
-    return { outcome: 'retrying', topics: [] };
+    return { outcome: 'retrying', topics: [], ...settled };
   }
 
   db.exec('BEGIN');
@@ -236,6 +319,7 @@ export function applyNack(
   return {
     outcome: 'failed',
     topics: [`chat:${row.chat_id}:messages`, `chat:${row.chat_id}:state`],
+    ...settled,
   };
 }
 
@@ -252,7 +336,7 @@ export function failed(db: DatabaseSync): (QueuedOp & { error: string | null })[
     opId: row.op_id, seq: row.seq, kind: row.kind as OpKind,
     chatId: row.chat_id, targetId: row.target_id,
     payload: JSON.parse(row.payload) as Record<string, unknown>,
-    attempts: row.attempts, error: row.error,
+    attempts: row.attempts, error: row.error, traceparent: null,
   }));
 }
 
@@ -276,6 +360,7 @@ export function discard(db: DatabaseSync, opId: string): void {
   try {
     const row = db.prepare('SELECT target_id, kind FROM outbox WHERE op_id = ?')
       .get(opId) as { target_id: string; kind: string } | undefined;
+    if (row) observe('outbox.discarded', { kind: row.kind });
     db.prepare('DELETE FROM outbox WHERE op_id = ?').run(opId);
     // Only a `send`'s echo is removed. Discarding a failed DELETE must leave
     // the message alone — the person wanted it gone and could not have it, and
@@ -288,13 +373,26 @@ export function discard(db: DatabaseSync, opId: string): void {
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-/** How many ops are waiting. A metric, and what "drain finished" means. */
-export function depth(db: DatabaseSync): { queued: number; failed: number } {
+/**
+ * How many ops are waiting, and how long the oldest has waited.
+ *
+ * Both, because depth alone cannot tell the two apart: sixty ops from the last
+ * minute and one op stuck for an hour are the same number and very different
+ * problems. `oldest` is 0 when nothing is queued.
+ */
+export function depth(
+  db: DatabaseSync, now = Date.now(),
+): { queued: number; failed: number; oldest: number } {
   const row = db.prepare(`
-    SELECT SUM(state != 'failed') AS queued, SUM(state = 'failed') AS failed
+    SELECT SUM(state != 'failed') AS queued, SUM(state = 'failed') AS failed,
+           MIN(CASE WHEN state != 'failed' THEN created_at END) AS oldest_at
       FROM outbox
-  `).get() as { queued: number | null; failed: number | null };
-  return { queued: row.queued ?? 0, failed: row.failed ?? 0 };
+  `).get() as { queued: number | null; failed: number | null; oldest_at: number | null };
+  return {
+    queued: row.queued ?? 0,
+    failed: row.failed ?? 0,
+    oldest: row.oldest_at === null ? 0 : Math.max(0, now - row.oldest_at),
+  };
 }
 
 /**

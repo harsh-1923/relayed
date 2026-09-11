@@ -104,17 +104,37 @@ redaction and rate limiting central.
 
 **A span is a logical operation, never a connection.**
 
-| Traced | Span |
-|---|---|
-| Sending a message | compose → outbox → `op` → `ack` |
-| Reconnect | `hello` → `welcome` → catch-up complete |
-| Opening a chat with a gap | open → backfill pages → rendered |
-| Agent invocation | delegation minted → provider call → reply committed |
+| Traced | Span | Built |
+|---|---|---|
+| Sending a message | compose → outbox → `op` → `ack` | `outbox.send` → `sync.op` → `ops.send` / `sync.fanout` |
+| Reconnect | `hello` → `welcome` → catch-up complete | `sync.connect` → `sync.hello`, `sync.directory.hydrate` |
+| Opening a chat with a gap | open → backfill pages → rendered | `sync.backfill` (the *open → rendered* half lands with the chat surface) |
+| Agent invocation | delegation minted → provider call → reply committed | Phase 3 |
 
 Connection lifecycle — connects, drops, zombie detection — is **events and
-metrics**, not spans.
+metrics**, not spans. So is the heartbeat: one span per ping per socket every
+twenty-five seconds would be the largest trace volume in the system, and it
+answers no question at all.
 
-### `traceparent` belongs in the frame envelope
+### A span whose end is somewhere else
+
+`startSpan(name, fn)` covers an operation that *is* a function call. The
+interesting ones here are not. "Sending a message" begins when somebody presses
+return and ends when an `ack` arrives over a socket — possibly after a
+reconnect, possibly days later if the laptop was shut. There is no function
+whose body is that operation, so `openSpan` returns a handle and the caller owns
+the ending.
+
+The cost is that a caller who forgets leaves a span that is never reported at
+all — which does not look like a leak, it looks like a trace missing its last
+step. So every holder of one is a map keyed by something that settles (an op id,
+a connection), and every teardown ends what it is still holding (invariant 54).
+
+**A queued op stores its `traceparent` on the outbox row**, because the outbox
+is durable and the span is not: an op composed offline on Friday and acked on
+Monday is one send, and nothing in memory bridges that.
+
+### `traceparent` belongs in the frame envelope — and now does
 
 OTel propagates context through HTTP headers automatically. A WebSocket provides
 nothing, so to link a client-side "user pressed send" span to the server span
@@ -124,8 +144,13 @@ that assigned the `ord`, the frame must carry it explicitly:
 { "t": "op", "op_id": "01J…", "traceparent": "00-<trace-id>-<span-id>-01", … }
 ```
 
-This is a §9 protocol addition. Cheap now; a version-skew problem once old
-clients are in the field (§9.10), which given opt-in updates is soon.
+Attached by `frame()` in `@relayed/protocol`, which is the one place `t` is
+attached too, so neither can be forgotten. It is **omitted entirely** when no
+span is active rather than sent as null, and a header that does not parse starts
+a new trace rather than failing the request — a missing link is not an error
+(invariant 43's rule, applied to telemetry). That matters immediately given
+opt-in updates: clients in the field are months old and send no trace context
+at all.
 
 ---
 
@@ -396,22 +421,56 @@ observable condition.
 **The rule: adding an invariant means asking "what signal shows me this broke?"**
 If there is no answer, either it is untestable in production, or there is a gap.
 
-The mapping is **pending** — signals land with the subsystems that emit them.
-The pattern:
+### The sync invariants, as built
 
-| Invariant | Signal |
-|---|---|
-| 1 — cursor advances contiguously | `sync.cursor.lag` (`server_head_rev − synced_through_rev`); `sync.staged_events.depth`, expected ≈ 0 — it collapses to empty whenever a client is caught up |
-| 5 — op idempotency | `sync.op.duplicate.rate` |
-| 6 / 7 — outbox coalescing, in-order replay | `outbox.depth`, `outbox.oldest.age`, `outbox.failed.count` |
-| 25 — join uses the gap path | `sync.gap.count`, `sync.backfill.pages` |
-| 29 — heartbeat under 30s | `ws.heartbeat.missed`, `ws.reconnect.count` |
-| 30 — zombie socket detection | `ws.zombie.detected` |
-| **32 — unknown event advances cursor** | `sync.event.unknown` — tells us old clients are meeting new op types in the wild |
-| §9.9 — the `welcome` ceiling | `sync.chats_per_actor` histogram — the number that predicts when `welcome` must page |
+Wired in one pass (`SYNC-FLOWS.md` step 13) rather than one at a time, so they
+answer a question **together** rather than each answering a local one:
 
-That last one is worth emphasising: it is the metric that gives advance warning
-of a design limit rather than reporting it after users hit it.
+| Invariant | Signal | Healthy |
+|---|---|---|
+| 1 — cursor advances contiguously | `sync.cursor.lag`, `sync.staged.depth`, and the `sync.cursor.stalled` event | lag rises and **falls**; depth ≈ 0 |
+| 5 — op idempotency | *no metric* — see below | — |
+| 6 / 7 — outbox coalescing, in-order replay | `outbox.op{settled}`, `outbox.depth`, `outbox.oldest.age` | `coalesced` present, `failed` rare |
+| 25 — join uses the gap path | `sync.catchup{answer}`, `sync.gap{stream}`, `sync.backfill.page` | gap share stable |
+| 29 / 30 — heartbeat, zombie detection | `ws.closed{close}`, `ws.zombie.detected` | `zombie` near 0 |
+| 31 — reconnect jitter | `sync.catchup.duration`, `ws.closed{close}` | no spike after a deploy |
+| **32 — unknown event advances cursor** | `sync.event.unknown` — carrying **which type** | rises after a release, then falls |
+| 43 — unknown frames are ignored | `sync.frame.dropped{frame}` | `unknown` free to rise, `malformed` 0 |
+| §9.9 — the `welcome` ceiling | `sync.welcome.bytes`, `sync.chats_per_actor` | far below the paging point |
+
+`sync.chats_per_actor` is worth emphasising: it is the metric that gives advance
+warning of a design limit rather than reporting it after users hit it.
+
+**`sync.cursor.stalled` needed a real definition, and the first one was wrong.**
+*Behind* is not *stalled* — a client back from a week offline is a hundred
+thousand revisions behind and perfectly healthy; that is what catch-up is for.
+The first attempt asked whether a catch-up request was outstanding, which could
+essentially never fire: the scheduler re-asks the moment one settles while a
+stream is still behind, so a struggling stream is **always** outstanding. What
+makes a stall unambiguous is that we asked, we were **answered**, and the
+frontier is exactly where it was.
+
+### Four things deliberately NOT instrumented
+
+A marker nobody reads costs cardinality, ingest and attention, so declining is
+part of the pass rather than a gap in it. Three of these were named in the
+table this section used to carry:
+
+- **`ws.heartbeat.missed`** — a missed beat that recovers is not a condition
+  anybody acts on, and one that does not recover **is** `ws.zombie.detected`.
+- **`sync.op.duplicate.rate`** (invariant 5) — a duplicate is the *correct*
+  outcome of a retry after a lost ack, so the rate has no healthy value to
+  compare against. The failure worth catching is a duplicate that was not
+  idempotent, which production cannot distinguish and tests can. The
+  per-message view is in the trace: two `op` frames, one `op_id`.
+- **`ws.reconnect.count`** — the same number as `ws.closed` with the reason
+  thrown away. Every reconnect is preceded by a close, and the close says why.
+- **directory pages per sync** — `ceil(actors / DIRECTORY_PAGE)`, a
+  deterministic function of a number we already hold. Whether the pager
+  *finished* is the question, and `directory.synced{result}` answers it.
+
+The reasons live in `metrics.ts` beside the catalogue as well, because "we
+thought about it and said no" is the part that does not survive in a diff.
 
 ---
 
@@ -538,10 +597,12 @@ pnpm services      # Postgres, Redis, MinIO and the LGTM stack
 pnpm dev           # the app and the server, both exporting to :4318
 ```
 
-Then **http://localhost:3000** — anonymous admin, no login — and the dashboard
-**Relayed → identity & storage**, provisioned with the stack from
-`infra/grafana/dashboards/`. A dashboard that has to be imported by hand is a
-dashboard nobody opens, so it ships in `compose.yaml` as a read-only mount.
+Then **http://localhost:3000** — anonymous admin, no login — and two dashboards,
+provisioned with the stack from `infra/grafana/dashboards/`. A dashboard that has
+to be imported by hand is a dashboard nobody opens, so they ship in
+`compose.yaml` as a read-only mount.
+
+#### Relayed → identity & storage
 
 Six rows, in the order they are usually needed:
 
@@ -554,10 +615,33 @@ Six rows, in the order they are usually needed:
 | **The read path** | local read latency by trigger, pushes against wakes, what surfaces rendered, could-paint against did-paint, and one loop end to end |
 | **Down to one user** | the raw event stream, with account, device, actor and workspace ids |
 
+#### Relayed → sync
+
+Eight rows, opening with the traces rather than the numbers — because the first
+question about sync is almost always about one message rather than about a rate:
+
+| Row | Reads |
+|---|---|
+| **Traces** | slowest sends compose → ack, and the writes the server refused |
+| **Invariants** | slow-consumer drops, stalled cursors, malformed frames, unknown events |
+| **Sending a message** | how ops left the outbox, server write latency, queue depth and oldest wait |
+| **Getting it to everybody** | connected sockets, fanout audience and duration, client apply cost |
+| **Falling behind** | replay against gap, replay size against the 500 cap, cursor lag, backfill |
+| **Connections** | sockets closing by cause, attempts before a welcome |
+| **The welcome ceiling** | frame bytes and chats per actor, against §9.9 |
+| **Retention** | appended against swept — the log's net growth |
+
 Panels ship **with** the metrics that feed them, deliberately. `app.boot` was
 once declared as a histogram and only ever emitted as an event, so its panel
 returned nothing — and an empty panel reads as healthy rather than as
 never-wired. A metric with no panel has the same problem from the other end.
+
+**Both directions are now checked by a test.** `dashboards.test.ts` fails a
+panel querying a metric or event the catalogue does not declare, a filter on a
+label value outside its closed set, a unit that disagrees with the metric's own,
+and any sync metric displayed nowhere. All four fail identically in production —
+a panel that is empty because it is *wrong*, which is indistinguishable from a
+panel that is empty because everything is fine.
 
 A counter at zero emits nothing, so **an empty invariant panel is the healthy
 state** — the alert is `> 0`, not a threshold.
@@ -582,15 +666,107 @@ The attributes arrive as Loki **structured metadata**, not stream labels — onl
 was worth checking rather than assuming, because putting an unbounded id in a
 Loki label is the same mistake §5 forbids for metrics, in a different store.
 
-**This is a dev-grade arrangement and it has two consequences.** Metrics
-inherit the 14-day log retention rather than being kept for months, which is
-precisely the distinction §5 draws — so "how many users did we create this
-quarter" is not yet answerable, even though the metric exists. And `span()`
-records a duration line rather than a real trace, so **Tempo is empty**: there
-is no waterfall to open when a switch is slow, only a number.
+**Traces are real, and go to Tempo.** They used to not be: `span()` recorded a
+duration line into Loki and nothing else, so there was no trace id, no parent,
+no propagation, and **Tempo was empty** — a number when a switch was slow, and
+no waterfall to open. Step 13 of the sync plan replaced that with W3C trace
+context over `AsyncLocalStorage`, and `OtlpSink` now posts spans to `/v1/traces`
+as a separate signal. The two posts are attempted independently, so a collector
+rejecting traces does not also cost the logs that would say why.
 
-Both are the same fix — emit OTLP metrics to `/v1/metrics` and spans to
-`/v1/traces` — and both are §3's ingest work, which Phase 2 needs anyway.
+**One dev-grade consequence remains.** Metrics still inherit the 14-day log
+retention rather than being kept for months, which is precisely the distinction
+§5 draws — so "how many users did we create this quarter" is not yet answerable
+even though the metric exists. The fix is the same shape: emit OTLP metrics to
+`/v1/metrics`, which is §3's ingest work.
+
+---
+
+## 10c. Putting data in it
+
+A dashboard with no data on it cannot be judged. `scripts/mock/` drives the real
+engine — real replicas, real sockets, a real server — hard enough to fill one.
+
+```bash
+pnpm services                                   # Postgres and the LGTM stack
+pnpm --filter @relayed/server dev               # the real server
+pnpm mock                                       # ~4 min, 24 clients
+pnpm mock:wipe                                  # remove every mock world
+```
+
+`MOCK_MINUTES`, `MOCK_CLIENTS`, `MOCK_MSGS_PER_SEC` and `MOCK_EDGE_SHARE` size it.
+
+**Seventy / thirty, deliberately.** A run that only exercises the happy path
+produces a dashboard where every panel is green and nothing has been learned;
+one that only exercises edge cases produces a dashboard where the ordinary case
+is invisible and every ratio is meaningless. The numbers worth reading here —
+the gap share, the replay-size distribution, the retry rate — are all **ratios**,
+and a ratio needs both halves.
+
+The thirty percent is provoked rather than waited for. A gap needs five hundred
+events to arrive while one client is away, which does not happen by chance in
+five minutes. Fifteen scenarios cover catch-up, gap, backfill, retention past the
+floor, offline compose and coalescing, both kinds of refusal, duplicate ops,
+reconnect storms, unknown and malformed frames, an ancient protocol, a rejected
+token, a silent socket, and a brand new device with an empty replica.
+
+**Nothing is mocked but the person.** The clients build real replicas with the
+real migrations and hand them to the real `createLink`; the only stand-ins are
+`send`, `goOffline` and `scrollBack`, for a UI that does not exist yet. A run
+that simulated the engine would produce telemetry describing the simulation.
+
+### It is also a test, and it behaves like one
+
+The first runs found five bugs that 548 passing tests did not, and the shape of
+each is worth recording — every one lived in the space *between* two components
+that were each individually tested:
+
+| Found | Why no test caught it |
+|---|---|
+| The gap snapshot was camelCase on the server and read as snake_case on the client — **every gap with messages in it threw** | Both sides had tests; each built its own fixtures in its own convention, and `Gap.snapshot` is `.loose()` so nothing validated across the seam |
+| `#hello` guarded on state but not generation, so `retryNow` mid-token-read wrote to a socket that had not opened — an unhandled rejection that took the engine down | Needs an async token read to be interrupted at one exact moment |
+| An op **in flight when the socket died was never re-queued**: `ready` only sees `queued`, so the message stayed pending for ever with no error | Every unit test acked or nacked what it sent |
+| The stall detector's memory lived in the catch-up scheduler, which is rebuilt per connection — a flaky client could stall for ever and report nothing | The unit test never reconnected |
+| `LABEL_CARDINALITY` had drifted from its unions, under-counting the series budget | It was a hand-maintained mirror; nothing compared the two |
+
+Each now has a regression test, and two produced structural fixes rather than
+patches — the label sets are proven exhaustive at compile time, and the stall
+mark moved into the replica where it survives a reconnect.
+
+### The one that mattered most: the sink was lying
+
+None of the above is the important finding. Asked whether the dashboards could
+be *trusted*, the answer at 120 messages a second was **no**:
+
+| | |
+|---|---|
+| Telemetry records emitted by one client process | 1,773,119 |
+| Records that reached Loki | 244,811 |
+| **Lost** | **86%** |
+| `outbox.op{settled=acked}` emitted / arrived | 36,921 / 3,126 |
+
+`OtlpSink` buffered 500 records and flushed every five seconds — **100 a second**
+— against a run producing three and a half thousand. It dropped the oldest on
+overflow and said nothing, so every count on every panel was a twelfth of the
+truth **while the shapes still looked right**. Ratios and label distributions
+survived; magnitudes did not. Traces fared worse: only 3 of 20 sends had both
+halves, because whichever side lost its span left the other looking like a root.
+
+Two changes, and the first matters more than the second:
+
+- **Overflow is counted.** `telemetry.dropped{signal}` is added at FLUSH time,
+  so it cannot be dropped by the buffer it reports on. It is the first panel on
+  the sync dashboard, because it is the number every other number depends on:
+  *is this complete?* MUST be 0.
+- The window was raised to 20,000 records on a 2-second flush. At 25 messages a
+  second, 5,895 of 6,118 acks now arrive and 20 of 20 traces span both services.
+
+**The real fix is aggregation, and it is not built.** One log record per
+observation is the wrong shape for a metric — 1.6 million histogram records came
+from a four-minute run. OTLP metrics on `/v1/metrics` carry pre-aggregated series
+instead, which is §3's ingest work and the same fix the 14-day retention problem
+needs. Until then: a bigger window, and a counter that says when it was not big
+enough.
 
 ---
 

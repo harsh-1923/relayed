@@ -11,6 +11,7 @@ import { migrate } from './migrate.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
 import { applyEvent, frontierOf, type Stream, type Envelope } from './apply.ts';
 import { replicaEffect } from './effects.ts';
+import { setSink } from '@relayed/telemetry';
 import {
   CatchupScheduler, applyCatchup, applyGap, applyBackfill, backfillFloor,
   applyDirectoryPage, directorySnapshotComplete, directoryOwed,
@@ -42,6 +43,123 @@ const tail = (from: number, to: number): MessageRow[] =>
 
 const messageCount = (db: DatabaseSync): number =>
   (db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n;
+
+// ─── the stall detector (step 13) ───────────────────────────────────────────
+
+/** Say the server is ahead on a stream, without delivering anything. */
+const serverAheadOn = (db: DatabaseSync, stream: Stream, rev: number): void => {
+  db.prepare(`INSERT INTO stream_state (stream_kind, stream_id, server_head_rev)
+              VALUES (?, ?, ?)
+              ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+                server_head_rev = excluded.server_head_rev`)
+    .run(stream.kind, stream.id, rev);
+};
+
+/** The events one block emits, through the public sink. */
+function recorded(fn: () => void): { name: string; fields: Record<string, unknown> }[] {
+  const events: { name: string; fields: Record<string, unknown> }[] = [];
+  setSink({
+    event: (name, fields) =>
+      events.push({ name, fields: fields as Record<string, unknown> }),
+    count: () => {}, gauge: () => {}, histogram: () => {},
+  });
+  fn();
+  return events;
+}
+
+test('BEHIND IS NOT STALLED — a client returning from a week off is healthy', () => {
+  // The distinction the whole marker turns on. A client a hundred thousand
+  // revisions behind is exactly what catch-up is for, and reporting it as a
+  // stall would make the signal fire on the most ordinary event there is.
+  const db = replica();
+  const scheduler = new CatchupScheduler(db, () => {});
+  serverAheadOn(db, CHAT, 100_000);
+
+  const events = recorded(() => { scheduler.sweep(); });
+  assert.equal(events.filter(e => e.name === 'sync.cursor.stalled').length, 0);
+  db.close();
+});
+
+test('a frontier that does not move between sweeps IS stalled', () => {
+  // Behind, not moving, and nothing in flight that could move it. Silent
+  // otherwise: no error, no spinner, just a client that has quietly stopped
+  // receiving messages (invariant 1).
+  const db = replica();
+  // A request that is never answered, so nothing ever settles or advances.
+  const scheduler = new CatchupScheduler(db, () => {});
+  serverAheadOn(db, CHAT, 500);
+
+  scheduler.sweep();                      // first look: no memory to compare to
+  scheduler.settled(CHAT);                // the reply came back and changed nothing
+  const events = recorded(() => { scheduler.sweep(); });
+
+  const stalled = events.find(e => e.name === 'sync.cursor.stalled');
+  assert.ok(stalled, 'the stall was reported');
+  assert.deepEqual(stalled.fields,
+    { stream: 'chat', id: CHAT.id, cursor_rev: 0, head_rev: 500, lag: 500 });
+  db.close();
+});
+
+test('a request still UNANSWERED is not stalled, it is waiting', () => {
+  // The correction this definition took. Asking "is a request outstanding"
+  // could not work: `settled` re-asks immediately while a stream is behind, so
+  // a struggling stream is always outstanding and the signal would never fire.
+  // Asking "were we answered" does — and it still stays quiet here.
+  const db = replica();
+  const scheduler = new CatchupScheduler(db, () => {});
+  serverAheadOn(db, CHAT, 500);
+
+  scheduler.sweep();                      // asked, and nothing has come back
+  const events = recorded(() => { scheduler.sweep(); });
+  assert.equal(events.filter(e => e.name === 'sync.cursor.stalled').length, 0);
+  db.close();
+});
+
+test('THE STALL SURVIVES A RECONNECT, because the scheduler does not', () => {
+  // Found by a load run, and it is the case the marker most needs to cover. The
+  // memory started in the scheduler — which is rebuilt per connection, on
+  // purpose — so a client reconnecting more often than it swept lost the
+  // comparison every time and could sit permanently stuck reporting nothing.
+  // A laptop on a flaky connection is both the likeliest to stall and the least
+  // likely to stay connected long enough to notice.
+  const db = replica();
+  serverAheadOn(db, CHAT, 500);
+
+  const first = new CatchupScheduler(db, () => {});
+  first.sweep();
+  first.settled(CHAT);
+
+  // The socket dropped. A brand new scheduler, with nothing carried across.
+  const second = new CatchupScheduler(db, () => {});
+  second.sweep();          // welcome's sweep: no memory of its own, so quiet
+  second.settled(CHAT);
+  const events = recorded(() => { second.sweep(); });
+
+  const stalled = events.find(e => e.name === 'sync.cursor.stalled');
+  assert.ok(stalled, 'the mark outlived the connection');
+  assert.equal(stalled.fields['cursor_rev'], 0);
+  db.close();
+});
+
+test('a stream that caught up is FORGOTTEN, not remembered against itself', () => {
+  // Otherwise the next time it fell behind by one event it would compare
+  // against a frontier from before it caught up, and read as stalled on the
+  // first sweep — a false alarm on the most normal thing that happens.
+  const db = replica();
+  const scheduler = new CatchupScheduler(db, () => {});
+  const deps = { db, effect: replicaEffect() };
+
+  serverAheadOn(db, CHAT, 1);
+  scheduler.sweep();
+  scheduler.settled(CHAT);
+  applyEvent(deps, CHAT, created(1, 1));   // now level
+  scheduler.sweep();
+
+  serverAheadOn(db, CHAT, 2);              // behind again, by one
+  const events = recorded(() => { scheduler.sweep(); });
+  assert.equal(events.filter(e => e.name === 'sync.cursor.stalled').length, 0);
+  db.close();
+});
 
 // ─── the scheduler ──────────────────────────────────────────────────────────
 
@@ -189,7 +307,7 @@ test('a gap adopts the tail, jumps the frontier, and MARKS the floor', () => {
   // current state rather than partial history. What is below is not
   // missing-and-unknown — it is missing-and-marked.
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 40_112, recent: tail(40_063, 40_112) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 40_112, recent: tail(40_063, 40_112) });
 
   assert.equal(frontierOf(db, CHAT), 91_204, 'the frontier jumped deliberately');
   assert.equal(messageCount(db), 50, 'and only the tail came with it');
@@ -211,7 +329,7 @@ test('a gap CLEARS staged events, which could never drain', () => {
   applyEvent(deps, CHAT, created(41, 41));
   assert.ok((db.prepare('SELECT COUNT(*) n FROM staged_events').get() as { n: number }).n > 0);
 
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 40_112, recent: tail(40_100, 40_112) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 40_112, recent: tail(40_100, 40_112) });
   assert.equal((db.prepare('SELECT COUNT(*) n FROM staged_events').get() as { n: number }).n, 0);
   db.close();
 });
@@ -221,10 +339,10 @@ test('a second gap with a shorter tail does not RAISE the floor', () => {
   // client already holds, and the UI would offer to backfill what is already
   // there while pretending the rest is gone.
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 40_112, recent: tail(40_000, 40_112) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 40_112, recent: tail(40_000, 40_112) });
   assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 40_000);
 
-  applyGap(db, CHAT, 91_300, { kind: 'messages', headOrd: 40_200, recent: tail(40_190, 40_200) });
+  applyGap(db, CHAT, 91_300, { kind: 'messages', head_ord: 40_200, recent: tail(40_190, 40_200) });
   assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 40_000, 'the floor held');
   db.close();
 });
@@ -260,7 +378,7 @@ test('a gap on the DIRECTORY records the debt without inlining it', () => {
 
 test('backfill lowers the floor and keeps the gap open until the beginning', () => {
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 237, recent: tail(188, 237) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 237, recent: tail(188, 237) });
   assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 188);
 
   applyBackfill(db, CHAT.id, tail(138, 187), false);
@@ -272,7 +390,7 @@ test('backfill lowers the floor and keeps the gap open until the beginning', () 
 
 test('the gap CLOSES when the server says the page was the last', () => {
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 237, recent: tail(188, 237) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 237, recent: tail(188, 237) });
   applyBackfill(db, CHAT.id, tail(1, 187), true);
 
   const floor = backfillFloor(db, CHAT.id);
@@ -286,7 +404,7 @@ test('the gap ALSO closes on reaching ordinal 1, not only on being told', () => 
   // Clearing on "no rows returned" alone would clear it on a network hiccup
   // too. Reaching the first ordinal is positive evidence rather than an absence.
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 50, recent: tail(2, 50) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 50, recent: tail(2, 50) });
   applyBackfill(db, CHAT.id, tail(1, 1), false);
 
   assert.equal(backfillFloor(db, CHAT.id).hasGap, false);
@@ -297,7 +415,7 @@ test('paging terminates without duplicates or holes', () => {
   // Keyset on `ord`, never OFFSET: offset paging degrades linearly and, worse,
   // skips or repeats rows when anything is inserted mid-scroll.
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 237, recent: tail(188, 237) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 237, recent: tail(188, 237) });
 
   let cursor = backfillFloor(db, CHAT.id).oldestLocalOrd ?? 0;
   let pages = 0;
@@ -317,7 +435,7 @@ test('paging terminates without duplicates or holes', () => {
 test('an empty backfill page on an open gap changes nothing', () => {
   // A hiccup is not evidence of the beginning.
   const db = replica();
-  applyGap(db, CHAT, 91_204, { kind: 'messages', headOrd: 237, recent: tail(188, 237) });
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 237, recent: tail(188, 237) });
   const before = backfillFloor(db, CHAT.id);
 
   applyBackfill(db, CHAT.id, [], false);
@@ -332,7 +450,7 @@ test('a live event after a gap applies at the new frontier', () => {
   // frontier + 1 and applies normally — no special case for "we just gapped".
   const db = replica();
   const deps = { db, effect: replicaEffect() };
-  applyGap(db, CHAT, 100, { kind: 'messages', headOrd: 50, recent: tail(1, 50) });
+  applyGap(db, CHAT, 100, { kind: 'messages', head_ord: 50, recent: tail(1, 50) });
 
   const next = applyEvent(deps, CHAT, created(101, 51));
   assert.equal(next.outcome, 'applied');

@@ -376,4 +376,47 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE chat_state_new RENAME TO chat_state;
     `,
   },
+  {
+    version: 4,
+    name: 'trace',
+    up: `
+      -- The trace an op belongs to, so a send survives a restart with its
+      -- identity intact. Step 13 of the sync build plan.
+      --
+      -- WHY THE COLUMN EXISTS AT ALL. "Sending a message" begins when somebody
+      -- presses return and ends when an ack comes back, and between those two
+      -- moments the app may be closed for a week — the outbox is durable
+      -- precisely so that is survivable. An in-memory span cannot bridge it, so
+      -- the trace context is stored beside the op it belongs to. Without this,
+      -- every message sent offline arrives on the server as the root of its own
+      -- trace and the compose end of the path is simply missing.
+      --
+      -- Nullable, and rows written before this migration stay null: an op with
+      -- no trace is sent without a traceparent and the server starts a fresh
+      -- trace, which is a missing link rather than an error (invariant 43's
+      -- rule applied to telemetry).
+      ALTER TABLE outbox ADD COLUMN traceparent TEXT;
+    `,
+  },
+  {
+    version: 5,
+    name: 'stall',
+    up: `
+      -- Where the frontier stood at the previous sweep, so "stalled" can mean
+      -- something across a reconnect. Step 13 of the sync build plan.
+      --
+      -- WHY IT CANNOT LIVE IN MEMORY, which is where it started. The catch-up
+      -- scheduler is rebuilt per connection — deliberately, because its other
+      -- state is "what have I asked for on THIS socket" — so a client that
+      -- reconnects more often than it sweeps loses the comparison every time,
+      -- and can be permanently stuck while reporting nothing. That is exactly
+      -- the client the marker exists for: a laptop on a flaky connection is
+      -- both the one most likely to stall and the one least likely to stay
+      -- connected long enough to notice.
+      --
+      -- A stall is a property of the STREAM, not of the socket, so it belongs
+      -- beside the frontier it is about.
+      ALTER TABLE stream_state ADD COLUMN swept_at_rev INTEGER;
+    `,
+  },
 ];

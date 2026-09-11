@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { metrics, type LabelValues, type MetricSpec } from './metrics.ts';
+import {
+  metrics, labelValues, cardinality, type LabelName, type MetricSpec,
+} from './metrics.ts';
 import { events } from './events.ts';
 
 function walk(dir: string): string[] {
@@ -19,11 +21,26 @@ function walk(dir: string): string[] {
  * itself, which types cannot.
  */
 
-const LABEL_CARDINALITY: Record<keyof LabelValues, number> = {
-  result: 2, op: 5, phase: 2, tier: 2, via: 5, path: 2,
-  outcome: 3, kind: 2, serve: 3, had_account: 2, stored: 3,
-  trigger: 3, surface: 4,
-};
+/**
+ * DERIVED, not counted by hand.
+ *
+ * It used to be a literal table, and it had drifted: `via` was written as 5
+ * against a union of 6 and `outcome` as 3 against 4, so the series budget below
+ * — the check that stands between us and the 10,000-series cap — had been
+ * quietly under-counting. A hand-maintained mirror of a union is a mirror that
+ * goes stale; `metrics.ts` now proves the runtime sets are exhaustive at
+ * compile time, which makes counting them the honest source.
+ */
+const LABEL_CARDINALITY: Record<LabelName, number> = cardinality;
+
+test('no label repeats a value', () => {
+  // Exhaustiveness is proven at compile time in metrics.ts; a duplicate is the
+  // one thing that proof cannot see, and it would inflate the series budget
+  // rather than shrink it — the safe direction, but still wrong.
+  for (const [label, values] of Object.entries(labelValues)) {
+    assert.equal(new Set(values).size, values.length, `${label} repeats a value`);
+  }
+});
 
 test('every declared label is a closed set with known cardinality', () => {
   for (const [name, spec] of Object.entries(metrics) as [string, MetricSpec][]) {

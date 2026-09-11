@@ -11,7 +11,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { CLOSE } from '@relayed/protocol';
-import { db, pool } from '../db/client.ts';
+import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import {
   createChannel, addToSpace, leaveSpace, removeFromSpace, joinSpace,
@@ -24,8 +24,8 @@ import { workspaceStream, type AppendedEvent } from './events.ts';
 import { allocateStream } from './allocate.ts';
 import { appendEvent } from './events.ts';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 const org = ulid('org');
 const wsp = ulid('wsp');
@@ -35,7 +35,7 @@ const bob = ulid('act');
 const carol = ulid('act');          // in the workspace, never in the space
 
 before(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await db.insertInto('organizations')
     .values({ id: org, workos_org_id: `test_${org}`, name: 'Fanout' }).execute();
   for (const id of [wsp, other]) {
@@ -57,7 +57,7 @@ before(async () => {
 });
 
 after(async () => {
-  if (!reachable) return;
+  if (!up) return;
   for (const id of [wsp, other]) {
     await db.deleteFrom('sync_events').where('workspace_id', '=', id).execute();
     await db.deleteFrom('spaces').where('workspace_id', '=', id).execute();

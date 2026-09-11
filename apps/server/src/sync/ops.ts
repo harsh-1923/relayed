@@ -16,6 +16,7 @@ import { loadGrants, Forbidden } from '../authz/can.ts';
 import { chatPlacement } from './placement.ts';
 import { allocateChat, applyOnce } from './allocate.ts';
 import { appendEvent, type AppendedEvent } from './events.ts';
+import { startSpan, annotate, mark } from '@relayed/telemetry';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -79,7 +80,13 @@ export interface SendInput {
  * replaced by the value in this ack.
  */
 export async function send(db: Kysely<DB>, input: SendInput): Promise<Applied> {
+  return startSpan('ops.send', () => sendInner(db, input),
+                   { attributes: { chat_id: input.chatId, op_id: input.opId } });
+}
+
+async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   const authorize = await chatGate(db, input.actorId, input.chatId);
+  mark('authorized');
   authorize('post');
 
   // Captured from the closure rather than returned through the ledger, because
@@ -129,6 +136,14 @@ export async function send(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   // Narrowed rather than cast: `event` is always set when the work ran, but the
   // compiler cannot see that through a closure, and a cast here would be the one
   // place a genuine bug could hide behind an assertion.
+  // `replayed` on the span rather than only in the return value: from the
+  // outside a replay and a fresh write look identical, and the idempotency
+  // ledger doing its job is exactly what somebody chasing a duplicate needs to
+  // see (invariant 5).
+  // `?? undefined` rather than `?? 0`: a delete genuinely has no ordinal, and
+  // an attribute that is absent reads as absent, while a zero reads as one.
+  annotate({ replayed: applied.replayed, ord: applied.result.ord ?? undefined,
+             rev: applied.result.rev });
   if (applied.replayed || !event) return { ack: applied.result };
   return { ack: applied.result, event };
 }
@@ -154,6 +169,11 @@ export interface DeleteInput {
  * but a branch.
  */
 export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise<Applied> {
+  return startSpan('ops.delete', () => deleteInner(db, input),
+                   { attributes: { chat_id: input.chatId, op_id: input.opId } });
+}
+
+async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied> {
   // ONE snapshot of grants and placement, asked TWO questions. Loading twice
   // was two wasted round trips and, worse, two chances to disagree: a
   // membership revoked between the reads would have let the first check pass
@@ -199,6 +219,7 @@ export async function deleteMessage(db: Kysely<DB>, input: DeleteInput): Promise
     return ackOf(input.messageId, input.chatId, null, allocated.rev, row.created_at);
   });
 
+  annotate({ replayed: applied.replayed, rev: applied.result.rev });
   // Narrowed rather than cast: `event` is always set when the work ran, but the
   // compiler cannot see that through a closure, and a cast here would be the one
   // place a genuine bug could hide behind an assertion.

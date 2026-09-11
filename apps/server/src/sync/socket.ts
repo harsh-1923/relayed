@@ -28,9 +28,17 @@ import { verifyAccessToken, type SessionClaims } from '../auth/tokens.ts';
 import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import { parseStream, type AppendedEvent, type Stream } from './events.ts';
-import { welcome, catchup, backfill, streamHead, directoryPage } from './feed.ts';
+import {
+  welcome, catchup, backfill, streamHead, directoryPage, type Snapshot,
+} from './feed.ts';
 import { send, deleteMessage, MessageNotFoundError } from './ops.ts';
 import { Forbidden } from '../authz/can.ts';
+import {
+  startSpan, openSpan, annotate, traceparent, parseTraceparent,
+} from '@relayed/telemetry';
+import {
+  observe, recordOp, recordCatchupDuration, recordWelcome,
+} from './observe.ts';
 
 /** Where the socket lives. One path; the protocol is negotiated in `hello`. */
 export const SYNC_PATH = '/sync';
@@ -86,7 +94,12 @@ export interface SocketDeps {
   verify?: (token: string) => Promise<SessionClaims>;
   helloTimeoutMs?: number;
   readTimeoutMs?: number;
-  /** Called for anything worth a metric. Wired to telemetry in the marker pass. */
+  /**
+   * Called for anything worth a marker, IN ADDITION to telemetry rather than
+   * instead of it. Tests observe through this seam; production reads the
+   * metrics `observe` records from the same call. Wiring them as alternatives
+   * would mean every test ran a code path production does not.
+   */
   onEvent?: (name: string, detail?: Record<string, unknown>) => void;
 }
 
@@ -111,7 +124,10 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
   const verify = deps.verify ?? verifyAccessToken;
   const helloTimeoutMs = deps.helloTimeoutMs ?? HELLO_TIMEOUT_MS;
   const readTimeoutMs = deps.readTimeoutMs ?? READ_TIMEOUT_MS;
-  const note = deps.onEvent ?? (() => {});
+  const note = (name: string, detail: Record<string, unknown> = {}): void => {
+    observe(name, detail);
+    deps.onEvent?.(name, detail);
+  };
 
   // `noServer` rather than `{ server }`: we want to refuse an upgrade on any
   // other path outright rather than accept it and close it afterwards, and that
@@ -155,20 +171,66 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     // without ever authenticating.
     state.arm(helloTimeoutMs, () => {
       note('sync.socket.hello_timeout');
-      state.bye(CLOSE.helloTimeout, 'no hello');
+      state.bye(CLOSE.helloTimeout, 'no hello', 'hello_timeout');
     });
 
     const forget = (): void => {
+      // `ws` emits `error` and then `close`, so this runs twice for one
+      // departure. Counted once, or every errored socket is two disconnects.
+      if (state.disposed) return;
+      const wasAuthenticated = state.claims !== null;
       state.dispose();
       connections.delete(state);
       // Removed on BOTH paths. A registry that only shed connections on a clean
       // close would keep writing to sockets that errored — and that leak's
       // symptom is memory on the busiest server, months later.
       if (state.claims) registry.remove(state);
+      // AFTER the removal, so the gauge is the count that remains rather than
+      // the one that included this socket.
+      if (wasAuthenticated) {
+        note('sync.socket.gone', {
+          close: state.closeReason, sessions: registry.size(),
+          uptime: Date.now() - state.openedAt,
+        });
+      }
     };
-    socket.on('message', (raw: Buffer) => { void onMessage(state, raw); });
-    socket.on('error', forget);
+    socket.on('message', (raw: Buffer) => {
+      // THE ERROR BOUNDARY, and on the server it is the difference between one
+      // refused frame and an outage. `onMessage` is async and nothing awaits
+      // it, so a handler that throws — a database blip inside `welcome`, a
+      // driver error mid-catch-up — becomes an unhandled rejection and takes
+      // the process down, disconnecting every client on it.
+      //
+      // The connection SURVIVES. One frame failing is not evidence the peer is
+      // broken, and closing would turn a transient fault into a reconnect
+      // storm at exactly the moment the database is already struggling
+      // (invariant 31). The client asks again; the ops are idempotent.
+      void onMessage(state, raw).catch((e: unknown) => { failure(e); });
+    });
+    socket.on('error', () => {
+      // A transport-level failure, which is genuinely different from the peer
+      // choosing to leave. `ws` emits this and then `close`; the first one
+      // through sets the reason and `forget` counts it once.
+      state.closeReason = 'error';
+      forget();
+    });
     socket.on('close', forget);
+  }
+
+  /**
+   * Report one caught failure.
+   *
+   * The MESSAGE goes on a span and nowhere else. Every event field type is
+   * structured by construction — there is no free text an error string could
+   * occupy (§6) — and a span records `e.message` alone, never the thrown value,
+   * which can carry anything a caller attached to it. A span here rather than
+   * relying on the handler's own is deliberate: `ping` is not traced, and a
+   * frame that fails before dispatch has no span of its own at all.
+   */
+  function failure(e: unknown): void {
+    const span = openSpan('sync.failed', { attributes: { stage: 'frame' } });
+    span.end('error', e instanceof Error ? e.message : 'error');
+    note('sync.failed', { stage: 'frame' });
   }
 
   async function onMessage(state: ConnectionState, raw: Buffer): Promise<void> {
@@ -189,7 +251,16 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       return;
     }
 
-    if (read.t === 'hello') { await onHello(state, read.body as Hello); return; }
+    // The client's span, if it sent one. Everything below becomes a CHILD of
+    // it, which is what makes "user pressed send" and "server assigned the
+    // ordinal" one trace rather than two that happen to be adjacent in time.
+    const parent = parseTraceparent(read.traceparent);
+
+    if (read.t === 'hello') {
+      await startSpan('sync.hello', () => onHello(state, read.body as Hello),
+                      { parent });
+      return;
+    }
 
     // Everything past here needs an authenticated connection. Silence rather
     // than an error frame: a peer that has not said hello is a peer we know
@@ -197,16 +268,33 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     if (!state.claims) return;
     state.arm(readTimeoutMs, () => {
       note('sync.socket.read_timeout');
-      state.bye(CLOSE.goingAway, 'silent');
+      state.bye(CLOSE.goingAway, 'silent', 'read_timeout');
     });
 
-    if (read.t === 'catchup') { await onCatchup(state, read.body as CatchupRequest); return; }
-    if (read.t === 'backfill') { await onBackfill(state, read.body as BackfillRequest); return; }
-    if (read.t === 'directory') {
-      await onDirectory(state, read.body as DirectoryRequest); return;
+    if (read.t === 'catchup') {
+      await startSpan('sync.catchup', () => onCatchup(state, read.body as CatchupRequest),
+                      { parent });
+      return;
     }
-    if (read.t === 'op') { await onOp(state, read.body as OpFrame); return; }
+    if (read.t === 'backfill') {
+      await startSpan('sync.backfill', () => onBackfill(state, read.body as BackfillRequest),
+                      { parent });
+      return;
+    }
+    if (read.t === 'directory') {
+      await startSpan('sync.directory', () => onDirectory(state, read.body as DirectoryRequest),
+                      { parent });
+      return;
+    }
+    if (read.t === 'op') {
+      await startSpan('sync.op', () => onOp(state, read.body as OpFrame), { parent });
+      return;
+    }
 
+    // `ping` is NOT traced. A span is a logical operation, never a connection
+    // (OBSERVABILITY.md §4) — one span per heartbeat per socket every
+    // twenty-five seconds is the largest trace volume in the system and it
+    // answers no question at all.
     if (read.t === 'ping') {
       // The heartbeat is CLIENT-initiated, which is one mechanism serving both
       // directions: the client learns the server is alive from this reply, and
@@ -259,22 +347,35 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       return;
     }
 
+    // Ids on a SPAN, never on a metric label — this is the split §5 exists for,
+    // and it is what makes "why did this person's reconnect hang" answerable at
+    // all while the metric stays three series.
+    annotate({ stream_kind: stream.kind, stream_id: stream.id,
+               from_rev: request.from_rev });
+
+    const started = performance.now();
     const result = await catchup(deps.db, stream, request.from_rev);
     if (result.kind === 'gap') {
+      recordCatchupDuration('gap', performance.now() - started);
+      annotate({ answer: 'gap', head_rev: result.headRev });
       note('sync.gap.sent', { kind: request.stream.kind });
       state.send('gap', {
-        stream, head_rev: result.headRev, snapshot: result.snapshot,
+        stream, head_rev: result.headRev, snapshot: onWire(result.snapshot),
       });
       return;
     }
 
+    const complete = result.toRev >= await streamHead(deps.db, stream);
+    recordCatchupDuration('replay', performance.now() - started);
+    annotate({ answer: 'replay', to_rev: result.toRev, complete });
+    note('sync.catchup.sent', { events: result.events.length });
     state.send('catchup_ok', {
       stream,
       from_rev: result.fromRev,
       to_rev: result.toRev,
       // False when the batch was capped by the read limit and another round is
       // owed. The client must not stop asking just because a reply arrived.
-      complete: result.toRev >= await streamHead(deps.db, stream),
+      complete,
       events: result.events,
     });
   }
@@ -358,6 +459,9 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     const claims = state.claims;
     if (!claims) return;
 
+    annotate({ op_id: frame.op_id, op_kind: frame.kind, chat_id: frame.c,
+               actor_id: claims.actorId });
+    const started = performance.now();
     try {
       const applied = frame.kind === 'send'
         ? await send(deps.db, {
@@ -377,13 +481,23 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
         created_at: applied.ack.createdAt,
       });
 
+      recordOp(frame.kind, true, performance.now() - started);
+      // A REPLAY is worth saying out loud in the trace rather than inferring
+      // from an absent fanout: it is the idempotency ledger working, and it
+      // looks identical to a delivery failure from the outside.
+      annotate({ ord: applied.ack.ord ?? undefined, rev: applied.ack.rev,
+                 replayed: applied.event === undefined });
+
       // Absent on a REPLAY, which is the whole reason the ops report it: the
       // retried op returned the stored ack without doing the work, so fanning
       // out here would deliver a duplicate to every other device while the
       // sender's own ack correctly reported one.
       if (applied.event) await fanout(deps.db, registry, applied.event);
     } catch (err) {
-      state.send('nack', nackFor(frame.op_id, err));
+      recordOp(frame.kind, false, performance.now() - started);
+      const nack = nackFor(frame.op_id, err);
+      annotate({ nack_code: String(nack['code']), retryable: nack['retryable'] === true });
+      state.send('nack', nack);
     }
   }
 
@@ -432,7 +546,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
         message: 'This version can no longer sync. Please update.',
       });
       note('sync.socket.too_old', { protocol: hello.protocol });
-      state.bye(CLOSE.tooOld, 'protocol too old');
+      state.bye(CLOSE.tooOld, 'protocol too old', 'too_old');
       return;
     }
 
@@ -444,7 +558,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // tell "refresh your token and try again" from "the server went away"
       // without parsing anything.
       note('sync.socket.unauthenticated');
-      state.bye(CLOSE.unauthenticated, 'bad token');
+      state.bye(CLOSE.unauthenticated, 'bad token', 'unauthenticated');
       return;
     }
 
@@ -458,7 +572,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       .executeTakeFirst();
     if (!actor || actor.state !== 'active') {
       note('sync.socket.unauthenticated', { reason: 'actor_inactive' });
-      state.bye(CLOSE.unauthenticated, 'actor not active');
+      state.bye(CLOSE.unauthenticated, 'actor not active', 'unauthenticated');
       return;
     }
 
@@ -470,9 +584,11 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     registry.add(state);
     state.arm(readTimeoutMs, () => {
       note('sync.socket.read_timeout');
-      state.bye(CLOSE.goingAway, 'silent');
+      state.bye(CLOSE.goingAway, 'silent', 'read_timeout');
     });
-    note('sync.socket.connected');
+    note('sync.socket.connected', { sessions: registry.size() });
+    annotate({ actor_id: actor.id, workspace_id: claims.workspaceId,
+               protocol: hello.protocol, compress: state.compress });
 
     // THE FRAME THAT SATISFIES R2. After this one exchange every badge in the
     // sidebar is correct and not one message body has been fetched — because
@@ -480,7 +596,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     // carries the second for every chat the actor can reach.
     const payload = await welcome(deps.db, claims.workspaceId, claims.actorId);
 
-    state.send('welcome', {
+    const bytes = state.send('welcome', {
       protocol: PROTOCOL,
       now: Date.now(),
       actor: { id: actor.id, handle: actor.handle, display_name: actor.display_name },
@@ -505,6 +621,13 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       })),
       streams: payload.streams,
     });
+
+    // The two numbers §9.9's ceiling is made of, recorded together because
+    // neither answers the question alone: bytes says how close we are, and
+    // chats says what is driving it.
+    recordWelcome(bytes, payload.chats.length);
+    annotate({ welcome_bytes: bytes, chats: payload.chats.length,
+               spaces: payload.spaces.length });
   }
 
   return {
@@ -515,7 +638,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // Every connection told WHY, so clients reconnect with jitter instead of
       // discovering a dead socket at their next heartbeat. This is the half of
       // "a server restart disconnects everyone" that we control.
-      for (const state of connections) state.bye(CLOSE.goingAway, 'server closing');
+      for (const state of connections) state.bye(CLOSE.goingAway, 'server closing', 'server_closing');
       connections.clear();
       await new Promise<void>(resolve => { wss.close(() => { resolve(); }); });
     },
@@ -535,6 +658,24 @@ class ConnectionState implements Delivery {
   claims: SessionClaims | null = null;
   /** Set from `hello`. Text-only until a client says otherwise. */
   compress = false;
+  readonly openedAt = Date.now();
+  /**
+   * Why this connection ended, set by whoever ended it.
+   *
+   * Recorded on the way OUT rather than derived from the close code, because
+   * the code the client sees and the reason we closed are not the same
+   * question: `goingAway` covers a shutdown and a silent socket alike, and
+   * those are the two incidents a disconnect graph most needs to separate.
+   *
+   * DEFAULTS TO `client_stop`, because the default case is the peer hanging up
+   * — a laptop closing, an app quitting — and `bye` is the only path by which
+   * this server closes a socket. It defaulted to `error` at first, which made
+   * every ordinary disconnect in a load run read as a fault: four hundred
+   * `error` closes and not one `client_stop`, on the panel whose entire job is
+   * telling a deploy apart from an incident.
+   */
+  closeReason = 'client_stop';
+  disposed = false;
   #timer: NodeJS.Timeout | null = null;
 
   constructor(socket: WebSocket) {
@@ -552,7 +693,7 @@ class ConnectionState implements Delivery {
   get actorId(): string { return this.claims?.actorId ?? ''; }
   get workspaceId(): string { return this.claims?.workspaceId ?? ''; }
   get backlog(): number { return this.socket.bufferedAmount; }
-  drop(code: number, reason: string): void { this.bye(code, reason); }
+  drop(code: number, reason: string): void { this.bye(code, reason, 'slow_consumer'); }
 
   arm(ms: number, onExpiry: () => void): void {
     if (this.#timer) clearTimeout(this.#timer);
@@ -561,32 +702,108 @@ class ConnectionState implements Delivery {
     this.#timer.unref?.();
   }
 
-  send(t: string, body: Record<string, unknown> = {}): void {
+  /**
+   * Write one frame, and report how many bytes it was.
+   *
+   * The byte count is returned rather than measured by the caller because this
+   * is the only place the serialised frame exists — `welcome`'s size is the
+   * number DESIGN §9.9's paging ceiling is about, and re-stringifying the body
+   * to find it would double the cost of the largest frame we send.
+   *
+   * Assignable to `Delivery.send`, which declares `void`: TypeScript allows a
+   * function that returns something where nothing is expected.
+   */
+  send(t: string, body: Record<string, unknown> = {}): number {
     // OPEN is checked because a close can land between deciding to send and
     // sending; `ws` throws on a closed socket, and that throw would surface
     // inside whatever unrelated handler happened to be running.
-    if (this.socket.readyState !== this.socket.OPEN) return;
-    const text = frame(t, body);
+    if (this.socket.readyState !== this.socket.OPEN) return 0;
+    // The reply carries the trace of the frame that caused it, so a client's
+    // `ack` handling joins the span that assigned the ordinal instead of
+    // starting a second trace nothing links to (OBSERVABILITY.md §4).
+    const text = frame(t, body, traceparent());
     // Compressed frames go as BINARY, which is how the client tells them apart
     // — no envelope flag, because a flag would have to be read out of a payload
     // that has not been decompressed yet.
     if (this.compress && text.length > COMPRESS_ABOVE_BYTES) {
-      this.socket.send(gzipSync(text));
-      return;
+      const packed = gzipSync(text);
+      this.socket.send(packed);
+      // The COMPRESSED size, because that is what crosses the network and what
+      // a ceiling on frame size has to be about.
+      return packed.byteLength;
     }
     this.socket.send(text);
+    return Buffer.byteLength(text);
   }
 
   /** Say goodbye and mean it: the timer goes even if the close never lands. */
-  bye(code: number, reason: string): void {
-    this.dispose();
+  bye(code: number, reason: string, why = 'error'): void {
+    this.closeReason = why;
+    // NOT `dispose()`. That marks the connection departed, and the departure is
+    // the `close` event that follows — disposing here would make `forget` treat
+    // it as already counted and the disconnect would never be recorded.
+    this.disarm();
     try { this.socket.close(code, reason); } catch { /* already gone */ }
   }
 
-  dispose(): void {
+  disarm(): void {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
   }
+
+  dispose(): void {
+    this.disposed = true;
+    this.disarm();
+  }
+}
+
+/**
+ * A snapshot, in the shape the WIRE uses.
+ *
+ * THE BUG THIS EXISTS FOR, and it was live. `snapshotOf` returns the domain
+ * shape — camelCase, because nothing in `feed.ts` knows a socket exists — and
+ * the gap frame sent it through verbatim while the client read `author_id` and
+ * `parent_id`. Every gap carrying messages therefore bound `undefined` into
+ * SQLite and threw, on the one path that exists to rescue a client that has
+ * fallen behind.
+ *
+ * Both sides had tests and both passed: each built its own fixtures in its own
+ * convention, and `Gap.snapshot` is `.loose()` — deliberately, so a newer
+ * server can add to it — which means zod validated nothing inside it. Nothing
+ * checked that the two agreed until a load run did.
+ *
+ * A message here is byte-identical to a message in `backfill_ok`, and that is
+ * asserted rather than hoped for: two shapes for "a message on the wire" is
+ * what produced this in the first place.
+ */
+function onWire(snapshot: Snapshot): Record<string, unknown> {
+  if (snapshot.kind === 'messages') {
+    return {
+      kind: 'messages',
+      head_ord: snapshot.headOrd,
+      recent: snapshot.recent.map(row => ({
+        id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
+        body: row.body, parent_id: row.parentId,
+      })),
+    };
+  }
+  if (snapshot.kind === 'space') {
+    return {
+      kind: 'space',
+      space: {
+        id: snapshot.space.id, kind: snapshot.space.kind, name: snapshot.space.name,
+        slug: snapshot.space.slug, visibility: snapshot.space.visibility,
+        membership_policy: snapshot.space.membershipPolicy,
+        lifecycle: snapshot.space.lifecycle, rev: snapshot.space.rev,
+      },
+      chats: snapshot.chats.map(chat => ({
+        id: chat.id, space_id: chat.spaceId, kind: chat.kind, name: chat.name,
+      })),
+      members: snapshot.members,
+    };
+  }
+  // The directory is deliberately not inlined — it is paged (invariant 71).
+  return { kind: 'directory' };
 }
 
 /**

@@ -23,7 +23,6 @@ function capturingSink(): Sink {
     count: (metric, labels, by = 1) => captured.metrics.push({ kind: 'count', metric, value: by, labels }),
     gauge: (metric, value, labels) => captured.metrics.push({ kind: 'gauge', metric, value, labels }),
     histogram: (metric, value, labels) => captured.metrics.push({ kind: 'histogram', metric, value, labels }),
-    span: async (_n, fn) => fn(),
   };
 }
 

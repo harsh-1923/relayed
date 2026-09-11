@@ -2,7 +2,7 @@
   "name": "relayed",
   "version": "0.0.0",
   "private": true,
-  "description": "The workspace of tomorrow — humans and agents collaborating, local-first.",
+  "description": "The workspace of tomorrow \u2014 humans and agents collaborating, local-first.",
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": ">=24"
@@ -19,7 +19,7 @@
     "preview": "pnpm --filter @relayed/desktop start",
     "ui": "pnpm --filter @relayed/desktop exec vite",
     "check:boundaries": "node tools/check-boundaries.mjs",
-    "typecheck": "pnpm -r typecheck && pnpm check:boundaries",
+    "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json && pnpm check:boundaries",
     "psql": "docker compose exec postgres psql -U relayed -d relayed",
     "redis-cli": "docker compose exec redis redis-cli",
     "grafana": "open http://localhost:3000",
@@ -28,6 +28,17 @@
     "spike:authz": "node spikes/authz-tests.mjs",
     "verify:sqlite": "npm --prefix spikes/electron-verify run sqlite",
     "verify:timer": "npm --prefix spikes/electron-verify run timer",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "mock": "node --env-file-if-exists=.env scripts/mock/run.ts",
+    "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe"
+  },
+  "devDependencies": {
+    "@relayed/protocol": "workspace:*",
+    "@relayed/telemetry": "workspace:*",
+    "@types/node": "^24.3.1",
+    "@types/ws": "^8.18.1",
+    "kysely": "^0.28.3",
+    "typescript": "^5.9.3",
+    "ws": "^8.21.3"
   }
 }

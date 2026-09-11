@@ -13,7 +13,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { sql } from 'kysely';
-import { db, pool } from '../db/client.ts';
+import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import {
   createChannel, joinSpace, addToSpace, leaveSpace, removeFromSpace,
@@ -27,8 +27,8 @@ import {
 } from './events.ts';
 import { recordActor } from './directory.ts';
 
-const reachable = await pool.query('SELECT 1').then(() => true).catch(() => false);
-const opts = reachable ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
+const up = await reachable();
+const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
 const org = ulid('org');
 const wsp = ulid('wsp');
@@ -36,7 +36,7 @@ const me = ulid('act');
 const bob = ulid('act');
 
 before(async () => {
-  if (!reachable) return;
+  if (!up) return;
   await db.insertInto('organizations')
     .values({ id: org, workos_org_id: `test_${org}`, name: 'Events' }).execute();
   await db.insertInto('workspaces')
@@ -56,7 +56,7 @@ before(async () => {
 });
 
 after(async () => {
-  if (!reachable) return;
+  if (!up) return;
   // Events first: `sync_events` cascades from `workspaces`, not from `spaces`,
   // so a space delete leaves its stream's rows behind.
   await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();

@@ -20,23 +20,24 @@ ordered log, every read served from local SQLite.
 | 0 — de-risk, then skeleton | ✅ Electron shell, `utilityProcess`, MessagePort, SQLite, telemetry |
 | 1 — identity | ✅ WorkOS AuthKit, real orgs, invitations, authorization, actor replication |
 | 1½ — the shell | ✅ Router, transition table, live-query client, renderer telemetry |
-| **2 — the sync core** | **In progress**, 12 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
+| **2 — the sync core** | **In progress**, 13 of 14 steps. [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2 |
 
-**Next task: the instrumentation pass** — every marker for the whole sync path
-decided in one sitting, rather than nine decisions made six steps apart. That is
-step 13 of fourteen in the sync build plan
-([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2).
+**Next task: the milestone** — step 14 of fourteen in the sync build plan
+([`SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) §2). Four flows exercised **by hand**
+rather than by a test, plus the cross-phase checks. A step that only ever ran
+under `node --test` has not been used.
 
-It is a departure from working rule 8 below, agreed deliberately and recorded
-with its reasoning: the nine declared events cannot be forgotten (the build
-fails for an unmarked metric with no call site), and one pass buys a coherent
-picture of a request crossing the whole path instead of markers that each answer
-a local question. **It must land before the milestone** — a step that ships
-uninstrumented is a step debugged by `console.log` until this one arrives.
+Everything it needs is now instrumented, so a flow that misbehaves is a trace to
+open rather than a `console.log` to add: **Relayed → sync** in Grafana
+(`pnpm services && pnpm grafana`) opens with the send path as traces, and the
+whole engine reports through `sync/observe.ts` on each side.
 
-Read [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) first, and propose each
-marker with **the question it answers** rather than what it counts. Proposing
-*not* to instrument something is a legitimate answer.
+`pnpm mock` fills that dashboard: real replicas, real sockets, a real server,
+70% ordinary traffic and 30% provoked edge cases (`pnpm mock:wipe` undoes it).
+Its first runs found five bugs the test suite did not, every one of them living
+between two components that were each individually tested — see
+[`OBSERVABILITY.md`](docs/OBSERVABILITY.md) §10c. Run it before the milestone,
+not after.
 
 **Done so far:** steps 1 to 12. The sync core is functionally complete — a
 client connects, paints correct badges, applies what arrives, asks for what it
@@ -59,6 +60,7 @@ rules over 196 files, typecheck across five packages, production build.
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
+| [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |
 | [`docs/SYNC-FLOWS.md`](docs/SYNC-FLOWS.md) | **Start here for sync.** The six goals with their completeness checks, the fourteen-step build plan, and every flow end to end with data shapes. |
 | [`spikes/`](spikes/) | Executable models that validate the design. Not app code. |
 
