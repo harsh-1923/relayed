@@ -19,7 +19,7 @@ export function SignIn() {
   const inFlight = state.auth.status === 'authenticating'
     || state.auth.status === 'awaiting_browser';
   const done = state.auth.status !== 'signed_out' && !inFlight;
-  useEffect(() => { if (done) navigate('/', { replace: true }); }, [done, navigate]);
+  useEffect(() => { if (done) void navigate('/', { replace: true }); }, [done, navigate]);
 
   // Deliberately NOT awaited into a local `busy` flag. auth.signIn does not
   // resolve until the browser comes back — up to five minutes — and a local

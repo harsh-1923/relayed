@@ -109,7 +109,9 @@ export function useBackForward(): BackForward {
   return {
     canBack: at > 0,
     canForward: at < top,
-    back: useCallback(() => { navigate(-1); }, [navigate]),
-    forward: useCallback(() => { navigate(1); }, [navigate]),
+    // `void`: navigate returns a promise in react-router 7, and moving through
+    // history client-side has nothing to reject with.
+    back: useCallback(() => { void navigate(-1); }, [navigate]),
+    forward: useCallback(() => { void navigate(1); }, [navigate]),
   };
 }

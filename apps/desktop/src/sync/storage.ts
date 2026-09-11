@@ -752,7 +752,7 @@ export class Storage {
       kind: String(space['kind']),
       name: (space['name'] as string | null) ?? null,
       slug: (space['slug'] as string | null) ?? null,
-      visibility: String(space['visibility'] ?? 'public'),
+      visibility: (space['visibility'] as string | null) ?? 'public',
       chats: chats
         .filter(chat => chat['space_id'] === space['id'])
         .map(chat => ({
@@ -799,7 +799,7 @@ export class Storage {
       ord: row['ord'] === null ? null : Number(row['ord']),
       authorId: String(row['author_id']),
       authorName: (row['display_name'] as string | null)
-        ?? `@${String(row['handle'] ?? 'unknown')}`,
+        ?? `@${(row['handle'] as string | null) ?? 'unknown'}`,
       authorHandle: (row['handle'] as string | null) ?? null,
       authorAvatarBlob: (row['avatar_blob'] as string | null) ?? null,
       body: String(row['body']),

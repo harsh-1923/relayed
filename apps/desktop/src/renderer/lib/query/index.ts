@@ -129,11 +129,21 @@ export function useQuery<Name extends QueryName>(
   // entry on every render — dropping the rows and refetching each time.
   const argsKey = useMemo(() => JSON.stringify(args ?? null), [args]);
 
+  // The two suppressions below are that same decision, stated. `args` IS a
+  // dependency and IS deliberately excluded: `argsKey` is its serialisation and
+  // the only stable form of it. Listing `args` would restore the exact bug the
+  // key exists to prevent — so the rule is right about the shape and wrong about
+  // this case, which is what a suppression with a reason is for.
   const subscribe = useCallback(
     (onChange: () => void) => registry.subscribe(name, args, TOPICS[name](args), onChange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [name, argsKey],
   );
-  const getSnapshot = useCallback(() => registry.snapshot(name, args), [name, argsKey]);
+  const getSnapshot = useCallback(
+    () => registry.snapshot(name, args),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [name, argsKey],
+  );
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);
 
   const rows = snapshot.rows as Queries[Name]['rows'] | null;

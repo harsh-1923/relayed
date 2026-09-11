@@ -1,0 +1,100 @@
+# The gate, run on a machine that has none of your local state.
+#
+# `pnpm verify` is the same list in the same order, so a green local run means a
+# green pipeline. It is spelled out as separate steps here rather than called as
+# one, for a reason worth keeping: a single failing script gives you one red
+# cross and a scroll through a log, where separate steps name the failure in the
+# job summary.
+#
+# ONE SERVICE, AND ONLY ONE. Postgres. The server's tests skip themselves when it
+# is unreachable — `{ skip: 'postgres not reachable' }` — and a suite that skips
+# is a suite that passes, which is how a pipeline goes green over nothing. Redis
+# is in compose.yaml for later; no code imports a client yet, and MinIO is only
+# reached by hand. Neither is started here, because a service nothing connects to
+# is a minute of CI time spent proving nothing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # Pinned to compose.yaml. A version skew between CI and the machine the
+        # schema was written on is a failure that only reproduces in one place.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: relayed
+          POSTGRES_PASSWORD: relayed
+          POSTGRES_DB: relayed
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relayed -d relayed"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # The two `required()` values in apps/server/src/env.ts. Everything else it
+      # reads has a default, and nothing here is a secret — the client id is a
+      # public identifier and the database is a container that lives for one job.
+      DATABASE_URL: postgres://relayed:relayed@localhost:5432/relayed
+      WORKOS_CLIENT_ID: client_ci_placeholder
+      # Read by scripts/dev-clients.mjs to skip its interactive prompt, and by
+      # anything else that should not assume a terminal.
+      CI: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches .nvmrc and the `engines.node` floor in package.json.
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        # --frozen-lockfile: CI resolves what the lockfile says and nothing else.
+        # A dependency that drifted is a build that cannot be reproduced.
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format
+        run: pnpm format:check
+
+      # tsc over every package, then the nine architectural rules in
+      # tools/check-boundaries.mjs.
+      - name: Typecheck and boundaries
+        run: pnpm typecheck
+
+      # The schema has to exist before the tests that read it. They do not apply
+      # migrations themselves — `apps/server/src/db/migrate.ts` is a command, not
+      # a fixture.
+      - name: Migrate
+        run: pnpm --filter @relayed/server migrate
+
+      - name: Test
+        run: pnpm test
+
+      # The executable models behind DESIGN §8-§12 and AUTHZ. Half a second, no
+      # services, and they fail when a change contradicts the document it was
+      # designed against.
+      - name: Spikes
+        run: pnpm spike:sync && pnpm spike:authz
+
+      - name: Build
+        run: pnpm build

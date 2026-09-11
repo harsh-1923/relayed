@@ -74,6 +74,6 @@ export async function verifyWorkOSToken(token: string): Promise<WorkOSClaims> {
       observed = ` [observed iss=${claims.iss} alg=${header.alg} kid=${header.kid}` +
                  ` | expected iss=${cfg.issuer}]`;
     } catch { /* not a JWT at all */ }
-    throw new Error(`${(err as Error).message}${observed}`);
+    throw new Error(`${(err as Error).message}${observed}`, { cause: err });
   }
 }

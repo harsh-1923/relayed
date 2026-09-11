@@ -29,7 +29,7 @@ export async function migrate(connectionString = env.databaseUrl): Promise<strin
         applied.push(file);
       } catch (e) {
         await client.query('ROLLBACK');
-        throw new Error(`migration ${file} failed: ${(e as Error).message}`);
+        throw new Error(`migration ${file} failed: ${(e as Error).message}`, { cause: e });
       }
     }
   } finally { await client.end(); }

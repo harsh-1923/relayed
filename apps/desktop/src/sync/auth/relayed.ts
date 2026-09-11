@@ -1,4 +1,5 @@
 import type { Role } from '@relayed/authz';
+import { firstString } from './json.ts';
 
 // Client for OUR auth server. Everything after the initial WorkOS exchange goes
 // through here, so steady-state sync depends only on our server being up
@@ -85,8 +86,8 @@ async function get<T>(path: string, bearer: string): Promise<T> {
   }
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
-    throw new ServerError(String(json['detail'] ?? json['error'] ?? res.statusText),
-                          String(json['error'] ?? `http_${res.status}`), res.status);
+    throw new ServerError(firstString(json['detail'], json['error'], res.statusText),
+                          firstString(json['error'], `http_${res.status}`), res.status);
   }
   return json as T;
 }
@@ -111,8 +112,8 @@ async function post<T>(path: string, body: unknown, bearer?: string): Promise<T>
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     throw new ServerError(
-      String(json['detail'] ?? json['error'] ?? res.statusText),
-      String(json['error'] ?? `http_${res.status}`),
+      firstString(json['detail'], json['error'], res.statusText),
+      firstString(json['error'], `http_${res.status}`),
       res.status,
     );
   }

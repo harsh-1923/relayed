@@ -32,7 +32,7 @@ export function JoinWorkspace() {
         api.query('auth.join', { workspaceId: pick.workspaceId, handle }));
       if (s) {
         apply(s);
-        navigate(`/w/${pick.workspaceId}`, { replace: true });
+        void navigate(`/w/${pick.workspaceId}`, { replace: true });
       }
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }

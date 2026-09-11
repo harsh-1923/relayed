@@ -1,0 +1,15 @@
+# THE WHOLE REPOSITORY, which pre-commit deliberately does not check.
+#
+# `typecheck` is `tsc` over all five packages AND tools/check-boundaries.mjs —
+# the nine architectural rules. A boundary violation is the class of mistake
+# that is cheapest to catch before it is shared and most expensive to unpick
+# after, because by then something depends on it.
+#
+# The spikes are the executable models behind DESIGN §8-§12 and AUTHZ. They
+# cost 0.3s and 0.2s, they need no services, and they fail loudly when a change
+# to the sync or permission model contradicts the document it was designed
+# against. There is no cheaper check in this repository.
+#
+# Tests are NOT here. They need Postgres, and a hook that fails because Docker
+# is not running teaches people to pass --no-verify. CI runs them with services.
+pnpm typecheck && pnpm spike:sync && pnpm spike:authz

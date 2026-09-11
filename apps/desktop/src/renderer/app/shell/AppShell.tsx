@@ -32,7 +32,10 @@ export function AppShell() {
     && !state.workspaces.some(w => w.state === 'active');
 
   useEffect(() => {
-    if (stranded) navigate('/', { replace: true });
+    // `void`: react-router's navigate returns a promise, and a client-side
+    // navigation has nothing to reject with. Marked rather than awaited so the
+    // rule that catches REAL unhandled rejections stays on (invariant 54).
+    if (stranded) void navigate('/', { replace: true });
   }, [stranded, navigate]);
 
   return (

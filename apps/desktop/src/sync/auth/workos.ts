@@ -8,6 +8,7 @@
 // Management API calls (creating orgs, actors, invitations) DO need the secret
 // and therefore belong on the server, never here.
 import type { Pkce } from './pkce.ts';
+import { asString } from './json.ts';
 
 const API = 'https://api.workos.com';
 
@@ -83,8 +84,8 @@ export function buildAuthorizeUrl(
 
 function toUser(raw: Record<string, unknown>): WorkOSUser {
   return {
-    id: String(raw['id'] ?? ''),
-    email: String(raw['email'] ?? ''),
+    id: asString(raw['id']),
+    email: asString(raw['email']),
     firstName: (raw['first_name'] as string | null) ?? null,
     lastName: (raw['last_name'] as string | null) ?? null,
     profilePictureUrl: (raw['profile_picture_url'] as string | null) ?? null,

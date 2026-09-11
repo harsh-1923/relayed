@@ -58,7 +58,6 @@ const channel = (over: Record<string, unknown> = {}) => ({
 });
 
 const insertSpace = (over: Record<string, unknown> = {}) =>
-  // eslint-disable-next-line
   db.insertInto('spaces').values(channel(over) as never).execute();
 
 const rejects = async (fn: () => Promise<unknown>, constraint: string) => {

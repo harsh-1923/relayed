@@ -1,0 +1,88 @@
+# ─── Prettier does NOT own the source in this repository ────────────────────
+#
+# This is the decision the file exists to record, because the obvious setup is
+# the other way round and somebody will try it.
+#
+# MEASURED, not assumed. Run across the 172 hand-written .ts/.tsx/.mjs files at
+# printWidth 100 — the p90 line here is 80 characters and the p99 is 102, so the
+# width is not the disagreement — Prettier rewrites 157 of them: +10,396 / −5,066
+# lines against 33,402 total. It grows the codebase by a sixth and touches
+# roughly a third of its lines.
+#
+# The churn is not cosmetic. It explodes deliberately-grouped JSX props one per
+# line, so
+#
+#     variant="ghost" size="icon" aria-label={label} title={label}
+#
+# — one thought, one line — becomes four. It does the same to destructured
+# parameter lists and to `cn(...)` calls whose arguments are grouped by what they
+# style. This codebase's formatting carries meaning that a general-purpose
+# printer cannot see, and trading that for "nobody argues about commas" is a bad
+# trade when nobody is arguing about commas.
+#
+# So Prettier is left with what has no house style to lose — JSON, YAML and CSS —
+# and the source is formatted by the people writing it. ESLint covers what
+# actually breaks (eslint.config.mjs).
+#
+# TO REVERSE THIS, delete the lines in either block below and run `pnpm format`.
+# It is one commit and a `.git-blame-ignore-revs` entry. Deliberately easy to
+# undo, and deliberately not the default.
+*.ts
+*.tsx
+*.mts
+*.mjs
+
+# ─── Nor the documents ──────────────────────────────────────────────────────
+#
+# Same finding, measured the same way. `docs/DESIGN.md` alone differs by 697
+# lines. Two reasons, and neither is configurable away:
+#
+#   Tables are padded to column width. Every future edit to one cell re-pads the
+#   whole table, so a one-word change arrives as a fifteen-line diff — in the
+#   files where the diff IS the review.
+#
+#   `*emphasis*` becomes `_emphasis_`, everywhere, in every document.
+#
+# These documents are the primary artifact of this project. `proseWrap:
+# "preserve"` in .prettierrc.json keeps the paragraphs intact for the day this
+# is reconsidered; the rest is not worth the churn.
+*.md
+
+# ─── Nor the one HTML file ──────────────────────────────────────────────────
+#
+# `index.html` is a shell around a thirty-line comment explaining the renderer's
+# CSP line by line. Prettier indents the `<!--` and leaves the body where it was,
+# so the explanation ends up misaligned against its own opening. One file, one
+# hand-formatted essay, nothing to gain.
+*.html
+
+# ─── Not ours to format ─────────────────────────────────────────────────────
+node_modules/
+out/
+dist/
+pnpm-lock.yaml
+apps/desktop/src/renderer/components/ui/
+spikes/electron-verify/
+docs/sync-whiteboards/
+
+# Generated, and reformatting it would make the diff against the source useless.
+schema.sql
+
+# Grafana's own export format. Reformatting it means every dashboard edit made in
+# the UI comes back as a whole-file diff against ours.
+infra/grafana/dashboards/
+
+# Vendored: the shadcn skill, fetched by `npx skills add`, replaced wholesale on
+# the next update.
+.claude/skills/
+
+# Tool-managed. These are rewritten by the tools that own them, so formatting one
+# is undone the next time it runs — and `format:check` then fails over a file
+# nobody edited. Caught exactly that way: graphify rewrote .codex/hooks.json
+# between a `format` and a `format:check`.
+.codex/
+
+# JSONC, hand-aligned, and carrying comments that explain compiler flags. Prettier
+# keeps the comments but moves them.
+tsconfig*.json
+**/tsconfig*.json

@@ -105,7 +105,9 @@ export async function joinWorkspace(
     .executeTakeFirst();
   if (!target) return 'not_invited';
 
-  let admitted = false;
+  // No initialiser: the try assigns it and the catch returns, so a `false` here
+  // would be a value nothing ever reads.
+  let admitted: boolean;
   try {
     const res = await listMemberships(id.workosUserId);
     admitted = res.data.some(m => m.organization_id === target.workos_org_id);

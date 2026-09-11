@@ -44,7 +44,7 @@ export function CreateWorkspace() {
             apply(s);
             // The engine made it active; the URL follows, because the URL is
             // where "which workspace" is expressed (§4.5).
-            if (s.workspaceId) navigate(`/w/${s.workspaceId}`, { replace: true });
+            if (s.workspaceId) void navigate(`/w/${s.workspaceId}`, { replace: true });
           }} />
       </CardContent>
     </Card>

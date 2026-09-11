@@ -41,7 +41,8 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[]): Mig
       applied.push(`${m.version}:${m.name}`);
     } catch (e) {
       db.exec('ROLLBACK');
-      throw new Error(`migration ${m.version} (${m.name}) failed: ${(e as Error).message}`);
+      throw new Error(`migration ${m.version} (${m.name}) failed: ${(e as Error).message}`,
+                      { cause: e });
     }
   }
   return { from, to: applied.length ? pending.at(-1)!.version : from, applied };

@@ -11,6 +11,23 @@
 // would not be.
 import { env } from '../env.ts';
 
+/**
+ * The first candidate that is actually a string.
+ *
+ * WorkOS returns an object in `errors` on a validation failure, and
+ * `String(json['error'])` on that yields the literal text `[object Object]` —
+ * as the message a caller sees and as the message that reaches Loki. The error
+ * path is exactly where the message is the only thing left, so a non-string
+ * falls through to the next candidate rather than being stringified into noise.
+ */
+const firstString = (...candidates: unknown[]): string => {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return '';
+};
+
+
 const BASE = 'https://api.workos.com';
 
 export class WorkOSError extends Error {
@@ -48,8 +65,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok) {
     throw new WorkOSError(
-      String(json['message'] ?? json['error_description'] ?? res.statusText),
-      res.status, String(json['code'] ?? json['error'] ?? `http_${res.status}`));
+      firstString(json['message'], json['error_description'], res.statusText),
+      res.status, firstString(json['code'], json['error'], `http_${res.status}`));
   }
   return json as T;
 }

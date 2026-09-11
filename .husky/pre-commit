@@ -1,0 +1,2 @@
+# Staged files only. See .lintstagedrc.mjs.
+pnpm exec lint-staged

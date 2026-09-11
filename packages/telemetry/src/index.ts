@@ -91,7 +91,6 @@ export interface Sink {
 class ConsoleSink implements Sink {
   #emit(kind: string, payload: unknown) {
     // The one permitted console call in the codebase: this IS the log sink.
-    // eslint-disable-next-line no-console
     console.log(JSON.stringify({ t: Date.now(), kind, ...(payload as object) }));
   }
   event<N extends EventName>(name: N, fields: EventFields<N>) {

@@ -22,7 +22,7 @@ services:
       POSTGRES_DB: relayed
       # Deterministic collation. Text index ordering must not depend on the
       # host's locale, or a laptop and a server can disagree about sort order.
-      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=und-x-icu --encoding=UTF8"
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=und-x-icu --encoding=UTF8'
     command:
       - postgres
       # Surface slow queries in dev. The welcome query touches ~150 chats
@@ -34,7 +34,7 @@ services:
       - -c
       - shared_buffers=256MB
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       # Postgres 18+ wants a single mount at /var/lib/postgresql, NOT at
       # .../data — the image places the cluster in a version-specific
@@ -45,7 +45,7 @@ services:
       # *.sql here runs once, on first init only (empty data dir).
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U relayed -d relayed"]
+      test: ['CMD-SHELL', 'pg_isready -U relayed -d relayed']
       interval: 3s
       timeout: 3s
       retries: 20
@@ -59,11 +59,11 @@ services:
     # limiting — all of it reconstructible. Losing it costs nothing, because
     # clients recover missed events through cursors and gap markers
     # (docs/DESIGN.md §9.3). If Redis ever holds durable state, that is a bug.
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - '${REDIS_PORT:-6379}:6379'
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 3s
       timeout: 3s
       retries: 20
@@ -75,14 +75,14 @@ services:
     environment:
       MINIO_ROOT_USER: relayed
       MINIO_ROOT_PASSWORD: relayedsecret
-    command: ["server", "/data", "--console-address", ":9001"]
+    command: ['server', '/data', '--console-address', ':9001']
     ports:
-      - "${MINIO_PORT:-9000}:9000"       # S3 API
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"  # web console
+      - '${MINIO_PORT:-9000}:9000' # S3 API
+      - '${MINIO_CONSOLE_PORT:-9001}:9001' # web console
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: ['CMD-SHELL', 'mc ready local || exit 1']
       interval: 3s
       timeout: 5s
       retries: 20
@@ -98,7 +98,7 @@ services:
     depends_on:
       minio:
         condition: service_healthy
-    restart: "no"
+    restart: 'no'
     entrypoint:
       - /bin/sh
       - -c
@@ -128,15 +128,15 @@ services:
     container_name: relayed-lgtm
     restart: unless-stopped
     environment:
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
-      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"    # Grafana UI
-      - "${OTLP_GRPC_PORT:-4317}:4317"  # OTLP gRPC   <- SDK exporters
-      - "${OTLP_HTTP_PORT:-4318}:4318"  # OTLP HTTP
-      - "${TEMPO_PORT:-3200}:3200"      # Tempo query API
-      - "${PROM_PORT:-9090}:9090"       # Prometheus query API
+      - '${GRAFANA_PORT:-3000}:3000' # Grafana UI
+      - '${OTLP_GRPC_PORT:-4317}:4317' # OTLP gRPC   <- SDK exporters
+      - '${OTLP_HTTP_PORT:-4318}:4318' # OTLP HTTP
+      - '${TEMPO_PORT:-3200}:3200' # Tempo query API
+      - '${PROM_PORT:-9090}:9090' # Prometheus query API
     volumes:
       - lgtm-data:/data
       # Dashboards ship with the stack. Read-only mounts: the container may not
@@ -146,7 +146,7 @@ services:
     healthcheck:
       # curl, not wget — the image has curl only, and a missing probe binary
       # means the healthcheck never passes and `--wait` hangs until timeout.
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:3000/api/health || exit 1']
       interval: 5s
       timeout: 5s
       retries: 30

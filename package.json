@@ -2,7 +2,7 @@
   "name": "relayed",
   "version": "0.0.0",
   "private": true,
-  "description": "The workspace of tomorrow \u2014 humans and agents collaborating, local-first.",
+  "description": "The workspace of tomorrow — humans and agents collaborating, local-first.",
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": ">=24"
@@ -19,6 +19,10 @@
     "preview": "pnpm --filter @relayed/desktop start",
     "ui": "pnpm --filter @relayed/desktop exec vite",
     "check:boundaries": "node tools/check-boundaries.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json && pnpm check:boundaries",
     "psql": "docker compose exec postgres psql -U relayed -d relayed",
     "redis-cli": "docker compose exec redis redis-cli",
@@ -31,16 +35,26 @@
     "test": "pnpm -r test",
     "mock": "node --env-file-if-exists=.env scripts/mock/run.ts",
     "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe",
-    "dev:all": "pnpm -r --parallel dev"
+    "dev:all": "pnpm -r --parallel dev",
+    "verify": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test && pnpm spike:sync && pnpm spike:authz && pnpm build",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@clack/prompts": "^1.8.0",
+    "@eslint/compat": "^2.1.1",
+    "@eslint/js": "^10.0.1",
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "@types/node": "^24.3.1",
     "@types/ws": "^8.18.1",
+    "eslint": "^10.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "husky": "^9.1.7",
     "kysely": "^0.28.3",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
     "ws": "^8.21.3"
   }
 }

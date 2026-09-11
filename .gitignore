@@ -18,6 +18,11 @@ coverage/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+# Shared, because it is a project decision rather than a personal one: which
+# formatter owns which extension, and that saving a .ts file runs ESLint's fixer
+# and not Prettier (see .prettierignore). Everything else under .vscode stays
+# personal.
+!.vscode/settings.json
 
 *.log
 

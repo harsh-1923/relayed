@@ -1,0 +1,48 @@
+// On save: ESLint fixes the code, Prettier formats the data.
+//
+// The split is the same one .prettierignore records. Prettier is the default
+// formatter, but it declines `.ts`/`.tsx` because the ignore file says so — the
+// per-language overrides below just make that explicit rather than leaving it to
+// be discovered. `source.fixAll.eslint` is what actually runs on a TypeScript
+// file, and since this config carries no stylistic rules, saving reformats
+// nothing and fixes only what is genuinely wrong.
+//
+// Markdown and HTML opt out of formatOnSave entirely: both are ignored by
+// Prettier here, and a formatter that silently does nothing is more confusing
+// than one that is visibly off.
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [{ "mode": "auto" }],
+  "eslint.validate": ["javascript", "typescript", "typescriptreact"],
+
+  "[typescript]": { "editor.defaultFormatter": "dbaeumer.vscode-eslint" },
+  "[typescriptreact]": { "editor.defaultFormatter": "dbaeumer.vscode-eslint" },
+  "[javascript]": { "editor.defaultFormatter": "dbaeumer.vscode-eslint" },
+
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[yaml]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  "[markdown]": { "editor.formatOnSave": false },
+  "[html]": { "editor.formatOnSave": false },
+
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  "files.exclude": {
+    "**/out": true,
+    "**/.turbo": true
+  },
+  "search.exclude": {
+    "**/pnpm-lock.yaml": true,
+    "**/out": true
+  }
+}

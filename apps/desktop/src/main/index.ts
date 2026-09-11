@@ -186,8 +186,17 @@ function createWindow(): BrowserWindow {
     emit('app.boot', { to_first_render: Date.now() - bootStarted, from_local: true });
   });
 
-  if (process.env['ELECTRON_RENDERER_URL']) win.loadURL(process.env['ELECTRON_RENDERER_URL']);
-  else win.loadFile(join(__dirname, '../renderer/index.html'));
+  // BOTH RETURN A PROMISE, and both reject on an ordinary failure — a dev server
+  // that is not up yet, an ERR_ABORTED from a reload landing mid-navigation. Left
+  // floating, that is an unhandled rejection in the MAIN process, which is the
+  // one that takes the whole app with it. Reported rather than swallowed: a
+  // window that never loads is otherwise a white rectangle with no explanation.
+  const target = process.env['ELECTRON_RENDERER_URL'];
+  const loading = target ? win.loadURL(target)
+                         : win.loadFile(join(__dirname, '../renderer/index.html'));
+  loading.catch((e: unknown) => {
+    console.error('[main] window failed to load', (e as Error).message);
+  });
   return win;
 }
 
@@ -219,6 +228,8 @@ app.on('second-instance', (_event, _argv) => {
 // still buffers the callback instead of dropping it.
 const protocolOk = registerProtocol();
 
+// `.then` with no `.catch` is an unhandled rejection if anything in the body
+// throws, and the body is the whole of startup.
 app.whenReady().then(() => {
   // Match the renderer default so native chrome — the window frame, menus and
   // any OS-drawn control — is dark too, rather than a light frame around a
@@ -380,6 +391,13 @@ app.whenReady().then(() => {
       app.exit(0);
     })();
   }
+}).catch((e: unknown) => {
+  // Startup failed. There is no window to show this in and no renderer to send
+  // it to, so the log is the only place it can go — and exiting is honest:
+  // a main process that survived a failed boot is an app with no windows and
+  // no way to make one.
+  console.error('[main] startup failed', (e as Error).message);
+  app.exit(1);
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
