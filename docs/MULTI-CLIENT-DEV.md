@@ -350,8 +350,14 @@ Verified by running it:
 | `SIGINT` takes everything down | 3 Electron processes → 0, launcher exits |
 | A non-TTY run does not hang on the prompt | defaults to 1 and starts |
 
-Two things the first run found, both worth keeping in mind rather than only
-fixing:
+Three things running it found, worth keeping in mind rather than only fixing:
+
+- **A second `pnpm dev` on top of a live one** failed as two unrelated stack
+  traces a screen apart — `EADDRINUSE` from the server, "Port 5273 is already in
+  use" from Vite — with the actual cause named in neither. The launcher now
+  checks both ports first and says what holds them. It reports rather than kills:
+  whatever owns the port is somebody's process, and a server run in another
+  terminal to watch its logs is exactly what `--no-server` is for.
 
 - **`electron-vite dev` has no `--port`.** The renderer port is pinned in
   `electron.vite.config.ts` with `strictPort`, so a busy port fails loudly

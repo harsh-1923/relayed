@@ -12,7 +12,8 @@
 // So: electron-vite owns the build, the watch, the renderer server and client 1.
 // This owns clients 2..N, and restarts them on the SAME signal electron-vite
 // restarts client 1 on.
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { existsSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +26,44 @@ const signalFile = join(desktop, 'out', '.build-signal');
 
 /** Where the renderer dev server listens. Pinned so siblings can be told. */
 const PORT = Number(process.env['RELAYED_DEV_PORT'] ?? 5273);
+/** Where the API and sync socket listen. Matches apps/server/src/env.ts. */
+const SERVER_PORT = Number(process.env['PORT'] ?? 8787);
 const MAX_CLIENTS = 4;
+
+/**
+ * Refuse to start on top of something already running.
+ *
+ * Without this the failure is two unrelated stack traces a screen apart — an
+ * `EADDRINUSE` from the server and a Vite "Port 5273 is already in use" — with
+ * the actual cause (a previous run still alive) named in neither. The renderer
+ * port is `strictPort` on purpose, because a sibling pointed at a port Vite
+ * quietly moved renders nothing and looks like a broken build; that correctness
+ * is worth keeping, and this is what makes it legible.
+ *
+ * It reports rather than kills. Whatever holds the port is somebody's process,
+ * possibly deliberate — a server run in another terminal to watch its logs is
+ * exactly the case `--no-server` exists for.
+ */
+function portFree(port) {
+  return new Promise(resolve => {
+    const probe = createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => probe.close(() => resolve(true)));
+    probe.listen(port, '127.0.0.1');
+  });
+}
+
+/** What is holding a port, best effort — a pid is more use than a number. */
+function holderOf(port) {
+  try {
+    const out = execFileSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'],
+                             { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const line = out.split('\n')[1];
+    if (!line) return null;
+    const [cmd, pid] = line.split(/\s+/);
+    return `${cmd} (pid ${pid})`;
+  } catch { return null; }
+}
 
 // Declared UP HERE rather than beside their users, because the client loop below
 // runs at the top level and a `const` referenced before its declaration is
@@ -63,6 +101,32 @@ if (interactive) {
 if (!Number.isInteger(clients) || clients < 1 || clients > MAX_CLIENTS) {
   console.error(`--clients must be 1..${MAX_CLIENTS}`);
   process.exit(1);
+}
+
+// ── nothing may already be listening ────────────────────────────────────────
+
+{
+  const wanted = [
+    { port: PORT, what: 'the renderer dev server' },
+    ...(process.argv.includes('--no-server')
+      ? [] : [{ port: SERVER_PORT, what: 'the Relayed server' }]),
+  ];
+  const taken = [];
+  for (const w of wanted) if (!(await portFree(w.port))) taken.push(w);
+
+  if (taken.length > 0) {
+    const lines = taken.map(t => {
+      const who = holderOf(t.port);
+      return `  :${t.port} — ${t.what}${who ? `, held by ${who}` : ''}`;
+    });
+    console.error(
+      `\nAlready running.\n\n${lines.join('\n')}\n\n` +
+      `Another \`pnpm dev\` is probably still alive. Stop it, or:\n` +
+      `  lsof -nP -iTCP:${taken[0].port} -sTCP:LISTEN\n` +
+      (taken.some(t => t.port === SERVER_PORT)
+        ? `\nIf you are running the server yourself, use \`pnpm dev --no-server\`.\n` : ''));
+    process.exit(1);
+  }
 }
 
 // ── the primary: build, watch, renderer server, client 1 ────────────────────
