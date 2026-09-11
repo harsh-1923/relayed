@@ -10,7 +10,7 @@
   "scripts": {
     "services": "docker compose up -d --wait postgres redis minio lgtm && docker compose up -d minio-init",
     "services:down": "docker compose down",
-    "dev": "pnpm -r --parallel dev",
+    "dev": "node scripts/dev-clients.mjs",
     "services:reset": "docker compose down -v && pnpm services",
     "services:lite": "docker compose up -d --wait postgres redis minio && docker compose up -d minio-init",
     "services:logs": "docker compose logs -f",
@@ -30,9 +30,11 @@
     "verify:timer": "npm --prefix spikes/electron-verify run timer",
     "test": "pnpm -r test",
     "mock": "node --env-file-if-exists=.env scripts/mock/run.ts",
-    "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe"
+    "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe",
+    "dev:all": "pnpm -r --parallel dev"
   },
   "devDependencies": {
+    "@clack/prompts": "^1.8.0",
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "@types/node": "^24.3.1",

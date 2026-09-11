@@ -6,7 +6,7 @@ import {
   MessageChannelMain,
 } from 'electron';
 import { dirname, join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
 import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
@@ -23,6 +23,40 @@ import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAva
 // user's local database — recoverable, since it is a replica, but
 // indistinguishable from data loss to them.
 app.setName('Relayed');
+
+/**
+ * Which development client this process is, if it is one of several.
+ *
+ * Sync is the first phase whose behaviour cannot be SEEN with one client, so a
+ * dev loop has to be able to run two or three isolated installs against one
+ * server (docs/MULTI-CLIENT-DEV.md). Isolation is entirely a matter of which
+ * `userData` directory this process owns, because the whole storage layout —
+ * account.db, the vault, every replica — hangs off that root (STORAGE.md §5).
+ *
+ * THE POSITION OF THIS BLOCK IS LOAD-BEARING, twice over.
+ *
+ * Before `requestSingleInstanceLock`, because that lock is keyed on the
+ * userData directory. Without this, client 2 exits at startup having decided
+ * client 1 is the same app — which is the guard working correctly, protecting a
+ * database the second process was about to open behind the first one's back.
+ *
+ * And before anything reads `userData` at all, for the reason the comment above
+ * records: the path used to be derived from `app.getName()` and silently changed
+ * with how the app was launched. Setting it explicitly rather than letting a
+ * name imply it is what keeps that closed.
+ *
+ * `!app.isPackaged` is not decoration. A shipped build must not be talkable into
+ * a different database directory by an environment variable.
+ */
+const devClient = !app.isPackaged ? process.env['RELAYED_CLIENT'] : undefined;
+if (devClient) {
+  app.setName(`Relayed ${devClient}`);
+  const dir = join(app.getPath('appData'), `relayed-client-${devClient}`);
+  // `setPath` requires a directory that already exists, and the failure would
+  // land before any of our error handling.
+  mkdirSync(dir, { recursive: true });
+  app.setPath('userData', dir);
+}
 
 // Both MUST precede app.whenReady(); Electron ignores a privileged-scheme
 // registration made after it (DESIGN.md §13.3).
@@ -96,6 +130,26 @@ function createWindow(): BrowserWindow {
       if (/content security|refused|error/i.test(t)) console.warn('[renderer]', t.slice(0, 200));
     });
   }
+  // WHICH CLIENT THIS IS, where you can actually see it.
+  //
+  // Not `app.setName`, which Electron documents as changing the INTERNAL name
+  // rather than the one the OS shows — in an unpackaged dev run the dock and
+  // menu bar take their text from Electron's own bundle, so three windows would
+  // be three identically-labelled icons. The title is ours and is visible
+  // without switching focus.
+  //
+  // Re-applied on `page-title-updated` because the renderer sets
+  // `document.title`, and a marker that survives until the first route change is
+  // a marker you cannot trust.
+  if (devClient) {
+    const label = `Relayed ${devClient}`;
+    win.setTitle(label);
+    win.on('page-title-updated', (event, title) => {
+      event.preventDefault();
+      win.setTitle(title.startsWith(label) ? title : `${label} — ${title}`);
+    });
+  }
+
   win.once('ready-to-show', () => {
     win.show();
     emit('app.boot', { to_first_render: Date.now() - bootStarted, from_local: true });

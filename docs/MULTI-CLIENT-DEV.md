@@ -9,8 +9,8 @@ flow worth demonstrating — a message appearing somewhere else, two people typi
 while the server is down, a laptop waking to a changed world — needs at least two
 installs talking to one server. One install can be tested; two must be *run*.
 
-This document decides how. **Nothing here is built yet**; §11 records what was
-checked against the code and what is still assumption.
+This document decides how. **Built and running**; §11 records what has been
+verified by running it and what remains untested.
 
 ---
 
@@ -22,7 +22,7 @@ checked against the code and what is still assumption.
 | How do they stay isolated? | A separate `userData` per client, chosen by env var | 3 |
 | Who picks the directory? | `main`, before the single-instance lock | 3 |
 | How do UI edits reach all of them? | One Vite dev server; every window is an HMR client | 5 |
-| How do main/preload edits reach them? | `--watch` — **which is not on today** — plus a build-completion signal | 5 |
+| How do main/preload edits reach them? | `--watch`, which the launcher turns on, plus a build-completion signal | 5 |
 | What signals a restart? | electron-vite's own `closeBundle`, never a watch on `out/` | 5 |
 | How do you tell the windows apart? | **Window title.** `app.setName` is not enough | 6 |
 | Which client is which in Grafana? | Not answerable today — needs an instrumentation change | 7 |
@@ -148,10 +148,17 @@ The launcher is wired behind `pnpm dev` and **defaults to one client**, so the
 ordinary loop is unchanged and nobody pays for a capability they are not using.
 
 ```bash
-pnpm dev                  # one client, exactly as today
-pnpm dev --clients=2      # two
-pnpm dev --clients=3      # three
+pnpm dev                  # asks how many, in a TTY; 1 otherwise
+pnpm dev --clients=3      # skip the prompt
+pnpm dev --clients=2 --no-server   # server already running elsewhere
 ```
+
+`pnpm dev` also starts the server, because that is what it meant before and must
+keep meaning. `pnpm dev:all` is the old `pnpm -r --parallel dev` if you want it.
+
+The prompt only appears on a TTY and never in CI, so a non-interactive run
+defaults to one client and starts rather than hanging on a question nobody can
+answer.
 
 ---
 
@@ -160,20 +167,20 @@ pnpm dev --clients=3      # three
 This is the requirement that decides the architecture. A second window that
 needs a manual restart is a second window nobody uses.
 
-### Hot reload of main and preload is **not enabled today**
+### Hot reload of main and preload was **off** until this landed
 
-`apps/desktop`'s dev script is bare `electron-vite dev`, and the config sets no
-`build.watch`. So today a main-process change does nothing until you restart by
-hand. Multi-client does not cause this, but it makes it much more expensive —
-restarting by hand is tolerable once and not three times.
+`apps/desktop`'s dev script was bare `electron-vite dev` with no `build.watch`
+anywhere, so a main-process change did nothing until you restarted by hand.
+Multi-client did not cause that, but it made it much more expensive — restarting
+by hand is tolerable once and not three times.
 
-The flag exists: `-w, --watch`, documented as *"rebuilds when main process or
-preload script modules have changed on disk"*. Turning it on is a prerequisite
-of this design, not a detail of it, and it changes the single-client loop too —
-which is a reason to land it as its own change and see what it does before
-building anything on top.
+The launcher passes `-w, --watch`, documented as *"rebuilds when main process or
+preload script modules have changed on disk"*. **This changes the single-client
+loop too**: `pnpm dev` now restarts on a main-process edit where before it sat
+there. That is the intended improvement, but it is a behaviour change to the
+thing you use every day, and worth knowing before it surprises you.
 
-| Edit | What happens, once `--watch` is on |
+| Edit | What happens |
 |---|---|
 | **Renderer / UI** | One Vite dev server, HMR over a websocket. Every window is another connected client. Free, and it is most edits |
 | **Main / sync engine** | Rebuild, then Electron restarts |
@@ -331,8 +338,30 @@ crossing, a killed server, offline composition on both, and a slept laptop.
 
 ## 11. Status, and what is actually verified
 
-**Designed, not built.** Neither the `main` change nor `scripts/dev-clients.mjs`
-exists.
+**Built.** `scripts/dev-clients.mjs`, the `RELAYED_CLIENT` block in `main`, the
+`relayed:build-signal` plugin, and a pinned renderer port.
+
+Verified by running it:
+
+| | |
+|---|---|
+| Three clients boot, three `app.boot` events | `relayed-client-1/2/3` created under Application Support |
+| A main-process edit restarts **all three** | +3 boots per edit, from one signal |
+| `SIGINT` takes everything down | 3 Electron processes → 0, launcher exits |
+| A non-TTY run does not hang on the prompt | defaults to 1 and starts |
+
+Two things the first run found, both worth keeping in mind rather than only
+fixing:
+
+- **`electron-vite dev` has no `--port`.** The renderer port is pinned in
+  `electron.vite.config.ts` with `strictPort`, so a busy port fails loudly
+  instead of silently moving — a sibling pointed at the wrong port renders
+  nothing and looks like a broken build.
+- **`pnpm` does not forward a signal to its grandchild.** Killing the pnpm
+  process left Electron running with its replica open, and the next run's client
+  1 would have met a database another process still held — the exact failure the
+  separate directories exist to prevent, reintroduced by sloppy teardown. The
+  launcher spawns detached and signals the process group.
 
 Checked against the code in this repository:
 
@@ -353,8 +382,8 @@ Taken from Electron's own documentation rather than this repository, and not
 verified by running: that `app.setName` changes the internal name only, and that
 `app.setPath` requires an existing directory.
 
-**Not exercised at all**: two Electron instances, `--watch` end to end, and the
-restart path for clients 2..N. Every claim about them is design, not observation.
+**Still not exercised**: signing in as two different people (§8's browser-session
+problem is untested), and anything that needs a compose surface.
 
 ### What this still does not give you
 
