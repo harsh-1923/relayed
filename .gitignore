@@ -34,3 +34,5 @@ schema.sql
 
 # local Graphify output
 /graphify-out/
+
+.codex
