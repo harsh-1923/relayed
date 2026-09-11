@@ -49,8 +49,25 @@ app.setName('Relayed');
  * a different database directory by an environment variable.
  */
 const devClient = !app.isPackaged ? process.env['RELAYED_CLIENT'] : undefined;
+
+/**
+ * What this client calls itself: "Relayed 2", or plain "Relayed" when there is
+ * only one.
+ *
+ * CHOSEN BY `scripts/dev-clients.mjs`, not derived here, because the same string
+ * has to be stamped into the copy of `Electron.app` this process is running
+ * from — `app.setName` is documented as changing the name used internally and
+ * NOT the one the operating system shows, and on macOS the menu bar, the Dock
+ * tile and the app switcher all read the running bundle's `CFBundleName`.
+ * Deriving the name in two places is how the window and the menu bar come to
+ * disagree about which client you are looking at.
+ */
+const clientName = devClient
+  ? process.env['RELAYED_CLIENT_NAME'] || `Relayed ${devClient}`
+  : 'Relayed';
+
 if (devClient) {
-  app.setName(`Relayed ${devClient}`);
+  app.setName(clientName);
   const dir = join(app.getPath('appData'), `relayed-client-${devClient}`);
   // `setPath` requires a directory that already exists, and the failure would
   // land before any of our error handling.
@@ -130,23 +147,22 @@ function createWindow(): BrowserWindow {
       if (/content security|refused|error/i.test(t)) console.warn('[renderer]', t.slice(0, 200));
     });
   }
-  // WHICH CLIENT THIS IS, where you can actually see it.
+  // WHICH CLIENT THIS IS, in the window itself.
   //
-  // Not `app.setName`, which Electron documents as changing the INTERNAL name
-  // rather than the one the OS shows — in an unpackaged dev run the dock and
-  // menu bar take their text from Electron's own bundle, so three windows would
-  // be three identically-labelled icons. The title is ours and is visible
-  // without switching focus.
+  // The menu bar and the Dock say it too now, but they say it because
+  // `scripts/dev-clients.mjs` stamps the name into a per-client copy of
+  // `Electron.app` — nothing in this process can change either one. This stays
+  // regardless: the title is what is in front of you at the moment you are
+  // about to type into the wrong window, which the menu bar is not.
   //
   // Re-applied on `page-title-updated` because the renderer sets
   // `document.title`, and a marker that survives until the first route change is
   // a marker you cannot trust.
   if (devClient) {
-    const label = `Relayed ${devClient}`;
-    win.setTitle(label);
+    win.setTitle(clientName);
     win.on('page-title-updated', (event, title) => {
       event.preventDefault();
-      win.setTitle(title.startsWith(label) ? title : `${label} — ${title}`);
+      win.setTitle(title.startsWith(clientName) ? title : `${clientName} — ${title}`);
     });
   }
 

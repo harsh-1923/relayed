@@ -13,8 +13,8 @@
 // This owns clients 2..N, and restarts them on the SAME signal electron-vite
 // restarts client 1 on.
 import { spawn, execFileSync } from 'node:child_process';
-import { createServer } from 'node:net';
-import { existsSync, rmSync, statSync } from 'node:fs';
+import { connect } from 'node:net';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -45,12 +45,27 @@ const MAX_CLIENTS = 4;
  * exactly the case `--no-server` exists for.
  */
 function portFree(port) {
-  return new Promise(resolve => {
-    const probe = createServer();
-    probe.once('error', () => resolve(false));
-    probe.once('listening', () => probe.close(() => resolve(true)));
-    probe.listen(port, '127.0.0.1');
+  // A CONNECT probe, not a listen probe, and the difference is not academic:
+  // this guard failed to fire on a genuinely occupied port because Vite binds
+  // `localhost`, which resolves to `::1`, while a `listen` probe on `127.0.0.1`
+  // is a DIFFERENT address and succeeds happily beside it. The run then died
+  // fifteen seconds later with the two stack traces this function exists to
+  // replace.
+  //
+  // Connecting sidesteps the bind address entirely — if something answers on
+  // either family, the port is taken. A timeout counts as free: a host that
+  // neither refuses nor accepts is not the case this is protecting against, and
+  // hanging the launcher on it would be worse than a clear error downstream.
+  const reach = (host) => new Promise(resolve => {
+    const probe = connect({ port, host });
+    const settle = (answered) => { probe.destroy(); resolve(answered); };
+    probe.setTimeout(500);
+    probe.once('connect', () => settle(true));
+    probe.once('timeout', () => settle(false));
+    probe.once('error', () => settle(false));
   });
+  return Promise.all([reach('127.0.0.1'), reach('::1')])
+    .then(answered => !answered.some(Boolean));
 }
 
 /** What is holding a port, best effort — a pid is more use than a number. */
@@ -71,6 +86,106 @@ function holderOf(port) {
 const require_ = createRequire(join(desktop, 'package.json'));
 /** The Electron binary the workspace resolved, not one from PATH. */
 const electronBin = require_('electron');
+
+// ── what each client calls itself, to macOS ─────────────────────────────────
+
+/** The name one client answers to. One client is just "Relayed". */
+const nameFor = (n, total) => (total === 1 ? 'Relayed' : `Relayed ${n}`);
+
+/** Where the named copies live. Under node_modules, so it is already ignored. */
+const bundleCache = join(root, 'node_modules', '.cache', 'relayed-dev-bundles');
+
+/**
+ * Give client `n` an `Electron.app` that says who it is.
+ *
+ * WHY NOT `app.setName`. Its contract is explicit: it "overrides the current
+ * application's name used internally by Electron" and "does not affect the name
+ * that the OS uses". On macOS the first submenu of the application menu ALWAYS
+ * carries the application's name, taken from the running bundle's
+ * `CFBundleName` — so does the Dock tile, and so does ⌘-Tab. A menu template
+ * does not help either: the label you give that first submenu is ignored on
+ * macOS by design. An unpackaged dev run executes Electron's own prebuilt
+ * bundle, and Electron's bundle is called Electron. That is the whole of the
+ * bug, and none of it is reachable from inside the process.
+ *
+ * So the bundle has to say it, which means a copy of the bundle per client, and
+ * each client has to be POINTED AT ITS OWN — by a different knob in each case,
+ * which cost a round to learn. The siblings are spawned here, so they are simply
+ * given the copied binary's path. Client 1 is spawned by electron-vite, which
+ * does NOT load the `electron` npm shim and therefore never reads that shim's
+ * `ELECTRON_OVERRIDE_DIST_PATH`: it reads `path.txt` and joins it to the module
+ * directory itself. Its own override is `ELECTRON_EXEC_PATH`, which it checks
+ * first and otherwise fills in — so that is what the primary is given.
+ *
+ * THE COPY IS FREE, which is the only reason this belongs in a dev loop: `cp -c`
+ * on APFS is a copy-on-write clone, so 307MB takes about a tenth of a second and
+ * no disk at all. A non-APFS volume falls back to a real copy — which is why the
+ * result is cached and stamped rather than remade every run.
+ *
+ * AND NOTHING IS RE-SIGNED, because nothing needs to be. Electron's dev binary
+ * is ad-hoc linker-signed with `Info.plist=not bound` and no sealed resources:
+ * the signature covers the Mach-O and nothing else, so editing the plist leaves
+ * it exactly as valid as it was — `codesign --verify` says the same thing word
+ * for word before and after. If a future Electron ships a sealed bundle the
+ * symptom is a copy macOS refuses to launch, and the repair is one line:
+ * `codesign --force --sign - <app>`.
+ *
+ * Returns a dist directory, or null to run the original bundle. This is
+ * cosmetic and must never be the reason a dev loop will not start.
+ */
+function bundleFor(n, label) {
+  if (process.platform !== 'darwin') return null;
+  const suffix = join('Electron.app', 'Contents', 'MacOS', 'Electron');
+  if (!electronBin.endsWith(suffix)) return null;
+
+  const srcDist = electronBin.slice(0, -(suffix.length + 1));
+  const dist = join(bundleCache, `client-${n}`);
+  const bundle = join(dist, 'Electron.app');
+  const stamp = join(dist, '.relayed-stamp');
+  // Both halves matter: an Electron upgrade must replace the copy, and renaming
+  // a client must not be answered out of a cache of the old name.
+  const want = `${electronVersion()} ${label}`;
+
+  try {
+    if (readFileSync(stamp, 'utf8') === want
+        && existsSync(join(bundle, 'Contents', 'MacOS', 'Electron'))) return dist;
+  } catch { /* no stamp yet, or unreadable — rebuild */ }
+
+  try {
+    rmSync(dist, { recursive: true, force: true });
+    mkdirSync(bundleCache, { recursive: true });
+    clone(srcDist, dist);
+    const plist = join(bundle, 'Contents', 'Info.plist');
+    // `CFBundleName` is what the menu bar and the Dock read; `CFBundleDisplayName`
+    // is what Finder and the app switcher prefer when it is present. Setting one
+    // and not the other is how an app ends up with two names.
+    for (const key of ['CFBundleName', 'CFBundleDisplayName']) {
+      execFileSync('plutil', ['-replace', key, '-string', label, plist]);
+    }
+    // Written LAST, so an interrupted copy is not mistaken for a finished one.
+    writeFileSync(stamp, want);
+    return dist;
+  } catch (e) {
+    console.error(`[dev] could not name client ${n} (${e.message}) — it will show as Electron`);
+    rmSync(dist, { recursive: true, force: true });
+    return null;
+  }
+}
+
+/** The executable inside a named copy. */
+const binIn = (dist) => join(dist, 'Electron.app', 'Contents', 'MacOS', 'Electron');
+
+/** Clone if the filesystem can, copy if it cannot. */
+function clone(src, dst) {
+  try { execFileSync('cp', ['-c', '-R', src, dst], { stdio: 'ignore' }); }
+  catch { execFileSync('cp', ['-R', src, dst], { stdio: 'ignore' }); }
+}
+
+/** Read from the package rather than the lockfile, which is what is installed. */
+function electronVersion() {
+  const pkg = join(dirname(require_.resolve('electron')), 'package.json');
+  return JSON.parse(readFileSync(pkg, 'utf8')).version;
+}
 
 const stampOf = () => {
   try { return statSync(signalFile).mtimeMs; } catch { return 0; }
@@ -166,6 +281,9 @@ rmSync(signalFile, { force: true });
 // would then meet a database another process still holds — the exact failure the
 // separate directories exist to prevent, reintroduced by sloppy teardown.
 // Killing the negative pid signals the group.
+const primaryName = nameFor(1, clients);
+const primaryDist = bundleFor(1, primaryName);
+
 const primary = spawn('pnpm', args, {
   cwd: root,
   stdio: 'inherit',
@@ -174,6 +292,12 @@ const primary = spawn('pnpm', args, {
     ...process.env,
     RELAYED_DEV_PORT: String(PORT),
     RELAYED_CLIENT: '1',
+    RELAYED_CLIENT_NAME: primaryName,
+    // electron-vite's OWN override, and the only one it honours — it resolves
+    // the binary itself rather than loading the npm shim, so the shim's
+    // `ELECTRON_OVERRIDE_DIST_PATH` is read by nobody on this path and client 1
+    // launched from the unnamed bundle while client 2 was correct.
+    ...(primaryDist ? { ELECTRON_EXEC_PATH: binIn(primaryDist) } : {}),
     ...(clients > 1 ? { RELAYED_BUILD_SIGNAL: signalFile } : {}),
   },
 });
@@ -199,12 +323,19 @@ if (clients === 1) {
 
 function start(n) {
   if (stopping) return;
-  const child = spawn(electronBin, [join(desktop, 'out', 'main', 'index.js')], {
+  // Named on every start, not once: a rebuild restarts siblings, and the second
+  // call is a stamp comparison against a copy that is already there.
+  const label = nameFor(n, clients);
+  const dist = bundleFor(n, label);
+  // Spawned here, so there is nothing to override: the path IS the choice.
+  const bin = dist ? binIn(dist) : electronBin;
+  const child = spawn(bin, [join(desktop, 'out', 'main', 'index.js')], {
     cwd: desktop,
     stdio: 'inherit',
     env: {
       ...process.env,
       RELAYED_CLIENT: String(n),
+      RELAYED_CLIENT_NAME: label,
       // The SAME dev server client 1 uses. `main` reads exactly this variable to
       // choose a URL over a file, so HMR reaches every window from one server.
       ELECTRON_RENDERER_URL: `http://localhost:${PORT}`,

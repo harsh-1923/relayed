@@ -24,8 +24,8 @@ verified by running it and what remains untested.
 | How do UI edits reach all of them? | One Vite dev server; every window is an HMR client | 5 |
 | How do main/preload edits reach them? | `--watch`, which the launcher turns on, plus a build-completion signal | 5 |
 | What signals a restart? | electron-vite's own `closeBundle`, never a watch on `out/` | 5 |
-| How do you tell the windows apart? | **Window title.** `app.setName` is not enough | 6 |
-| Which client is which in Grafana? | Not answerable today — needs an instrumentation change | 7 |
+| How do you tell the windows apart? | **A named copy of `Electron.app` per client**, plus the window title | 6 |
+| Which client is which in Grafana? | By `device` and `actor` on every event and span | 7 |
 | Does sign-in need anything special? | Loopback handles the callback; the **browser session** does not | 8 |
 | One server and one database, or several? | **One of each.** That is the production topology too | 9 |
 
@@ -225,18 +225,63 @@ product.
 
 ## 6. Telling them apart, on screen
 
-**`app.setName` is not sufficient.** Electron's contract is explicit that it
-changes the *internal* application name, not the name the OS shows; on macOS the
-menu bar and dock take their text from the bundle, which in an unpackaged dev run
-is Electron's own. Setting it is still worth doing — it is what several Electron
-paths derive from — but it must not be the thing you rely on to tell three
-identical windows apart.
+Three things carry the name, and only one of them is reachable from inside the
+process.
 
-**The window title is the identifier.** It is under our control, it is visible
-without switching focus, and it survives being wrong about what the dock does.
-The one trap: the renderer may set `document.title`, which would overwrite it —
-so the prefix has to be reapplied, or set from main in a way the page cannot
-clobber.
+**`app.setName` is not one of them.** Its contract is explicit: it overrides the
+name Electron uses *internally* and "does not affect the name that the OS uses".
+On macOS the first submenu of the application menu **always** carries the
+application's name, read from the running bundle's `CFBundleName` — and so do the
+Dock tile and the app switcher. A custom `Menu.setApplicationMenu` does not help
+either: the label you give that first submenu is ignored on macOS by design. An
+unpackaged dev run executes Electron's own prebuilt bundle, and that bundle is
+called Electron. So the menu bar said `Electron` for every client, and nothing in
+`main` could change it.
+
+**So the bundle says it.** `scripts/dev-clients.mjs` gives each client its own
+copy of Electron's `dist`, rewrites `CFBundleName` and `CFBundleDisplayName` in
+its `Info.plist`, and points that client at it. The menu bar, the Dock and ⌘-Tab
+then read `Relayed 1` and `Relayed 2`.
+
+**Pointing at it takes a different knob per client**, which cost a round to
+learn — client 2 was correctly named while client 1 still said `Electron`. The
+siblings are spawned by the launcher, so they are simply given the copied
+binary's path. Client 1 is spawned by **electron-vite**, which does *not* load
+the `electron` npm shim: it reads `path.txt` and joins it to the module directory
+itself, so the shim's `ELECTRON_OVERRIDE_DIST_PATH` is read by nobody on that
+path. electron-vite's own override is `ELECTRON_EXEC_PATH`, which it checks
+before resolving and otherwise fills in — that is what the primary is given.
+
+Two properties make this cheap enough to sit in a dev loop rather than in a
+build step:
+
+- **The copy is free.** `cp -c` on APFS is a copy-on-write clone: 307MB in about
+  a tenth of a second, and no disk consumed — free space is unchanged after
+  cloning three of them. A non-APFS volume falls back to a real copy, which is
+  why the result is cached under `node_modules/.cache/relayed-dev-bundles` and
+  stamped with the Electron version and the intended name. An upgrade or a rename
+  invalidates the stamp; nothing else does.
+- **Nothing is re-signed.** Electron's dev binary is ad-hoc *linker-signed*, with
+  `Info.plist=not bound` and no sealed resources — the signature covers the
+  Mach-O and nothing else, so editing the plist leaves it exactly as valid as it
+  was. `codesign --verify` reports the same thing, word for word, on the original
+  and on the patched copy. If a future Electron ships a sealed bundle the symptom
+  is a copy macOS refuses to launch, and the repair is one line:
+  `codesign --force --sign - <app>`.
+
+A failure to build the named copy is logged and the client runs from the original
+bundle. This is cosmetic, and must never be the reason a dev loop will not start.
+
+**The window title stays** regardless. It is what is in front of you at the
+moment you are about to type into the wrong window, which the menu bar is not.
+The one trap: the renderer sets `document.title`, which would overwrite it, so
+the prefix is reapplied on `page-title-updated`.
+
+**One name, chosen in one place.** The launcher picks it (`Relayed 2`, or plain
+`Relayed` when there is only one client) and passes it as `RELAYED_CLIENT_NAME`;
+`main` uses that same string for `app.setName` and the window title. Deriving it
+twice is how the window and the menu bar come to disagree about which client you
+are looking at.
 
 Directories stay numbered — `relayed-client-1`, `relayed-client-2` — because the
 number is what the environment variable says, and a second name to hold in your
@@ -246,31 +291,27 @@ head is a second thing to get wrong.
 
 ## 7. Telling them apart, in telemetry
 
-**Not answerable today, and the gap is specific.**
+**Answered, and by the general fix rather than a dev-only one.**
 
-Every client reports as `service_name="relayed-desktop"`, which is correct: the
-service is the desktop app. But the resource context the sink attaches is *only*
-the service name, and of the sync events — `ws.connected`, `ws.disconnected`,
-`sync.gap.entered`, `sync.backfill.page`, `sync.cursor.stalled`, `outbox.op.failed`
-and the rest — **none carries a device or client field**. Account-open and
-sign-in events do; the sync path does not. So "filter by device" works for
+Every client still reports as `service_name="relayed-desktop"`, which is correct:
+the service is the desktop app. What was missing was *who* — the sync events
+(`ws.connected`, `sync.gap.entered`, `sync.backfill.page`, `outbox.op.failed` and
+the rest) carried no device or actor at all, so "filter by device" worked for
 exactly the events you would not be asking about.
 
-Keeping ids off *metric* labels stays right ([`OBSERVABILITY.md`](OBSERVABILITY.md)
-§5) — that is the cardinality rule and multi-client does not weaken it. What is
-missing is on the events and spans, where high cardinality is the point.
+`telemetry.identify()` closed it. Every event and every span now carries
+`install`, `device`, `actor`, `workspace` and `account`, attached by the sink
+rather than by each call site. Two clients on one machine are two `device` values
+and, when signed in as different people, two `actor` values — so a Grafana query
+separates them without knowing anything about development.
 
-Two candidate fixes, both needing a decision rather than a default:
-
-- **A resource attribute on the sink** — one `device` (or dev-only `client`)
-  attached alongside `service.name`, so every record from that install carries it
-  without touching a single call site. Cheap, uniform, and it makes the whole
-  stream filterable at once.
-- **A field on the events that want it.** More deliberate, more diff, and it
-  spreads an id through a catalogue that has so far been careful about them.
-
-The first looks right, and it is a change to `OBSERVABILITY.md` §8's contract, so
-it belongs in that conversation rather than being smuggled in through a dev tool.
+The **split** is the part to keep in mind: bounded context (`os.type`,
+`host.arch`, `deployment.environment`) rides the OTLP *resource* and therefore
+reaches metrics too, while the unbounded half rides each record and never touches
+a metric. That is not a preference — a resource attribute is folded into a
+metric's identifying label set, so a device id there is a series per device per
+metric ([`OBSERVABILITY.md`](OBSERVABILITY.md) §5). `packages/telemetry/src/identity.test.ts`
+asserts both halves, because the failure is silent and arrives as a bill.
 
 ---
 
@@ -373,7 +414,7 @@ Checked against the code in this repository:
 
 | Claim | Where |
 |---|---|
-| `dev` is bare `electron-vite dev`; no `build.watch` anywhere — **main/preload hot reload is off today** | `apps/desktop/package.json`, `electron.vite.config.ts` |
+| ~~`dev` is bare `electron-vite dev`; no `build.watch` anywhere~~ — **closed**: the launcher passes `--watch`, §5 | `apps/desktop/package.json`, `scripts/dev-clients.mjs` |
 | `-w, --watch` is the flag that enables it | `electron-vite/dist/cli.js` |
 | Restarts come from a rollup `closeBundle` hook, not a filesystem watcher | `electron-vite/dist/chunks/lib-B4dCEySN.js` |
 | electron-vite forwards args after `--`, but spawns exactly one child | `cli.js`, then `spawn(electronPath, [entry].concat(args))` |
@@ -381,7 +422,7 @@ Checked against the code in this repository:
 | The storage root already comes from an environment variable | `sync/index.ts` |
 | The single-instance lock runs after `app.setName` | `main/index.ts` |
 | Sign-in is a loopback redirect on an ephemeral port | `sync/auth/loopback.ts` |
-| **No sync event carries a device or client field**; the sink adds only `service.name` | `packages/telemetry/src/events.ts`, `otlp.ts` |
+| ~~No sync event carries a device or client field~~ — **closed** by `identify()`, §7 | `packages/telemetry/src/index.ts`, `otlp.ts` |
 | The mock world writes synthetic WorkOS references, so a real sign-in cannot join it | `scripts/mock/world.ts` |
 
 Taken from Electron's own documentation rather than this repository, and not
@@ -393,10 +434,10 @@ problem is untested), and anything that needs a compose surface.
 
 ### What this still does not give you
 
-- **Composing a message.** `enqueue` has no production caller — there is no
-  compose surface. A hand-driven client can connect, receive, catch up and
-  back-fill, but it cannot type. `scripts/mock/` drives that path directly;
-  a person cannot yet.
+- ~~**Composing a message.**~~ **Closed.** `messages.send` is `enqueue`'s first
+  production caller and the chat route has a composer, so a hand-driven client
+  can now type as well as receive. Two clients exchanging messages, both replicas
+  level with empty outboxes, has been run.
 - **Joining the mock fleet.** "One real Electron against the mock world" was
   suggested in an earlier draft and does not work as written: `scripts/mock/`
   mints synthetic `workos_org_id` and `identity_id` values and signs its own
