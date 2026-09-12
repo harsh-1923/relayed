@@ -637,3 +637,65 @@ test('applying welcome is one transaction — a failure writes nothing', () => {
   db.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+// ── preferences (PREFERENCES.md §4) ─────────────────────────────────────────
+
+test('preferences read empty while signed out, rather than throwing', () => {
+  // The signed-out shell still renders, and every key falls back to its default
+  // — which is the ordinary case, not a degraded one.
+  const s = new Storage(root());
+  assert.deepEqual(s.preferences(), []);
+});
+
+test('a preference is account-tier: two accounts on one install do not share one', () => {
+  // The cost of the tier, stated (PREFERENCES.md §4): switching accounts can
+  // change the appearance of the window. The alternative is a table joining two
+  // accounts, which STORAGE.md §2 rules out.
+  const dir = root();
+  const s = new Storage(dir);
+
+  const a = s.createAccount('dev_a');
+  s.openAccount(a);
+  s.setPreference('appearance.theme', 'dark');
+  assert.deepEqual(s.preferences(),
+                   [{ key: 'appearance.theme', value: '"dark"', reach: 'local' }]);
+
+  const b = s.createAccount('dev_b');
+  s.openAccount(b);
+  assert.deepEqual(s.preferences(), [], 'the second account starts at its defaults');
+  s.setPreference('appearance.theme', 'light');
+
+  s.openAccount(a);
+  assert.equal(s.preferences()[0]?.value, '"dark"', 'and the first still has its own');
+});
+
+test('a preference survives a workspace switch, which does not touch it', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [
+    member({ workspaceId: 'wsp_1', actorId: 'act_1' }),
+    member({ workspaceId: 'wsp_2', actorId: 'act_2', name: 'Acme' }),
+  ]);
+  storage.setPreference('appearance.theme', 'dark');
+  storage.switchWorkspace('wsp_2');
+  assert.equal(storage.preferences()[0]?.value, '"dark"',
+               'it lives in account.db, which a switch does not replace');
+});
+
+test('a preference outlives the process, which is the point of storing it', () => {
+  const dir = root();
+  const { accountId } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_1' })]);
+  const first = new Storage(dir);
+  first.openAccount(accountId);
+  first.setPreference('appearance.theme', 'dark');
+  first.close();
+
+  const second = new Storage(dir);
+  second.boot();
+  assert.equal(second.preferences()[0]?.value, '"dark"');
+});
+
+test('Storage refuses a key the catalogue does not have', () => {
+  const s = new Storage(root());
+  s.openAccount(s.createAccount('dev_1'));
+  assert.throws(() => s.setPreference('appearance.mood', 'blue'), /unknown preference/);
+});

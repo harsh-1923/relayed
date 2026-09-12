@@ -1,7 +1,18 @@
+import type { ReactNode } from 'react';
+
 interface SettingsPanelItem {
   label: string;
   description: string;
-  value: string;
+  /**
+   * The right-hand side of the row: a control where the setting is live, a
+   * string where it is still a placeholder.
+   *
+   * One slot rather than a `control?` beside a `value`, because a row has
+   * exactly one right-hand side and two fields would make "both set" a state
+   * this has to have an answer for. A bare string is styled as muted text so
+   * the unbuilt rows keep reading as unbuilt.
+   */
+  value: ReactNode;
 }
 
 export function SettingsPanel({
@@ -31,7 +42,9 @@ export function SettingsPanel({
                 <h2 className="text-sm font-medium">{item.label}</h2>
                 <p className="text-sm text-muted-foreground">{item.description}</p>
               </div>
-              <span className="text-sm text-muted-foreground">{item.value}</span>
+              {typeof item.value === 'string'
+                ? <span className="text-sm text-muted-foreground">{item.value}</span>
+                : item.value}
             </div>
           ))}
         </div>

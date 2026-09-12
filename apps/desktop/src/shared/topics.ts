@@ -46,6 +46,20 @@ export const topic = {
   space: (spaceId: string): string => `space:${spaceId}`,
   /** The sidebar's own list of spaces. Woken by a join or a leave. */
   spaces: (): string => 'spaces',
+  /** Everything a person has chosen. What `prefs.list` reads. */
+  prefs: (): string => 'prefs',
+  /**
+   * One preference.
+   *
+   * WRITTEN FINE, SUBSCRIBED COARSE (PREFERENCES.md §8). A write names the key
+   * it changed and the reader subscribes to `prefs`, which the prefix rule
+   * below already matches — so per-key granularity costs nothing today and is
+   * there the moment a surface wants it.
+   *
+   * Keys are dotted and topics are colon-separated, which is why
+   * `appearance.theme` is one segment here rather than two.
+   */
+  pref: (key: string): string => `prefs:${key}`,
 } as const;
 
 /**

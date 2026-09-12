@@ -79,4 +79,69 @@ export const accountMigrations: readonly Migration[] = [
       CREATE UNIQUE INDEX workspace_actor ON workspaces(actor_id);
     `,
   },
+  {
+    version: 2,
+    name: 'preferences',
+    up: `
+      -- What the PERSON chose, as opposed to what the engine knows
+      -- (PREFERENCES.md).
+      --
+      -- NOT in \`meta\`. That table holds engine-owned singletons — device_id,
+      -- last_workspace, schema_origin — written by this process and meaningless
+      -- to a user. Sharing one table makes "reset my settings" one careless
+      -- DELETE away from discarding this install's device identity.
+      --
+      -- ROW PER KEY, not one JSON document, and the reason is the release model
+      -- rather than ergonomics. A reinstall leaves userData intact and updates
+      -- cannot be forced (RELEASE.md §6.1, §6.4), so two versions of this app
+      -- read this file for months. Meeting a key it does not know, a client
+      -- with one document read-modify-writes and DELETES it — silently, and for
+      -- good. With a row per key it reads what it knows, writes what it knows,
+      -- and leaves the rest alone. That is invariant 32's rule for unknown
+      -- events, applied to settings.
+      CREATE TABLE preferences (
+        -- Dotted namespace: 'appearance.theme'. Dots and not colons, so a key
+        -- is never mistaken for a topic; topic.pref() does that conversion.
+        key        TEXT    PRIMARY KEY,
+
+        -- JSON text, always — '"dark"' and not 'dark'. One codec covers every
+        -- key that way, and a value that grows from a string into an object
+        -- needs no column change. The CHECK below rejects the bare spelling,
+        -- which is the single mistake the codec can make.
+        value      TEXT    NOT NULL,
+
+        -- How far this setting is ALLOWED to travel. Nothing syncs today and
+        -- nothing reads this column yet; it ships now for the reason
+        -- unread_hint did (STORAGE.md §16.2) — it must be on rows written
+        -- BEFORE the feature exists, or the first release that syncs cannot
+        -- interpret what it finds.
+        --
+        -- On the ROW and not only in the shared catalogue, because a client
+        -- that does not recognise a key must still route it correctly.
+        -- Otherwise the first sync-capable release silently skips every key a
+        -- newer client introduced. Same argument as staged_events retaining the
+        -- envelope rather than a shredded shape.
+        --
+        -- Defaulted to the LEAST travel, so a row written by something that
+        -- forgot to set it goes nowhere.
+        reach      TEXT    NOT NULL DEFAULT 'local',
+
+        -- Local today; the per-key merge input when sync arrives.
+        updated_at INTEGER NOT NULL,
+
+        CHECK (json_valid(value)),
+        -- The NOT NULL above is what rejects a null reach, and this CHECK is
+        -- NOT a substitute for it: NULL IN (...) is NULL, a CHECK rejects only
+        -- FALSE, so on its own this permits exactly the row it appears to
+        -- forbid (DESIGN.md §13.5). Asserted in both spellings in
+        -- account-schema.test.ts rather than trusted.
+        CHECK (reach IN ('local','synced'))
+      );
+
+      -- No index, deliberately. The PRIMARY KEY serves point reads, and a
+      -- missing row IS the default, so the table holds only what somebody
+      -- actually changed — the scan behind a settings panel is a handful of
+      -- rows.
+    `,
+  },
 ];

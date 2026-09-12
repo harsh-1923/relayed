@@ -8,7 +8,9 @@
 // The boundary rule `renderer/no-direct-query` reads the keys of TOPICS as its
 // source of truth, so adding a read here is what makes it enforceable
 // everywhere else. Nothing to remember.
-import type { ReplicaActor, ReplicaSpace, ReplicaMessage } from '../../../preload/api';
+import type {
+  ReplicaActor, ReplicaSpace, ReplicaMessage, PreferenceRow,
+} from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
 /** Every read the live-query client owns: its arguments and its row type. */
@@ -16,6 +18,7 @@ export interface Queries {
   'actors.list': { args: undefined; rows: ReplicaActor[] };
   'spaces.list': { args: undefined; rows: ReplicaSpace[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
+  'prefs.list': { args: undefined; rows: PreferenceRow[] };
 }
 
 export type QueryName = keyof Queries;
@@ -33,4 +36,9 @@ export const TOPICS: TopicsFor = {
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.
   'messages.list': ({ chatId }) => [topic.messages(chatId)],
+  // The COARSE topic, against writes that name a single key. `topicsIntersect`
+  // matches them because one is a prefix of the other, so this wakes on any
+  // preference while a future per-key subscription stays possible
+  // (PREFERENCES.md §8).
+  'prefs.list': () => [topic.prefs()],
 };

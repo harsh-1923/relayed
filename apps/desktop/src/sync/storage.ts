@@ -17,6 +17,8 @@ import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
 import { newId } from './ids.ts';
+import { readPreferences, writePreference } from './prefs.ts';
+import { isPreferenceKey, specOf, type PreferenceRow } from '../shared/prefs.ts';
 import * as p from './paths.ts';
 
 /**
@@ -823,6 +825,42 @@ export class Storage {
         state: String(r['state']),
         updatedAt: Number(r['updated_at'] ?? 0),
       }));
+  }
+
+  // ── preferences (PREFERENCES.md) ────────────────────────────────────────
+
+  /**
+   * Which database a key's row lives in (PREFERENCES.md §4).
+   *
+   * The workspace tier is designed and deliberately not created: version 2 of
+   * the replica states the rule it follows — a table with no writer has
+   * constraints nothing has ever exercised — and every key today is
+   * account-scoped. The throw is what makes adding the first workspace-tier key
+   * name its own migration instead of meeting `no such table` from SQLite.
+   */
+  #preferenceDb(tier: 'account' | 'workspace'): DatabaseSync {
+    if (tier === 'workspace') {
+      throw new Error('workspace-tier preferences need the replica table (PREFERENCES.md §4)');
+    }
+    return this.account;
+  }
+
+  /**
+   * Every preference, undecoded.
+   *
+   * Empty rather than throwing when no account is open: signed out there is
+   * nothing to read, and every key falls back to its default — which is the
+   * ordinary case, not a degraded one.
+   */
+  preferences(): PreferenceRow[] {
+    if (!this.#account) return [];
+    return readPreferences(this.#account);
+  }
+
+  /** Set one preference. Throws on an unknown key or a value outside its domain. */
+  setPreference(key: string, value: unknown): void {
+    if (!isPreferenceKey(key)) throw new Error(`unknown preference: ${key}`);
+    writePreference(this.#preferenceDb(specOf(key).tier), key, value);
   }
 
   // ── blobs (§13.3) ───────────────────────────────────────────────────────

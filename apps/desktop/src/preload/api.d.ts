@@ -92,6 +92,19 @@ export interface ReplicaMessage {
   state: string;
 }
 
+/**
+ * One preference row, exactly as stored (PREFERENCES.md §6).
+ *
+ * `value` is JSON TEXT and deliberately not decoded here: decoding needs the
+ * shared catalogue's fallback for anything this build cannot parse, so it
+ * happens in `usePreference` rather than on the wire.
+ */
+export interface PreferenceRow {
+  key: string;
+  value: string;
+  reach: "local" | "synced";
+}
+
 export type AuthState =
   | { status: "signed_out" }
   /** Binding the loopback socket. Nothing to cancel yet, and no link to open. */
@@ -202,6 +215,15 @@ export interface RelayedApi {
   query(op: "dev.setOffline", params: { offline: boolean }): Promise<AppState>;
   query(op: "actors.list"): Promise<ReplicaActor[]>;
   query(op: "spaces.list"): Promise<ReplicaSpace[]>;
+  query(op: "prefs.list"): Promise<PreferenceRow[]>;
+  /**
+   * Change one preference. Validated against the shared catalogue in the
+   * engine — an unknown key or a value outside its domain rejects.
+   */
+  query(
+    op: "prefs.set",
+    params: { key: string; value: unknown },
+  ): Promise<null>;
   query(
     op: "messages.list",
     params: { chatId: string },

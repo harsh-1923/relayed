@@ -39,3 +39,18 @@ export const openBrowser = (url: string) => callMain<void>('browser:open', { url
 /** Scopes the relayed-blob: handler to one account (DESIGN.md §13.3). */
 export const setBlobAccount = (accountId: string | null) =>
   callMain<void>('blob:account', { accountId });
+
+/**
+ * Apply the theme preference (PREFERENCES.md §9).
+ *
+ * `nativeTheme` is a main-process API and the preference lives in a database
+ * only this process opens, so main is TOLD rather than deriving it — the same
+ * split as `blob:account`, and for the same reason: a second reader of
+ * account.db would be a second authority over it.
+ *
+ * One value drives both the native window material and `prefers-color-scheme`
+ * in the renderer, which is what stops a dark interface appearing inside a
+ * light-material window.
+ */
+export const setThemeSource = (source: 'system' | 'light' | 'dark') =>
+  callMain<void>('theme:source', { source });

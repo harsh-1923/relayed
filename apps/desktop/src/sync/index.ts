@@ -13,7 +13,7 @@ import {
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, openBrowser, setBlobAccount } from './main-bridge.ts';
+import { vault as bridgeVault, openBrowser, setBlobAccount, setThemeSource } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
@@ -21,6 +21,7 @@ import { newId } from './ids.ts';
 import { enqueue } from './outbox.ts';
 import { installNetworkGate } from './network.ts';
 import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
+import { decode } from '../shared/prefs.ts';
 import { createInvalidator } from './invalidate.ts';
 import { createLink } from './link.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
@@ -89,6 +90,29 @@ const net = installNetworkGate(globalThis, {
 
 const storage = new Storage(process.env['RELAYED_DATA'] ?? process.cwd());
 const boot = storage.boot();
+
+/**
+ * Push the stored theme at main (PREFERENCES.md §9).
+ *
+ * Account-scoped, like `setBlobAccount` — and called beside it everywhere the
+ * active account can change, because two accounts on one install each keep
+ * their own theme (§4). No account open means no rows, which decodes to the
+ * default, which is what main already has.
+ */
+function applyTheme(): Promise<void> {
+  return setThemeSource(decode('appearance.theme', storage.preferences()));
+}
+
+// EAGER, and deliberately not inside `startSyncing` below.
+//
+// That deferral exists to keep the network out of the path to first render, and
+// this is an IPC message to the process next door — nothing it guards. It has
+// the opposite requirement: the window is created in the same tick as this
+// process is forked, so anything later than module load risks painting the
+// system appearance over somebody's chosen one. Opening SQLite beats booting a
+// renderer, so in practice this lands well before `ready-to-show`; §9 records
+// why the remaining race is accepted rather than closed.
+void applyTheme();
 
 // What multi-account and multi-workspace were built on assumptions about.
 // Sampled at boot because that is when both are known without extra work.
@@ -191,6 +215,8 @@ function adoptSession(s: OurSession): void {
   identify(who);
 
   void setBlobAccount(storage.accountId);
+  // The account may have changed under us, and each one keeps its own theme.
+  void applyTheme();
   // Whatever this replica ALREADY holds. On a fresh one that is nothing, which
   // is the whole reason `avatarsWanted` exists below: the directory arrives
   // over the socket seconds later, and this call cannot see it.
@@ -474,6 +500,50 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     return { id: messageId };
   },
 
+  // ── preferences (PREFERENCES.md §8) ────────────────────────────────────
+
+  /**
+   * Every preference, undecoded.
+   *
+   * ONE read for all of them rather than one per key. The table is under ten
+   * rows — a missing row is the default and defaults are never written — so a
+   * per-key query would be ten subscriptions and ten reads to save nothing,
+   * and one shared entry means two surfaces reading the same key share a fetch.
+   *
+   * Decoding happens in the renderer, against the same shared catalogue this
+   * side validates writes with: a value this build cannot parse has to fall
+   * back rather than fail, and the fallback is the catalogue's.
+   */
+  'prefs.list': () => storage.preferences(),
+
+  /**
+   * Change one preference.
+   *
+   * VALIDATED HERE, not only at the control that offered the value. The
+   * renderer is a surface and not an authority, and the catalogue is the same
+   * file on both sides — so there is one rule and one implementation of it.
+   * An unknown key or a value outside its domain throws.
+   */
+  'prefs.set': async (params) => {
+    const { key, value } = (params ?? {}) as { key?: string; value?: unknown };
+    if (!key) throw new Error('key required');
+    storage.setPreference(key, value);
+    // The one preference that also lives outside the database (§9). Gated on
+    // the key rather than run unconditionally, so adding a preference does not
+    // quietly add an IPC round trip to every write.
+    //
+    // AWAITED, AND BEFORE THE INVALIDATION. The renderer resolves `system`
+    // against `prefers-color-scheme`, which is what `themeSource` drives — so
+    // waking it before main has applied the new value hands it the window's
+    // OLD appearance to resolve against. Ordering the two removes that race
+    // rather than papering over it with a delay.
+    if (key === 'appearance.theme') await applyTheme();
+    // Written fine, subscribed coarse: this names the key, and a reader
+    // subscribed to `prefs` is woken by the prefix rule in topics.ts.
+    invalidate([topic.pref(key)]);
+    return null;
+  },
+
   'db.info': () => {
     if (!storage.hasWorkspace) return { open: false };
     const db = storage.workspace;
@@ -534,6 +604,10 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // Another account may still be signed in on this device; boot picks it up.
     const next = storage.boot();
     if (next.workspaceId) void session.activate(next.workspaceId);
+    // AFTER boot, not beside the setBlobAccount above: whichever account it
+    // just adopted owns the theme now, and signing out of the last one leaves
+    // no rows at all, which correctly decodes back to the system default.
+    void applyTheme();
 
     push();
     return view();

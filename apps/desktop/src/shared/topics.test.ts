@@ -52,3 +52,14 @@ test('topicsTouched is true when any pair intersects', () => {
   assert.equal(topicsTouched([], ['actors']), false);
   assert.equal(topicsTouched(['actors'], []), false);
 });
+
+test('a preference write wakes the read that asks for all of them', () => {
+  // Written fine, subscribed coarse (PREFERENCES.md §8). `prefs.list` declares
+  // the coarse topic and a write names one key; if this stopped matching, the
+  // settings panel would simply never refresh — no error anywhere.
+  assert.equal(topicsIntersect(topic.prefs(), topic.pref('appearance.theme')), true);
+  // And a key is one segment, dots included, so two keys under one namespace do
+  // not wake each other.
+  assert.equal(topicsIntersect(topic.pref('appearance.theme'),
+                               topic.pref('appearance.material')), false);
+});

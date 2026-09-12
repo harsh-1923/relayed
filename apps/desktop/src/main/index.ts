@@ -244,6 +244,12 @@ const protocolOk = registerProtocol();
 // throws, and the body is the whole of startup.
 app.whenReady().then(() => {
   // Native material and renderer tokens follow one source of truth.
+  //
+  // The STARTING value, not the final one: the sync engine sends the stored
+  // preference over `theme:source` as soon as it has opened account.db
+  // (PREFERENCES.md §9). Set here anyway, because that message races the first
+  // paint and the system appearance is the right thing to be showing if it
+  // loses — or if there is no account, or the engine never starts.
   nativeTheme.themeSource = 'system';
 
   // Dev only, macOS only: unpackaged Electron shows its own icon in the Dock,
@@ -299,7 +305,7 @@ app.whenReady().then(() => {
   syncProcess.on('message', (m: unknown) => {
     const msg = m as {
       type?: string; rid?: number; token?: string; url?: string;
-      accountId?: string; workspaceId?: string;
+      accountId?: string; workspaceId?: string; source?: string;
     };
     const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
     // A vault slot is per (account, workspace) — STORAGE.md §9.
@@ -316,6 +322,19 @@ app.whenReady().then(() => {
       // Which account's blobs may be served. Storage lives in the sync
       // process, so main is told rather than deriving it.
       case 'blob:account': setBlobAccount(msg.accountId ?? null); reply(null); break;
+      // The theme preference, applied (PREFERENCES.md §9). One value drives the
+      // native material AND prefers-color-scheme in the renderer, so the CSS
+      // tokens and the window's vibrancy cannot disagree — the renderer's
+      // existing media-query listener does the rest with no new code.
+      //
+      // Anything but the three it accepts falls back to 'system': this arrives
+      // over IPC, and a themeSource Electron does not recognise would throw
+      // inside the bridge's try and leave the caller's reply to the catch.
+      case 'theme:source':
+        nativeTheme.themeSource =
+          msg.source === 'dark' || msg.source === 'light' ? msg.source : 'system';
+        reply(null);
+        break;
       case 'browser:open':
         // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
         // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).

@@ -44,8 +44,8 @@ client connects, paints correct badges, applies what arrives, asks for what it
 missed, hydrates its directory, writes offline, and is told when it has fallen
 past the retention horizon.
 
-Green as of the last commit: **471 tests**, 103 spike assertions, 9 boundary
-rules over 196 files, typecheck across five packages, production build.
+Green as of the last commit: **607 tests**, 103 spike assertions, 9 boundary
+rules over 230 files, typecheck across five packages, production build.
 
 ## Documentation
 
@@ -58,6 +58,7 @@ rules over 196 files, typecheck across five packages, production build.
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
+| [`docs/PREFERENCES.md`](docs/PREFERENCES.md) | What a person chooses: the `preferences` table, the shared catalogue, and why a row per key rather than a JSON blob. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |

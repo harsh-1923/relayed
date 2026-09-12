@@ -5,23 +5,18 @@ import { HashRouter } from 'react-router';
 import { AppStateProvider } from '@/app/state';
 import { Router } from '@/app/router';
 import { Telemetry } from '@/app/Telemetry';
+import { Theme } from '@/app/Theme';
 import { TopBar } from '@/app/shell/TopBar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 
-const systemDarkTheme = window.matchMedia('(prefers-color-scheme: dark)');
-
-function syncSystemTheme(theme: MediaQueryList | MediaQueryListEvent): void {
-  document.documentElement.classList.toggle('dark', theme.matches);
-}
-
-syncSystemTheme(systemDarkTheme);
-systemDarkTheme.addEventListener('change', syncSystemTheme);
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    systemDarkTheme.removeEventListener('change', syncSystemTheme);
-  });
-}
+// The FIRST GUESS, before React mounts and before the stored preference has
+// been read: whatever this machine is set to. `<Theme />` below takes over from
+// here and corrects it, which is the only thing that knows about `light` and
+// `dark`. Painting something now rather than waiting is what keeps a cold start
+// from flashing an unstyled document (PREFERENCES.md §9).
+document.documentElement.classList.toggle(
+  'dark', window.matchMedia('(prefers-color-scheme: dark)').matches,
+);
 
 // Hash history, not browser history (FRONTEND.md §4.4). The production renderer
 // loads from file://, where pushState paths break on reload; the hash survives
@@ -34,6 +29,11 @@ createRoot(document.getElementById('root')!).render(
         {/* Renders nothing; reports the two facts only this side holds — which
             route is showing, and when it first actually painted. */}
         <Telemetry />
+
+        {/* Renders nothing; owns `html.dark`. Inside the provider because the
+            preference is an ordinary live read, and above the router because
+            every screen is themed — including the signed-out ones. */}
+        <Theme />
 
         {/* THE PROVIDER IS AT THE ROOT so the top bar can hold the sidebar's
             toggle. It is state plus a wrapper div, and the wrapper takes our
