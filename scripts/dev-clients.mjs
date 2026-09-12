@@ -28,6 +28,25 @@ const signalFile = join(desktop, 'out', '.build-signal');
 const PORT = Number(process.env['RELAYED_DEV_PORT'] ?? 5273);
 /** Where the API and sync socket listen. Matches apps/server/src/env.ts. */
 const SERVER_PORT = Number(process.env['PORT'] ?? 8787);
+/** Where the agent runtime listens. Matches apps/agent/src/env.ts. */
+const AGENT_PORT = Number(process.env['AGENT_PORT'] ?? 8788);
+
+/**
+ * The agent runtime joins `pnpm dev` only once it is configured.
+ *
+ * It refuses to boot without a key and a provider table (docs/AGENT-RUNTIME.md
+ * §5, §11) — correct for the service, wrong as a reason for the whole dev
+ * environment to crash-loop before anyone has keys. So: start it when it can
+ * start, say so when it cannot, and never fail `pnpm dev` over it.
+ *
+ * THIS READS `.env`, which is why the root script runs with
+ * `--env-file-if-exists`. Every app loads `.env` itself, so the launcher never
+ * needed to — until it had to decide something FROM it. Without the flag this
+ * gate saw nothing, silently skipped the agent, and printed "set these in
+ * .env" at someone who already had.
+ */
+const agentConfigured = Boolean(process.env['AGENT_S2S_KEY'] && process.env['AGENT_PROVIDERS']);
+const withAgent = agentConfigured && !process.argv.includes('--no-agent');
 const MAX_CLIENTS = 4;
 
 /**
@@ -225,6 +244,7 @@ if (!Number.isInteger(clients) || clients < 1 || clients > MAX_CLIENTS) {
     { port: PORT, what: 'the renderer dev server' },
     ...(process.argv.includes('--no-server')
       ? [] : [{ port: SERVER_PORT, what: 'the Relayed server' }]),
+    ...(withAgent ? [{ port: AGENT_PORT, what: 'the agent runtime' }] : []),
   ];
   const taken = [];
   for (const w of wanted) if (!(await portFree(w.port))) taken.push(w);
@@ -271,6 +291,17 @@ const server = withServer
   ? spawn('pnpm', ['--filter', '@relayed/server', 'dev'],
           { cwd: root, stdio: 'inherit', env: process.env, detached: true })
   : null;
+
+const agent = withAgent
+  ? spawn('pnpm', ['--filter', '@relayed/agent', 'dev'],
+          { cwd: root, stdio: 'inherit', env: process.env, detached: true })
+  : null;
+if (!agentConfigured) {
+  const missing = ['AGENT_S2S_KEY', 'AGENT_PROVIDERS'].filter(v => !process.env[v]);
+  console.log(`[dev] agent runtime not started — ${missing.join(' and ')} unset in .env (docs/AGENT-RUNTIME.md §11).`);
+} else if (withAgent) {
+  console.log(`[dev] agent runtime on :${AGENT_PORT}`);
+}
 
 // Stale signal from a previous run would fire a restart before the first build.
 rmSync(signalFile, { force: true });
@@ -374,7 +405,7 @@ function killTree(child, sig = 'SIGTERM') {
   catch { try { child.kill(sig); } catch { /* already gone */ } }
 }
 
-function killServer() { killTree(server); }
+function killServer() { killTree(server); killTree(agent); }
 
 // ── the rebuild signal ──────────────────────────────────────────────────────
 

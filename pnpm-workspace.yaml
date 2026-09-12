@@ -3,7 +3,9 @@ packages:
   - 'packages/*'
 
 allowBuilds:
-  esbuild: set this to true or false
+  '@google/genai': false
+  esbuild: true
+  protobufjs: false
 
 # pnpm blocks dependency build scripts by default. These two genuinely need
 # theirs: esbuild fetches its platform binary, electron downloads the runtime.

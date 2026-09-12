@@ -59,6 +59,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PREFERENCES.md`](docs/PREFERENCES.md) | What a person chooses: the `preferences` table, the shared catalogue, and why a row per key rather than a JSON blob. |
+| [`docs/AGENT-RUNTIME.md`](docs/AGENT-RUNTIME.md) | The agent service: one endpoint in two modes, the pi loop, the provider table, and what bounds a run. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |
