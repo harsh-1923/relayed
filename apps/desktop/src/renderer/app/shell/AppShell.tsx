@@ -138,8 +138,7 @@ export function AppShell() {
         onPointerCancel={() => {
           sidebarPointerDownX.current = null;
         }}
-        className="z-20 bg-border after:w-3 hover:after:bg-border/40
-                   focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        className="z-20 bg-transparent after:w-3 focus-visible:ring-0"
       />
 
       {/* `min-h-0` bounds a route-height scroller; `min-w-0` lets narrow

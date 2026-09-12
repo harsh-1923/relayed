@@ -78,7 +78,7 @@ export function WorkspaceSwitcher() {
           </DropdownMenuTrigger>
 
           <DropdownMenuContent align="start" side="bottom" sideOffset={4}
-                               className="min-w-64 space-y-2">
+                               className="w-(--anchor-width) min-w-0 space-y-2">
             <DropdownMenuGroup className="space-y-1.5">
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Workspaces

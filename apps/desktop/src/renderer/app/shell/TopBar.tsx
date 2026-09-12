@@ -74,9 +74,9 @@ export function TopBar() {
       {/* PAST THE RESIZE HANDLE THE BAR STOPS BEING CHROME.
           Left of it the bar continues the sidebar and keeps the window's
           material; right of it it continues the route, so it takes the same
-          `bg-background` as the SidebarInset directly beneath it. The border is
-          the handle's own 1px track carried up through the title bar, which is
-          what makes the two edges land on the same column.
+          `bg-background` as the SidebarInset directly beneath it. The title bar
+          owns the 1px border; the handle directly below stays transparent so a
+          resize does not turn that seam into a brighter full-height rule.
 
           Only when there IS a sidebar. On /signin and on mobile there is no
           split below to line up with, and the bar stays one surface. */}

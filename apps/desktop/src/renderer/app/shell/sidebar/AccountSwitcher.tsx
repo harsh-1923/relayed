@@ -52,7 +52,12 @@ export function AccountSwitcher() {
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </DropdownMenuTrigger>
 
-          <DropdownMenuContent align="start" side="top" sideOffset={4} className="min-w-64">
+          <DropdownMenuContent
+            align="start"
+            side="top"
+            sideOffset={4}
+            className="w-(--anchor-width) min-w-0"
+          >
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 In this workspace

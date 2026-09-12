@@ -1417,7 +1417,7 @@ are referenced from four documents.
    `/` → `/w/:wsId` → shell → rail.
 
    The workspace sidebar is a pixel-constrained resizable panel on desktop:
-   256px initially, 224px minimum and 480px maximum. Dragging below the minimum
+   256px initially, 224px minimum and 320px maximum. Dragging below the minimum
    collapses it to zero; the separator, title-bar control and keyboard shortcut
    all drive the same shadcn sidebar state. Below the desktop breakpoint the
    existing shadcn Sheet remains the sidebar and slides over the route, offset

@@ -36,7 +36,7 @@ export function SettingsSidebar({ inline = false }: { inline?: boolean }) {
     <Sidebar
       collapsible={inline ? 'none' : 'offcanvas'}
       className={cn(
-        inline && 'h-full w-full border-r bg-window-glass',
+        inline && 'h-full w-full bg-window-glass',
         inline && !open && 'invisible',
       )}
     >
