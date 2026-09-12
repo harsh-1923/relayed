@@ -45,7 +45,7 @@ export function TopBar() {
   return (
     <header
       className="drag-region relative z-60 flex h-10 shrink-0 items-center
-                 bg-window-glass pr-2 text-sidebar-foreground"
+                 bg-window-glass text-sidebar-foreground"
     >
       <div
         className={cn(
@@ -71,12 +71,28 @@ export function TopBar() {
         </div>
       </div>
 
-      {/* The empty middle IS the handle. Nothing lives here yet — search and
-          the current space's name are the candidates — and until something
-          does, the whole span is what you grab to move the window. */}
-      <div className="min-w-0 flex-1" />
+      {/* PAST THE RESIZE HANDLE THE BAR STOPS BEING CHROME.
+          Left of it the bar continues the sidebar and keeps the window's
+          material; right of it it continues the route, so it takes the same
+          `bg-background` as the SidebarInset directly beneath it. The border is
+          the handle's own 1px track carried up through the title bar, which is
+          what makes the two edges land on the same column.
 
-      <OfflineSwitch />
+          Only when there IS a sidebar. On /signin and on mobile there is no
+          split below to line up with, and the bar stays one surface. */}
+      <div
+        className={cn(
+          'flex h-full min-w-0 flex-1 items-center pr-2 border-border',
+          alignNavigationToSidebar && 'border-border bg-background border-b border-l'
+        )}
+      >
+        {/* The empty middle IS the handle. Nothing lives here yet — search and
+            the current space's name are the candidates — and until something
+            does, the whole span is what you grab to move the window. */}
+        <div className="min-w-0 flex-1" />
+
+        <OfflineSwitch />
+      </div>
     </header>
   );
 }

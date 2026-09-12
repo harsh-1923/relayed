@@ -55,14 +55,11 @@ export function WorkspaceSwitcher() {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<SidebarMenuButton size="lg" className="gap-2" />}
+            render={<SidebarMenuButton  className="gap-2 rounded-2xl" />}
           >
-            <Face workspace={current} className="size-7 rounded-lg" />
+            <Face workspace={current} className="size-5 rounded-lg" />
             <div className="grid min-w-0 flex-1 text-left leading-tight">
               <span className="truncate text-sm font-medium">{current.name}</span>
-              <span className="truncate text-xs text-muted-foreground">
-                @{current.actorHandle}
-              </span>
             </div>
             {elsewhere > 0 && (
               <span title={`${elsewhere} elsewhere`}
@@ -81,27 +78,27 @@ export function WorkspaceSwitcher() {
           </DropdownMenuTrigger>
 
           <DropdownMenuContent align="start" side="bottom" sideOffset={4}
-                               className="min-w-64">
-            <DropdownMenuGroup>
+                               className="min-w-64 space-y-2">
+            <DropdownMenuGroup className="space-y-1.5">
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Workspaces
               </DropdownMenuLabel>
-              {workspaces.map(w => (
+              {workspaces.map(workspace => (
                 <DropdownMenuItem
-                  key={w.workspaceId}
-                  render={<Link to={`/w/${w.workspaceId}`} />}
-                  className="gap-2 p-2"
+                  key={workspace.workspaceId}
+                  render={<Link to={`/w/${workspace.workspaceId}`} />}
+                  className="gap-2 rounded-lg"
                 >
-                  <Face workspace={w} className="size-6 rounded-md" />
-                  <span className="min-w-0 flex-1 truncate">{w.name}</span>
-                  {w.mentionHint > 0 && (
+                  <Face workspace={workspace} className="size-5.5 rounded-md" />
+                  <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+                  {workspace.mentionHint > 0 && (
                     <span className="grid size-4 place-items-center rounded-full
                                      bg-destructive text-[10px] text-white">
-                      {w.mentionHint > 9 ? '9+' : w.mentionHint}
+                      {workspace.mentionHint > 9 ? '9+' : workspace.mentionHint}
                     </span>
                   )}
-                  {w.outboxHint > 0 && (
-                    <span title={`${w.outboxHint} unsent`}
+                  {workspace.outboxHint > 0 && (
+                    <span title={`${workspace.outboxHint} unsent`}
                           className="size-2 rounded-full bg-amber-500" />
                   )}
                 </DropdownMenuItem>
@@ -110,9 +107,7 @@ export function WorkspaceSwitcher() {
 
             <DropdownMenuSeparator />
 
-            {/* Creating a workspace is an ACCOUNT-tier act — it opens no replica
-                and needs none — so it lives outside /w/ (FRONTEND.md §4.6). */}
-            <DropdownMenuItem render={<Link to="/onboarding/create" />} className="gap-2 p-2">
+            <DropdownMenuItem render={<Link to="/onboarding/create" />} className="gap-2 mt-1">
               <div className="grid size-6 place-items-center rounded-md border bg-background">
                 <Plus className="size-3.5" />
               </div>
@@ -141,7 +136,7 @@ function Face({ workspace, className }: { workspace: WorkspaceRow; className: st
     >
       {src
         ? <img src={src} alt="" className="size-full object-cover" />
-        : initials(workspace.name)}
+        : <small>{initials(workspace.name)}</small>}
     </div>
   );
 }

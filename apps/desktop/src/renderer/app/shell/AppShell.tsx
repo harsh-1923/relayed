@@ -21,7 +21,7 @@ import { useQueryInvalidation } from '@/lib/query';
 
 const SIDEBAR_DEFAULT_WIDTH = 256;
 const SIDEBAR_MIN_WIDTH = 224;
-const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_MAX_WIDTH = 320;
 const SIDEBAR_CLICK_SLOP_PX = 4;
 
 export function AppShell() {
@@ -138,7 +138,7 @@ export function AppShell() {
         onPointerCancel={() => {
           sidebarPointerDownX.current = null;
         }}
-        className="z-20  after:w-3
+        className="z-20 bg-border after:w-3 hover:after:bg-border/40
                    focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       />
 

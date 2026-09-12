@@ -38,8 +38,8 @@ export function AccountSwitcher() {
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu>
-          <DropdownMenuTrigger render={<SidebarMenuButton size="lg" className="gap-2" />}>
-            <Avatar className="size-7 rounded-lg">
+          <DropdownMenuTrigger render={<SidebarMenuButton  className="gap-2 rounded-2xl" />}>
+            <Avatar className="size-5">
               <AvatarImage src={blobSrc(me.actorAvatarBlob) ?? undefined} />
               <AvatarFallback className="rounded-lg text-[10px]">
                 {initials(me.actorDisplayName)}
@@ -47,7 +47,7 @@ export function AccountSwitcher() {
             </Avatar>
             <div className="grid min-w-0 flex-1 text-left leading-tight">
               <span className="truncate text-sm font-medium">{me.actorDisplayName}</span>
-              <span className="truncate text-xs text-muted-foreground">@{me.actorHandle}</span>
+              {/*<span className="truncate text-xs text-muted-foreground">@{me.actorHandle}</span>*/}
             </div>
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </DropdownMenuTrigger>

@@ -33,12 +33,11 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
     <Sidebar
       collapsible={inline ? 'none' : 'offcanvas'}
       className={cn(
-        // 'border-border/60',
         inline && 'h-full w-full border-r bg-window-glass',
         inline && !open && 'invisible',
       )}
     >
-      <SidebarHeader className="border-b border-border/60">
+      <SidebarHeader>
         <WorkspaceSwitcher />
       </SidebarHeader>
 

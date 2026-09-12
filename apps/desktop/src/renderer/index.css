@@ -214,3 +214,7 @@
 @utility no-drag {
   -webkit-app-region: no-drag;
 }
+
+.debug {
+  outline: 1px solid red;
+}
