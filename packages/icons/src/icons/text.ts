@@ -1,0 +1,25 @@
+// Generated. Do not edit by hand.
+import { createIcon } from "../createIcon.ts";
+import type { IconVariants } from "../types.ts";
+
+const text: IconVariants = {
+  "Stroke": [
+    ["path", {"d":"M12 20V5M5 5H19","stroke":"currentColor","key":"s0"}],
+  ],
+  "Solid": [
+    ["path", {"d":"M12 20V5M5 5H19","stroke":"currentColor","key":"s0"}],
+  ],
+  "Contrast": [
+    ["path", {"d":"M12 20V5M5 5H19","stroke":"currentColor","key":"s0"}],
+  ],
+  "Duo Stroke": [
+    ["path", {"d":"M12 20V5","stroke":"currentColor","opacity":0.28,"key":"d0"}],
+    ["path", {"d":"M5 5H19","stroke":"currentColor","key":"d1"}],
+  ],
+  "Duo Solid": [
+    ["path", {"d":"M12 20V5M5 5H19","stroke":"currentColor","key":"s0"}],
+  ],
+};
+
+export const Text = createIcon("text", text);
+export default Text;

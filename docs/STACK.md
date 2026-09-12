@@ -24,6 +24,7 @@ How builds reach users — packaging, signing, update channels — is
 | Client database | **`node:sqlite`** | No native module, no `electron-rebuild` (§13.5) |
 | Client shell | **Electron** + electron-vite + electron-builder | §5 process architecture; distribution in [`RELEASE.md`](RELEASE.md) |
 | Client UI | **React**, shadcn/Tailwind, TanStack Virtual | Windowing a message list is not worth hand-rolling |
+| Client icons | **`@relayed/icons`** | One set, five styles per icon chosen at the call site; replaced lucide-react ([`FRONTEND.md`](FRONTEND.md) §6.1) |
 | Client routing | **React Router**, declarative mode, `HashRouter` | Loaders assume fetching is expensive; ours is ~1 ms from disk ([`FRONTEND.md`](FRONTEND.md) §4) |
 | Client read path | **Ours**, implementing §11 | A push-invalidated local replica is the data layer; a server-state cache is priced for a cost we do not pay (§5.2) |
 | Blobs | **S3-compatible** — R2 in production, MinIO locally | Egress cost dominates for a media-heavy chat client |

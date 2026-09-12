@@ -15,7 +15,7 @@
 // EVERY CONTROL IN HERE IS `no-drag`. A drag region swallows clicks, so a button
 // inside one is inert until it opts out — and it still looks and hovers exactly
 // like a button that works.
-import { ChevronLeft, ChevronRight, PanelLeft } from 'lucide-react';
+import { ChevronLeft, ChevronRight, SidebarDefault } from '@relayed/icons';
 import { useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
@@ -33,7 +33,7 @@ const TRAFFIC_LIGHTS = 78;
 
 export function TopBar() {
   const { state } = useSession();
-  const { isMobile } = useSidebar();
+  const { isMobile, open } = useSidebar();
   const { canBack, canForward, back, forward } = useBackForward();
 
   // Asked of the sidebar itself rather than worked out from the URL: a toggle
@@ -41,11 +41,14 @@ export function TopBar() {
   // is not something to restate here (sidebar/use-sidebar-presence.ts).
   const hasSidebar = useSidebarPresent();
   const alignNavigationToSidebar = hasSidebar && !isMobile;
+  const sidebarCollapsed = alignNavigationToSidebar && !open;
 
   return (
     <header
-      className="drag-region relative z-60 flex h-10 shrink-0 items-center
-                 bg-window-glass text-sidebar-foreground"
+      className={cn(
+        'drag-region relative z-60 flex h-11 shrink-0 items-center text-sidebar-foreground',
+        sidebarCollapsed ? 'bg-background' : 'bg-window-glass',
+      )}
     >
       <div
         className={cn(
@@ -76,14 +79,17 @@ export function TopBar() {
           material; right of it it continues the route, so it takes the same
           `bg-background` as the SidebarInset directly beneath it. The title bar
           owns the 1px border; the handle directly below stays transparent so a
-          resize does not turn that seam into a brighter full-height rule.
+          resize does not turn that seam into a brighter full-height rule. When
+          the sidebar is collapsed there is no split to describe, so the whole
+          bar uses the route background and the vertical border disappears.
 
           Only when there IS a sidebar. On /signin and on mobile there is no
           split below to line up with, and the bar stays one surface. */}
       <div
         className={cn(
           'flex h-full min-w-0 flex-1 items-center pr-2 border-border',
-          alignNavigationToSidebar && 'border-border bg-background border-b border-l'
+          alignNavigationToSidebar && 'bg-background border-b',
+          alignNavigationToSidebar && !sidebarCollapsed && 'border-l',
         )}
       >
         {/* The empty middle IS the handle. Nothing lives here yet — search and
@@ -102,7 +108,7 @@ function SidebarToggle() {
   const { toggleSidebar } = useSidebar();
   return (
     <Bare label="Toggle sidebar" onClick={toggleSidebar}>
-      <PanelLeft className="size-4" />
+      <SidebarDefault className="size-3.5" />
     </Bare>
   );
 }

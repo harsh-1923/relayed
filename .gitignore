@@ -35,4 +35,11 @@ schema.sql
 # local Graphify output
 /graphify-out/
 
+# The icon pipeline stays local: @relayed/icons ships the icons, not the
+# machinery that produced them. Listed HERE rather than in the package's own
+# .gitignore because eslint reads this file and only this one
+# (eslint.config.mjs), so git and lint agree about what is not here.
+/packages/icons/scripts/
+/packages/icons/incomplete-icons.json
+
 .codex

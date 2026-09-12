@@ -578,6 +578,28 @@ switchers exist only because `AppSidebar` composes them, and loose beside
 `router.tsx` they read as peers of the route table. A search field in the top bar
 goes in `shell/`; a space-creation menu goes in `shell/sidebar/`.
 
+**Icons come from `@relayed/icons`, and nowhere else.** One workspace package,
+~980 icons, five styles each chosen per call site (`variant="Solid"`); it
+replaced `lucide-react`, which is no longer a dependency. Import the icon's real
+name — `ChatDefault`, not an alias back to whatever lucide called it — so that
+the name in a component is a name you can grep for in the package.
+
+**Vendored shadcn is the one exception, and deliberately.** Those files alias on
+the import line instead: `import { CheckTickSingle as CheckIcon } from
+'@relayed/icons'`. `shadcn add --overwrite` rewrites them wholesale, so the
+question there is not what reads best but what is cheapest to re-apply after an
+update — and that is one changed line per file, with the upstream body
+untouched.
+
+**A new shadcn component will arrive importing lucide, and that is expected.**
+`components.json` still says `"iconLibrary": "lucide"` because the CLI only
+accepts icon sets it knows, and ours is not one of them — so the field records
+what the generator emits, not what this app uses. After `shadcn add`, rewrite
+the one import line to `@relayed/icons` with aliases, as above. The check that
+catches a missed one is `grep -rn lucide apps/desktop/src`: nothing should match,
+and `lucide-react` is not installed, so a missed line also fails `pnpm
+typecheck`.
+
 ### 6.1a Naming
 
 **PascalCase names a component you place in a tree. kebab-case names a module
@@ -1422,6 +1444,11 @@ are referenced from four documents.
    all drive the same shadcn sidebar state. Below the desktop breakpoint the
    existing shadcn Sheet remains the sidebar and slides over the route, offset
    below the 40px window title bar.
+
+   The workspace switcher, Command-K search and five primary destinations stay
+   pinned in the sidebar header. Space sections — channels, rooms, group
+   messages and direct messages — occupy the bounded content region below and
+   scroll independently, so a large directory cannot hide the primary controls.
 
    On desktop workspace routes the title bar's leading region follows the live
    sidebar width: the sidebar toggle remains beside the window controls while

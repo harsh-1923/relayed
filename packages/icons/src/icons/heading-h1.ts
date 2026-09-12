@@ -1,0 +1,25 @@
+// Generated. Do not edit by hand.
+import { createIcon } from "../createIcon.ts";
+import type { IconVariants } from "../types.ts";
+
+const headingH1: IconVariants = {
+  "Stroke": [
+    ["path", {"d":"M4 12H12M4 18V6M12 18V6M19 18V10C18.0376 10.2357 17.3022 10.8984 16.8657 11.7713M19 18H16.5M19 18H21.5","stroke":"currentColor","key":"s0"}],
+  ],
+  "Solid": [
+    ["path", {"d":"M4 12H12M4 18V6M12 18V6M19 18V10C18.0376 10.2357 17.3022 10.8984 16.8657 11.7713M19 18H16.5M19 18H21.5","stroke":"currentColor","key":"s0"}],
+  ],
+  "Contrast": [
+    ["path", {"d":"M4 12H12M4 18V6M12 18V6M19 18V10C18.0376 10.2357 17.3022 10.8984 16.8657 11.7713M19 18H16.5M19 18H21.5","stroke":"currentColor","key":"s0"}],
+  ],
+  "Duo Stroke": [
+    ["path", {"d":"M4 12H12M4 18V6M12 18V6","stroke":"currentColor","opacity":0.28,"key":"d0"}],
+    ["path", {"d":"M19 18V10C18.0376 10.2357 17.3021 10.8984 16.8657 11.7713M19 18H16.5M19 18H21.5","stroke":"currentColor","key":"d1"}],
+  ],
+  "Duo Solid": [
+    ["path", {"d":"M4 12H12M4 18V6M12 18V6M19 18V10C18.0376 10.2357 17.3022 10.8984 16.8657 11.7713M19 18H16.5M19 18H21.5","stroke":"currentColor","key":"s0"}],
+  ],
+};
+
+export const HeadingH1 = createIcon("heading-h1", headingH1);
+export default HeadingH1;

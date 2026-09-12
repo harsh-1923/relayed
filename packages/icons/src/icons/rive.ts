@@ -1,0 +1,25 @@
+// Generated. Do not edit by hand.
+import { createIcon } from "../createIcon.ts";
+import type { IconVariants } from "../types.ts";
+
+const rive: IconVariants = {
+  "Stroke": [
+    ["path", {"d":"M4 3H14C16.7614 3 19 5.23858 19 8C19 10.4376 17.2557 12.4678 14.9472 12.9104M9 13H14C14.3238 13 14.6405 12.9692 14.9472 12.9104M14.9472 12.9104L20 21","stroke":"currentColor","key":"s0"}],
+  ],
+  "Solid": [
+    ["path", {"d":"M4 3H14C16.7614 3 19 5.23858 19 8C19 10.4376 17.2557 12.4678 14.9472 12.9104M9 13H14C14.3238 13 14.6405 12.9692 14.9472 12.9104M14.9472 12.9104L20 21","stroke":"currentColor","key":"s0"}],
+  ],
+  "Contrast": [
+    ["path", {"d":"M4 3H14C16.7614 3 19 5.23858 19 8C19 10.4376 17.2557 12.4678 14.9472 12.9104M9 13H14C14.3238 13 14.6405 12.9692 14.9472 12.9104M14.9472 12.9104L20 21","stroke":"currentColor","key":"s0"}],
+  ],
+  "Duo Stroke": [
+    ["path", {"d":"M14.9471 12.9104L20 21","stroke":"currentColor","opacity":0.28,"key":"d0"}],
+    ["path", {"d":"M4 3H14C16.7614 3 19 5.23858 19 8C19 10.4376 17.2557 12.4678 14.9472 12.9104C14.6405 12.9692 14.3238 13 14 13H9","stroke":"currentColor","key":"d1"}],
+  ],
+  "Duo Solid": [
+    ["path", {"d":"M4 3H14C16.7614 3 19 5.23858 19 8C19 10.4376 17.2557 12.4678 14.9472 12.9104M9 13H14C14.3238 13 14.6405 12.9692 14.9472 12.9104M14.9472 12.9104L20 21","stroke":"currentColor","key":"s0"}],
+  ],
+};
+
+export const Rive = createIcon("rive", rive);
+export default Rive;

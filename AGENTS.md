@@ -68,7 +68,8 @@ rules over 230 files, typecheck across five packages, production build.
 
 Workspace packages: `@relayed/authz` (one `can()`, shared so client and server
 cannot disagree), `@relayed/protocol` (the wire format, shared for the same
-reason), `@relayed/telemetry` (the typed event catalogue).
+reason), `@relayed/telemetry` (the typed event catalogue), `@relayed/icons`
+(~980 icons in five styles, renderer-only — [`packages/icons/README.md`](packages/icons/README.md)).
 
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
 rationale is the part that tells you whether a change is safe** — the two-counter

@@ -1,0 +1,25 @@
+// Generated. Do not edit by hand.
+import { createIcon } from "../createIcon.ts";
+import type { IconVariants } from "../types.ts";
+
+const underline: IconVariants = {
+  "Stroke": [
+    ["path", {"d":"M17 20H7M17 4V10.6667C17 13.4281 14.7614 15.6667 12 15.6667C9.23858 15.6667 7 13.4281 7 10.6667V4","stroke":"currentColor","key":"s0"}],
+  ],
+  "Solid": [
+    ["path", {"d":"M17 20H7M17 4V10.6667C17 13.4281 14.7614 15.6667 12 15.6667C9.23858 15.6667 7 13.4281 7 10.6667V4","stroke":"currentColor","key":"s0"}],
+  ],
+  "Contrast": [
+    ["path", {"d":"M17 20H7M17 4V10.6667C17 13.4281 14.7614 15.6667 12 15.6667C9.23858 15.6667 7 13.4281 7 10.6667V4","stroke":"currentColor","key":"s0"}],
+  ],
+  "Duo Stroke": [
+    ["path", {"d":"M17 20H7","stroke":"currentColor","opacity":0.28,"key":"d0"}],
+    ["path", {"d":"M17 4V10.6667C17 13.4281 14.7614 15.6667 12 15.6667C9.23858 15.6667 7 13.4281 7 10.6667V4","stroke":"currentColor","key":"d1"}],
+  ],
+  "Duo Solid": [
+    ["path", {"d":"M17 20H7M17 4V10.6667C17 13.4281 14.7614 15.6667 12 15.6667C9.23858 15.6667 7 13.4281 7 10.6667V4","stroke":"currentColor","key":"s0"}],
+  ],
+};
+
+export const Underline = createIcon("underline", underline);
+export default Underline;

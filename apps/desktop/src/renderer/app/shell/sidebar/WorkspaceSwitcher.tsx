@@ -15,7 +15,7 @@
 // Drawn entirely from account.db, so it is correct on a cold boot with no
 // network and before any authentication (STORAGE.md §6, §11).
 import { Link, useLocation } from 'react-router';
-import { ChevronsUpDown, Plus } from 'lucide-react';
+import { ChevronDown, PlusDefault } from '@relayed/icons';
 import type { WorkspaceRow } from '../../../../preload/api';
 import { useSession } from '../../state';
 import { blobSrc, hueFor, initials } from '@/lib/ipc';
@@ -51,15 +51,17 @@ export function WorkspaceSwitcher() {
     .reduce((sum, w) => sum + w.outboxHint, 0);
 
   return (
-    <SidebarMenu>
+    <SidebarMenu className="min-w-0 flex-1">
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<SidebarMenuButton  className="gap-2 rounded-2xl" />}
+            render={(
+              <SidebarMenuButton className="gap-2 px-2 text-base font-medium w-fit" />
+            )}
           >
-            <Face workspace={current} className="size-5 rounded-lg" />
-            <div className="grid min-w-0 flex-1 text-left leading-tight">
-              <span className="truncate text-sm font-medium">{current.name}</span>
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+              <span className="truncate">{current.name}</span>
+              <ChevronDown className="size-4 shrink-0 opacity-50" />
             </div>
             {elsewhere > 0 && (
               <span title={`${elsewhere} elsewhere`}
@@ -74,11 +76,13 @@ export function WorkspaceSwitcher() {
               <span title={`${parked} unsent elsewhere`}
                     className="size-2 shrink-0 rounded-full bg-amber-500" />
             )}
-            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </DropdownMenuTrigger>
 
           <DropdownMenuContent align="start" side="bottom" sideOffset={4}
-                               className="w-(--anchor-width) min-w-0 space-y-2">
+                               className="min-w-0 max-w-(--available-width) space-y-2"
+                               style={{
+                                 width: 'calc(var(--workspace-sidebar-width, var(--sidebar-width)) - 1rem)',
+                               }}>
             <DropdownMenuGroup className="space-y-1.5">
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Workspaces
@@ -109,7 +113,7 @@ export function WorkspaceSwitcher() {
 
             <DropdownMenuItem render={<Link to="/onboarding/create" />} className="gap-2 mt-1">
               <div className="grid size-6 place-items-center rounded-md border bg-background">
-                <Plus className="size-3.5" />
+                <PlusDefault className="size-3.5" />
               </div>
               <span className="font-medium text-muted-foreground">New workspace</span>
             </DropdownMenuItem>

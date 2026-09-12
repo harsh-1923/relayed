@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // DOM for SVGSVGElement, which the props type extends. No "jsx" setting:
+  // createIcon.ts builds its <svg> with createElement, so nothing here is TSX.
+  "compilerOptions": { "lib": ["ES2023", "DOM"], "types": ["react"] },
+  "include": ["src/**/*.ts"]
+}

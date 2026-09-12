@@ -12,13 +12,13 @@
 // toggles `html.dark`. Doing it here instead would move the CSS tokens and
 // leave the native window material behind — a dark interface in a light-
 // material window, which is the failure the single source of truth prevents.
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor01, Moon, Sun } from '@relayed/icons';
 import { usePreference } from '@/lib/prefs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import type { ThemePreference } from '../../../shared/prefs.ts';
 
-const CHOICES: { value: ThemePreference; label: string; Icon: typeof Monitor }[] = [
-  { value: 'system', label: 'System', Icon: Monitor },
+const CHOICES: { value: ThemePreference; label: string; Icon: typeof Monitor01 }[] = [
+  { value: 'system', label: 'System', Icon: Monitor01 },
   { value: 'light', label: 'Light', Icon: Sun },
   { value: 'dark', label: 'Dark', Icon: Moon },
 ];

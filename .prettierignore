@@ -81,6 +81,11 @@ infra/grafana/dashboards/
 # nobody edited. Caught exactly that way: graphify rewrote .codex/hooks.json
 # between a `format` and a `format:check`.
 .codex/
+# Same, from the icon pipeline. The file is gitignored, but Prettier does not
+# read .gitignore — and it is written with JSON.stringify(…, 2), which puts every
+# array element on its own line while Prettier collapses the short ones back.
+# Neither yields to the other, so `format:check` fails over a file nobody edited.
+packages/icons/incomplete-icons.json
 
 # JSONC, hand-aligned, and carrying comments that explain compiler flags. Prettier
 # keeps the comments but moves them.

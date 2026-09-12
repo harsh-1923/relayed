@@ -1,0 +1,5 @@
+# The icon pipeline's working directories. The pipeline itself is ignored at the
+# repo root, with the reasoning; these are the intermediates it reads and writes.
+# The committed source of truth is src/icons/*.ts, not these.
+svg/
+_import/

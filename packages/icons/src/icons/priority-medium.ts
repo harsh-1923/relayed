@@ -1,0 +1,25 @@
+// Generated. Do not edit by hand.
+import { createIcon } from "../createIcon.ts";
+import type { IconVariants } from "../types.ts";
+
+const priorityMedium: IconVariants = {
+  "Stroke": [
+    ["path", {"d":"M6 9H18M6 15H18","stroke":"currentColor","key":"s0"}],
+  ],
+  "Solid": [
+    ["path", {"d":"M6 9H18M6 15H18","stroke":"currentColor","key":"s0"}],
+  ],
+  "Contrast": [
+    ["path", {"d":"M6 9H18M6 15H18","stroke":"currentColor","key":"s0"}],
+  ],
+  "Duo Stroke": [
+    ["path", {"d":"M6 9H18M6 15H18","stroke":"currentColor","opacity":0.28,"key":"d0"}],
+    ["path", {"d":"M10 9H14M10 15H14","stroke":"currentColor","key":"d1"}],
+  ],
+  "Duo Solid": [
+    ["path", {"d":"M6 9H18M6 15H18","stroke":"currentColor","key":"s0"}],
+  ],
+};
+
+export const PriorityMedium = createIcon("priority-medium", priorityMedium);
+export default PriorityMedium;

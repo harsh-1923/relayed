@@ -13,7 +13,9 @@
 // fires partway through it (routes/Account.tsx). A second copy of that
 // reasoning in a dropdown is a second place for it to drift.
 import { Link, useParams } from 'react-router';
-import { ChevronsUpDown, IdCard, LogOut, Settings, Users } from 'lucide-react';
+import {
+  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo,
+} from '@relayed/icons';
 import { useSession } from '../../state';
 import { blobSrc, initials } from '@/lib/ipc';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -49,7 +51,7 @@ export function AccountSwitcher() {
               <span className="truncate text-sm font-medium">{me.actorDisplayName}</span>
               {/*<span className="truncate text-xs text-muted-foreground">@{me.actorHandle}</span>*/}
             </div>
-            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+            <ChevronSortVertical className="size-4 shrink-0 opacity-50" />
           </DropdownMenuTrigger>
 
           <DropdownMenuContent
@@ -63,11 +65,11 @@ export function AccountSwitcher() {
                 In this workspace
               </DropdownMenuLabel>
               <DropdownMenuItem render={<Link to={`/w/${me.workspaceId}/settings/profile`} />}>
-                <IdCard className="size-4 text-muted-foreground" />
+                <ContactsBook className="size-4 text-muted-foreground" />
                 Your profile
               </DropdownMenuItem>
               <DropdownMenuItem render={<Link to={`/w/${me.workspaceId}/people`} />}>
-                <Users className="size-4 text-muted-foreground" />
+                <UserTwo className="size-4 text-muted-foreground" />
                 People
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -81,11 +83,11 @@ export function AccountSwitcher() {
                 {others.length > 0 ? `Account · ${others.length} more on this device` : 'Account'}
               </DropdownMenuLabel>
               <DropdownMenuItem render={<Link to="/settings/general" />}>
-                <Settings className="size-4 text-muted-foreground" />
+                <Settings01 className="size-4 text-muted-foreground" />
                 Settings
               </DropdownMenuItem>
               <DropdownMenuItem render={<Link to="/account" />}>
-                <LogOut className="size-4 text-muted-foreground" />
+                <LogOutRight className="size-4 text-muted-foreground" />
                 Account and sign out
               </DropdownMenuItem>
             </DropdownMenuGroup>

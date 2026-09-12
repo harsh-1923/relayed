@@ -16,24 +16,20 @@
 // and a `scrollIntoView` on a ref, which is the hand-rolled stick-to-bottom the
 // primitive exists to replace — it does the anchoring, the position restore and
 // the jump-to-latest, and it yields the moment somebody scrolls up.
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@/lib/query';
-import { call, blobSrc, initials } from '@/lib/ipc';
+import { call } from '@/lib/ipc';
 import { useSession } from '@/app/state';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Bubble, BubbleContent } from '@/components/ui/bubble';
-import {
-  Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader,
-} from '@/components/ui/message';
 import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
-  MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport,
+  MessageScrollerProvider, MessageScrollerViewport, useMessageScroller,
+  useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller';
-import { cn } from '@/lib/utils';
-import { AlertCircle, Clock, SendHorizontal } from 'lucide-react';
+import { ChatBubble } from '@/features/chat/ChatBubble';
+import { SendPlaneHorizontal } from '@relayed/icons';
 
 export function Chat() {
   const { chatId } = useParams();
@@ -49,7 +45,12 @@ export function Chat() {
     // `-m-10` and pinned itself to `h-svh`, which is a layout arguing with
     // itself and was wrong by the height of the top bar the moment one existed.
     <div className="flex min-h-0 flex-1 flex-col">
-      <MessageScrollerProvider autoScroll>
+      <MessageScrollerProvider
+        autoScroll
+        defaultScrollPosition="end"
+        scrollEdgeThreshold={64}
+      >
+        <FollowAtLiveEdge />
         <MessageScroller>
           <MessageScrollerViewport>
             <MessageScrollerContent className="p-6">
@@ -62,96 +63,50 @@ export function Chat() {
                 </p>
               )}
 
-              {(messages ?? []).map(message => {
+              {(messages ?? []).map((message, index, allMessages) => {
                 const mine = message.authorId === me;
-                const align = mine ? 'end' : 'start';
+                const previousMessage = allMessages[index - 1];
+                const nextMessage = allMessages[index + 1];
                 return (
-                  <MessageScrollerItem
+                  <ChatBubble
                     key={message.id}
-                    messageId={message.id}
-                    // Anchor on our own messages: sending is the moment the
-                    // view should hold, and somebody else's arrival must not
-                    // yank a reader away from what they were reading.
-                    scrollAnchor={mine}
-                  >
-                    <Message align={align}>
-                      {!mine && (
-                        <MessageAvatar>
-                          <Avatar className="size-7">
-                            <AvatarImage
-                              src={blobSrc(message.authorAvatarBlob) ?? undefined}
-                            />
-                            <AvatarFallback className="text-[10px]">
-                              {initials(message.authorName)}
-                            </AvatarFallback>
-                          </Avatar>
-                        </MessageAvatar>
-                      )}
-
-                      <MessageContent>
-                        {!mine && <MessageHeader>{message.authorName}</MessageHeader>}
-
-                        {/* `align` is not decoration: it is what gives the
-                            bubble `self-end`. Without it the bubble takes the
-                            row's full width rule and `w-fit` collapses to the
-                            longest word — which is how a first version rendered
-                            "hello" one character per line. */}
-                        <Bubble
-                          variant={mine ? 'default' : 'muted'}
-                          align={align}
-                          className={cn(
-                            // PENDING IS VISIBLE, and understated on purpose. It
-                            // is the ordinary state of a message for a few
-                            // hundred milliseconds, so it must not look like a
-                            // problem — but rendering it identically to an
-                            // acknowledged one is how a message that never sent
-                            // looks exactly like one that did (DESIGN.md §10.2).
-                            message.state === 'pending' && 'opacity-60',
-                            message.state === 'failed' && 'ring-1 ring-destructive',
-                          )}
-                        >
-                          <BubbleContent>
-                            {message.deleted
-                              ? <span className="italic opacity-60">Message deleted</span>
-                              : message.body}
-                          </BubbleContent>
-                        </Bubble>
-
-                        <MessageFooter>
-                          {message.state === 'pending' && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="size-3" /> Queued
-                            </span>
-                          )}
-                          {message.state === 'failed' && (
-                            <span className="flex items-center gap-1 text-destructive">
-                              <AlertCircle className="size-3" /> Not sent
-                            </span>
-                          )}
-                          {/* An acked message says only the time: "it worked"
-                              is the default and needs no label. */}
-                          {message.state === 'acked' && time(message.createdAt)}
-                        </MessageFooter>
-                      </MessageContent>
-                    </Message>
-                  </MessageScrollerItem>
+                    message={message}
+                    mine={mine}
+                    startsGroup={previousMessage?.authorId !== message.authorId}
+                    endsGroup={nextMessage?.authorId !== message.authorId}
+                  />
                 );
               })}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />
         </MessageScroller>
-      </MessageScrollerProvider>
 
-      <Composer chatId={chatId} />
+        <Composer chatId={chatId} />
+      </MessageScrollerProvider>
     </div>
   );
+}
+
+function FollowAtLiveEdge() {
+  const { end: hasContentBelow } = useMessageScrollerScrollable();
+  const { scrollToEnd } = useMessageScroller();
+
+  useEffect(() => {
+    // The primitive leaves follow mode after any deliberate scroll. Reaching
+    // the live edge again is the reader opting back in, as in people-to-people
+    // chat: subsequent arrivals should remain visible until they scroll away.
+    if (!hasContentBelow) scrollToEnd({ behavior: 'auto' });
+  }, [hasContentBelow, scrollToEnd]);
+
+  return null;
 }
 
 function Composer({ chatId }: { chatId: string | undefined }) {
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const { scrollToEnd } = useMessageScroller();
 
   async function send() {
     const text = body.trim();
@@ -164,6 +119,11 @@ function Composer({ chatId }: { chatId: string | undefined }) {
     setError(null);
     try {
       await call(api => api.query('messages.send', { chatId, body: text }));
+      // Sending expresses an intent to return to the live conversation even
+      // when the reader had previously scrolled into history. The local write
+      // resolves before its live-query repaint, and scrollToEnd also re-engages
+      // auto-follow for that incoming optimistic row.
+      scrollToEnd({ behavior: 'smooth' });
     } catch (e) {
       // Put it back rather than lose it. A failure here is the queue refusing,
       // not the network — nothing about sending waits on a socket.
@@ -191,13 +151,10 @@ function Composer({ chatId }: { chatId: string | undefined }) {
           rows={1}
         />
         <Button size="icon" onClick={() => void send()} disabled={body.trim().length === 0}>
-          <SendHorizontal className="size-4" />
+          <SendPlaneHorizontal className="size-4" />
           <span className="sr-only">Send</span>
         </Button>
       </div>
     </div>
   );
 }
-
-const time = (at: number): string =>
-  new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

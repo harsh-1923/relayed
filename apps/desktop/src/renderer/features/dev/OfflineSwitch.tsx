@@ -18,7 +18,7 @@
 // it back on, and two sign-in attempts failed for a reason the screen could not
 // show. A switch that can strand you is worse than no switch.
 import { useState } from 'react';
-import { PlaneTakeoff, Wifi } from 'lucide-react';
+import { WifiOff, WifiOn } from '@relayed/icons';
 import { useSession } from '@/app/state';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
@@ -54,7 +54,7 @@ export function OfflineSwitch() {
                       off ? 'bg-amber-500 text-black hover:bg-amber-400'
                           : 'text-muted-foreground hover:text-foreground')}
       >
-        {off ? <PlaneTakeoff className="size-3.5" /> : <Wifi className="size-3.5" />}
+        {off ? <WifiOff className="size-3.5" /> : <WifiOn className="size-3.5" />}
         {off ? 'Offline' : 'Online'}
       </Button>
 

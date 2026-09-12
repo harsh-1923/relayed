@@ -6,8 +6,8 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: "Geist Variable", sans-serif;
+  /* shadcn theme token bridge. Keep this set aligned with the shadcn theme
+     scaffold so a generated theme can replace the values below as one unit. */
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -39,9 +39,6 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --color-window-canvas: var(--window-canvas);
-  --color-window-glass: var(--window-glass);
-  --color-window-solid: var(--window-solid);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,9 +46,20 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Relayed custom tokens. Add new app-specific token bridges below this line. */
+  --font-heading: var(--font-sans);
+  --font-sans: "Geist Variable", sans-serif;
+  --color-window-canvas: var(--window-canvas);
+  --color-window-glass: var(--window-glass);
+  --color-window-solid: var(--window-solid);
+  --color-message-outgoing: var(--message-outgoing);
+  --color-message-outgoing-foreground: var(--message-outgoing-foreground);
 }
 
 :root {
+  /* shadcn light theme. Replace this complete section when swapping themes. */
+  --radius: 0.8rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -75,9 +83,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar-solid: oklch(0.985 0 0);
-  --sidebar: var(--sidebar-solid);
+  --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -85,13 +91,18 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* Relayed custom light tokens. Add new app-specific tokens below this line. */
   --window-canvas: transparent;
-  --window-glass: color-mix(in srgb, var(--sidebar-solid) 70%, transparent);
+  --window-glass: color-mix(in srgb, var(--sidebar) 70%, transparent);
   --window-solid: var(--background);
+  --message-outgoing: oklch(0.2143 0.0039 286.07);
+  --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  /* shadcn dark theme. Replace this complete section when swapping themes. */
+  --background: oklch(0.1693 0.0041 285.95);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -114,8 +125,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar-solid: oklch(0.205 0 0);
-  --sidebar: var(--sidebar-solid);
+  --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -123,9 +133,13 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  /* Relayed custom dark tokens. Add new app-specific tokens below this line. */
   --window-canvas: transparent;
-  --window-glass: color-mix(in srgb, var(--sidebar-solid) 70%, transparent);
+  --window-glass: color-mix(in srgb, var(--sidebar) 70%, transparent);
   --window-solid: var(--background);
+  --message-outgoing: oklch(0.2143 0.0039 286.07);
+  --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
 }
 
 @layer base {
@@ -193,7 +207,7 @@
 @media (prefers-reduced-transparency: reduce) {
   :root {
     --window-canvas: var(--window-solid);
-    --window-glass: var(--sidebar-solid);
+    --window-glass: var(--sidebar);
   }
 }
 /* ─── The top bar is the title bar ────────────────────────────────────────
