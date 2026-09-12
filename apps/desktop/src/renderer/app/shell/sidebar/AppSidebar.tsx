@@ -11,8 +11,10 @@
 // only part that scrolls, so the things you reach most often never disappear
 // behind a long list of spaces.
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
+import { useDialKit, type DialConfig } from 'dialkit';
 import {
-  Activity, ChatChatting, MagneticCompass, PencilEditBox, SearchDefault, UserTwo,
+  NotificationBellOn, ChatChatting, LayerTwo, PencilEditBox, SearchDefault, UserTwo,
 } from '@relayed/icons';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
@@ -31,15 +33,66 @@ import { cn } from '@/lib/utils';
 
 const PRIMARY_DESTINATIONS = [
   { label: 'New space', icon: PencilEditBox },
-  { label: 'Activity', icon: Activity },
+  { label: 'Activity', icon: NotificationBellOn },
   { label: 'Threads', icon: ChatChatting },
   { label: 'People', icon: UserTwo },
-  { label: 'Explore', icon: MagneticCompass },
+  { label: 'Connectors', icon: LayerTwo },
 ] as const;
+
+const SIDEBAR_ITEM_CONTROLS = {
+  backgroundToken: {
+    type: 'select',
+    options: [
+      { label: 'Background', value: 'var(--background)' },
+      { label: 'Card', value: 'var(--card)' },
+      { label: 'Primary', value: 'var(--primary)' },
+      { label: 'Secondary', value: 'var(--secondary)' },
+      { label: 'Muted', value: 'var(--muted)' },
+      { label: 'Accent', value: 'var(--accent)' },
+      { label: 'Sidebar', value: 'var(--sidebar)' },
+      { label: 'Sidebar primary', value: 'var(--sidebar-primary)' },
+      { label: 'Sidebar accent', value: 'var(--sidebar-accent)' },
+      { label: 'Outgoing message', value: 'var(--message-outgoing)' },
+      { label: 'Destructive', value: 'var(--destructive)' },
+    ],
+    default: 'var(--primary)',
+  },
+  backgroundOpacity: [0.1, 0, 1, 0.05],
+  textToken: {
+    type: 'select',
+    options: [
+      { label: 'Foreground', value: 'var(--foreground)' },
+      { label: 'Primary foreground', value: 'var(--primary-foreground)' },
+      { label: 'Secondary foreground', value: 'var(--secondary-foreground)' },
+      { label: 'Muted foreground', value: 'var(--muted-foreground)' },
+      { label: 'Accent foreground', value: 'var(--accent-foreground)' },
+      { label: 'Sidebar foreground', value: 'var(--sidebar-foreground)' },
+      { label: 'Sidebar primary foreground', value: 'var(--sidebar-primary-foreground)' },
+      { label: 'Sidebar accent foreground', value: 'var(--sidebar-accent-foreground)' },
+      { label: 'Outgoing message foreground', value: 'var(--message-outgoing-foreground)' },
+      { label: 'Destructive', value: 'var(--destructive)' },
+    ],
+    default: 'var(--muted-foreground)',
+  },
+  textOpacity: [1, 0, 1, 0.05],
+} satisfies DialConfig;
 
 export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const itemTokens = useDialKit('Sidebar items', SIDEBAR_ITEM_CONTROLS, {
+    persist: true,
+  });
+  const itemStyles = {
+    '--sidebar-item-background': withOpacity(
+      itemTokens.backgroundToken,
+      itemTokens.backgroundOpacity,
+    ),
+    '--sidebar-item-foreground': withOpacity(
+      itemTokens.textToken,
+      itemTokens.textOpacity,
+    ),
+  } as CSSProperties;
 
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
@@ -65,6 +118,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
     // bar so the same top-level controls remain visible while it is open.
     <Sidebar
       collapsible={inline ? 'none' : 'offcanvas'}
+      style={itemStyles}
       className={cn(
         inline && 'h-full w-full bg-window-glass',
         inline && !open && 'invisible',
@@ -138,4 +192,8 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
       </CommandDialog>
     </Sidebar>
   );
+}
+
+function withOpacity(token: string, opacity: number): string {
+  return `color-mix(in oklch, ${token} ${opacity * 100}%, transparent)`;
 }

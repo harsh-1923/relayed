@@ -24,8 +24,11 @@ export function SidebarItem({
         type={to ? undefined : 'button'}
         isActive={isActive}
         disabled={disabled}
-        className="h-9 gap-2 px-2 text-sm text-sidebar-foreground
-                   hover:bg-muted-foreground/10"
+        className="h-9 gap-2.5 px-2 text-[15px] text-(--sidebar-item-foreground)
+                   hover:bg-(--sidebar-item-background)!
+                   hover:text-(--sidebar-item-foreground)!
+                   data-active:bg-(--sidebar-item-background)!
+                   data-active:text-(--sidebar-item-foreground)!"
       >
         <Icon className="size-4" />
         <span className="truncate">{label}</span>

@@ -15,7 +15,7 @@
 // EVERY CONTROL IN HERE IS `no-drag`. A drag region swallows clicks, so a button
 // inside one is inert until it opts out — and it still looks and hovers exactly
 // like a button that works.
-import { ChevronLeft, ChevronRight, SidebarDefault } from '@relayed/icons';
+import { ArrowLeft, ArrowRight, SidebarDefault } from '@relayed/icons';
 import { useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
@@ -66,10 +66,10 @@ export function TopBar() {
 
         <div className={cn('flex items-center gap-1', alignNavigationToSidebar && 'ml-auto')}>
           <Bare label="Back" onClick={back} disabled={!canBack}>
-            <ChevronLeft className="size-4" />
+            <ArrowLeft className="size-4" />
           </Bare>
           <Bare label="Forward" onClick={forward} disabled={!canForward}>
-            <ChevronRight className="size-4" />
+            <ArrowRight className="size-4" />
           </Bare>
         </div>
       </div>

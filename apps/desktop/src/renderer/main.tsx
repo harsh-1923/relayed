@@ -1,6 +1,8 @@
 import './index.css';
+import 'dialkit/styles.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { DialRoot } from 'dialkit';
 import { HashRouter } from 'react-router';
 import { AppStateProvider } from '@/app/state';
 import { Router } from '@/app/router';
@@ -57,5 +59,6 @@ createRoot(document.getElementById('root')!).render(
         </SidebarProvider>
       </AppStateProvider>
     </HashRouter>
+    <DialRoot />
   </StrictMode>,
 );
