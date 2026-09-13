@@ -148,7 +148,7 @@ export interface MessagesTable {
   ord: number;
   rev: number;
   author_id: string;
-  /** Mentions are `<@actor_id>` markup, never a handle. */
+  /** Canonical Relayed Markdown; actor links carry durable ids (COMPOSER.md). */
   body: string;
   created_at: Generated<Timestamp>;
   edited_at: Timestamp | null;

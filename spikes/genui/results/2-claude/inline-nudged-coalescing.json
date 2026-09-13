@@ -1,0 +1,66 @@
+{
+  "id": "coalescing",
+  "variant": "inline-nudged",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 13312,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 3098,
+    "cache_read_input_tokens": 23432,
+    "output_tokens": 838,
+    "output_tokens_details": {
+      "thinking_tokens": 17
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3098,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 570,
+        "cache_read_input_tokens": 8783,
+        "cache_creation_input_tokens": 797,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 797
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.06467500000000001,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 882,
+      "source": "root = Card([header, table, note, ref])\nheader = CardHeader(\"Outbox coalescing rules\", \"DESIGN.md §10.4\")\ntable = Table([colQueued, colNew, colResult])\ncolQueued = Col(\"Queued\", [\"send\", \"send\", \"send\", \"edit\", \"edit\", \"react(add)\", \"read(ord=5)\"])\ncolNew = Col(\"New op\", [\"edit\", \"delete\", \"react\", \"edit\", \"delete\", \"react(remove)\", \"read(ord=9)\"])\ncolResult = Col(\"Result\", [\"Put the new body into the send's payload; one op remains\", \"Drop both; nothing is sent to the server\", \"Keep both, in order; the react must follow the send\", \"Keep the last edit\", \"Drop the edit, keep the delete\", \"Drop both (same emoji and user)\", \"Keep the higher ord (max-register)\"])\nnote = Callout(\"warning\", \"Add this early\", \"The doc warns that adding coalescing later means checking every op type against every other op type.\")\nref = FileRef(\"docs/DESIGN.md\", 1848, \"§10.4 Outbox coalescing\")\n",
+      "text": "Outbox coalescing rules: DESIGN.md §10.4\nQueued: send, New op: edit, Result: Put the new body into the send's payload; one op remains; Queued: send, New op: delete, Result: Drop both; nothing is sent to the server; Queued: send, New op: react, Result: Keep both, in order; the react must follow the send; Queued: edit, New op: edit, Result: Keep the last edit; Queued: edit, New op: delete, Result: Drop the edit, keep the delete; Queued: react(add), New op: react(remove), Result: Drop both (same emoji and user); Queued: read(ord=5), New op: read(ord=9), Result: Keep the higher ord (max-register)\nAdd this early: The doc warns that adding coalescing later means checking every op type against every other op type.\ndocs/DESIGN.md:1848 (§10.4 Outbox coalescing)"
+    }
+  ],
+  "reply": "Coalescing happens when an op is added to the outbox, and only between ops with the same `target_id` (`docs/DESIGN.md:1857`). The doc says it's needed for correctness, not just speed: without it, an edit or delete can reach the server for a message the server has never seen.\n\n```openui-lang\nroot = Card([header, table, note, ref])\nheader = CardHeader(\"Outbox coalescing rules\", \"DESIGN.md §10.4\")\ntable = Table([colQueued, colNew, colResult])\ncolQueued = Col(\"Queued\", [\"send\", \"send\", \"send\", \"edit\", \"edit\", \"react(add)\", \"read(ord=5)\"])\ncolNew = Col(\"New op\", [\"edit\", \"delete\", \"react\", \"edit\", \"delete\", \"react(remove)\", \"read(ord=9)\"])\ncolResult = Col(\"Result\", [\"Put the new body into the send's payload; one op remains\", \"Drop both; nothing is sent to the server\", \"Keep both, in order; the react must follow the send\", \"Keep the last edit\", \"Drop the edit, keep the delete\", \"Drop both (same emoji and user)\", \"Keep the higher ord (max-register)\"])\nnote = Callout(\"warning\", \"Add this early\", \"The doc warns that adding coalescing later means checking every op type against every other op type.\")\nref = FileRef(\"docs/DESIGN.md\", 1848, \"§10.4 Outbox coalescing\")\n```\n\nThese seven pairs are the only ones the table lists. It doesn't cover `blob_upload`, `join` or `leave`, or pairs like `edit` then `react`. The doc does say elsewhere that a `blob_upload` must finish before the `send` that uses it (line 1845)."
+}

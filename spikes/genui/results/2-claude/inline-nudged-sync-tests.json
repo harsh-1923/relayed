@@ -1,0 +1,66 @@
+{
+  "id": "sync-tests",
+  "variant": "inline-nudged",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 14457,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 6509,
+    "cache_read_input_tokens": 11062,
+    "output_tokens": 1104,
+    "output_tokens_details": {
+      "thinking_tokens": 293
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 6509,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 833,
+        "cache_read_input_tokens": 8160,
+        "cache_creation_input_tokens": 1251,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1251
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.099218,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 735,
+      "source": "root = Card([header, table])\nheader = CardHeader(\"Test files in apps/desktop/src/sync\", \"19 files, 262 test( calls\")\ntable = Table([colFile, colCount])\ncolFile = Col(\"File\", [\"storage.test.ts\", \"catchup.test.ts\", \"transport/connection.test.ts\", \"trace.test.ts\", \"apply.test.ts\", \"replica-schema.test.ts\", \"outbox.test.ts\", \"observe.test.ts\", \"auth/session.test.ts\", \"account-schema.test.ts\", \"telemetry-relay.test.ts\", \"network.test.ts\", \"auth/loopback.test.ts\", \"invalidate.test.ts\", \"telemetry.test.ts\", \"transport/live.test.ts\", \"boot.test.ts\", \"auth/transitions.test.ts\", \"auth/pkce.test.ts\"])\ncolCount = Col(\"test( calls\", [\"37\", \"30\", \"28\", \"22\", \"19\", \"19\", \"18\", \"13\", \"13\", \"10\", \"8\", \"8\", \"8\", \"6\", \"6\", \"5\", \"4\", \"4\", \"4\"])\n",
+      "text": "Test files in apps/desktop/src/sync: 19 files, 262 test( calls\nFile: storage.test.ts, test( calls: 37; File: catchup.test.ts, test( calls: 30; File: transport/connection.test.ts, test( calls: 28; File: trace.test.ts, test( calls: 22; File: apply.test.ts, test( calls: 19; File: replica-schema.test.ts, test( calls: 19; File: outbox.test.ts, test( calls: 18; File: observe.test.ts, test( calls: 13; File: auth/session.test.ts, test( calls: 13; File: account-schema.test.ts, test( calls: 10; File: telemetry-relay.test.ts, test( calls: 8; File: network.test.ts, test( calls: 8; File: auth/loopback.test.ts, test( calls: 8; File: invalidate.test.ts, test( calls: 6; File: telemetry.test.ts, test( calls: 6; File: transport/live.test.ts, test( calls: 5; File: boot.test.ts, test( calls: 4; File: auth/transitions.test.ts, test( calls: 4; File: auth/pkce.test.ts, test( calls: 4"
+    }
+  ],
+  "reply": "There are 19 test files under `apps/desktop/src/sync`, with 262 `test(` calls in total.\n\n```openui-lang\nroot = Card([header, table])\nheader = CardHeader(\"Test files in apps/desktop/src/sync\", \"19 files, 262 test( calls\")\ntable = Table([colFile, colCount])\ncolFile = Col(\"File\", [\"storage.test.ts\", \"catchup.test.ts\", \"transport/connection.test.ts\", \"trace.test.ts\", \"apply.test.ts\", \"replica-schema.test.ts\", \"outbox.test.ts\", \"observe.test.ts\", \"auth/session.test.ts\", \"account-schema.test.ts\", \"telemetry-relay.test.ts\", \"network.test.ts\", \"auth/loopback.test.ts\", \"invalidate.test.ts\", \"telemetry.test.ts\", \"transport/live.test.ts\", \"boot.test.ts\", \"auth/transitions.test.ts\", \"auth/pkce.test.ts\"])\ncolCount = Col(\"test( calls\", [\"37\", \"30\", \"28\", \"22\", \"19\", \"19\", \"18\", \"13\", \"13\", \"10\", \"8\", \"8\", \"8\", \"6\", \"6\", \"5\", \"4\", \"4\", \"4\"])\n```\n\n- **How I counted:** the search counts lines that match `\\btest\\(`. Two calls on one line would count as one.\n- **What could be off:** the search would also pick up things that aren't tests, like `regex.test(`. It would miss `test.each(`, `test.skip(` and `it(`. A few counts could be slightly off because of this.\n- **Left out:** `index.ts` has one match, but it isn't a test file, so it's not in the table."
+}

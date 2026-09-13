@@ -1,0 +1,55 @@
+{
+  "id": "topics-intersect",
+  "mode": "tool",
+  "expectUi": false,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 18856,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 3888,
+    "cache_read_input_tokens": 23513,
+    "output_tokens": 1370,
+    "output_tokens_details": {
+      "thinking_tokens": 190
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3888,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1134,
+        "cache_read_input_tokens": 8559,
+        "cache_creation_input_tokens": 1962,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1962
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.0859135,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [],
+  "reply": "From `apps/desktop/src/shared/topics.ts:76`:\n\n```ts\nexport function topicsIntersect(subscribed: string, invalidated: string): boolean {\n  if (subscribed === invalidated) return true;\n  const shorter = subscribed.length < invalidated.length ? subscribed : invalidated;\n  const longer = shorter === subscribed ? invalidated : subscribed;\n  // The trailing ':' is load-bearing. Without it a write to 'chat:c_engineering'\n  // wakes everything subscribed to 'chat:c_eng', and the symptom is a pane that\n  // refetches slightly too often — which nobody ever investigates.\n  return longer.startsWith(`${shorter}:`);\n}\n```\n\n## Why the trailing colon matters\n\nA topic is a list of segments separated by colons, from broad to narrow (`chat` → `chat:<id>` → `chat:<id>:messages`). Two topics overlap when one is an ancestor of the other. That's a match on **whole segments**, not raw characters.\n\nA plain `startsWith(shorter)` compares characters, so it matches IDs that only share a prefix:\n\n| shorter | longer | `startsWith(shorter)` | `startsWith(shorter + ':')` |\n|---|---|---|---|\n| `chat:c_eng` | `chat:c_eng:messages` | true ✅ | true ✅ |\n| `chat:c_eng` | `chat:c_engineering` | **true ❌** | false ✅ |\n| `actors` | `actors:a_alice` | true ✅ | true ✅ |\n| `prefs` | `prefsX` | **true ❌** | false ✅ |\n\nAdding the `:` means the shorter topic has to end exactly where a segment ends. So `c_eng` can't match the start of `c_engineering`.\n\n**Why nobody notices when it's wrong:** this bug never causes a missed update. It causes extra ones. A write to `#engineering` also wakes every pane subscribed to `#eng`, which then refetches for no reason. Nothing errors and the screen still looks right. The only cost is wasted work, which is why the comment calls the colon \"load-bearing\" but the failure easy to overlook.\n\n## Other details worth noting\n\n- **The check runs both ways.** It doesn't matter which side is the ancestor. A broad write like `actors` (a full resync) has to wake a narrow subscriber like `actors:a_alice`. A narrow write like `chat:c_eng:messages` has to wake a broad subscriber like `chat`.\n- **Identical topics are handled first** by the `===` check. Without it, `startsWith('x:')` would return false when both topics are `x`.\n- **Pref keys use dots, not colons** (`prefs:appearance.theme`), so a key counts as one segment and a subscriber to `prefs` still matches it."
+}

@@ -1,0 +1,55 @@
+{
+  "id": "server-ops",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 20798,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 7075,
+    "cache_read_input_tokens": 14477,
+    "output_tokens": 1385,
+    "output_tokens_details": {
+      "thinking_tokens": 382
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 7075,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1295,
+        "cache_read_input_tokens": 8078,
+        "cache_creation_input_tokens": 5396,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 5396
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.1136615,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [],
+  "reply": "The file exports three ops: `send`, `deleteMessage` and `markRead`. It also exports `MessageNotFoundError` and the types `Ack`, `Applied`, `SendInput` and `DeleteInput`. Every op starts with `chatGate` (`ops.ts:268`). It loads the actor's grants and the chat's placement once, then returns a function that throws `Forbidden` if `can()` refuses an action.\n\n### `send` (`ops.ts:82`)\n1. **Checks** that the actor has `post` on the chat.\n2. **Writes** inside `applyOnce`, keyed by `opId`. If that op already ran, the saved ack is returned, nothing is written, and no event is returned, so it isn't sent out to other devices twice. Otherwise it gets the next position and version number for the chat, inserts the message, updates the space's `last_activity_at`, and records a `message.created` event.\n\n### `deleteMessage` (`ops.ts:171`)\n1. **Checks** that the actor has `read` on the chat. This comes before the message is looked up, so someone outside the chat can't learn whether a message exists.\n2. **Checks the message exists** and belongs to this chat. If not, it throws `MessageNotFoundError`.\n3. **Checks delete permission** against the same grants loaded in step 1: `delete_own` if the actor wrote the message, `delete_any` if not (that's an admin power held at the space level).\n4. **Writes** through `applyOnce` in the same way as `send`. It gets a new version number but no new position, sets `deleted = true`, clears the body, and records a `message.deleted` event. Deleting a message that's already deleted isn't treated as a special case.\n\n### `markRead` (`ops.ts:243`)\n1. **Checks** that the actor has `read` on the chat.\n2. **Writes** with an upsert that keeps `GREATEST(existing, new)`, so an older value never overwrites a newer one. It doesn't use `applyOnce`, doesn't take a version number and doesn't record an event, because sending the same value again changes nothing.\n\n### Things this file doesn't check\n- **`send`** doesn't check that `parentId` exists or is in the same chat, and doesn't check `body` (empty or too long). A database constraint may cover the parent. I haven't looked at the schema.\n- **`markRead`** doesn't check `ord` against the chat's highest position. A client could set it far too high, and because the value only ever goes up, it could never be lowered again.\n- **Permission checks in `send` and `deleteMessage` run before and outside `applyOnce`.** A retry is checked again, so an actor who lost access gets `Forbidden` instead of the saved ack. That's probably what you want, but it means a retry doesn't always return the same result."
+}

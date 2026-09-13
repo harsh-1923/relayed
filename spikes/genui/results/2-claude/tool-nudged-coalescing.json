@@ -1,0 +1,66 @@
+{
+  "id": "coalescing",
+  "variant": "tool-nudged",
+  "mode": "tool",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 4,
+  "ms": 14591,
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 7128,
+    "cache_read_input_tokens": 30370,
+    "output_tokens": 847,
+    "output_tokens_details": {
+      "thinking_tokens": 39
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 7128,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 167,
+        "cache_read_input_tokens": 9814,
+        "cache_creation_input_tokens": 452,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 452
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.108679,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 49,
+  "streamSnapshots": 49,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 737,
+      "source": "root = Card([header, rules, ref])\nheader = CardHeader(\"Outbox coalescing rules\", \"Runs on enqueue, scoped by target_id\")\nrules = Table([colQueued, colNew, colResult])\ncolQueued = Col(\"Queued\", [\"send\", \"send\", \"send\", \"edit\", \"edit\", \"react(add)\", \"read(ord=5)\"])\ncolNew = Col(\"New op\", [\"edit\", \"delete\", \"react\", \"edit\", \"delete\", \"react(remove)\", \"read(ord=9)\"])\ncolResult = Col(\"Result\", [\"Rewrite the send payload with the new body; one op\", \"Drop both; never touches the network\", \"Keep both, in order; the react must follow the send\", \"Keep the last edit\", \"Drop the edit, keep the delete\", \"Drop both (same emoji and user)\", \"Keep the higher ord (max-register)\"])\nref = FileRef(\"docs/DESIGN.md\", 1848, \"§10.4 Outbox coalescing\")",
+      "text": "Outbox coalescing rules: Runs on enqueue, scoped by target_id\nQueued: send, New op: edit, Result: Rewrite the send payload with the new body; one op; Queued: send, New op: delete, Result: Drop both; never touches the network; Queued: send, New op: react, Result: Keep both, in order; the react must follow the send; Queued: edit, New op: edit, Result: Keep the last edit; Queued: edit, New op: delete, Result: Drop the edit, keep the delete; Queued: react(add), New op: react(remove), Result: Drop both (same emoji and user); Queued: read(ord=5), New op: read(ord=9), Result: Keep the higher ord (max-register)\ndocs/DESIGN.md:1848 (§10.4 Outbox coalescing)"
+    }
+  ],
+  "reply": "The table above lists all seven rules. The doc calls coalescing a **correctness requirement, not an optimization**. Without it, if you send a message offline and then edit or delete it, the queue would hold ops that point at a message ID the server has never seen. At best the server returns 404 and those ops fail. At worst they arrive out of order and leave a ghost message.\n\nThis is invariant 6 (`docs/DESIGN.md:2623`). The doc says to build it early, because adding it later means checking every op type against every other op type."
+}

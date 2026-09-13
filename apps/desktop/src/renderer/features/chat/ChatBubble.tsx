@@ -6,19 +6,44 @@ import {
   Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader,
 } from '@/components/ui/message';
 import { MessageScrollerItem } from '@/components/ui/message-scroller';
+import { LANG, LIBRARY_VERSION } from '@relayed/genui';
+import { ThinkingOrb } from 'thinking-orbs';
+import { useAgentStream } from '@/lib/agent-stream';
 import { blobSrc, initials } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
+import { CopyButton } from './CopyButton';
+import { MessageParts } from './MessageParts';
 
 interface ChatBubbleProps {
   message: ReplicaMessage;
   mine: boolean;
   startsGroup: boolean;
   endsGroup: boolean;
+  /** A local reply paused on the person: an approval, a question or a plan (LOCAL-ROOMS.md §8.5). */
+  waiting?: boolean;
 }
 
-export function ChatBubble({ message, mine, startsGroup, endsGroup }: ChatBubbleProps) {
+export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = false }: ChatBubbleProps) {
   const align = mine ? 'end' : 'start';
   const showFooter = message.state !== 'acked' || endsGroup;
+  // An agent's reply with parts is laid out as a page, not a speech bubble:
+  // cards and tool calls inside a tinted bubble capped at 70% are cramped and
+  // read as quoted. Everyone else's message keeps its bubble.
+  // A reply Claude is still writing in a local room (LOCAL-ROOMS.md §8.3): its
+  // stored parts, plus the text of the block arriving now, which is pushed and
+  // never stored.
+  const streaming = message.state === 'streaming';
+  const live = useAgentStream(message.id, streaming);
+  // A block that has landed as a part is still in the live push until the next
+  // block starts; drawing both would show the card twice.
+  const storedUi = message.parts?.findLast(part => part.kind === 'ui')?.['source'];
+  const liveParts = [
+    ...(live.text ? [{ kind: 'markdown', text: live.text }] : []),
+    ...(live.ui && live.ui !== storedUi ? [{ kind: 'ui', lang: LANG, library: LIBRARY_VERSION, source: live.ui }] : []),
+  ];
+  const arriving = liveParts.length > 0;
+  const parts = streaming && arriving ? [...(message.parts ?? []), ...liveParts] : message.parts;
+  const unbubbled = !message.deleted && message.authorType === 'agent' && (parts !== null || streaming);
 
   return (
     <MessageScrollerItem
@@ -30,8 +55,13 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup }: ChatBubble
     >
       <Message align={align}>
         {!mine && (
-          <MessageAvatar className={!endsGroup ? 'invisible' : undefined}>
-            <Avatar className="size-7">
+          // Sized to the avatar: the slot's own 32px minimum left a muted rim
+          // around the 28px face. Lifted by exactly the footer row (h-5) so it sits
+          // level with the bubble's last line: the slot's own lift is 32px, which
+          // pushed it out of the row, and a row with `content-visibility: auto`
+          // clips whatever leaves it.
+          <MessageAvatar className={cn('size-7 min-w-0 group-has-data-[slot=message-footer]/message:-translate-y-8.25', !endsGroup && 'invisible')}>
+            <Avatar className="size-7 overflow-hidden">
               <AvatarImage src={blobSrc(message.authorAvatarBlob) ?? undefined} />
               <AvatarFallback className="text-[10px]">
                 {initials(message.authorName)}
@@ -44,22 +74,52 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup }: ChatBubble
           {!mine && startsGroup && <MessageHeader>{message.authorName}</MessageHeader>}
 
           <Bubble
-            variant={mine ? 'outgoing' : 'muted'}
+            variant={unbubbled ? 'ghost' : mine ? 'outgoing' : 'muted'}
             align={align}
             className={cn(
               message.state === 'pending' && 'opacity-60',
-              message.state === 'failed' && 'ring-1 ring-destructive',
+              // A person's message that never sent is outlined; an agent's reply
+              // that did not finish says so in its footer and keeps what it wrote.
+              message.state === 'failed' && !unbubbled && 'ring-1 ring-destructive',
             )}
           >
-            <BubbleContent className="select-text">
+            {/* The base layer makes every element unselectable, so selection is
+                re-enabled on each descendant, not just inherited. */}
+            <BubbleContent className="select-text **:select-text">
               {message.deleted
                 ? <span className="italic opacity-60">Message deleted</span>
-                : message.body}
+                // Links do nothing yet: where one opens, and which schemes may,
+                // is phase 6 (docs/AGENT-RESPONSES.md, actions). Nor do Reply buttons.
+                : (
+                  <>
+                    <MessageParts
+                      body={message.body}
+                      parts={parts}
+                      authorType={message.authorType ?? 'human'}
+                      streaming={streaming}
+                    />
+                    {streaming && (
+                      <span className="flex items-center gap-2 text-sm pt-6" role="status">
+                        {waiting
+                          ? <><ThinkingOrb state="listening" size={20} aria-hidden /> Waiting for you</>
+                          : <><ThinkingOrb state="working" size={20} aria-hidden /> Working…</>}
+                      </span>
+                    )}
+                  </>
+                )}
             </BubbleContent>
           </Bubble>
 
-          {showFooter && (
-            <MessageFooter>
+          {/* Time and Copy sit under the bubble. The last message of a stack
+              always shows them; one inside a stack opens the row on hover,
+              so a run of messages keeps its tight spacing. */}
+          <div
+            className={cn(
+              'grid transition-[grid-template-rows] duration-150',
+              showFooter ? 'grid-rows-[1fr]' : 'grid-rows-[0fr] group-hover/message:grid-rows-[1fr] has-focus-visible:grid-rows-[1fr]',
+            )}
+          >
+            <MessageFooter className={cn('min-h-0 gap-1 overflow-hidden', showFooter && 'h-5')}>
               {message.state === 'pending' && (
                 <span className="flex items-center gap-1" role="status">
                   <ClockDefault className="size-3" /> Queued
@@ -67,12 +127,21 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup }: ChatBubble
               )}
               {message.state === 'failed' && (
                 <span className="flex items-center gap-1 text-destructive" role="status">
-                  <AlertCircle className="size-3" /> Not sent
+                  <AlertCircle className="size-3" /> {message.authorType === 'agent' ? 'Did not finish' : 'Not sent'}
                 </span>
               )}
               {message.state === 'acked' && formatTime(message.createdAt)}
+              {!mine && !message.deleted && !streaming && message.body && (
+                // As its Markdown source. An agent's body is derived from its
+                // parts: tool lines come along as one-line summaries, cards not at all.
+                <CopyButton
+                  text={message.body}
+                  label="Copy message"
+                  className="opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100 data-copied:opacity-100"
+                />
+              )}
             </MessageFooter>
-          )}
+          </div>
         </MessageContent>
       </Message>
     </MessageScrollerItem>

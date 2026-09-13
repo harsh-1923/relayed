@@ -1,0 +1,38 @@
+{
+  "measured": {
+    "baselineInputTokens": 2993,
+    "instructionsTokens": 1862
+  },
+  "tool": {
+    "runs": 12,
+    "usedUiWhenExpected": "2/8",
+    "usedUiWhenNotExpected": "0/4",
+    "blocksTotal": 2,
+    "firstTryValid": "2/2",
+    "runsWithAnInvalidBlock": 0,
+    "repairedInSameTurn": "0/0",
+    "finalValid": "2/2",
+    "errorCodes": [],
+    "escapingMistakes": 0,
+    "runsWhereToolInputStreamed": 2,
+    "failedRuns": [],
+    "medianSeconds": 16,
+    "model": "claude-opus-5[1m]"
+  },
+  "inline": {
+    "runs": 12,
+    "usedUiWhenExpected": "5/8",
+    "usedUiWhenNotExpected": "0/4",
+    "blocksTotal": 5,
+    "firstTryValid": "5/5",
+    "runsWithAnInvalidBlock": 0,
+    "repairedInSameTurn": "0/0",
+    "finalValid": "5/5",
+    "errorCodes": [],
+    "escapingMistakes": 0,
+    "runsWhereToolInputStreamed": 0,
+    "failedRuns": [],
+    "medianSeconds": 15,
+    "model": "claude-opus-5[1m]"
+  }
+}

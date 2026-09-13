@@ -1,3 +1,12 @@
+import type { StoredPart } from '@relayed/protocol';
+import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
+import type { AgentStream, LocalRoom } from '../shared/local-rooms.ts';
+
+export type {
+  ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
+} from '../shared/claude.ts';
+export type { AgentStream, LocalRoom, LocalRoomChat } from '../shared/local-rooms.ts';
+
 export interface DbInfo {
   open: boolean;
   accountId?: string | null;
@@ -86,10 +95,26 @@ export interface ReplicaMessage {
   authorName: string;
   authorHandle: string | null;
   authorAvatarBlob: string | null;
+  /**
+   * `actors.type`, or null while the author is not in the directory yet. Tool
+   * and ui parts are drawn only for an agent, so an unknown author's render as
+   * body until the directory arrives.
+   */
+  authorType: string | null;
+  /** Always present, and derived from `parts` when there are any: search, previews and fallbacks read it. */
   body: string;
+  /** As the server sent them, possibly holding kinds this build does not know. Null for none. */
+  parts: StoredPart[] | null;
   createdAt: number;
   deleted: boolean;
   state: string;
+}
+
+export interface ComposerDraft {
+  chatId: string;
+  body: string;
+  revision: number;
+  updatedAt: number;
 }
 
 /**
@@ -216,6 +241,46 @@ export interface RelayedApi {
   query(op: "actors.list"): Promise<ReplicaActor[]>;
   query(op: "spaces.list"): Promise<ReplicaSpace[]>;
   query(op: "prefs.list"): Promise<PreferenceRow[]>;
+  /** The person's own Claude Code, as one row (LOCAL-ROOMS.md §3.2). Probes once, then answers from memory. */
+  query(op: "claude.status"): Promise<ClaudeStatus[]>;
+  /** Probe Claude Code again. Resolves when the new status is in; `claude.status` readers are woken. */
+  query(op: "claude.refresh"): Promise<null>;
+  /** Local rooms: the account's, most recently active first (LOCAL-ROOMS.md §7). */
+  query(op: "local.rooms.list"): Promise<LocalRoom[]>;
+  /** Create a room about a folder. Without `cwd` the person picks one; cancelling returns null. */
+  query(
+    op: "local.rooms.create",
+    params?: { name?: string; cwd?: string },
+  ): Promise<{ spaceId: string; chatId: string } | null>;
+  query(op: "local.messages.list", params: { chatId: string }): Promise<ReplicaMessage[]>;
+  query(op: "local.drafts.get", params: { chatId: string }): Promise<ComposerDraft[]>;
+  query(op: "local.drafts.save", params: { chatId: string; body: string; revision: number }): Promise<null>;
+  /** Send, and start Claude's reply. Resolves once both rows are on disk. */
+  query(
+    op: "local.messages.send",
+    params: { chatId: string; body: string; draftRevision?: number },
+  ): Promise<{ id: string; replyId: string }>;
+  /** Stop Claude mid-reply in this chat. */
+  query(op: "local.turn.stop", params: { chatId: string }): Promise<null>;
+  /** How Claude may act in a room without asking. Live sessions take it from their next tool call. */
+  query(op: "local.rooms.setMode", params: { spaceId: string; mode: RoomMode }): Promise<null>;
+  /** The slash commands this chat's folder offers. Empty until Claude Code has been asked; readers are woken when it answers. */
+  query(op: "local.commands.list", params: { chatId: string }): Promise<ClaudeCommand[]>;
+  /** The app's /clear: the chat's next message starts a new Claude Code session. */
+  query(op: "local.chats.clearSession", params: { chatId: string }): Promise<null>;
+  /** Rename a room. Always wins over an automatic name. */
+  query(op: "local.rooms.rename", params: { spaceId: string; name: string }): Promise<{ name: string }>;
+  /** Name a room again from its conversation. `name` is null when nothing better came back. */
+  query(op: "local.rooms.regenerateTitle", params: { spaceId: string }): Promise<{ name: string | null }>;
+  /** The room's model and effort; null for either is the default. The model switches in place, effort from the next message. */
+  query(op: "local.rooms.setModel", params: { spaceId: string; model: string | null; effort: EffortLevel | null }): Promise<null>;
+  /** What Claude Code is waiting on the person for in this chat, oldest first (LOCAL-ROOMS.md §8.5). */
+  query(op: "local.approvals.list", params: { chatId: string }): Promise<PendingApproval[]>;
+  /** Answer one. Rejects if its turn has already ended. */
+  query(
+    op: "local.approvals.respond",
+    params: { chatId: string; approvalId: string; decision: ApprovalDecision },
+  ): Promise<null>;
   /**
    * Change one preference. Validated against the shared catalogue in the
    * engine — an unknown key or a value outside its domain rejects.
@@ -228,6 +293,8 @@ export interface RelayedApi {
     op: "messages.list",
     params: { chatId: string },
   ): Promise<ReplicaMessage[]>;
+  query(op: "drafts.get", params: { chatId: string }): Promise<ComposerDraft[]>;
+  query(op: "drafts.save", params: { chatId: string; body: string; revision: number }): Promise<null>;
   /**
    * Queue a message. Returns as soon as it is on disk, NOT when it is sent —
    * the outbox is durable and the socket is not, so waiting on the network here
@@ -235,7 +302,7 @@ export interface RelayedApi {
    */
   query(
     op: "messages.send",
-    params: { chatId: string; body: string },
+    params: { chatId: string; body: string; draftRevision?: number },
   ): Promise<{ id: string }>;
   query(op: "auth.signOut"): Promise<AppState>;
   query(op: "auth.configured"): Promise<{ clientId: string | null }>;
@@ -284,6 +351,8 @@ export interface RelayedApi {
     params: { workspaceId: string; handle: string },
   ): Promise<AppState>;
   subscribe(channel: "app:state", fn: (s: AppState) => void): () => void;
+  /** The live text of a reply Claude is writing. Never stored; the parts carry it in the end. */
+  subscribe(channel: "agent:stream", fn: (stream: AgentStream) => void): () => void;
   /**
    * Something in the replica changed. Carries the topics affected and NOT
    * the rows — the renderer re-reads what it holds (DESIGN.md §11.2).

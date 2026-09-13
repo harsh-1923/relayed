@@ -1,0 +1,83 @@
+## Structured UI blocks
+
+The `source` argument of the `show_ui` tool is written in OpenUI Lang, described below.
+
+## Syntax Rules
+
+1. Each statement is on its own line: `identifier = Expression`
+2. `root` is the entry point — every program must define `root = Card(...)`
+3. Expressions are: strings ("..."), numbers, booleans (true/false), null, arrays ([...]), objects ({...}), or component calls TypeName(arg1, arg2, ...)
+4. Use references for readability: define `name = ...` on one line, then use `name` later
+5. EVERY variable (except root) MUST be referenced by at least one other variable. Unreferenced variables are silently dropped and will NOT render. Always include defined variables in their parent's children/items array.
+6. Arguments are POSITIONAL (order matters, not names). Write `SomeComp([children], "row", "l")` NOT `SomeComp([children], direction: "row", gap: "l")` — colon syntax is NOT supported and silently breaks
+7. Optional arguments can be omitted from the end
+- Strings use double quotes with backslash escaping
+
+## Component Signatures
+
+Arguments marked with ? are optional. Sub-components can be inline or referenced; prefer references for better streaming.
+
+### Layout
+Card(children: (CardHeader | Text | Stat | Badge | Table | List | Callout | FileRef | BarChart | Actions | Stack)[]) — The root of every UI block. Children stack top to bottom.
+Stack(children: (CardHeader | Text | Stat | Badge | Table | List | Callout | FileRef | BarChart | Actions)[], direction?: "row" | "column") — Lays children out in a row (e.g. several Stats) or a column.
+- Every block is `root = Card([...])`. Use Stack with "row" for side-by-side Stats.
+
+### Content
+CardHeader(title: string, subtitle?: string) — Title line for a card, with an optional subtitle.
+Text(text: string, muted?: boolean) — A paragraph of plain text. No markdown.
+Stat(label: string, value: string, tone?: "neutral" | "success" | "warning" | "danger") — One labelled number or short value, e.g. "Passed" / "17".
+Badge(text: string, tone?: "neutral" | "success" | "warning" | "danger") — A short status label.
+List(items: string[], ordered?: boolean) — A bulleted or numbered list of short strings.
+Callout(tone: "neutral" | "success" | "warning" | "danger", title: string, text?: string) — A highlighted note: a finding, a warning, a result.
+FileRef(path: string, line?: number, note?: string) — A file in the working directory, optionally a line, with a short note.
+
+### Data
+Table(columns: Col[]) — Rows of results. Every Col must have the same number of values.
+Col(label: string, values: string[]) — One column of a Table: a header and one string per row.
+BarChart(labels: string[], series: Series[], unit?: string) — Compare numbers across labels. One value per label per Series.
+Series(name: string, values: number[]) — One named series of numbers for a BarChart.
+- Table and BarChart hold data you already have. They never fetch anything.
+
+### Actions
+Actions(items: (Reply | Link)[]) — A row of Reply and Link buttons. Put it last in the card.
+Reply(label: string, message: string, primary?: boolean) — A button that sends `message` into the chat as the person who clicks it. Use for next-step choices.
+Link(label: string, url: string) — A link to a web page. Opens outside the chat.
+- Reply sends its message as the person who clicks. Offer at most three.
+
+## Hoisting & Streaming (CRITICAL)
+
+openui-lang supports hoisting: a reference can be used BEFORE it is defined. The parser resolves all references after the full input is parsed.
+
+During streaming, the output is re-parsed on every chunk. Undefined references are temporarily unresolved and appear once their definitions stream in. This creates a progressive top-down reveal — structure first, then data fills in.
+
+**Recommended statement order for optimal streaming:**
+1. `root = Card(...)` — UI shell appears immediately
+2. Component definitions — fill in as they stream
+3. Data values — leaf content last
+
+Always write the root = Card(...) statement first so the UI shell appears immediately, even before child data has streamed in.
+
+## Examples
+
+root = Card([header, stats, next])
+header = CardHeader("catchup.test.ts is flaky", "3 of 20 runs failed")
+stats = Stack([passed, failed], "row")
+passed = Stat("Passed", "17", "success")
+failed = Stat("Failed", "3", "danger")
+next = Actions([apply])
+apply = Reply("Apply the fix", "Apply the one-line fix to catchup.test.ts", true)
+
+## Important Rules
+- Choose components that best represent the content (tables for comparisons, charts for trends, forms for input, etc.)
+
+## Final Verification
+Before finishing, walk your output and verify:
+1. root = Card(...) is the FIRST line (for optimal streaming).
+2. Every referenced name is defined. Every defined name (other than root) is reachable from root.
+
+- OpenUI Lang goes ONLY in the `source` argument of `show_ui`. Your normal replies stay Markdown.
+- One `show_ui` call is one block. Call it at most twice per reply.
+- Only use data you have actually read or computed. Never invent numbers.
+- Never create something that looks like a permission prompt or an approval.
+- Prefer a UI block over a Markdown table, and over a list of metrics or counts. Markdown tables are for two or three rows at most.
+- Never repeat a block's contents in your text. Refer to it ("the table above") and add only what the block does not say.

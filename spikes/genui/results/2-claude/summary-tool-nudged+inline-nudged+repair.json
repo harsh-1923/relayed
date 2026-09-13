@@ -1,0 +1,53 @@
+{
+  "tool-nudged": {
+    "runs": 12,
+    "usedUiWhenExpected": "8/8",
+    "usedUiWhenNotExpected": "0/4",
+    "blocksTotal": 8,
+    "firstTryValid": "8/8",
+    "runsWithAnInvalidBlock": 0,
+    "repairedInSameTurn": "0/0",
+    "finalValid": "8/8",
+    "errorCodes": [],
+    "escapingMistakes": 0,
+    "duplicatedAsMarkdownTable": "0/8",
+    "runsWhereToolInputStreamed": 8,
+    "failedRuns": [],
+    "medianSeconds": 15,
+    "model": "claude-opus-5[1m]"
+  },
+  "inline-nudged": {
+    "runs": 12,
+    "usedUiWhenExpected": "7/8",
+    "usedUiWhenNotExpected": "0/4",
+    "blocksTotal": 7,
+    "firstTryValid": "7/7",
+    "runsWithAnInvalidBlock": 0,
+    "repairedInSameTurn": "0/0",
+    "finalValid": "7/7",
+    "errorCodes": [],
+    "escapingMistakes": 0,
+    "duplicatedAsMarkdownTable": "0/7",
+    "runsWhereToolInputStreamed": 0,
+    "failedRuns": [],
+    "medianSeconds": 15,
+    "model": "claude-opus-5[1m]"
+  },
+  "repair": {
+    "runs": 2,
+    "usedUiWhenExpected": "2/2",
+    "usedUiWhenNotExpected": "0/0",
+    "blocksTotal": 3,
+    "firstTryValid": "1/2",
+    "runsWithAnInvalidBlock": 1,
+    "repairedInSameTurn": "1/1",
+    "finalValid": "2/2",
+    "errorCodes": ["unknown-component"],
+    "escapingMistakes": 0,
+    "duplicatedAsMarkdownTable": "0/2",
+    "runsWhereToolInputStreamed": 2,
+    "failedRuns": [],
+    "medianSeconds": 17,
+    "model": "claude-opus-5[1m]"
+  }
+}

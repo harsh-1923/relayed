@@ -497,15 +497,17 @@ test('SPIKE §12: unread and mentions are correct with zero messages held',
   const { chatId } = await channel();
   await fill(chatId, 300);
   await markRead(db, me, chatId, 100);
-  // Mentions are `<@actor_id>` markup, never a handle.
+  // The readable label is not identity; the durable actor target is.
   await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
-                   body: `ping <@${me}> look at this` });
+                   body: `ping [My old name](actor:${me}) look at this` });
   await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
-                   body: `and <@${me}> again` });
+                   body: `and [My current name](actor:${me}) again` });
+  await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
+                   body: `[Any fallback](actor:${me}) still targets me` });
 
   const count = await counters(db, chatId, me);
-  assert.equal(count.chatUnread, 202);
-  assert.equal(count.mentionCount, 2);
+  assert.equal(count.chatUnread, 203);
+  assert.equal(count.mentionCount, 3);
 
   const held = await db.selectFrom('messages').select('id')
     .where('chat_id', '=', chatId).where('author_id', '=', me).execute();
@@ -583,7 +585,8 @@ test('welcome agrees with counters(), chat for chat, across the awkward cases',
 
   await fill(neverOpened.chatId, 3);          // deliberately no markRead: no row
   await send(db, { opId: ulid('op'), chatId: neverOpened.chatId, actorId: bob,
-                   messageId: ulid('msg'), body: `hi <@${me}> and <@${me}> twice` });
+                   messageId: ulid('msg'),
+                   body: `hi [first](actor:${me}) and [second](actor:${me}) twice` });
 
   await fill(onlyMine.chatId, 3, me);
 

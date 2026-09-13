@@ -1,0 +1,29 @@
+{
+  "id": "coalescing",
+  "expectUi": true,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 5,
+  "ms": 61365,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 4,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1188,
+      "source": "root = Card([header, why, rules, note, ref])\nheader = CardHeader(\"Outbox coalescing rules\", \"DESIGN.md §10.4 — runs on enqueue, scoped by target_id\")\nwhy = Callout(\"warning\", \"Correctness requirement, not an optimization\", \"Naively queuing send, edit, delete ops offline leaves edit/delete targeting an id the server has never seen: best case a 404 and failed ops, worst case a ghost message from out-of-order arrival.\")\nrules = Table([queued, newOp, result])\nqueued = Col(\"Queued\", [\"send\", \"send\", \"send\", \"edit\", \"edit\", \"react(add)\", \"read(ord=5)\"])\nnewOp = Col(\"New op\", [\"edit\", \"delete\", \"react\", \"edit\", \"delete\", \"react(remove)\", \"read(ord=9)\"])\nresult = Col(\"Result\", [\"Rewrite the send payload with the new body — one op\", \"Drop both — never touches the network\", \"Keep both, ordered — the react must follow the send\", \"Keep the last\", \"Drop the edit, keep the delete\", \"Drop both (same emoji + user)\", \"Keep the higher — max-register\"])\nnote = Text(\"Not covered by a rule above: reads may drop all but the newest per chat, and blob_upload must complete before the send that references it (§10.3).\")\nref = FileRef(\"docs/DESIGN.md\", 1848, \"§10.4 Outbox coalescing\")",
+      "text": "Outbox coalescing rules: DESIGN.md §10.4 — runs on enqueue, scoped by target_id\nCorrectness requirement, not an optimization: Naively queuing send, edit, delete ops offline leaves edit/delete targeting an id the server has never seen: best case a 404 and failed ops, worst case a ghost message from out-of-order arrival.\nQueued: send, New op: edit, Result: Rewrite the send payload with the new body — one op; Queued: send, New op: delete, Result: Drop both — never touches the network; Queued: send, New op: react, Result: Keep both, ordered — the react must follow the send; Queued: edit, New op: edit, Result: Keep the last; Queued: edit, New op: delete, Result: Drop the edit, keep the delete; Queued: react(add), New op: react(remove), Result: Drop both (same emoji + user); Queued: read(ord=5), New op: read(ord=9), Result: Keep the higher — max-register\nNot covered by a rule above: reads may drop all but the newest per chat, and blob_upload must complete before the send that references it (§10.3).\ndocs/DESIGN.md:1848 (§10.4 Outbox coalescing)"
+    }
+  ],
+  "reply": "The rules live in §10.4 (`docs/DESIGN.md:1848`). Coalescing runs **on enqueue**, is scoped by `target_id`, and is a correctness requirement — without it, an offline compose → edit → delete queues ops against a message id the server has never seen.\n\nTwo things worth noting beyond the table:\n\n- **The `react` key includes the actor**, so toggling the same emoji only cancels when it's the same user — different users' reactions can never coalesce.\n- The doc warns to implement this **early**: retrofitting means auditing every op kind against every other, \"a combinatorial review nobody enjoys.\""
+}

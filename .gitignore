@@ -43,3 +43,7 @@ schema.sql
 /packages/icons/incomplete-icons.json
 
 .codex
+
+# A read-only dump of this Mac's local databases, including the text of local
+# chats. Generated on request; never committed.
+/local-db-report.md

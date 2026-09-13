@@ -1,0 +1,83 @@
+{
+  "components": 16,
+  "instructionChars": 5377,
+  "instructionTokensEstimate": 1494,
+  "mentionsOf": {
+    "Query(": 0,
+    "Mutation(": 0,
+    "$": 0,
+    "@ToAssistant": 0,
+    "Action(": 0,
+    "openui-lang": 1,
+    "ONLY": 1,
+    "markdown": 3
+  },
+  "validation": {
+    "valid": {
+      "ok": true,
+      "codes": [],
+      "text": "catchup.test.ts is flaky: 3 of 20 runs failed\nPassed: 17 · Failed: 3\nFile: catchup.ts, Lines: 432; File: catchup.test.ts, Lines: 610\n[Apply the fix] CI run <htt"
+    },
+    "forwardReferenceOrderIndependent": {
+      "ok": true,
+      "codes": [],
+      "text": "Race: close fires before catchup resolves"
+    },
+    "unknownComponent": {
+      "ok": false,
+      "codes": ["unknown-component"],
+      "text": ""
+    },
+    "missingRequired": {
+      "ok": false,
+      "codes": ["missing-required"],
+      "text": ""
+    },
+    "unresolvedReference": {
+      "ok": false,
+      "codes": ["unresolved"],
+      "text": "Hi"
+    },
+    "wrongRoot": {
+      "ok": false,
+      "codes": ["wrong-root"],
+      "text": "A: 1"
+    },
+    "truncatedMidStatement": {
+      "ok": false,
+      "codes": ["incomplete"],
+      "text": "catchup.test.ts is fl"
+    },
+    "queryNotAllowed": {
+      "ok": false,
+      "codes": ["data-not-allowed"],
+      "text": ""
+    },
+    "stateNotAllowed": {
+      "ok": false,
+      "codes": ["state-not-allowed"],
+      "text": "hello"
+    },
+    "namedArgs": {
+      "ok": false,
+      "codes": ["type-mismatch", "excess-args", "null-required", "null-required", "unresolved"],
+      "text": ""
+    },
+    "fenced": {
+      "ok": true,
+      "codes": [],
+      "text": "fenced"
+    },
+    "wrongEnum": {
+      "ok": false,
+      "codes": ["type-mismatch"],
+      "text": "A: 1"
+    },
+    "jsonEscapedByMistake": {
+      "ok": false,
+      "codes": ["incomplete", "unresolved"],
+      "text": ""
+    }
+  },
+  "modelFacingErrorExample": "The UI block was not shown. Fix these and call show_ui again:\n- [unknown-component] \"x\": Unknown component \"Sparkline\" — not found in catalog or builtins. Available components: Card, CardHeader, Text, Stat, Badge, Table, Col, List, Callout, FileRef, BarChart, Series, Actions, Reply, Link, Stack"
+}

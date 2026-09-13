@@ -1228,10 +1228,9 @@ CREATE TABLE messages (
   ord         INTEGER,               -- NULL while pending; set on ack
   rev         INTEGER,               -- last rev that touched this row
   author_id   TEXT NOT NULL,
-  -- Mentions are stored as `<@actor_id>` markup, never as a handle
-  -- (PHASE-1-IDENTITY.md §10). A handle rename would otherwise orphan every
-  -- historical mention, and a reused handle would silently redirect one —
-  -- which for an agent mention means work done in the wrong context.
+  -- Canonical Relayed Markdown. Semantic mentions use durable application
+  -- links such as `[harsh](actor:act_...)`; the label is readable fallback and
+  -- never a lookup or authorization key (COMPOSER.md, Relayed Markdown).
   body        TEXT NOT NULL,
   created_at  INTEGER NOT NULL,      -- server time on ack; client time while pending
   edited_at   INTEGER,               -- LWW clock for body
@@ -1370,10 +1369,13 @@ CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
 -- schema_origin, last_sync_at, ...
 
 CREATE TABLE drafts (
-  chat_id TEXT PRIMARY KEY,
-  parent_id  TEXT,
-  body       TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
+  chat_id     TEXT NOT NULL,
+  draft_kind  TEXT NOT NULL, -- 'compose' | 'edit'
+  context_key TEXT NOT NULL, -- 'root', thread root, or edited message id
+  body        TEXT NOT NULL, -- canonical Relayed Markdown
+  revision    INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, draft_kind, context_key)
 );
 -- Local-only. Never synced. Cross-device drafts are a deliberate non-feature:
 -- they are an LWW register over content someone is actively typing, which is
@@ -2301,8 +2303,9 @@ VALUES('integrity-check')` in debug builds.
 
 - Search must exclude tombstones (`deleted = 0`) and respect eviction — the
   triggers handle eviction automatically, since eviction is a `DELETE`.
-- **Index a rendered body, not the raw stored one.** Mentions are stored as
-  `<@actor_01J…>` markup (§8.3), so indexing `body` verbatim makes the actor id
+- **Index a rendered body, not the raw stored one.** Mentions use durable
+  application links such as `[harsh](actor:act_01J…)`, so indexing `body`
+  verbatim makes the actor id
   searchable and the person's name invisible — searching "harsh" would miss
   every message that mentions Harsh. The trigger must write display text.
   Resolving names at *write* time also means a renamed actor's old messages stay

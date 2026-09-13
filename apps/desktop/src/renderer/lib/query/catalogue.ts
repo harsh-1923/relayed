@@ -9,7 +9,7 @@
 // source of truth, so adding a read here is what makes it enforceable
 // everywhere else. Nothing to remember.
 import type {
-  ReplicaActor, ReplicaSpace, ReplicaMessage, PreferenceRow,
+  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, PendingApproval, ReplicaActor, ReplicaSpace, ReplicaMessage, PreferenceRow,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -19,6 +19,13 @@ export interface Queries {
   'spaces.list': { args: undefined; rows: ReplicaSpace[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'prefs.list': { args: undefined; rows: PreferenceRow[] };
+  'claude.status': { args: undefined; rows: ClaudeStatus[] };
+  'local.rooms.list': { args: undefined; rows: LocalRoom[] };
+  'local.messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
+  'local.approvals.list': { args: { chatId: string }; rows: PendingApproval[] };
+  'local.commands.list': { args: { chatId: string }; rows: ClaudeCommand[] };
+  'drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
+  'local.drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
 }
 
 export type QueryName = keyof Queries;
@@ -41,4 +48,13 @@ export const TOPICS: TopicsFor = {
   // preference while a future per-key subscription stays possible
   // (PREFERENCES.md §8).
   'prefs.list': () => [topic.prefs()],
+  // Not replica data, and not per workspace: a fact about this machine, woken
+  // when a probe finishes.
+  'claude.status': () => [topic.claude()],
+  'local.rooms.list': () => [topic.localRooms()],
+  'local.messages.list': ({ chatId }) => [topic.localMessages(chatId)],
+  'local.approvals.list': ({ chatId }) => [topic.localApprovals(chatId)],
+  'local.commands.list': () => [topic.localCommands()],
+  'drafts.get': ({ chatId }) => [topic.draft(chatId)],
+  'local.drafts.get': ({ chatId }) => [topic.localDraft(chatId)],
 };

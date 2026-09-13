@@ -1,0 +1,20 @@
+{
+  "id": "why-utility-process",
+  "expectUi": false,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 4,
+  "ms": 29516,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 5,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [],
+  "reply": "Per `docs/DESIGN.md` §5 (\"Why a utility process rather than the main process\"), the main process is what keeps menus, tray, window creation, and native dialogs responsive, and two properties of the sync workload make it a bad host: `node:sqlite` is a synchronous API, so a catch-up batch writing several thousand rows blocks the calling thread for the duration — in main, that's a visible application stall — and FTS search over a large corpus has no useful upper bound on latency. Running the engine in a `utilityProcess` moves that blocking work off the main thread entirely, so the app shell stays responsive no matter how heavy sync or search gets.\n\nA separate process also buys crash isolation and restartability: if the sync engine wedges or throws on a malformed frame, main can respawn it without killing the app or losing the user's windows (see the respawn handler in `apps/desktop/src/main/index.ts:123`). The renderer is excluded for the same structural reasons — a socket there dies on window reload or close, and multiple windows would mean multiple cursors and racing writers against one database — so the `utilityProcess` becomes the single owner of the WebSocket and the SQLite file, with `MessageChannelMain` letting renderers talk to it directly without proxying every read through main."
+}

@@ -1,0 +1,55 @@
+{
+  "id": "why-utility-process",
+  "mode": "inline",
+  "expectUi": false,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 5,
+  "ms": 14966,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 7751,
+    "cache_read_input_tokens": 25484,
+    "output_tokens": 986,
+    "output_tokens_details": {
+      "thinking_tokens": 17
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 7751,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 427,
+        "cache_read_input_tokens": 11009,
+        "cache_creation_input_tokens": 3141,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3141
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.115923,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [],
+  "reply": "Mainly to keep the app responsive. The main process runs menus, the tray, window creation and native dialogs, and the sync engine does work that blocks the thread it runs on. `node:sqlite` is synchronous, so a catch-up batch writing several thousand rows would freeze the whole app while it runs. Full-text search queries over a large corpus have no useful upper bound on latency either. In the main process, both would cause visible stalls. Moved into a `utilityProcess`, they only block the sync engine (`docs/DESIGN.md:306`).\n\nThe second reason is crash isolation. If the engine hangs or throws on a malformed frame, main respawns it after a second without taking down the app or the user's windows (`apps/desktop/src/main/index.ts:122`). It's also a separate choice from putting sync in a renderer, which fails for different reasons. A renderer's socket dies on reload or when the window closes. Chromium also throttles timers in hidden renderers to about one tick per minute, which would stretch a 30s heartbeat past every timeout. A spike in `spikes/electron-verify` measured this: in 16 minutes with the window hidden, the utility process timer drifted 11 ms and the renderer timer was clamped to about 60 s per tick (`docs/DESIGN.md:2585`)."
+}

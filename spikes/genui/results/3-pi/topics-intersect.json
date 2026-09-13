@@ -1,0 +1,20 @@
+{
+  "id": "topics-intersect",
+  "expectUi": false,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 16053,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 1,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [],
+  "reply": "Here's the function from `apps/desktop/src/shared/topics.ts` (lines 79–88):\n\n```ts\nexport function topicsIntersect(subscribed: string, invalidated: string): boolean {\n  if (subscribed === invalidated) return true;\n  const shorter = subscribed.length < invalidated.length ? subscribed : invalidated;\n  const longer = shorter === subscribed ? invalidated : subscribed;\n  // The trailing ':' is load-bearing. Without it a write to 'chat:c_engineering'\n  // wakes everything subscribed to 'chat:c_eng', and the symptom is a pane that\n  // refetches slightly too often — which nobody ever investigates.\n  return longer.startsWith(`${shorter}:`);\n}\n```\n\n**Why the trailing colon matters**\n\nThe function treats topics as segment-delimited (colon-separated, coarse to fine). Two topics intersect when one is a *segment-boundary* prefix of the other. The colon is what enforces the \"on a segment boundary\" part.\n\nWithout it, the check would be a raw string prefix check (`longer.startsWith(shorter)`), and any ID that happens to be a string prefix of another ID would collide:\n\n- A subscription to `chat:c_eng` would be woken by a write to `chat:c_engineering:messages`, because `\"chat:c_engineering:messages\"` starts with `\"chat:c_eng\"` — but `c_eng` and `c_engineering` are *different chats*, not a topic and its facet.\n\nWith `${shorter}:'`, the shorter topic must end at a whole segment. `'chat:c_eng:'` is not a prefix of `'chat:c_engineering:messages'`, so the two chats correctly don't intersect — while `'chat:'` is still a prefix of `'chat:c_eng:messages'`, preserving the bidirectionality the doc comment requires (a `chat` write wakes `chat:<id>` readers and vice versa).\n\nAs the inline comment notes, the failure mode without the colon is subtle: no errors, just panes refetching slightly more than they should — a wasted-query tax that scales with how similarly your IDs are named, and that nobody would ever track down."
+}

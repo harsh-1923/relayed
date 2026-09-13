@@ -1,0 +1,32 @@
+{
+  "model": "kimi-latest",
+  "runs": 14,
+  "usedUiWhenExpected": "6/8",
+  "usedUiWhenNotExpected": "0/4",
+  "blocksTotal": 8,
+  "firstTryValid": "7/8",
+  "runsWithAnInvalidBlock": 1,
+  "repairedInSameTurn": "0/1",
+  "finalValid": "7/8",
+  "errorCodes": ["unknown-component"],
+  "escapingMistakes": 1,
+  "duplicatedAsMarkdownTable": "0/8",
+  "repairProbes": [
+    {
+      "id": "repair-natural",
+      "blocks": 1,
+      "codes": [],
+      "repaired": null,
+      "finalValid": true
+    },
+    {
+      "id": "repair-forced",
+      "blocks": 1,
+      "codes": ["unknown-component"],
+      "repaired": false,
+      "finalValid": false
+    }
+  ],
+  "runsWhereToolArgumentsStreamed": 14,
+  "failedRuns": []
+}

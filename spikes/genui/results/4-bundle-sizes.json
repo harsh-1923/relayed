@@ -1,0 +1,8 @@
+{
+  "dev": 2313101,
+  "guarded": 2313239,
+  "prod": 871096,
+  "reactOnlyProd": 222911,
+  "openuiAddsProdBytes": 648185,
+  "note": "prod includes the spike library, renderers and three result fixtures (~40 KB of JSON)"
+}

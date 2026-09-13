@@ -1,0 +1,66 @@
+{
+  "id": "packages",
+  "variant": "inline-nudged",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 4,
+  "ms": 15429,
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 3028,
+    "cache_read_input_tokens": 31853,
+    "output_tokens": 895,
+    "output_tokens_details": {
+      "thinking_tokens": 121
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3028,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 431,
+        "cache_read_input_tokens": 8877,
+        "cache_creation_input_tokens": 633,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 633
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.0696195,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 775,
+      "source": "root = Card([header, table, note])\nheader = CardHeader(\"Workspace packages\", \"7 packages: 3 apps, 4 libraries\")\ntable = Table([colPkg, colPath, colDeps])\ncolPkg = Col(\"Package\", [\"@relayed/desktop\", \"@relayed/server\", \"@relayed/agent\", \"@relayed/authz\", \"@relayed/icons\", \"@relayed/protocol\", \"@relayed/telemetry\"])\ncolPath = Col(\"Path\", [\"apps/desktop\", \"apps/server\", \"apps/agent\", \"packages/authz\", \"packages/icons\", \"packages/protocol\", \"packages/telemetry\"])\ncolDeps = Col(\"Depends on @relayed/*\", [\"authz, icons, protocol, telemetry\", \"authz, protocol, telemetry\", \"none\", \"none\", \"none\", \"none\", \"none\"])\nnote = Text(\"None of the packages under packages/ depend on another @relayed package, so the internal dependencies only go one way: from apps to packages.\", true)\n",
+      "text": "Workspace packages: 7 packages: 3 apps, 4 libraries\nPackage: @relayed/desktop, Path: apps/desktop, Depends on @relayed/*: authz, icons, protocol, telemetry; Package: @relayed/server, Path: apps/server, Depends on @relayed/*: authz, protocol, telemetry; Package: @relayed/agent, Path: apps/agent, Depends on @relayed/*: none; Package: @relayed/authz, Path: packages/authz, Depends on @relayed/*: none; Package: @relayed/icons, Path: packages/icons, Depends on @relayed/*: none; Package: @relayed/protocol, Path: packages/protocol, Depends on @relayed/*: none; Package: @relayed/telemetry, Path: packages/telemetry, Depends on @relayed/*: none\nNone of the packages under packages/ depend on another @relayed package, so the internal dependencies only go one way: from apps to packages."
+    }
+  ],
+  "reply": "There are 7 workspace packages. All `@relayed/*` dependencies are regular `dependencies` using `workspace:*`. None are listed as devDependencies.\n\n```openui-lang\nroot = Card([header, table, note])\nheader = CardHeader(\"Workspace packages\", \"7 packages: 3 apps, 4 libraries\")\ntable = Table([colPkg, colPath, colDeps])\ncolPkg = Col(\"Package\", [\"@relayed/desktop\", \"@relayed/server\", \"@relayed/agent\", \"@relayed/authz\", \"@relayed/icons\", \"@relayed/protocol\", \"@relayed/telemetry\"])\ncolPath = Col(\"Path\", [\"apps/desktop\", \"apps/server\", \"apps/agent\", \"packages/authz\", \"packages/icons\", \"packages/protocol\", \"packages/telemetry\"])\ncolDeps = Col(\"Depends on @relayed/*\", [\"authz, icons, protocol, telemetry\", \"authz, protocol, telemetry\", \"none\", \"none\", \"none\", \"none\", \"none\"])\nnote = Text(\"None of the packages under packages/ depend on another @relayed package, so the internal dependencies only go one way: from apps to packages.\", true)\n```\n\n`@relayed/agent` doesn't use any internal packages. `@relayed/icons` is used only by the desktop app."
+}

@@ -1,0 +1,64 @@
+{
+  "id": "boundary-rules",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 15961,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 7150,
+    "cache_read_input_tokens": 14471,
+    "output_tokens": 1202,
+    "output_tokens_details": {
+      "thinking_tokens": 57
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 7150,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1114,
+        "cache_read_input_tokens": 8072,
+        "cache_creation_input_tokens": 5477,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 5477
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.1098035,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 2105,
+      "source": "root = Card([header, table, note])\nheader = CardHeader(\"check-boundaries rules\", \"9 rules in tools/check-boundaries.mjs\")\ntable = Table([colId, colDoc, colEnforces])\ncolId = Col(\"Rule\", [\"renderer/no-direct-query\", \"authz/no-role-comparison\", \"telemetry/no-direct-sdk\", \"telemetry/no-interpolated-logs\", \"network/no-ungated-socket\", \"routing/switch-only-in-the-gate\", \"renderer/no-telemetry-sdk\", \"identity/no-layer-1-on-the-client\", \"sync/actor-write-records-directory\"])\ncolDoc = Col(\"Cited doc\", [\"FRONTEND.md §6.3 — components read through the live-query client\", \"AUTHZ.md §7 — every permission check goes through can()\", \"OBSERVABILITY.md §8 — one wrapper package, enforceable by lint rule\", \"OBSERVABILITY.md §6 — structured only; this is the privacy control\", \"STORAGE.md §16.2a — every outbound call passes one gate\", \"FRONTEND.md §4.5 — navigation is the only input to a switch\", \"OBSERVABILITY.md §3 — one SDK, in the utilityProcess\", \"DESIGN.md §6.3 — nothing below Layer 2 references an identity\", \"SYNC-FLOWS.md §9.1 — the directory replicates as workspace-stream events\"])\ncolEnforces = Col(\"What it catches\", [\"Renderer calls .query() directly with a read listed in TOPICS, instead of using useQuery. Allowed in renderer/lib/query/\", \"Roles compared with ==, ===, != or !==. Allowed in packages/authz and server/src/authz\", \"Imports from @opentelemetry/* or pino. Allowed in packages/telemetry\", \"console.* called with a template literal. Allowed in server auth/keygen.ts\", \"A WebSocket or ws opened in the desktop app. Allowed in sync/transport/ and sync/network.ts\", \"'workspace.switch' used in the renderer. Allowed in WorkspaceGate.tsx\", \"Non-type import of @relayed/telemetry in the renderer. No exceptions\", \"identity_id or identity_kind anywhere in the desktop app. No exceptions\", \"Server code that writes to actors must also call recordActor() in the same file. Test files are exempt\"])\nnote = Text(\"The file's header also points to PHASE-1-IDENTITY.md §11a, which explains why the checker exists. That section is not cited by any single rule.\", true)\n",
+      "text": "check-boundaries rules: 9 rules in tools/check-boundaries.mjs\nRule: renderer/no-direct-query, Cited doc: FRONTEND.md §6.3 — components read through the live-query client, What it catches: Renderer calls .query() directly with a read listed in TOPICS, instead of using useQuery. Allowed in renderer/lib/query/; Rule: authz/no-role-comparison, Cited doc: AUTHZ.md §7 — every permission check goes through can(), What it catches: Roles compared with ==, ===, != or !==. Allowed in packages/authz and server/src/authz; Rule: telemetry/no-direct-sdk, Cited doc: OBSERVABILITY.md §8 — one wrapper package, enforceable by lint rule, What it catches: Imports from @opentelemetry/* or pino. Allowed in packages/telemetry; Rule: telemetry/no-interpolated-logs, Cited doc: OBSERVABILITY.md §6 — structured only; this is the privacy control, What it catches: console.* called with a template literal. Allowed in server auth/keygen.ts; Rule: network/no-ungated-socket, Cited doc: STORAGE.md §16.2a — every outbound call passes one gate, What it catches: A WebSocket or ws opened in the desktop app. Allowed in sync/transport/ and sync/network.ts; Rule: routing/switch-only-in-the-gate, Cited doc: FRONTEND.md §4.5 — navigation is the only input to a switch, What it catches: 'workspace.switch' used in the renderer. Allowed in WorkspaceGate.tsx; Rule: renderer/no-telemetry-sdk, Cited doc: OBSERVABILITY.md §3 — one SDK, in the utilityProcess, What it catches: Non-type import of @relayed/telemetry in the renderer. No exceptions; Rule: identity/no-layer-1-on-the-client, Cited doc: DESIGN.md §6.3 — nothing below Layer 2 references an identity, What it catches: identity_id or identity_kind anywhere in the desktop app. No exceptions; Rule: sync/actor-write-records-directory, Cited doc: SYNC-FLOWS.md §9.1 — the directory replicates as workspace-stream events, What it catches: Server code that writes to actors must also call recordActor() in the same file. Test files are exempt\nThe file's header also points to PHASE-1-IDENTITY.md §11a, which explains why the checker exists. That section is not cited by any single rule."
+    }
+  ],
+  "reply": "`tools/check-boundaries.mjs` has 9 rules, starting at `tools/check-boundaries.mjs:47`:\n\n```openui-lang\nroot = Card([header, table, note])\nheader = CardHeader(\"check-boundaries rules\", \"9 rules in tools/check-boundaries.mjs\")\ntable = Table([colId, colDoc, colEnforces])\ncolId = Col(\"Rule\", [\"renderer/no-direct-query\", \"authz/no-role-comparison\", \"telemetry/no-direct-sdk\", \"telemetry/no-interpolated-logs\", \"network/no-ungated-socket\", \"routing/switch-only-in-the-gate\", \"renderer/no-telemetry-sdk\", \"identity/no-layer-1-on-the-client\", \"sync/actor-write-records-directory\"])\ncolDoc = Col(\"Cited doc\", [\"FRONTEND.md §6.3 — components read through the live-query client\", \"AUTHZ.md §7 — every permission check goes through can()\", \"OBSERVABILITY.md §8 — one wrapper package, enforceable by lint rule\", \"OBSERVABILITY.md §6 — structured only; this is the privacy control\", \"STORAGE.md §16.2a — every outbound call passes one gate\", \"FRONTEND.md §4.5 — navigation is the only input to a switch\", \"OBSERVABILITY.md §3 — one SDK, in the utilityProcess\", \"DESIGN.md §6.3 — nothing below Layer 2 references an identity\", \"SYNC-FLOWS.md §9.1 — the directory replicates as workspace-stream events\"])\ncolEnforces = Col(\"What it catches\", [\"Renderer calls .query() directly with a read listed in TOPICS, instead of using useQuery. Allowed in renderer/lib/query/\", \"Roles compared with ==, ===, != or !==. Allowed in packages/authz and server/src/authz\", \"Imports from @opentelemetry/* or pino. Allowed in packages/telemetry\", \"console.* called with a template literal. Allowed in server auth/keygen.ts\", \"A WebSocket or ws opened in the desktop app. Allowed in sync/transport/ and sync/network.ts\", \"'workspace.switch' used in the renderer. Allowed in WorkspaceGate.tsx\", \"Non-type import of @relayed/telemetry in the renderer. No exceptions\", \"identity_id or identity_kind anywhere in the desktop app. No exceptions\", \"Server code that writes to actors must also call recordActor() in the same file. Test files are exempt\"])\nnote = Text(\"The file's header also points to PHASE-1-IDENTITY.md §11a, which explains why the checker exists. That section is not cited by any single rule.\", true)\n```\n\nThe first rule doesn't keep its own list of reads. It gets them from the `TOPICS` block in `apps/desktop/src/renderer/lib/query/catalogue.ts`, and the script throws an error if it can't find that block. The last rule (`sync/actor-write-records-directory`) works differently from the rest: instead of banning a pattern, it fails when a write to `actors` appears in a file with no matching `recordActor()` call."
+}

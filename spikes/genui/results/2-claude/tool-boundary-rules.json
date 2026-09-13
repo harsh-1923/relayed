@@ -1,0 +1,64 @@
+{
+  "id": "boundary-rules",
+  "mode": "tool",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 20248,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 946,
+    "cache_read_input_tokens": 35872,
+    "output_tokens": 1625,
+    "output_tokens_details": {
+      "thinking_tokens": 141
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 946,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 631,
+        "cache_read_input_tokens": 13783,
+        "cache_creation_input_tokens": 946,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 946
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.069039,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 107,
+  "streamSnapshots": 107,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1676,
+      "source": "root = Card([header, table, note])\nheader = CardHeader(\"Boundary rules\", \"tools/check-boundaries.mjs: 9 rules\")\ntable = Table([colId, colDoc, colScope])\ncolId = Col(\"Rule\", [\"renderer/no-direct-query\", \"authz/no-role-comparison\", \"telemetry/no-direct-sdk\", \"telemetry/no-interpolated-logs\", \"network/no-ungated-socket\", \"routing/switch-only-in-the-gate\", \"renderer/no-telemetry-sdk\", \"identity/no-layer-1-on-the-client\", \"sync/actor-write-records-directory\"])\ncolDoc = Col(\"Cites\", [\"FRONTEND.md §6.3: components read through the live-query client\", \"AUTHZ.md §7: every permission check goes through can()\", \"OBSERVABILITY.md §8: one wrapper package, enforceable by lint rule\", \"OBSERVABILITY.md §6: structured only; this is the privacy control\", \"STORAGE.md §16.2a: every outbound call passes one gate\", \"FRONTEND.md §4.5: navigation is the only input to a switch\", \"OBSERVABILITY.md §3: one SDK, in the utilityProcess\", \"DESIGN.md §6.3: nothing below Layer 2 references an identity\", \"SYNC-FLOWS.md §9.1: the directory replicates as workspace-stream events\"])\ncolScope = Col(\"Scope / exemptions\", [\"desktop renderer; allows lib/query/\", \"all sources; allows packages/authz/, server src/authz/\", \"all sources; allows packages/telemetry/\", \"all sources; allows server auth/keygen.ts\", \"desktop only; allows sync/transport/, sync/network.ts\", \"desktop renderer; allows app/WorkspaceGate.tsx\", \"desktop renderer; no exemptions\", \"desktop only; no exemptions\", \"server src; skips *.test.ts; requires recordActor() in same file\"])\nnote = Text(\"The file header also points to PHASE-1-IDENTITY.md §11a as the reason the checker exists. That is not a rule citation.\", true)",
+      "text": "Boundary rules: tools/check-boundaries.mjs: 9 rules\nRule: renderer/no-direct-query, Cites: FRONTEND.md §6.3: components read through the live-query client, Scope / exemptions: desktop renderer; allows lib/query/; Rule: authz/no-role-comparison, Cites: AUTHZ.md §7: every permission check goes through can(), Scope / exemptions: all sources; allows packages/authz/, server src/authz/; Rule: telemetry/no-direct-sdk, Cites: OBSERVABILITY.md §8: one wrapper package, enforceable by lint rule, Scope / exemptions: all sources; allows packages/telemetry/; Rule: telemetry/no-interpolated-logs, Cites: OBSERVABILITY.md §6: structured only; this is the privacy control, Scope / exemptions: all sources; allows server auth/keygen.ts; Rule: network/no-ungated-socket, Cites: STORAGE.md §16.2a: every outbound call passes one gate, Scope / exemptions: desktop only; allows sync/transport/, sync/network.ts; Rule: routing/switch-only-in-the-gate, Cites: FRONTEND.md §4.5: navigation is the only input to a switch, Scope / exemptions: desktop renderer; allows app/WorkspaceGate.tsx; Rule: renderer/no-telemetry-sdk, Cites: OBSERVABILITY.md §3: one SDK, in the utilityProcess, Scope / exemptions: desktop renderer; no exemptions; Rule: identity/no-layer-1-on-the-client, Cites: DESIGN.md §6.3: nothing below Layer 2 references an identity, Scope / exemptions: desktop only; no exemptions; Rule: sync/actor-write-records-directory, Cites: SYNC-FLOWS.md §9.1: the directory replicates as workspace-stream events, Scope / exemptions: server src; skips *.test.ts; requires recordActor() in same file\nThe file header also points to PHASE-1-IDENTITY.md §11a as the reason the checker exists. That is not a rule citation."
+    }
+  ],
+  "reply": "There are 9 rules in `tools/check-boundaries.mjs:47`:\n\n| # | Rule | Doc it cites |\n|---|------|--------------|\n| 1 | `renderer/no-direct-query` | FRONTEND.md §6.3: components read through the live-query client |\n| 2 | `authz/no-role-comparison` | AUTHZ.md §7: every permission check goes through can() |\n| 3 | `telemetry/no-direct-sdk` | OBSERVABILITY.md §8: one wrapper package, enforceable by lint rule |\n| 4 | `telemetry/no-interpolated-logs` | OBSERVABILITY.md §6: structured only; this is the privacy control |\n| 5 | `network/no-ungated-socket` | STORAGE.md §16.2a: every outbound call passes one gate |\n| 6 | `routing/switch-only-in-the-gate` | FRONTEND.md §4.5: navigation is the only input to a switch |\n| 7 | `renderer/no-telemetry-sdk` | OBSERVABILITY.md §3: one SDK, in the utilityProcess |\n| 8 | `identity/no-layer-1-on-the-client` | DESIGN.md §6.3: nothing below Layer 2 references an identity |\n| 9 | `sync/actor-write-records-directory` | SYNC-FLOWS.md §9.1: the directory replicates as workspace-stream events |\n\n- **Other doc references:** Two more docs are mentioned but aren't rule citations. The file's header cites PHASE-1-IDENTITY.md §11a as the reason the checker exists. DESIGN.md §13.9 appears inside the explanation for rule 7.\n- **Rule 9 works differently:** Instead of banning a pattern, it requires something. Any file that writes to `actors` must also call `recordActor()` somewhere in the same file."
+}

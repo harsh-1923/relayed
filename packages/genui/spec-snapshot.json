@@ -1,0 +1,208 @@
+{
+  "Card": [
+    {
+      "prop": "children",
+      "type": "array",
+      "required": true
+    }
+  ],
+  "CardHeader": [
+    {
+      "prop": "title",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "subtitle",
+      "type": "string",
+      "required": false
+    }
+  ],
+  "Text": [
+    {
+      "prop": "text",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "muted",
+      "type": "boolean",
+      "required": false
+    }
+  ],
+  "Stat": [
+    {
+      "prop": "label",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "value",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "tone",
+      "type": "string",
+      "required": false,
+      "enum": ["neutral", "success", "warning", "danger"]
+    }
+  ],
+  "Badge": [
+    {
+      "prop": "text",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "tone",
+      "type": "string",
+      "required": false,
+      "enum": ["neutral", "success", "warning", "danger"]
+    }
+  ],
+  "Table": [
+    {
+      "prop": "columns",
+      "type": "array",
+      "required": true
+    }
+  ],
+  "Col": [
+    {
+      "prop": "label",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "values",
+      "type": "array",
+      "required": true
+    }
+  ],
+  "List": [
+    {
+      "prop": "items",
+      "type": "array",
+      "required": true
+    },
+    {
+      "prop": "ordered",
+      "type": "boolean",
+      "required": false
+    }
+  ],
+  "Callout": [
+    {
+      "prop": "tone",
+      "type": "string",
+      "required": true,
+      "enum": ["neutral", "success", "warning", "danger"]
+    },
+    {
+      "prop": "title",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "text",
+      "type": "string",
+      "required": false
+    }
+  ],
+  "FileRef": [
+    {
+      "prop": "path",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "line",
+      "type": "number",
+      "required": false
+    },
+    {
+      "prop": "note",
+      "type": "string",
+      "required": false
+    }
+  ],
+  "BarChart": [
+    {
+      "prop": "labels",
+      "type": "array",
+      "required": true
+    },
+    {
+      "prop": "series",
+      "type": "array",
+      "required": true
+    },
+    {
+      "prop": "unit",
+      "type": "string",
+      "required": false
+    }
+  ],
+  "Series": [
+    {
+      "prop": "name",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "values",
+      "type": "array",
+      "required": true
+    }
+  ],
+  "Actions": [
+    {
+      "prop": "items",
+      "type": "array",
+      "required": true
+    }
+  ],
+  "Reply": [
+    {
+      "prop": "label",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "message",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "primary",
+      "type": "boolean",
+      "required": false
+    }
+  ],
+  "Link": [
+    {
+      "prop": "label",
+      "type": "string",
+      "required": true
+    },
+    {
+      "prop": "url",
+      "type": "string",
+      "required": true
+    }
+  ],
+  "Stack": [
+    {
+      "prop": "children",
+      "type": "array",
+      "required": true
+    },
+    {
+      "prop": "direction",
+      "type": "string",
+      "required": false,
+      "enum": ["row", "column"]
+    }
+  ]
+}

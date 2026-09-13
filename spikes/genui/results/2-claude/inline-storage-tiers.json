@@ -1,0 +1,64 @@
+{
+  "id": "storage-tiers",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 23235,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 18453,
+    "cache_read_input_tokens": 14478,
+    "output_tokens": 1655,
+    "output_tokens_details": {
+      "thinking_tokens": 478
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 18453,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1570,
+        "cache_read_input_tokens": 8079,
+        "cache_creation_input_tokens": 16773,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 16773
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.23415999999999998,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1563,
+      "source": "root = Card([header, table, note])\nheader = CardHeader(\"Storage tiers\", \"docs/STORAGE.md §4, §5, §7, §13, §14\")\ntable = Table([colTier, colPath, colHolds, colDeleted])\ncolTier = Col(\"Tier\", [\"Install\", \"Account\", \"Workspace\"])\ncolPath = Col(\"Location\", [\"userData/install-id\", \"userData/accounts/acc_…/\", \"accounts/acc_…/workspaces/wsp_…/ + auth/refresh-wsp_….bin\"])\ncolHolds = Col(\"What lives there\", [\"install-id only, for telemetry and crash reports. Never put in a token.\", \"account.db: device_id, last_workspace, last_active_at, epoch, and a cached row per workspace (name, avatar, your actor/handle, unread/mention/outbox hints, state). Also blobs/ for avatars.\", \"relayed.db: cursors, staged_events, has_gap, last_read_ord, unread counters, outbox, drafts. Also blobs/ for message attachments, plus one encrypted refresh token per workspace.\"])\ncolDeleted = Col(\"When deleted\", [\"Never. No flow in the doc removes it.\", \"When you sign out of the account: POST /auth/signout for each refresh token, then rm -rf accounts/<acc_id>. The DB, blobs and tokens all go in one step.\", \"When you're removed from the workspace: the replica and its blobs are deleted and the token file is cleared. The account.db row stays, with state='removed'.\"])\nnote = Callout(\"neutral\", \"Nothing is deleted when you switch or when a token expires\", \"Switching closes the socket and drops the in-memory access token, but the refresh token file and the server session stay. If a token expires or refresh fails, the state becomes 'stale' and local reads keep working.\")\n",
+      "text": "Storage tiers: docs/STORAGE.md §4, §5, §7, §13, §14\nTier: Install, Location: userData/install-id, What lives there: install-id only, for telemetry and crash reports. Never put in a token., When deleted: Never. No flow in the doc removes it.; Tier: Account, Location: userData/accounts/acc_…/, What lives there: account.db: device_id, last_workspace, last_active_at, epoch, and a cached row per workspace (name, avatar, your actor/handle, unread/mention/outbox hints, state). Also blobs/ for avatars., When deleted: When you sign out of the account: POST /auth/signout for each refresh token, then rm -rf accounts/<acc_id>. The DB, blobs and tokens all go in one step.; Tier: Workspace, Location: accounts/acc_…/workspaces/wsp_…/ + auth/refresh-wsp_….bin, What lives there: relayed.db: cursors, staged_events, has_gap, last_read_ord, unread counters, outbox, drafts. Also blobs/ for message attachments, plus one encrypted refresh token per workspace., When deleted: When you're removed from the workspace: the replica and its blobs are deleted and the token file is cleared. The account.db row stays, with state='removed'.\nNothing is deleted when you switch or when a token expires: Switching closes the socket and drops the in-memory access token, but the refresh token file and the server session stay. If a token expires or refresh fails, the state becomes 'stale' and local reads keep working."
+    }
+  ],
+  "reply": "The doc defines three tiers (§4): **install → account → workspace**. Each tier nests inside the one above, and deleting a tier takes everything below it.\n\n```openui-lang\nroot = Card([header, table, note])\nheader = CardHeader(\"Storage tiers\", \"docs/STORAGE.md §4, §5, §7, §13, §14\")\ntable = Table([colTier, colPath, colHolds, colDeleted])\ncolTier = Col(\"Tier\", [\"Install\", \"Account\", \"Workspace\"])\ncolPath = Col(\"Location\", [\"userData/install-id\", \"userData/accounts/acc_…/\", \"accounts/acc_…/workspaces/wsp_…/ + auth/refresh-wsp_….bin\"])\ncolHolds = Col(\"What lives there\", [\"install-id only, for telemetry and crash reports. Never put in a token.\", \"account.db: device_id, last_workspace, last_active_at, epoch, and a cached row per workspace (name, avatar, your actor/handle, unread/mention/outbox hints, state). Also blobs/ for avatars.\", \"relayed.db: cursors, staged_events, has_gap, last_read_ord, unread counters, outbox, drafts. Also blobs/ for message attachments, plus one encrypted refresh token per workspace.\"])\ncolDeleted = Col(\"When deleted\", [\"Never. No flow in the doc removes it.\", \"When you sign out of the account: POST /auth/signout for each refresh token, then rm -rf accounts/<acc_id>. The DB, blobs and tokens all go in one step.\", \"When you're removed from the workspace: the replica and its blobs are deleted and the token file is cleared. The account.db row stays, with state='removed'.\"])\nnote = Callout(\"neutral\", \"Nothing is deleted when you switch or when a token expires\", \"Switching closes the socket and drops the in-memory access token, but the refresh token file and the server session stay. If a token expires or refresh fails, the state becomes 'stale' and local reads keep working.\")\n```\n\n**Why it's split this way:**\n- **Sign-out is one directory delete.** Everything for an account sits under one folder, so you can't end up with half of it deleted (§2 goal 4, §13).\n- **Cursors never leave the workspace replica.** Every stream belongs to exactly one workspace. The only data that crosses workspaces is the rough activity hints in `account.db` (§7).\n- **The outbox stays in the workspace replica, not `account.db`.** That way a message and its on-screen echo are written in one transaction (invariant 40).\n- **Avatars are stored per account, attachments per workspace.** The switcher rail shows avatars for workspaces you're not in. Attachments are cleaned up along with their messages, which happens per workspace (§14).\n\n**Three places where the doc contradicts itself:**\n- The §5 directory layout doesn't show `accounts/<acc>/blobs/`, but §14 puts avatars there.\n- Open question 1 in §20 asks whether account-level blobs are needed. §14 says it already settled that, so the question is out of date.\n- §13 sets `state='stale'`, but the `workspaces.state` check in §6 only allows `'active'` and `'removed'`. \"Stale\" probably means the session state from §13.1, not that column, but the doc doesn't say."
+}

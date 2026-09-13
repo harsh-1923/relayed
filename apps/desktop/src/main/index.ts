@@ -2,7 +2,7 @@
 // handshake. Deliberately thin — it does NOT own the database or the socket
 // (DESIGN.md §5).
 import {
-  app, BrowserWindow, ipcMain, nativeTheme, powerMonitor, shell, utilityProcess,
+  app, BrowserWindow, dialog, ipcMain, nativeTheme, powerMonitor, shell, utilityProcess,
   MessageChannelMain,
 } from 'electron';
 import { dirname, join } from 'node:path';
@@ -97,6 +97,7 @@ if (!app.isPackaged) {
   }
 }
 let syncProcess: Electron.UtilityProcess | null = null;
+let runnerProcess: Electron.UtilityProcess | null = null;
 
 function startSyncEngine(): Electron.UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'sync.js'), [], {
@@ -124,7 +125,65 @@ function startSyncEngine(): Electron.UtilityProcess {
     // taking the app or the user's windows with it.
     if (code !== 0) setTimeout(() => { syncProcess = startSyncEngine(); }, 1000);
   });
+  // A new sync engine has no port to the runner; a spawned child is the moment
+  // it can take one.
+  child.once('spawn', connectRunner);
   return child;
+}
+
+/**
+ * The agent runner: the one process that talks to the person's Claude Code
+ * (LOCAL-ROOMS.md §5). No database, no vault, no credential — it is given a
+ * port to the sync engine and nothing else.
+ *
+ * Its environment is main's, and main's includes the development `.env`. That
+ * is safe only because nothing reaches a Claude Code child except through
+ * `claudeEnv`, which passes a short named list and nothing more.
+ */
+let runnerRestarts = 0;
+
+function startAgentRunner(): Electron.UtilityProcess | null {
+  const entry = join(__dirname, 'agent-runner.js');
+  // Absent when a running `electron-vite dev` predates the entry being added to
+  // its config, which it reads once at start. Said once rather than retried:
+  // forking a missing file fails the same way every second, for ever.
+  if (!existsSync(entry)) {
+    console.warn('[main] no agent-runner.js in this build — restart `pnpm dev` to build it');
+    return null;
+  }
+  const child = utilityProcess.fork(entry, [], {
+    serviceName: 'Relayed agent runner',
+    stdio: 'inherit',
+  });
+  child.once('spawn', () => {
+    connectRunner();
+    // Healthy for a while means a later crash starts the backoff afresh.
+    setTimeout(() => { if (runnerProcess === child) runnerRestarts = 0; }, 60_000).unref();
+  });
+  child.on('exit', (code) => {
+    if (runnerProcess === child) runnerProcess = null;
+    if (code === 0) return;
+    // Its Claude Code children die with it. That is survivable by design: a
+    // conversation is resumed by session id, not by keeping a process alive.
+    // Backed off, because a runner that crashes on start would otherwise spin.
+    const delay = Math.min(1000 * 2 ** runnerRestarts++, 60_000);
+    setTimeout(() => { runnerProcess = startAgentRunner(); }, delay).unref();
+  });
+  return child;
+}
+
+/**
+ * A fresh channel between the sync engine and the runner.
+ *
+ * Called when either one spawns, so a restart of either gets a working pair
+ * again without the other noticing anything but a replaced port. Main brokers
+ * it and is then out of the path, as it is for the renderer.
+ */
+function connectRunner(): void {
+  if (!syncProcess?.pid || !runnerProcess?.pid) return;
+  const { port1, port2 } = new MessageChannelMain();
+  runnerProcess.postMessage({ type: 'attach' }, [port1]);
+  syncProcess.postMessage({ type: 'runner:attach' }, [port2]);
 }
 
 function createWindow(): BrowserWindow {
@@ -264,6 +323,7 @@ app.whenReady().then(() => {
 
   handleBlobProtocol();
   syncProcess = startSyncEngine();
+  runnerProcess = startAgentRunner();
 
   onDeepLink((url) => {
     // Phase 1: the OAuth callback. Forwarded to the sync process, which owns
@@ -335,6 +395,18 @@ app.whenReady().then(() => {
           msg.source === 'dark' || msg.source === 'light' ? msg.source : 'system';
         reply(null);
         break;
+      // The folder a local room is about (LOCAL-ROOMS.md §7). Always chosen by
+      // the person, so this is the only way a directory enters one.
+      case 'dialog:folder': {
+        const [win] = BrowserWindow.getAllWindows();
+        const options: Electron.OpenDialogOptions = {
+          title: 'Choose a folder for this room', properties: ['openDirectory', 'createDirectory'],
+        };
+        void (win ? dialog.showOpenDialog(win, options) : dialog.showOpenDialog(options))
+          .then(result => reply(result.canceled ? null : (result.filePaths[0] ?? null)))
+          .catch(() => reply(null));
+        break;
+      }
       case 'browser:open':
         // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
         // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).

@@ -4,6 +4,10 @@ packages:
 
 allowBuilds:
   '@google/genai': false
+  # Its postinstall reports install telemetry to a vendor endpoint. Denied by
+  # name rather than left to the default, so the decision is visible
+  # (docs/AGENT-RESPONSES.md, rules for rooms).
+  '@openuidev/lang-core': false
   esbuild: true
   protobufjs: false
 

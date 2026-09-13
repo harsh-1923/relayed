@@ -1,0 +1,375 @@
+{
+  "Card": [
+    {
+      "prop": "children",
+      "schema": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardHeader"
+            },
+            {
+              "$ref": "#/$defs/Text"
+            },
+            {
+              "$ref": "#/$defs/Stat"
+            },
+            {
+              "$ref": "#/$defs/Badge"
+            },
+            {
+              "$ref": "#/$defs/Table"
+            },
+            {
+              "$ref": "#/$defs/List"
+            },
+            {
+              "$ref": "#/$defs/Callout"
+            },
+            {
+              "$ref": "#/$defs/FileRef"
+            },
+            {
+              "$ref": "#/$defs/BarChart"
+            },
+            {
+              "$ref": "#/$defs/Actions"
+            },
+            {
+              "$ref": "#/$defs/Stack"
+            }
+          ]
+        }
+      },
+      "required": true
+    }
+  ],
+  "CardHeader": [
+    {
+      "prop": "title",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "subtitle",
+      "schema": {
+        "type": "string"
+      },
+      "required": false
+    }
+  ],
+  "Text": [
+    {
+      "prop": "text",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "muted",
+      "schema": {
+        "type": "boolean"
+      },
+      "required": false
+    }
+  ],
+  "Stat": [
+    {
+      "prop": "label",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "value",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "tone",
+      "schema": {
+        "type": "string",
+        "enum": ["neutral", "success", "warning", "danger"]
+      },
+      "required": false
+    }
+  ],
+  "Badge": [
+    {
+      "prop": "text",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "tone",
+      "schema": {
+        "type": "string",
+        "enum": ["neutral", "success", "warning", "danger"]
+      },
+      "required": false
+    }
+  ],
+  "Table": [
+    {
+      "prop": "columns",
+      "schema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Col"
+        }
+      },
+      "required": true
+    }
+  ],
+  "Col": [
+    {
+      "prop": "label",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "values",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "required": true
+    }
+  ],
+  "List": [
+    {
+      "prop": "items",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "required": true
+    },
+    {
+      "prop": "ordered",
+      "schema": {
+        "type": "boolean"
+      },
+      "required": false
+    }
+  ],
+  "Callout": [
+    {
+      "prop": "tone",
+      "schema": {
+        "type": "string",
+        "enum": ["neutral", "success", "warning", "danger"]
+      },
+      "required": true
+    },
+    {
+      "prop": "title",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "text",
+      "schema": {
+        "type": "string"
+      },
+      "required": false
+    }
+  ],
+  "FileRef": [
+    {
+      "prop": "path",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "line",
+      "schema": {
+        "type": "number"
+      },
+      "required": false
+    },
+    {
+      "prop": "note",
+      "schema": {
+        "type": "string"
+      },
+      "required": false
+    }
+  ],
+  "BarChart": [
+    {
+      "prop": "labels",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "required": true
+    },
+    {
+      "prop": "series",
+      "schema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/Series"
+        }
+      },
+      "required": true
+    },
+    {
+      "prop": "unit",
+      "schema": {
+        "type": "string"
+      },
+      "required": false
+    }
+  ],
+  "Series": [
+    {
+      "prop": "name",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "values",
+      "schema": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "required": true
+    }
+  ],
+  "Actions": [
+    {
+      "prop": "items",
+      "schema": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reply"
+            },
+            {
+              "$ref": "#/$defs/Link"
+            }
+          ]
+        }
+      },
+      "required": true
+    }
+  ],
+  "Reply": [
+    {
+      "prop": "label",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "message",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "primary",
+      "schema": {
+        "type": "boolean"
+      },
+      "required": false
+    }
+  ],
+  "Link": [
+    {
+      "prop": "label",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    },
+    {
+      "prop": "url",
+      "schema": {
+        "type": "string"
+      },
+      "required": true
+    }
+  ],
+  "Stack": [
+    {
+      "prop": "children",
+      "schema": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardHeader"
+            },
+            {
+              "$ref": "#/$defs/Text"
+            },
+            {
+              "$ref": "#/$defs/Stat"
+            },
+            {
+              "$ref": "#/$defs/Badge"
+            },
+            {
+              "$ref": "#/$defs/Table"
+            },
+            {
+              "$ref": "#/$defs/List"
+            },
+            {
+              "$ref": "#/$defs/Callout"
+            },
+            {
+              "$ref": "#/$defs/FileRef"
+            },
+            {
+              "$ref": "#/$defs/BarChart"
+            },
+            {
+              "$ref": "#/$defs/Actions"
+            }
+          ]
+        }
+      },
+      "required": true
+    },
+    {
+      "prop": "direction",
+      "schema": {
+        "type": "string",
+        "enum": ["row", "column"]
+      },
+      "required": false
+    }
+  ]
+}

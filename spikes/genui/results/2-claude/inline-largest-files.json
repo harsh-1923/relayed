@@ -1,0 +1,55 @@
+{
+  "id": "largest-files",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 11971,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 3103,
+    "cache_read_input_tokens": 14476,
+    "output_tokens": 795,
+    "output_tokens_details": {
+      "thinking_tokens": 336
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3103,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 493,
+        "cache_read_input_tokens": 8077,
+        "cache_creation_input_tokens": 1425,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1425
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.059184,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [],
+  "reply": "The six largest `.ts` files in `apps/desktop/src/sync`, counting subfolders too:\n\n| # | File | Lines |\n|---|------|------:|\n| 1 | `storage.ts` | 1103 |\n| 2 | `index.ts` | 857 |\n| 3 | `storage.test.ts` | 701 |\n| 4 | `trace.test.ts` | 627 |\n| 5 | `transport/connection.test.ts` | 619 |\n| 6 | `catchup.test.ts` | 610 |\n\nIf you only count files directly in `sync/`, `transport/connection.test.ts` drops out and `link.ts` (572) comes in at #6.\n\nFour of the six are test files. The largest non-test files after `storage.ts` and `index.ts` are `link.ts` (572) and `transport/connection.ts` (520)."
+}

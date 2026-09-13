@@ -1,0 +1,23 @@
+{
+  "name": "@relayed/genui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test src/",
+    "typecheck": "tsc --noEmit",
+    "snapshot": "node src/snapshot.ts"
+  },
+  "dependencies": {
+    "@openuidev/lang-core": "0.2.18",
+    "@relayed/protocol": "workspace:*",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -48,6 +48,23 @@ export const topic = {
   spaces: (): string => 'spaces',
   /** Everything a person has chosen. What `prefs.list` reads. */
   prefs: (): string => 'prefs',
+  /** The person's own Claude Code: installed, signed in, who as (LOCAL-ROOMS.md §3.2). */
+  claude: (): string => 'claude',
+  /**
+   * Local rooms, under their own root (LOCAL-ROOMS.md §7). Not `space:` or
+   * `chat:`: a local room is not in the replica, and a workspace switch — which
+   * wakes every replica read — must not tear down a chat Claude is writing in.
+   */
+  localRooms: (): string => 'local:rooms',
+  localMessages: (chatId: string): string => `local:chat:${chatId}:messages`,
+  /** Every local room's slash commands. One topic: lists change rarely, and a read is a map lookup. */
+  localCommands: (): string => 'local:commands',
+  /** What Claude Code is waiting on the person for in one local chat. */
+  localApprovals: (chatId: string): string => `local:chat:${chatId}:approvals`,
+  /** One workspace chat's locally authored draft. */
+  draft: (chatId: string): string => `chat:${chatId}:draft`,
+  /** One local-room chat's locally authored draft. */
+  localDraft: (chatId: string): string => `local:chat:${chatId}:draft`,
   /**
    * One preference.
    *

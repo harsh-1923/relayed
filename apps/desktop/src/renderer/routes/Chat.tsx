@@ -12,31 +12,54 @@
 // `effects.ts` is what makes the second one land on the first rather than beside
 // it; here it means a message never jumps or duplicates as it is acknowledged.
 //
+// ONE VIEW, TWO SCOPES (LOCAL-ROOMS.md §11). A local room's chat is read and
+// written through the local store instead of the replica, and the rows are the
+// same shape, so the difference is which read and which send — named once, in
+// SCOPES below; the composer owns the matching draft and send operations.
+//
 // SCROLLING IS THE SCROLLER'S, not ours. A first version used an overflow div
 // and a `scrollIntoView` on a ref, which is the hand-rolled stick-to-bottom the
 // primitive exists to replace — it does the anchoring, the position restore and
 // the jump-to-latest, and it yields the moment somebody scrolls up.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@/lib/query';
-import { call } from '@/lib/ipc';
 import { useSession } from '@/app/state';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import {
   MessageScroller, MessageScrollerButton, MessageScrollerContent,
   MessageScrollerProvider, MessageScrollerViewport, useMessageScroller,
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller';
 import { ChatBubble } from '@/features/chat/ChatBubble';
-import { SendPlaneHorizontal } from '@relayed/icons';
+import { MessageComposer } from '@/features/chat/composer/MessageComposer';
+import { Approvals } from '@/features/local-rooms/Approvals';
+import { LocalRoomHeader } from '@/features/local-rooms/LocalRoomHeader';
+import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
+import { RoomModePicker } from '@/features/local-rooms/RoomModePicker';
+import { useRoomSlashCommands } from '@/features/local-rooms/useRoomSlashCommands';
 
-export function Chat() {
+type Scope = 'workspace' | 'local';
+
+/** The message read selected by the route's storage scope. */
+const SCOPES = {
+  workspace: { list: 'messages.list', empty: 'Nothing here yet. Say something — it is written to this device first.' },
+  local: { list: 'local.messages.list', empty: 'Ask Claude anything about this folder. It runs as your own Claude Code, here on this Mac.' },
+} as const;
+
+export function Chat({ scope = 'workspace' }: { scope?: Scope }) {
   const { chatId } = useParams();
   const { state } = useSession();
-  const me = state.workspaces.find(w => w.workspaceId === state.workspaceId)?.actorId;
+  const me = scope === 'local'
+    ? 'act_local_me'
+    : state.workspaces.find(w => w.workspaceId === state.workspaceId)?.actorId;
 
-  const { rows: messages, status } = useQuery('messages.list', { chatId: chatId ?? '' });
+  // Both reads take `{ chatId }` and return the same rows; the cast names one of
+  // them for the type checker, which cannot follow a key chosen at runtime.
+  const { rows: messages, status } = useQuery(SCOPES[scope].list as 'messages.list', { chatId: chatId ?? '' });
+  const replying = (messages ?? []).some(message => message.state === 'streaming');
+  // The replies paused on the person. Always read, for one hook order in both
+  // scopes; a workspace chat has no local approvals and gets none.
+  const { rows: approvals } = useQuery('local.approvals.list', { chatId: scope === 'local' ? chatId ?? '' : '' });
 
   return (
     // Fills the pane. The shell pads nothing — a route opts into padding by
@@ -45,6 +68,7 @@ export function Chat() {
     // `-m-10` and pinned itself to `h-svh`, which is a layout arguing with
     // itself and was wrong by the height of the top bar the moment one existed.
     <div className="flex min-h-0 flex-1 flex-col">
+      {scope === 'local' && chatId && <LocalRoomHeader chatId={chatId} />}
       <MessageScrollerProvider
         autoScroll
         defaultScrollPosition="end"
@@ -53,14 +77,14 @@ export function Chat() {
         <FollowAtLiveEdge />
         <MessageScroller>
           <MessageScrollerViewport>
-            <MessageScrollerContent className="p-6">
+            {/* One reading column: on a wide window, turns stay near each other
+                instead of pinned to opposite edges. The composer shares it. */}
+            <MessageScrollerContent className="mx-auto w-full max-w-4xl p-6">
               {status === 'loading' && (
                 <p className="text-sm text-muted-foreground">Reading…</p>
               )}
               {status === 'empty' && (
-                <p className="text-sm text-muted-foreground">
-                  Nothing here yet. Say something — it is written to this device first.
-                </p>
+                <p className="text-sm text-muted-foreground">{SCOPES[scope].empty}</p>
               )}
 
               {(messages ?? []).map((message, index, allMessages) => {
@@ -74,15 +98,19 @@ export function Chat() {
                     mine={mine}
                     startsGroup={previousMessage?.authorId !== message.authorId}
                     endsGroup={nextMessage?.authorId !== message.authorId}
+                    waiting={approvals?.some(approval => approval.messageId === message.id) ?? false}
                   />
                 );
               })}
+
+              {/* What a paused reply is waiting on, where the reply is. */}
+              {scope === 'local' && chatId && <Approvals chatId={chatId} />}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />
         </MessageScroller>
 
-        <Composer chatId={chatId} />
+        <ComposerAtLiveEdge chatId={chatId} scope={scope} replying={replying} />
       </MessageScrollerProvider>
     </div>
   );
@@ -102,59 +130,23 @@ function FollowAtLiveEdge() {
   return null;
 }
 
-function Composer({ chatId }: { chatId: string | undefined }) {
-  const [body, setBody] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const box = useRef<HTMLTextAreaElement>(null);
+function ComposerAtLiveEdge(props: { chatId: string | undefined; scope: Scope; replying: boolean }) {
   const { scrollToEnd } = useMessageScroller();
-
-  async function send() {
-    const text = body.trim();
-    if (!chatId || text.length === 0) return;
-    // CLEARED FIRST, deliberately. The write is local and the invalidation
-    // repaints from the replica, so the optimistic row appears either way —
-    // and a box that empties only after a round trip feels broken offline,
-    // which is precisely when it must not.
-    setBody('');
-    setError(null);
-    try {
-      await call(api => api.query('messages.send', { chatId, body: text }));
-      // Sending expresses an intent to return to the live conversation even
-      // when the reader had previously scrolled into history. The local write
-      // resolves before its live-query repaint, and scrollToEnd also re-engages
-      // auto-follow for that incoming optimistic row.
-      scrollToEnd({ behavior: 'smooth' });
-    } catch (e) {
-      // Put it back rather than lose it. A failure here is the queue refusing,
-      // not the network — nothing about sending waits on a socket.
-      setBody(text);
-      setError((e as Error).message);
-    }
-    box.current?.focus();
-  }
-
+  const { chatId, scope } = props;
+  const local = scope === 'local' && chatId ? chatId : undefined;
+  // Open from the model button, or from /model and /effort in the composer.
+  const [modelMenu, setModelMenu] = useState(false);
+  const openModelMenu = useCallback(() => setModelMenu(true), []);
+  const slash = useRoomSlashCommands(local, openModelMenu);
   return (
-    <div className="shrink-0 border-t border-border/60 p-4">
-      {error && <p className="pb-2 text-sm text-destructive">{error}</p>}
-      <div className="flex items-end gap-2">
-        <Textarea
-          ref={box}
-          value={body}
-          onChange={e => setBody(e.target.value)}
-          // Return sends, shift-return is a newline. The chat convention, and
-          // the reason the composer is a textarea rather than an input.
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
-          }}
-          placeholder="Message"
-          className="max-h-40 min-h-10 resize-none"
-          rows={1}
-        />
-        <Button size="icon" onClick={() => void send()} disabled={body.trim().length === 0}>
-          <SendPlaneHorizontal className="size-4" />
-          <span className="sr-only">Send</span>
-        </Button>
-      </div>
-    </div>
+    <MessageComposer
+      {...props}
+      onSent={() => scrollToEnd({ behavior: 'smooth' })}
+      approvalControl={local ? className => <RoomModePicker chatId={local} className={className} /> : undefined}
+      modelControl={local
+        ? className => <RoomModelPicker chatId={local} className={className} open={modelMenu} onOpenChange={setModelMenu} />
+        : undefined}
+      {...(slash ? { slash } : {})}
+    />
   );
 }

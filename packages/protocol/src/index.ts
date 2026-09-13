@@ -4,3 +4,4 @@
 // client's, and neither's to reinterpret — the same split that keeps `can()`
 // shared while loading grants stays local to each side.
 export * from './frames.ts';
+export * from './parts.ts';

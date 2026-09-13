@@ -76,11 +76,20 @@ const report: RegistryReport = {
  * dynamically — which is exactly the call `renderer/no-direct-query` exists to
  * keep confined here.
  */
-const registry: Registry = createRegistry(
+const registry: Registry = (import.meta.hot?.data['registry'] as Registry | undefined) ?? createRegistry(
   (name, args) =>
     call(api => (api.query as (op: string, params?: unknown) => Promise<unknown>)(name, args)),
   report,
 );
+
+// ONE REGISTRY ACROSS HOT RELOADS, development only. Editing this module or the
+// catalogue re-runs it, and a fresh registry here is a split brain: remounted
+// reads subscribe to the new one while the shell's `useQueryInvalidation` —
+// whose effect does not re-run — keeps delivering pushes to the old one, now
+// empty. Every write then lands and nothing repaints (`ui.invalidation.received`
+// reads `mounted=0`). Seen when a local room was created and sent to after a
+// catalogue edit. Editing registry.ts itself still needs a window reload.
+if (import.meta.hot) import.meta.hot.data['registry'] = registry;
 
 /**
  * Connect the registry to the engine's invalidations. Called once, by the shell.

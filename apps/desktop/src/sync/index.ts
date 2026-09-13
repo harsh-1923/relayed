@@ -13,7 +13,7 @@ import {
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, openBrowser, setBlobAccount, setThemeSource } from './main-bridge.ts';
+import { vault as bridgeVault, openBrowser, pickFolder, setBlobAccount, setThemeSource } from './main-bridge.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
@@ -25,7 +25,15 @@ import { decode } from '../shared/prefs.ts';
 import { createInvalidator } from './invalidate.ts';
 import { createLink } from './link.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
+import { createRunnerLink } from './runner.ts';
+import { LocalStore } from './local/store.ts';
+import { createLocalRooms } from './local/rooms.ts';
+import { createRoomTitles } from './local/titles.ts';
+import { createLocalCommands } from './local/commands.ts';
+import * as paths from './paths.ts';
 import type { OurSession } from './auth/relayed.ts';
+import type { ClaudeStatus } from '../shared/claude.ts';
+import { AGENT_STREAM_CHANNEL } from '../shared/local-rooms.ts';
 
 interface Request { id: number; op: string; params?: unknown }
 type Reply =
@@ -397,6 +405,81 @@ const invalidate = createInvalidator(({ invalidation, topics }) => {
 
 session.onChange((_state: AuthState) => push());
 
+// ── the agent runner (LOCAL-ROOMS.md §5) ────────────────────────────────────
+
+/**
+ * The open account's local rooms (LOCAL-ROOMS.md §4), opened on first use and
+ * reopened when the account changes. Account-tier on purpose: a workspace
+ * switch does not touch it, so a reply being written survives one.
+ */
+let local: { accountId: string; store: LocalStore } | null = null;
+
+function localStore(): LocalStore | null {
+  const accountId = storage.accountId;
+  if (local?.accountId === accountId) return local.store;
+  local?.store.close();
+  local = accountId ? { accountId, store: LocalStore.open(paths.localRoomsDb(storage.root, accountId)) } : null;
+  return local?.store ?? null;
+}
+
+function closeLocalStore(): void {
+  local?.store.close();
+  local = null;
+}
+
+/** The runner's port, handed over by main whenever either process starts. */
+const runner = createRunnerLink({
+  onEvent: event => { localRooms.onEvent(event); localCommands.onEvent(event); },
+  onDetach: () => localRooms.onDetach(),
+});
+
+/**
+ * Room names (titles.ts). Every step is on; a preference for turning automatic
+ * naming off becomes `policy`, read at the moment a room's first message lands.
+ */
+const roomTitles = createRoomTitles({
+  store: localStore,
+  runner,
+  invalidate: topics => invalidate(topics),
+});
+
+const localCommands = createLocalCommands({ store: localStore, runner, invalidate: topics => invalidate(topics) });
+
+const localRooms = createLocalRooms({
+  store: localStore,
+  runner,
+  invalidate: topics => invalidate(topics),
+  // Fired and forgotten: the seed is written before this returns, the generated title whenever it arrives.
+  onFirstMessage: (spaceId, text) => { void roomTitles.onFirstMessage(spaceId, text); },
+  // Live text, straight to every window. Not an invalidation: nothing was written.
+  stream: data => { for (const p of ports) p.postMessage({ push: AGENT_STREAM_CHANNEL, data }); },
+  pickFolder,
+});
+
+/**
+ * The last probe's answer, kept for the life of this process.
+ *
+ * Probing starts a Claude Code child, so a read does not do it every time the
+ * settings screen mounts: the first read probes, later reads return this, and
+ * `claude.refresh` probes again. Not stored on disk — whether Claude Code is
+ * installed is a fact about the machine now, not something to remember.
+ */
+let claudeStatus: ClaudeStatus | null = null;
+
+async function probeClaude(): Promise<ClaudeStatus> {
+  try {
+    claudeStatus = await runner.request('claude.status', undefined);
+  } catch (error) {
+    // The runner being down is a state the screen shows, not a failed read.
+    claudeStatus = {
+      state: 'error', binary: null, version: null, checkedAt: Date.now(),
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  invalidate([topic.claude()]);
+  return claudeStatus;
+}
+
 // ── handlers ────────────────────────────────────────────────────────────────
 
 const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>> = {
@@ -437,11 +520,57 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   /** The sidebar: spaces this actor is in, each with its chats. */
   'spaces.list': () => (storage.hasWorkspace ? storage.spaces() : []),
 
+  /**
+   * The person's Claude Code, as one row: not installed, signed out, ready, or
+   * an error (LOCAL-ROOMS.md §3.2). An array because every read in the
+   * catalogue returns rows.
+   */
+  'claude.status': async () => [claudeStatus ?? await probeClaude()],
+
+  /** Probe again — after the person installs Claude Code or signs in, say. */
+  'claude.refresh': async () => { await probeClaude(); return null; },
+
+  // ── local rooms (LOCAL-ROOMS.md §7–§8) ─────────────────────────────────
+  ...localRooms.handlers,
+  ...roomTitles.handlers,
+  ...localCommands.handlers,
+
   /** One chat's tail. Everything below it is backfill's job, on demand. */
   'messages.list': (params) => {
     const chatId = (params as { chatId?: string } | undefined)?.chatId;
     if (!chatId || !storage.hasWorkspace) return [];
     return storage.messages(chatId);
+  },
+
+  /** The root composer draft is local to this replica and never enters sync. */
+  'drafts.get': (params) => {
+    const chatId = (params as { chatId?: string } | undefined)?.chatId;
+    if (!chatId || !storage.hasWorkspace) return [];
+    const row = storage.workspace.prepare(`
+      SELECT chat_id, body, revision, updated_at FROM drafts
+       WHERE chat_id = ? AND draft_kind = 'compose' AND context_key = 'root'
+    `).get(chatId) as { chat_id: string; body: string; revision: number; updated_at: number } | undefined;
+    return row ? [{ chatId: row.chat_id, body: row.body, revision: row.revision, updatedAt: row.updated_at }] : [];
+  },
+
+  'drafts.save': (params) => {
+    const { chatId, body, revision } = (params ?? {}) as { chatId?: string; body?: string; revision?: number };
+    if (!chatId || typeof revision !== 'number' || revision < 1) throw new Error('chatId and positive revision required');
+    if (!storage.hasWorkspace) throw new Error('no workspace open');
+    if ((body ?? '').trim().length === 0) {
+      storage.workspace.prepare("DELETE FROM drafts WHERE chat_id = ? AND draft_kind = 'compose' AND context_key = 'root'")
+        .run(chatId);
+    } else {
+      storage.workspace.prepare(`
+        INSERT INTO drafts (chat_id, draft_kind, context_key, body, revision, updated_at)
+        VALUES (?, 'compose', 'root', ?, ?, ?)
+        ON CONFLICT(chat_id, draft_kind, context_key) DO UPDATE SET
+          body = excluded.body, revision = excluded.revision, updated_at = excluded.updated_at
+        WHERE excluded.revision >= drafts.revision
+      `).run(chatId, body ?? '', revision, Date.now());
+    }
+    invalidate([topic.draft(chatId)]);
+    return null;
   },
 
   /**
@@ -462,7 +591,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
    * been delivered.
    */
   'messages.send': async (params) => {
-    const { chatId, body } = (params ?? {}) as { chatId?: string; body?: string };
+    const { chatId, body, draftRevision } = (params ?? {}) as { chatId?: string; body?: string; draftRevision?: number };
     const text = (body ?? '').trim();
     if (!chatId || text.length === 0) throw new Error('chatId and body required');
     if (!storage.hasWorkspace) throw new Error('no workspace open');
@@ -490,12 +619,18 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
                                 created_at, state, local_only)
           VALUES (?, ?, NULL, NULL, 0, ?, ?, ?, 'pending', 0)
         `).run(messageId, chatId, actorId, text, Date.now());
+        if (draftRevision !== undefined) {
+          tx.prepare(`
+            DELETE FROM drafts WHERE chat_id = ? AND draft_kind = 'compose'
+              AND context_key = 'root' AND revision = ?
+          `).run(chatId, draftRevision);
+        }
       });
     }, { attributes: { chat_id: chatId, op_kind: 'send' } });
 
     // The surface repaints from the replica, exactly as it would for a message
     // that arrived from somebody else. One path, not a special case for "mine".
-    invalidate([topic.messages(chatId), topic.chatState(chatId)]);
+    invalidate([topic.messages(chatId), topic.chatState(chatId), topic.draft(chatId)]);
     link.drain();
     return { id: messageId };
   },
@@ -597,8 +732,12 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     await session.signOut(ids);
 
     // §13: sign-out wipes the database and blob directory. With this layout
-    // that is one directory delete, which cannot be half-completed.
-    if (accountId) storage.deleteAccount(accountId);
+    // that is one directory delete, which cannot be half-completed. The local
+    // rooms file lives in that directory, so its handle is closed first.
+    if (accountId) {
+      closeLocalStore();
+      storage.deleteAccount(accountId);
+    }
     void setBlobAccount(storage.accountId);
 
     // Another account may still be signed in on this device; boot picks it up.
@@ -841,8 +980,11 @@ setTimeout(startSyncing, 5_000).unref?.();
 
 process.parentPort.on('message', (e) => {
   const [port] = e.ports;
-  if (port) { attach(port); return; }
   const msg = e.data as { type?: string; url?: string };
+  // The agent runner's end of a channel main minted for the two of us. Every
+  // other port is a renderer's.
+  if (port && msg?.type === 'runner:attach') { runner.attach(port); return; }
+  if (port) { attach(port); return; }
   // Waking from sleep, forwarded by main because `powerMonitor` is a
   // main-process API and the socket lives here. Worth the hop: after a lid
   // closes the connection is dead and the operating system will not find out

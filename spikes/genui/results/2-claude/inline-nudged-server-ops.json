@@ -1,0 +1,66 @@
+{
+  "id": "server-ops",
+  "variant": "inline-nudged",
+  "mode": "inline",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 19428,
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 7075,
+    "cache_read_input_tokens": 14643,
+    "output_tokens": 1292,
+    "output_tokens_details": {
+      "thinking_tokens": 396
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 7075,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1202,
+        "cache_read_input_tokens": 8161,
+        "cache_creation_input_tokens": 5396,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 5396
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.1113745,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1267,
+      "source": "root = Card([header, table, gaps])\nheader = CardHeader(\"Exported domain ops\", \"apps/server/src/sync/ops.ts\")\ntable = Table([colOp, colChecks, colWrite])\ncolOp = Col(\"Op\", [\"send (line 82)\", \"deleteMessage (line 171)\", \"markRead (line 243)\"])\ncolChecks = Col(\"Checks before writing\", [\"1. 'post' permission on the chat. 2. applyOnce idempotency ledger: a replayed opId returns the stored ack and skips the work.\", \"1. 'read' permission on the chat. 2. Message exists and belongs to this chat, else MessageNotFoundError. 3. 'delete_own' if the actor wrote it, else 'delete_any'. 4. applyOnce ledger.\", \"1. 'read' permission on the chat. Nothing else: no ledger, no revision.\"])\ncolWrite = Col(\"Write\", [\"Allocates ord and rev, inserts the message, bumps the space's last_activity_at, appends message.created\", \"Allocates rev only, sets deleted = true and body = '', appends message.deleted\", \"Upserts chat_read_state with GREATEST(old, new) last_read_ord\"])\ngaps = Callout(\"neutral\", \"Not checked\", \"send never checks that parentId exists or belongs to the same chat. markRead never checks the ord against the chat's highest ord or rejects negative values. deleteMessage doesn't stop a delete of a message that's already deleted, and the code says that's on purpose.\")\n",
+      "text": "Exported domain ops: apps/server/src/sync/ops.ts\nOp: send (line 82), Checks before writing: 1. 'post' permission on the chat. 2. applyOnce idempotency ledger: a replayed opId returns the stored ack and skips the work., Write: Allocates ord and rev, inserts the message, bumps the space's last_activity_at, appends message.created; Op: deleteMessage (line 171), Checks before writing: 1. 'read' permission on the chat. 2. Message exists and belongs to this chat, else MessageNotFoundError. 3. 'delete_own' if the actor wrote it, else 'delete_any'. 4. applyOnce ledger., Write: Allocates rev only, sets deleted = true and body = '', appends message.deleted; Op: markRead (line 243), Checks before writing: 1. 'read' permission on the chat. Nothing else: no ledger, no revision., Write: Upserts chat_read_state with GREATEST(old, new) last_read_ord\nNot checked: send never checks that parentId exists or belongs to the same chat. markRead never checks the ord against the chat's highest ord or rejects negative values. deleteMessage doesn't stop a delete of a message that's already deleted, and the code says that's on purpose."
+    }
+  ],
+  "reply": "`apps/server/src/sync/ops.ts` exports three ops. All three check permissions the same way: `chatGate` (`ops.ts:268`) loads the actor's grants and the chat's placement once, then returns a function that throws `Forbidden` whenever `can()` says no.\n\n```openui-lang\nroot = Card([header, table, gaps])\nheader = CardHeader(\"Exported domain ops\", \"apps/server/src/sync/ops.ts\")\ntable = Table([colOp, colChecks, colWrite])\ncolOp = Col(\"Op\", [\"send (line 82)\", \"deleteMessage (line 171)\", \"markRead (line 243)\"])\ncolChecks = Col(\"Checks before writing\", [\"1. 'post' permission on the chat. 2. applyOnce idempotency ledger: a replayed opId returns the stored ack and skips the work.\", \"1. 'read' permission on the chat. 2. Message exists and belongs to this chat, else MessageNotFoundError. 3. 'delete_own' if the actor wrote it, else 'delete_any'. 4. applyOnce ledger.\", \"1. 'read' permission on the chat. Nothing else: no ledger, no revision.\"])\ncolWrite = Col(\"Write\", [\"Allocates ord and rev, inserts the message, bumps the space's last_activity_at, appends message.created\", \"Allocates rev only, sets deleted = true and body = '', appends message.deleted\", \"Upserts chat_read_state with GREATEST(old, new) last_read_ord\"])\ngaps = Callout(\"neutral\", \"Not checked\", \"send never checks that parentId exists or belongs to the same chat. markRead never checks the ord against the chat's highest ord or rejects negative values. deleteMessage doesn't stop a delete of a message that's already deleted, and the code says that's on purpose.\")\n```\n\nSome details on the order of checks:\n\n- **The order in `deleteMessage` is deliberate.** It checks `'read'` before looking up the message. Otherwise someone outside the chat could learn whether a message ID exists. After that, the same permission snapshot answers the question about who wrote the message.\n- **Replays don't send an event.** `send` and `deleteMessage` return `event` only when the work actually ran. A replay returns just the ack, so other devices never get the message twice.\n- I didn't open `allocate.ts`, so I've only described what `applyOnce` does from how `ops.ts` uses it and from its comments."
+}

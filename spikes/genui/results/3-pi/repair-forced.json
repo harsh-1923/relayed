@@ -1,0 +1,29 @@
+{
+  "id": "repair-forced",
+  "expectUi": true,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 4,
+  "ms": 1065898,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": false,
+  "anyInvalid": true,
+  "repaired": false,
+  "finalValid": false,
+  "errorCodes": ["unknown-component"],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 18,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [
+    {
+      "ok": false,
+      "codes": ["unknown-component"],
+      "escapedNewlines": false,
+      "bytes": 57,
+      "source": "root = Card([s])\ns = Sparkline(\"Files\", [1103, 857, 701])",
+      "text": ""
+    }
+  ],
+  "reply": "I need to read the 48 files to count lines, starting with the first batch.\n\nThe show_ui call failed because the `Sparkline` component doesn't exist in the catalog, and continuing without it. I've read the first 8 files and am now moving on to the next batch to get line counts."
+}

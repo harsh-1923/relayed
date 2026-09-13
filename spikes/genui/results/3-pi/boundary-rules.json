@@ -1,0 +1,29 @@
+{
+  "id": "boundary-rules",
+  "expectUi": true,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 41822,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 2,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1441,
+      "source": "root = Card([header, rules, note])\nheader = CardHeader(\"check-boundaries.mjs — 9 rules\", \"Each rule bans (or requires) a pattern and cites the doc sentence it enforces\")\nrules = Table([ruleCol, docCol, enforcesCol])\nruleCol = Col(\"Rule\", [\"renderer/no-direct-query\", \"authz/no-role-comparison\", \"telemetry/no-direct-sdk\", \"telemetry/no-interpolated-logs\", \"network/no-ungated-socket\", \"routing/switch-only-in-the-gate\", \"renderer/no-telemetry-sdk\", \"identity/no-layer-1-on-the-client\", \"sync/actor-write-records-directory\"])\ndocCol = Col(\"Doc cited\", [\"FRONTEND.md §6.3\", \"AUTHZ.md §7\", \"OBSERVABILITY.md §8\", \"OBSERVABILITY.md §6\", \"STORAGE.md §16.2a\", \"FRONTEND.md §4.5\", \"OBSERVABILITY.md §3\", \"DESIGN.md §6.3\", \"SYNC-FLOWS.md §9.1\"])\nenforcesCol = Col(\"Sentence enforced\", [\"components read through the live-query client\", \"every permission check goes through can()\", \"one wrapper package, enforceable by lint rule\", \"structured only; this is the privacy control\", \"every outbound call passes one gate\", \"navigation is the only input to a switch\", \"one SDK, in the utilityProcess\", \"nothing below Layer 2 references an identity\", \"the directory replicates as workspace-stream events\"])\nnote = Text(\"The file's header comments trace the checker's own rationale to PHASE-1-IDENTITY.md §11a; one telemetry rule's `why` also references DESIGN.md §13.9 (timer throttling) as justification rather than as the cited source.\", true)",
+      "text": "check-boundaries.mjs — 9 rules: Each rule bans (or requires) a pattern and cites the doc sentence it enforces\nRule: renderer/no-direct-query, Doc cited: FRONTEND.md §6.3, Sentence enforced: components read through the live-query client; Rule: authz/no-role-comparison, Doc cited: AUTHZ.md §7, Sentence enforced: every permission check goes through can(); Rule: telemetry/no-direct-sdk, Doc cited: OBSERVABILITY.md §8, Sentence enforced: one wrapper package, enforceable by lint rule; Rule: telemetry/no-interpolated-logs, Doc cited: OBSERVABILITY.md §6, Sentence enforced: structured only; this is the privacy control; Rule: network/no-ungated-socket, Doc cited: STORAGE.md §16.2a, Sentence enforced: every outbound call passes one gate; Rule: routing/switch-only-in-the-gate, Doc cited: FRONTEND.md §4.5, Sentence enforced: navigation is the only input to a switch; Rule: renderer/no-telemetry-sdk, Doc cited: OBSERVABILITY.md §3, Sentence enforced: one SDK, in the utilityProcess; Rule: identity/no-layer-1-on-the-client, Doc cited: DESIGN.md §6.3, Sentence enforced: nothing below Layer 2 references an identity; Rule: sync/actor-write-records-directory, Doc cited: SYNC-FLOWS.md §9.1, Sentence enforced: the directory replicates as workspace-stream events\nThe file's header comments trace the checker's own rationale to PHASE-1-IDENTITY.md §11a; one telemetry rule's `why` also references DESIGN.md §13.9 (timer throttling) as justification rather than as the cited source."
+    }
+  ],
+  "reply": "The checker at `tools/check-boundaries.mjs:41-173` defines 9 rules, each keyed to a specific document section:\n\nMechanically, eight of the nine are bans (a regex that must not match); the last one, `sync/actor-write-records-directory`, is the only `requires` rule — an insert/update into `actors` obligates a `recordActor(` call somewhere in the same file, and the violation is its absence."
+}

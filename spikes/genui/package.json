@@ -1,0 +1,24 @@
+{
+  "name": "genui-spikes",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Spikes for docs/AGENT-RESPONSES.md — standalone, not a workspace member",
+  "scripts": {
+    "install:safe": "OPENUI_TELEMETRY_DISABLED=1 DO_NOT_TRACK=1 npm install --ignore-scripts",
+    "1-prompt": "node 1-prompt.mjs",
+    "2-claude": "node 2-claude.mjs",
+    "3-pi": "node --env-file-if-exists=../../.env 3-pi.ts",
+    "4-render": "node 4-render/build.mjs",
+    "5-guard": "node 5-guard.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.270",
+    "@openuidev/lang-core": "0.2.18",
+    "@openuidev/react-lang": "0.2.15",
+    "esbuild": "0.25.10",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.2"
+  }
+}

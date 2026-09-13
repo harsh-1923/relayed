@@ -1,0 +1,20 @@
+{
+  "id": "new-id",
+  "expectUi": false,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 2,
+  "ms": 5758,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 1,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [],
+  "reply": "It returns a string of the form `prefix_` followed by 16 random bytes (from `crypto.randomBytes`) each mapped to a Crockford base32 character — i.e., an opaque, collision-resistant local identifier like `prefix_9X3K…` with no meaning embedded in it."
+}

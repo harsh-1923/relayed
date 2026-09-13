@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentProps, ComponentType } from 'react';
 import { NavLink } from 'react-router';
 import {
   SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem,
@@ -11,14 +11,17 @@ interface SidebarItemProps {
   isActive?: boolean;
   badge?: number;
   disabled?: boolean;
+  /** Styles the label only, e.g. a shimmer while it is being renamed. */
+  labelClassName?: string;
 }
 
 /** One visual and interaction contract for every destination in the app sidebar. */
 export function SidebarItem({
-  label, icon: Icon, to, isActive = false, badge = 0, disabled = false,
-}: SidebarItemProps) {
+  label, icon: Icon, to, isActive = false, badge = 0, disabled = false, labelClassName, ...item
+}: SidebarItemProps & Omit<ComponentProps<typeof SidebarMenuItem>, 'children'>) {
   return (
-    <SidebarMenuItem>
+    // The rest go to the row itself, so a context menu or a double-click can wrap it.
+    <SidebarMenuItem {...item}>
       <SidebarMenuButton
         render={to ? <NavLink to={to} /> : undefined}
         type={to ? undefined : 'button'}
@@ -31,7 +34,7 @@ export function SidebarItem({
                    data-active:text-(--sidebar-item-foreground)!"
       >
         <Icon className="size-4" />
-        <span className="truncate">{label}</span>
+        <span className={labelClassName ? `truncate ${labelClassName}` : 'truncate'}>{label}</span>
       </SidebarMenuButton>
 
       {badge > 0 && (

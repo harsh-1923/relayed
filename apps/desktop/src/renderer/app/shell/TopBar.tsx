@@ -54,6 +54,9 @@ export function TopBar() {
         className={cn(
           'flex h-full shrink-0 items-center gap-1 pr-2',
           alignNavigationToSidebar && 'min-w-max',
+          // Collapsed, the bar is one surface over the route: its bottom rule
+          // runs the full width instead of stopping where the sidebar would be.
+          sidebarCollapsed && 'border-b border-border',
         )}
         style={{
           paddingLeft: state.platform === 'darwin' ? TRAFFIC_LIGHTS : 8,

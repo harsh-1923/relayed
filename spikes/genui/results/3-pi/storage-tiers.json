@@ -1,0 +1,29 @@
+{
+  "id": "storage-tiers",
+  "expectUi": true,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 84903,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 1,
+  "toolArgumentDeltas": 2,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": true,
+      "bytes": 1752,
+      "source": "root = Card([header, tbl, keep])\nheader = CardHeader(\"Storage tiers: contents & deletion\", \"docs/STORAGE.md §4–§5, §13–§14\")\ntbl = Table([tier, contents, deletion])\ntier = Col(\"Tier\", [\"install\\nuserData/\", \"account\\naccounts/<acc_id>/\", \"workspace\\naccounts/<acc>/workspaces/<wsp>/\"])\ncontents = Col(\"What lives there\", [\"install-id only — telemetry/crash reporting, never in a session token (§8). Accounts share nothing but this parent directory.\", \"account.db — device_id, workspace index / switcher membership cache, unread/mention/outbox hints, IPC epoch; auth/refresh-<wsp>.bin vault files (one per workspace); avatar blobs (account tier so the rail renders off-workspace avatars, §14)\", \"relayed.db — chats, messages, stream cursors (stream_state, staged_events), last_read, unread counters, outbox, drafts (§5, §7); message-attachment blobs (§14)\"])\ndeletion = Col(\"When deleted\", [\"Never by the app. No deletion path exists — it spans all accounts and dies only with the install itself.\", \"On sign out of the account: /auth/signout per stored refresh token, then rm -rf the whole directory — DB, blobs, vault together, so it can't be half-done (§13, goal 4).\", \"On removal from the workspace: membership gone from memberships → state='removed', then replica, blobs, and vault slot are deleted (§13). Attachments also follow per-workspace message eviction (§13.6/§14).\"])\nkeep = Callout(\"neutral\", \"Switching and auth failure delete nothing\", \"Switching away keeps the refresh token and the server session live (§9, invariant 44). Token expiry / refresh failure only sets state='stale' — local reads continue, nothing is wiped (§13). The only destructive operations are account sign-out and workspace removal.\")",
+      "text": "Storage tiers: contents & deletion: docs/STORAGE.md §4–§5, §13–§14\nTier: install\nuserData/, What lives there: install-id only — telemetry/crash reporting, never in a session token (§8). Accounts share nothing but this parent directory., When deleted: Never by the app. No deletion path exists — it spans all accounts and dies only with the install itself.; Tier: account\naccounts/<acc_id>/, What lives there: account.db — device_id, workspace index / switcher membership cache, unread/mention/outbox hints, IPC epoch; auth/refresh-<wsp>.bin vault files (one per workspace); avatar blobs (account tier so the rail renders off-workspace avatars, §14), When deleted: On sign out of the account: /auth/signout per stored refresh token, then rm -rf the whole directory — DB, blobs, vault together, so it can't be half-done (§13, goal 4).; Tier: workspace\naccounts/<acc>/workspaces/<wsp>/, What lives there: relayed.db — chats, messages, stream cursors (stream_state, staged_events), last_read, unread counters, outbox, drafts (§5, §7); message-attachment blobs (§14), When deleted: On removal from the workspace: membership gone from memberships → state='removed', then replica, blobs, and vault slot are deleted (§13). Attachments also follow per-workspace message eviction (§13.6/§14).\nSwitching and auth failure delete nothing: Switching away keeps the refresh token and the server session live (§9, invariant 44). Token expiry / refresh failure only sets state='stale' — local reads continue, nothing is wiped (§13). The only destructive operations are account sign-out and workspace removal."
+    }
+  ],
+  "reply": "The document defines three tiers (§4–§5), and deletion is specified in §13 with blob retention in §14. Here is the comparison:\n\nOne caveat the table doesn't cover: within the workspace tier there's a retention policy short of full deletion — past the ~500-rev sync threshold, old history is replaced by gap markers with a recent tail kept per chat and lazy backfill on open (§7), and §13.6 caps blob bytes per workspace. Whether an install-wide blob cap should sit on top of the per-workspace one is still an open question (§20.4). Everything else destructive funnels through just two operations: sign out (account-tier wipe) and workspace removal (single-workspace wipe)."
+}

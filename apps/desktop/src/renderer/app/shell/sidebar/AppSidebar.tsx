@@ -11,15 +11,16 @@
 // only part that scrolls, so the things you reach most often never disappear
 // behind a long list of spaces.
 import { useEffect, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { useDialKit, type DialConfig } from 'dialkit';
-import {
-  NotificationBellOn, ChatChatting, LayerTwo, PencilEditBox, SearchDefault, UserTwo,
-} from '@relayed/icons';
+// import type { CSSProperties } from 'react';
+import { useNavigate } from 'react-router';
+import { useSession } from '../../state';
+// import { useDialKit, type DialConfig } from 'dialkit';
+import { SearchDefault, UserTwo } from '@relayed/icons';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
 import { AccountSwitcher } from './AccountSwitcher';
 import { SpaceDirectory } from '@/features/chat/SpaceDirectory';
+import { LocalRoomsDirectory } from '@/features/local-rooms/LocalRoomsDirectory';
 import { SidebarItem } from '@/components/SidebarItem';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,14 +32,17 @@ import {
 } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 
-const PRIMARY_DESTINATIONS = [
-  { label: 'New space', icon: PencilEditBox },
-  { label: 'Activity', icon: NotificationBellOn },
-  { label: 'Threads', icon: ChatChatting },
-  { label: 'People', icon: UserTwo },
-  { label: 'Connectors', icon: LayerTwo },
-] as const;
+/**
+ * Destinations that exist. A row here is a promise that clicking it goes
+ * somewhere, so nothing is listed ahead of the screen it would open.
+ * Workspace-tier, so absent while no workspace is open.
+ */
+const destinationsFor = (wsId: string | null) => wsId === null ? [] : [
+  { label: 'People', icon: UserTwo, to: `/w/${wsId}/people` },
+];
 
+/* DialKit is temporarily disabled. Keep the controls beside their consumer so
+ * restoring the design-tuning surface is a small, reviewable change.
 const SIDEBAR_ITEM_CONTROLS = {
   backgroundToken: {
     type: 'select',
@@ -76,10 +80,16 @@ const SIDEBAR_ITEM_CONTROLS = {
   },
   textOpacity: [1, 0, 1, 0.05],
 } satisfies DialConfig;
+*/
 
 export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
+  // From state, not the URL: a local room's route has no workspace in its path.
+  const wsId = useSession().state.workspaceId;
+  const navigate = useNavigate();
+  const destinations = destinationsFor(wsId);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  /* DialKit is temporarily disabled.
   const itemTokens = useDialKit('Sidebar items', SIDEBAR_ITEM_CONTROLS, {
     persist: true,
   });
@@ -93,6 +103,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
       itemTokens.textOpacity,
     ),
   } as CSSProperties;
+  */
 
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
@@ -116,9 +127,9 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
     // Desktop is inline because the resizable panel owns its width. Mobile is
     // still shadcn's off-canvas Sheet; Sidebar offsets it below the 40px title
     // bar so the same top-level controls remain visible while it is open.
+    // DialKit previously supplied `style={itemStyles}` here.
     <Sidebar
       collapsible={inline ? 'none' : 'offcanvas'}
-      style={itemStyles}
       className={cn(
         inline && 'h-full w-full bg-window-glass',
         inline && !open && 'invisible',
@@ -141,20 +152,22 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
           </Button>
         </div>
 
-        <SidebarMenu className="gap-0.5">
-          {PRIMARY_DESTINATIONS.map(destination => {
-            return (
+        {destinations.length > 0 && (
+          <SidebarMenu className="gap-0.5">
+            {destinations.map(destination => (
               <SidebarItem
                 key={destination.label}
                 label={destination.label}
                 icon={destination.icon}
+                to={destination.to}
               />
-            );
-          })}
-        </SidebarMenu>
+            ))}
+          </SidebarMenu>
+        )}
       </SidebarHeader>
 
       <SidebarContent className="border-t border-sidebar-border/40 pt-1">
+        <LocalRoomsDirectory />
         <SpaceDirectory />
       </SidebarContent>
 
@@ -172,14 +185,17 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
           <CommandInput autoFocus placeholder="Search Relayed…" />
           <CommandList>
             <CommandEmpty>No results found.</CommandEmpty>
-            <CommandGroup heading="Quick actions">
-              {PRIMARY_DESTINATIONS.map(destination => {
+            <CommandGroup heading="Go to">
+              {destinations.map(destination => {
                 const Icon = destination.icon;
                 return (
                   <CommandItem
                     key={destination.label}
                     value={destination.label}
-                    onSelect={() => setCommandPaletteOpen(false)}
+                    onSelect={() => {
+                      setCommandPaletteOpen(false);
+                      void navigate(destination.to);
+                    }}
                   >
                     <Icon />
                     <span>{destination.label}</span>
@@ -194,6 +210,8 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   );
 }
 
+/* DialKit is temporarily disabled.
 function withOpacity(token: string, opacity: number): string {
   return `color-mix(in oklch, ${token} ${opacity * 100}%, transparent)`;
 }
+*/

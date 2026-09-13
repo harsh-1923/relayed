@@ -1,0 +1,66 @@
+{
+  "id": "storage-tiers",
+  "variant": "tool-nudged",
+  "mode": "tool",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 28514,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 23678,
+    "cache_read_input_tokens": 36703,
+    "output_tokens": 1963,
+    "output_tokens_details": {
+      "thinking_tokens": 731
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 23678,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 271,
+        "cache_read_input_tokens": 25169,
+        "cache_creation_input_tokens": 1647,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1647
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.3052325,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 144,
+  "streamSnapshots": 144,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 2119,
+      "source": "root = Card([header, tiers, never, gaps])\nheader = CardHeader(\"Storage tiers in docs/STORAGE.md\", \"install → account → workspace (§4, §5, §13)\")\ntiers = Table([cTier, cPath, cHolds, cDeleted])\ncTier = Col(\"Tier\", [\"Install\", \"Account\", \"Workspace\"])\ncPath = Col(\"Path\", [\"userData/\", \"userData/accounts/acc_…/\", \"accounts/acc_…/workspaces/wsp_…/\"])\ncHolds = Col(\"What lives there\", [\"install-id file (telemetry and crash reports only, never put in a token). Parent of accounts/.\", \"account.db: device_id, last_workspace, last_active_at, epoch, and a workspace index with activity/outbox hints (lets the switcher render offline). auth/refresh-<wsp>.bin: one encrypted refresh token per workspace. blobs/: avatars.\", \"relayed.db: chats, messages, stream cursors, staged_events, has_gap, last_read_ord, unread counters, outbox, drafts. blobs/: message attachments.\"])\ncDeleted = Col(\"When it's deleted\", [\"No deletion is described. Signing out removes only that account's directory.\", \"Sign-out: POST /auth/signout for each stored refresh token, then rm -rf the whole account dir (DB, blobs and tokens together). Other accounts aren't touched.\", \"Removed from the workspace: the account.db row is kept with state='removed', the replica and its blobs are deleted, and its token file is cleared. Also deleted along with its account. Attachments are evicted per workspace (§13.6).\"])\nnever = Callout(\"neutral\", \"Deletes nothing\", \"Switching workspaces or accounts: the replica closes with cursors frozen, the in-memory access token is dropped, and the refresh token file stays on disk and valid (§9, invariant 44). Token expiry or failed refresh: the session goes 'stale' and local reads keep working (§13).\")\ngaps = Callout(\"warning\", \"Inconsistencies in the doc\", \"1) The §5 directory tree has no accounts/<acc>/blobs/, but §14 puts avatars there. 2) §20 open question 1 asks whether account.db needs its own blobs/, yet §14 says that question is settled. 3) §12.1 says the epoch is stored in account.db, but the comment on the §6 meta table lists only device_id, last_workspace and last_active_at.\")\n",
+      "text": "Storage tiers in docs/STORAGE.md: install → account → workspace (§4, §5, §13)\nTier: Install, Path: userData/, What lives there: install-id file (telemetry and crash reports only, never put in a token). Parent of accounts/., When it's deleted: No deletion is described. Signing out removes only that account's directory.; Tier: Account, Path: userData/accounts/acc_…/, What lives there: account.db: device_id, last_workspace, last_active_at, epoch, and a workspace index with activity/outbox hints (lets the switcher render offline). auth/refresh-<wsp>.bin: one encrypted refresh token per workspace. blobs/: avatars., When it's deleted: Sign-out: POST /auth/signout for each stored refresh token, then rm -rf the whole account dir (DB, blobs and tokens together). Other accounts aren't touched.; Tier: Workspace, Path: accounts/acc_…/workspaces/wsp_…/, What lives there: relayed.db: chats, messages, stream cursors, staged_events, has_gap, last_read_ord, unread counters, outbox, drafts. blobs/: message attachments., When it's deleted: Removed from the workspace: the account.db row is kept with state='removed', the replica and its blobs are deleted, and its token file is cleared. Also deleted along with its account. Attachments are evicted per workspace (§13.6).\nDeletes nothing: Switching workspaces or accounts: the replica closes with cursors frozen, the in-memory access token is dropped, and the refresh token file stays on disk and valid (§9, invariant 44). Token expiry or failed refresh: the session goes 'stale' and local reads keep working (§13).\nInconsistencies in the doc: 1) The §5 directory tree has no accounts/<acc>/blobs/, but §14 puts avatars there. 2) §20 open question 1 asks whether account.db needs its own blobs/, yet §14 says that question is settled. 3) §12.1 says the epoch is stored in account.db, but the comment on the §6 meta table lists only device_id, last_workspace and last_active_at."
+    }
+  ],
+  "reply": "Some context behind the table above:\n\n- **Why workspace data is split across two tiers:** A workspace's token and its switcher row live in the account tier, not in the workspace folder. That's why removal from a workspace deletes the replica but only *clears a slot* and *flags a row* in the account tier. The switcher can then still list the workspace as `removed`.\n- **Why avatars sit in the account tier:** The switcher shows an avatar for every workspace, including inactive ones. Blob lookups only work within the active account, so a per-workspace avatar for an inactive workspace could never be shown (§14).\n- **Why sign-out is one delete:** Everything for an account sits in one folder, so deleting that folder can't leave data half-removed (§2 goal 4, §13).\n\nIf you want, I can fix the three inconsistencies in the doc."
+}

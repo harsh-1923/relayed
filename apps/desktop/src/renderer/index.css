@@ -25,6 +25,8 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -59,7 +61,7 @@
 
 :root {
   /* shadcn light theme. Replace this complete section when swapping themes. */
-  --radius: 0.8rem;
+  --radius: 0.9rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -98,18 +100,24 @@
   --window-solid: var(--background);
   --message-outgoing: oklch(0.2143 0.0039 286.07);
   --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
+
+  /* Tones for agent UI blocks (docs/AGENT-RESPONSES.md): a Stat, Badge or
+     Callout marked success or warning. Lightness kept beside destructive's so
+     the three read at the same weight. */
+  --success: oklch(0.55 0.13 150);
+  --warning: oklch(0.62 0.15 65);
 }
 
 .dark {
   /* shadcn dark theme. Replace this complete section when swapping themes. */
   --background: oklch(0.1693 0.0041 285.95);
-  --foreground: oklch(0.985 0 0);
+  --foreground: oklch(0.9187 0.0029 264.54);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.5648 0.1497 276.12);
+  --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -140,6 +148,8 @@
   --window-solid: var(--background);
   --message-outgoing: oklch(0.2143 0.0039 286.07);
   --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
+  --success: oklch(0.72 0.15 150);
+  --warning: oklch(0.78 0.14 75);
 }
 
 @layer base {
@@ -149,6 +159,12 @@
 
   body {
     @apply text-foreground;
+  }
+
+  /* Light text on a dark ground renders heavy with macOS's default smoothing. */
+  .dark {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   html,
@@ -181,6 +197,15 @@
   *::after {
     corner-shape: squircle;
     user-select: none;
+  }
+
+  /* Avatars are circles, not squircles: a face cut to a superellipse reads as
+     a bug, and the ring drawn in ::after must follow the same curve. */
+  [data-slot="avatar"],
+  [data-slot="avatar"] *,
+  [data-slot="avatar"]::after,
+  [data-slot="message-avatar"] {
+    corner-shape: round;
   }
 
   /* ─── Scrollbars: thin bar, transparent rail ───────────────────────────

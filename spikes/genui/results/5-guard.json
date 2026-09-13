@@ -1,0 +1,59 @@
+{
+  "storedBlock": "root = Card([s])\ns = Stat(\"Passed\", \"17\", \"success\")",
+  "reading": {
+    "original": {
+      "validationErrors": [],
+      "renderedAs": {
+        "label": "Passed",
+        "value": "17",
+        "tone": "success"
+      }
+    },
+    "swappedLabelAndValue": {
+      "validationErrors": [],
+      "renderedAs": {
+        "value": "Passed",
+        "label": "17",
+        "tone": "success"
+      }
+    },
+    "optionalPropAppended": {
+      "validationErrors": [],
+      "renderedAs": {
+        "label": "Passed",
+        "value": "17",
+        "tone": "success"
+      }
+    },
+    "toneRemoved": {
+      "validationErrors": ["excess-args"],
+      "renderedAs": {
+        "label": "Passed",
+        "value": "17"
+      }
+    },
+    "enumValueRemoved": {
+      "validationErrors": [],
+      "renderedAs": {
+        "label": "Passed",
+        "value": "17",
+        "tone": "success"
+      }
+    },
+    "requiredPropAppended": {
+      "validationErrors": ["missing-required"]
+    }
+  },
+  "guard": {
+    "original": [],
+    "swappedLabelAndValue": [
+      "Stat: position 0 was \"label\", now \"value\"",
+      "Stat: position 1 was \"value\", now \"label\""
+    ],
+    "optionalPropAppended": [],
+    "toneRemoved": ["Stat: prop 2 \"tone\" removed"],
+    "enumValueRemoved": ["Stat.tone: enum values removed warning, danger"],
+    "requiredPropAppended": ["Stat: new prop \"unit\" must be optional"]
+  },
+  "realLibraryAgainstSnapshot": []
+}

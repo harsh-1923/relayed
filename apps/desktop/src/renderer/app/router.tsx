@@ -26,6 +26,7 @@ import { Account } from '@/routes/Account';
 import { AccountSettings } from '@/routes/AccountSettings';
 import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
 import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
+import { AccountSettingsAgent } from '@/routes/AccountSettingsAgent';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
 import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
 import { NotFound } from '@/routes/NotFound';
@@ -53,10 +54,14 @@ export function Router() {
           scroll container (see shell/Page.tsx). */}
       <Route element={<AppShell />}>
         <Route path="/account" element={<Page><Account /></Page>} />
+        {/* A local room's chat (LOCAL-ROOMS.md §11.3): the synced chat's view, in
+            the local scope. Outside /w/ because a local room is account-tier. */}
+        <Route path="/local/c/:chatId" element={<Chat scope="local" />} />
         <Route path="/settings" element={<Page><AccountSettings /></Page>}>
           <Route index element={<Navigate to="general" replace />} />
           <Route path="general" element={<AccountSettingsGeneral />} />
           <Route path="appearance" element={<AccountSettingsAppearance />} />
+          <Route path="agent" element={<AccountSettingsAgent />} />
           <Route path="notifications" element={<AccountSettingsNotifications />} />
           <Route path="advanced" element={<AccountSettingsAdvanced />} />
         </Route>

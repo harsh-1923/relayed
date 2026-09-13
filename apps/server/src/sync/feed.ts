@@ -424,15 +424,15 @@ export interface WelcomePayload {
 /**
  * How a mention of an actor looks in a stored body.
  *
- * Mentions are `<@actor_id>` markup, never a handle — a rename would otherwise
- * orphan every historical mention (PHASE-1-IDENTITY.md §10). The spike matched
- * `@actorId`, which is its own fixtures' shape rather than the product's.
+ * Messages use a canonical Markdown application link whose target is the
+ * actor id. Its label is only a human-readable fallback; identity and mention
+ * counting depend on the durable target.
  *
  * Defined once because two paths count mentions, and a pattern that differed
  * between them would make a badge disagree with itself depending on whether it
  * arrived in `welcome` or in a later `counters` push.
  */
-const mentionPattern = (actorId: string): string => `%<@${actorId}>%`;
+const mentionPattern = (actorId: string): string => `%](actor:${actorId})%`;
 
 /**
  * Head state and counters for every chat an actor can reach in a workspace.

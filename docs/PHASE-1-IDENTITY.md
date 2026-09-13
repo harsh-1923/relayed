@@ -306,7 +306,7 @@ The handle question looks load-bearing because mentions appear to depend on it.
 ### Mentions store `actor_id`, not the handle
 
 ```
-stored:    hey <@actor_01JABC> can you look at this
+stored:    hey [harsh](actor:act_01JABC) can you look at this
 rendered:  hey @Harsh can you look at this
 ```
 

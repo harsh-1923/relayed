@@ -43,11 +43,13 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ['@relayed/telemetry'] }), signalBuild()],
     build: {
       rollupOptions: {
-        // Two main-process entries: the app itself and the sync engine that
-        // runs as a utilityProcess (DESIGN.md §5).
+        // Three main-process entries: the app itself, the sync engine, and the
+        // agent runner — both of the latter utilityProcesses (DESIGN.md §5,
+        // LOCAL-ROOMS.md §5).
         input: {
           index: resolve('src/main/index.ts'),
           sync: resolve('src/sync/index.ts'),
+          'agent-runner': resolve('src/agent-runner/index.ts'),
         },
       },
     },

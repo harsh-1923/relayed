@@ -32,6 +32,11 @@ export const epochFile = (root: string) => join(root, 'epoch');
 export const accountDir   = (root: string, acc: string) => join(accountsDir(root), acc);
 export const accountDb    = (root: string, acc: string) => join(accountDir(root, acc), 'account.db');
 export const authDir      = (root: string, acc: string) => join(accountDir(root, acc), 'auth');
+/**
+ * Local rooms: the only copy, never a replica (LOCAL-ROOMS.md §4). At the
+ * account tier so a workspace switch or removal never touches them.
+ */
+export const localRoomsDb = (root: string, acc: string) => join(accountDir(root, acc), 'local-rooms.db');
 export const vaultFile    = (root: string, acc: string, wsp: string) =>
   join(authDir(root, acc), `refresh-${wsp}.bin`);
 

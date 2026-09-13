@@ -77,8 +77,8 @@ export const workspaceMigrations: readonly Migration[] = [
       -- What this deliberately does NOT create: reactions and the FTS table
       -- (Phase 4), the blobs metadata table (Phase 7 — the store is
       -- content-addressed on the filesystem today and needs no rows), and
-      -- drafts (a composer convenience with no composer yet). A table with no
-      -- writer has unverified constraints, and FTS's trigger-ordering trap
+      -- drafts (added with the composer in version 7). A table with no writer
+      -- has unverified constraints, and FTS's trigger-ordering trap
       -- cannot be exercised until messages actually flow. The replica is a
       -- replica: a later version adds them at no cost.
 
@@ -466,6 +466,26 @@ export const workspaceMigrations: readonly Migration[] = [
       DROP TABLE memberships;
       ALTER TABLE memberships_new RENAME TO memberships;
       CREATE INDEX membership_actor ON memberships(actor_id) WHERE left_at IS NULL;
+    `,
+  },
+  {
+    version: 7,
+    name: 'drafts',
+    up: `
+      -- Drafts are device-local workspace state. Markdown is the one authored
+      -- representation; Tiptap is only the editing projection (COMPOSER.md,
+      -- canonical body and drafts).
+      CREATE TABLE drafts (
+        chat_id     TEXT    NOT NULL,
+        draft_kind  TEXT    NOT NULL DEFAULT 'compose',
+        context_key TEXT    NOT NULL DEFAULT 'root',
+        body        TEXT    NOT NULL,
+        revision    INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, draft_kind, context_key),
+        CHECK (draft_kind IN ('compose','edit')),
+        CHECK (revision >= 1)
+      );
     `,
   },
 ];

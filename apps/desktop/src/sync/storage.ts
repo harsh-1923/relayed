@@ -12,6 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join } from 'node:path';
 import { emit, count, histogram } from '@relayed/telemetry';
 import type { Role } from '@relayed/authz';
+import type { StoredPart } from '@relayed/protocol';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -110,7 +111,18 @@ export interface ReplicaMessage {
   authorName: string;
   authorHandle: string | null;
   authorAvatarBlob: string | null;
+  /**
+   * `actors.type`, or null while the author is not in the directory yet. The
+   * message view draws an agent's reply differently from a person's.
+   */
+  authorType: string | null;
   body: string;
+  /**
+   * An agent reply's parts, read by the shared message view. Always null for a
+   * replica row: synced messages do not carry parts yet — only local rooms
+   * write them (sync/local/store.ts).
+   */
+  parts: StoredPart[] | null;
   createdAt: number;
   deleted: boolean;
   state: string;
@@ -783,7 +795,7 @@ export class Storage {
     const rows = this.workspace.prepare(`
       SELECT m.id, m.chat_id, m.parent_id, m.ord, m.author_id, m.body,
              m.created_at, m.deleted, m.state,
-             a.display_name, a.handle, a.avatar_blob
+             a.display_name, a.handle, a.avatar_blob, a.type
         FROM messages m
         LEFT JOIN actors a ON a.id = m.author_id
        WHERE m.chat_id = ?
@@ -804,7 +816,9 @@ export class Storage {
         ?? `@${(row['handle'] as string | null) ?? 'unknown'}`,
       authorHandle: (row['handle'] as string | null) ?? null,
       authorAvatarBlob: (row['avatar_blob'] as string | null) ?? null,
+      authorType: (row['type'] as string | null) ?? null,
       body: String(row['body']),
+      parts: null,
       createdAt: Number(row['created_at'] ?? 0),
       deleted: Number(row['deleted'] ?? 0) === 1,
       state: String(row['state']),

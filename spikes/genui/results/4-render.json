@@ -1,0 +1,71 @@
+{
+  "how": "4-render/build.mjs, served from 4-render/dist, opened in Chromium (the in-app browser pane). Each page carries the exact CSP meta from apps/desktop/src/renderer/index.html. Values below are window.__spike as read from each page.",
+  "pages": {
+    "dev (NODE_ENV=development, no setup module)": {
+      "cspViolations": [
+        { "blocked": "eval", "directive": "script-src", "cause": "Zod v4 probing new Function" },
+        {
+          "blocked": "https://cdn.jsdelivr.net/npm/@openuidev/devtools@0/dist/devtools.browser.js?t=5964149",
+          "directive": "script-src-elem",
+          "cause": "react-lang auto-mounting devtools"
+        }
+      ],
+      "devtoolsHostMounted": true,
+      "networkRequestsOutsideOrigin": 0
+    },
+    "guarded (NODE_ENV=development, renderer-setup.mjs first)": {
+      "cspViolations": [],
+      "devtoolsHostMounted": false,
+      "scenarios": {
+        "stored-tool": { "errorCodes": [], "tableRows": 9 },
+        "stored-inline": { "errorCodes": [], "tableRows": 3 },
+        "streamed": {
+          "snapshots": 103,
+          "errorCodes": [],
+          "finished": true,
+          "tableRows": 9,
+          "sameAsStored": true
+        },
+        "unknown-component": {
+          "errorCodes": ["unknown-component"],
+          "rendered": "Before the bad line",
+          "note": "unknown component dropped, sibling rendered"
+        },
+        "throwing-component": {
+          "errorCodes": ["render-error"],
+          "rendered": "A sibling that is fine",
+          "caughtBy": "react-lang's own ElementErrorBoundary; the outer boundary never fired"
+        },
+        "actions": { "errorCodes": [] }
+      },
+      "actions": [
+        {
+          "scenario": "actions",
+          "type": "relayed.reply",
+          "message": "Apply the one-line fix",
+          "params": { "label": "Apply the fix" }
+        }
+      ]
+    },
+    "prod (NODE_ENV=production, renderer-setup.mjs first)": {
+      "cspViolations": [],
+      "devtoolsHostMounted": false,
+      "sameScenarioResultsAsGuarded": true
+    }
+  },
+  "bundle": {
+    "minifiedBytesByPackage": {
+      "zod": 450560,
+      "react-dom": 209818,
+      "@openuidev/lang-core": 66253,
+      "@openuidev/react-lang": 11469,
+      "react": 8397,
+      "ci-info": 5222,
+      "scheduler": 3686,
+      "@openuidev/observability": 614
+    },
+    "openuiOwnCodeKB": 82,
+    "zodKB": 440,
+    "note": "fixtures (98 KB) and spike code (12 KB) excluded from the per-package figures"
+  }
+}

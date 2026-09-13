@@ -1,0 +1,66 @@
+{
+  "id": "server-ops",
+  "variant": "tool-nudged",
+  "mode": "tool",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 22942,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 8180,
+    "cache_read_input_tokens": 28902,
+    "output_tokens": 1540,
+    "output_tokens_details": {
+      "thinking_tokens": 505
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 8180,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 385,
+        "cache_read_input_tokens": 13791,
+        "cache_creation_input_tokens": 1105,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1105
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.13580899999999999,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "duplicatedAsMarkdownTable": false,
+  "streamedDeltaEvents": 83,
+  "streamSnapshots": 83,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1160,
+      "source": "root = Card([header, table, refs])\nheader = CardHeader(\"Domain ops in sync/ops.ts\", \"What each one checks before it writes\")\ntable = Table([colOp, colChecks, colWrite])\ncolOp = Col(\"Op\", [\"send\", \"deleteMessage\", \"markRead\"])\ncolChecks = Col(\"Checks, in order\", [\"1. can 'post' on the chat. 2. applyOnce ledger: if opId was already applied, return the stored ack and skip the work\", \"1. can 'read' on the chat. 2. The message exists and its chat_id matches the input chat, or MessageNotFoundError. 3. can 'delete_own' if the actor wrote it, otherwise 'delete_any'. 4. applyOnce ledger replay check\", \"1. can 'read' on the chat. No ledger, no revision\"])\ncolWrite = Col(\"Write\", [\"allocateChat (ord + rev), insert message, bump spaces.last_activity_at, append message.created\", \"allocateChat (rev only), set deleted=true and body='', append message.deleted\", \"Upsert chat_read_state with GREATEST(last_read_ord), so the cursor never moves backwards\"])\nrefs = Stack([r1, r2, r3])\nr1 = FileRef(\"apps/server/src/sync/ops.ts\", 82, \"send\")\nr2 = FileRef(\"apps/server/src/sync/ops.ts\", 171, \"deleteMessage\")\nr3 = FileRef(\"apps/server/src/sync/ops.ts\", 243, \"markRead\")",
+      "text": "Domain ops in sync/ops.ts: What each one checks before it writes\nOp: send, Checks, in order: 1. can 'post' on the chat. 2. applyOnce ledger: if opId was already applied, return the stored ack and skip the work, Write: allocateChat (ord + rev), insert message, bump spaces.last_activity_at, append message.created; Op: deleteMessage, Checks, in order: 1. can 'read' on the chat. 2. The message exists and its chat_id matches the input chat, or MessageNotFoundError. 3. can 'delete_own' if the actor wrote it, otherwise 'delete_any'. 4. applyOnce ledger replay check, Write: allocateChat (rev only), set deleted=true and body='', append message.deleted; Op: markRead, Checks, in order: 1. can 'read' on the chat. No ledger, no revision, Write: Upsert chat_read_state with GREATEST(last_read_ord), so the cursor never moves backwards\napps/server/src/sync/ops.ts:82 (send) · apps/server/src/sync/ops.ts:171 (deleteMessage) · apps/server/src/sync/ops.ts:243 (markRead)"
+    }
+  ],
+  "reply": "Details the table leaves out:\n\n- **Order in `deleteMessage`:** Chat access is checked before the message is looked up (`ops.ts:186`). If it were checked after, a non-member could learn whether a message ID exists. Deleting a message that's already deleted isn't blocked; it just takes another revision.\n- **Retries still check permissions:** In `send` and `deleteMessage`, the permission checks run before `applyOnce`. So if someone loses access, retrying an old op returns `Forbidden` instead of the stored ack.\n- **Retries don't notify other devices:** On a replay the op returns the ack without an `event`, so a duplicate isn't sent to everyone else.\n- **What `send` doesn't check:** It doesn't confirm that `parentId` exists or belongs to the same chat, and it doesn't validate `body`. Nothing in this file checks these; if they're checked anywhere, it's in the caller or a DB constraint.\n- **Stale lookup in `deleteMessage`:** The message lookup and author check happen outside the transaction, before `applyOnce`. The update inside the transaction filters only by `id`, so it doesn't recheck them."
+}

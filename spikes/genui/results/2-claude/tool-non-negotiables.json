@@ -1,0 +1,55 @@
+{
+  "id": "non-negotiables",
+  "mode": "tool",
+  "expectUi": true,
+  "model": "claude-opus-5[1m]",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 32650,
+  "usage": {
+    "input_tokens": 6,
+    "cache_creation_input_tokens": 4144,
+    "cache_read_input_tokens": 23569,
+    "output_tokens": 2647,
+    "output_tokens_details": {
+      "thinking_tokens": 1177
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 4144,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "not_available",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 2246,
+        "cache_read_input_tokens": 8625,
+        "cache_creation_input_tokens": 2152,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 2152
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "listPriceUsd": 0.12041550000000001,
+  "blocks": 0,
+  "usedUi": false,
+  "firstTryValid": null,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": null,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "streamedDeltaEvents": 0,
+  "streamSnapshots": 0,
+  "calls": [],
+  "reply": "I can't edit files in this session (I only have read and search tools), so here's a replacement for `AGENTS.md:243-261`. It keeps all 17 rows word for word, grouped into five subsystems:\n\n```markdown\n### Sync protocol (7)\n\n| | |\n|---|---|\n| **Chat** is the sync unit | Messages reference `chat_id`, never a space directly (§7.1) |\n| `synced_through_rev` advances **contiguously** | Never past a hole, or you get silent permanent history gaps (§8.1) |\n| `ord` is never renumbered or reused | Read cursors and scroll positions corrupt across clients (§8.1) |\n| `last_read_ord` is a **max**-register | Not LWW — a stale device would un-read a chat (§4) |\n| An **unknown event type still advances the cursor** | Old clients exist — updates are opt-in. The frontier stalls forever otherwise (§9.10) |\n| Inbound frames parse **permissively**, never `.strict()` | One added server-side field breaks every older client in the field (§9.10) |\n| An **actor write is paired with `recordActor`** | A person exists on the server and on nobody's client — their messages render as a monogram with no name, for ever, and no reconnect repairs it (SYNC-FLOWS §9.1) |\n\n### Local storage (3)\n\n| | |\n|---|---|\n| Every read of granted data is **local** | Fetching granted data from the network is a bug (§3) |\n| Message IDs are **client**-generated | Offline compose, edit and react are otherwise impossible (§10.1) |\n| No native SQLite binding | `node:sqlite` is chosen to avoid `electron-rebuild` (§13.5) |\n\n### Identity & auth (2)\n\n| | |\n|---|---|\n| No identity reference **below Layer 2** | Only `actors` holds a `workos_*` id, or agents become second-class (§6.3) |\n| Auth failure **never** clears local data | A token expiring is not a sign-out (§13.1) |\n\n### Renderer (2)\n\n| | |\n|---|---|\n| Every renderer read goes through the **live-query client** | A read issued straight at the bridge is invisible to the invalidation registry, so nothing refreshes it (FRONTEND §5) |\n| The write and read sides share **one topic vocabulary** | They drift, a push wakes nobody, and every open surface goes stale in silence (§14, invariant 68) |\n\n### Telemetry (3)\n\n| | |\n|---|---|\n| **No message body in telemetry**, ever | Structured events only — a template-literal log puts the product in Loki (OBSERVABILITY §6) |\n| No unbounded **id as a metric label** | 100 actors × 150 chats = 15k series for one metric; the free tier caps at 10k (OBSERVABILITY §5) |\n| The renderer holds **no telemetry SDK** | A renderer flush timer is throttled to ~1 tick/minute when hidden, so telemetry stops draining when it is least observed (OBSERVABILITY §3) |\n```\n\nA few rows could reasonably go in a different group:\n- **Client-generated message IDs** could go under Sync protocol instead. I put it under Local storage because the reason given is offline compose.\n- **`recordActor`** could go under Identity & auth. I put it under Sync protocol because it cites SYNC-FLOWS.\n- **No telemetry SDK in the renderer** fits Renderer too. I put it under Telemetry to match its OBSERVABILITY source.\n\n`AGENTS.md` already has uncommitted changes, so check that this section isn't one of them before you paste this in."
+}

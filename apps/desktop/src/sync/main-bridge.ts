@@ -36,6 +36,9 @@ export const vault = {
 
 export const openBrowser = (url: string) => callMain<void>('browser:open', { url });
 
+/** Ask the person to choose a folder. `dialog` is a main-process API. Null when they cancel. */
+export const pickFolder = () => callMain<string | null>('dialog:folder');
+
 /** Scopes the relayed-blob: handler to one account (DESIGN.md §13.3). */
 export const setBlobAccount = (accountId: string | null) =>
   callMain<void>('blob:account', { accountId });

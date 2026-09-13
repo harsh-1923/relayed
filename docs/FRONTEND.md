@@ -287,6 +287,7 @@ loop.
 /settings/appearance             → system theme and window material
 /settings/notifications          → app-wide notification preferences
 /settings/advanced               → local data and diagnostics preferences
+
 ```
 
 Three things the shape encodes:
@@ -1255,6 +1256,26 @@ standard failure mode:**
 
 Version: resolve at adoption, per `STACK.md` §5's convention. Zod 4 is current;
 the constructs used above are stable across 3 and 4.
+
+### 8.4 Zod reaches the renderer through agent replies, not through a boundary
+
+The first Zod in the renderer is not one of the four boundaries above. It
+arrives with the component library an agent's UI block is drawn from
+(`AGENT-RESPONSES.md` §4.2): OpenUI defines each component's arguments as a Zod
+object, and the renderer uses those definitions to read a block. Nothing in
+§8.3 changes — the renderer still parses no rows and no arguments with it.
+
+It costs one line of setup, `z.config({ jitless: true })` in
+`renderer/app/openui-setup.ts`, imported first in `main.tsx`. Zod 4 probes
+whether it may compile validators with `new Function`; under this renderer's
+CSP (no `unsafe-eval`) that probe is reported as a violation even though Zod
+then falls back. `jitless` skips the probe. The same file stops OpenUI's
+development-build devtools from loading a script off a CDN.
+
+*Measured* with the production bundler, the whole message renderer adds
+**703 KB minified, 213 KB gzipped**; Zod's share after tree-shaking is about
+84 KB. The chart (recharts and its d3 and redux dependencies, ~326 KB) and
+Markdown (~213 KB) are the weight (`AGENT-RESPONSES.md` §10).
 
 ---
 

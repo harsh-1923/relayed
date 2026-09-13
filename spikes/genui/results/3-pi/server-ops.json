@@ -1,0 +1,29 @@
+{
+  "id": "server-ops",
+  "expectUi": true,
+  "model": "kimi-latest",
+  "outcome": "success",
+  "turns": 3,
+  "ms": 26250,
+  "blocks": 1,
+  "usedUi": true,
+  "firstTryValid": true,
+  "anyInvalid": false,
+  "repaired": null,
+  "finalValid": true,
+  "errorCodes": [],
+  "escapingMistakes": 0,
+  "toolArgumentDeltas": 2,
+  "duplicatedAsMarkdownTable": false,
+  "calls": [
+    {
+      "ok": true,
+      "codes": [],
+      "escapedNewlines": false,
+      "bytes": 1038,
+      "source": "root = Card([header, tbl, note])\nheader = CardHeader(\"Domain ops in apps/server/src/sync/ops.ts\", \"What each operation checks before writing\")\ntbl = Table([ops, authz, other])\nops = Col(\"Op\", [\"send\", \"deleteMessage\", \"markRead\"])\nauthz = Col(\"can() checks (one snapshot)\", [\"'post'\", \"'read' first, then 'delete_own' or 'delete_any'\", \"'read'\"])\nother = Col(\"Other pre-write checks\", [\"Idempotency ledger (applyOnce) keyed on opId; replay returns stored ack without running\", \"Message must exist and belong to the given chatId (MessageNotFoundError); existence/read checks ordered so non-members learn nothing; ledger via applyOnce\", \"None — no ledger, no revision; applied as GREATEST so it's inherently idempotent (MAX-register)\"])\nnote = Callout(\"neutral\", \"Shared context\", \"All three stamp server time (client clocks are never trusted). Checks run against one grants/placement snapshot via chatGate(). send and deleteMessage allocate chat counters inside applyOnce; send bumps the space's last_activity_at while delete does not.\")",
+      "text": "Domain ops in apps/server/src/sync/ops.ts: What each operation checks before writing\nOp: send, can() checks (one snapshot): 'post', Other pre-write checks: Idempotency ledger (applyOnce) keyed on opId; replay returns stored ack without running; Op: deleteMessage, can() checks (one snapshot): 'read' first, then 'delete_own' or 'delete_any', Other pre-write checks: Message must exist and belong to the given chatId (MessageNotFoundError); existence/read checks ordered so non-members learn nothing; ledger via applyOnce; Op: markRead, can() checks (one snapshot): 'read', Other pre-write checks: None — no ledger, no revision; applied as GREATEST so it's inherently idempotent (MAX-register)\nShared context: All three stamp server time (client clocks are never trusted). Checks run against one grants/placement snapshot via chatGate(). send and deleteMessage allocate chat counters inside applyOnce; send bumps the space's last_activity_at while delete does not."
+    }
+  ],
+  "reply": "`ops.ts` exports three domain write operations — `send`, `deleteMessage`, and `markRead` — plus the `Ack`/`Applied` result types and `MessageNotFoundError`. All authorization goes through the private `chatGate()` helper, which loads the actor's grants and the chat's placement **once** (`loadGrants` + `chatPlacement` in parallel) and returns a closure that answers permission questions against that single snapshot via pure `can()` — so a membership change can't slip between two checks, and violations throw `Forbidden` from `authz/can.ts`.\n\nA few details worth calling out beyond the table:\n\n- **`deleteMessage` orders its checks deliberately**: `read` access is verified *before* the message row is fetched, so a non-member can't even learn whether a message exists. Only after that does it branch — deleting your own message needs `delete_own` (membership-level), deleting someone else's needs `delete_any`, which is space-admin moderation power.\n- **Replays of `send`/`deleteMessage` return the stored ack with no event** — the `event` field is absent by design so the caller doesn't fan out a duplicate.\n- **`markRead` skips the ledger entirely**; its `GREATEST(last_read_ord, new)` upsert makes convergence a property of the operation itself, protecting against a stale device regressed the cursor under last-write-wins."
+}

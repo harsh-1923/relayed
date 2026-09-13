@@ -65,18 +65,18 @@ test('every migration applies, and auto_vacuum SURVIVES them all', () => {
   assert.equal(version.user_version, workspaceMigrations.at(-1)!.version);
 });
 
-test('every Phase 2 table exists, and the later-phase ones deliberately do not', () => {
+test('every sync table and the local composer draft table exist', () => {
   const db = replica();
   const names = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as
     { name: string }[]).map(r => r.name);
   for (const table of ['meta', 'actors', 'spaces', 'chats', 'memberships',
                        'messages', 'chat_state', 'stream_state', 'staged_events',
-                       'outbox']) {
+                       'outbox', 'drafts']) {
     assert.ok(names.includes(table), `missing ${table}`);
   }
   // Named rather than merely absent: each belongs to the phase that writes it,
   // and a table with no writer has constraints nothing has ever exercised.
-  for (const later of ['reactions', 'messages_fts', 'blobs', 'drafts']) {
+  for (const later of ['reactions', 'messages_fts', 'blobs']) {
     assert.ok(!names.includes(later), `${later} arrived early`);
   }
 });
@@ -97,8 +97,8 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 6,
-      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership'] });
+    { from: 1, to: 7,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])

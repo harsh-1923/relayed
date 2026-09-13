@@ -13,6 +13,7 @@
   "include": [
     "src/main/**/*.ts",
     "src/sync/**/*.ts",
+    "src/agent-runner/**/*.ts",
     "src/shared/**/*.ts",
     "electron.vite.config.ts",
     "src/renderer/**/*.test.ts"
