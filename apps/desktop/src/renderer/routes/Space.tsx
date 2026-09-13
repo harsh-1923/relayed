@@ -1,4 +1,9 @@
-// One chat: its messages, and somewhere to type.
+// One space: its header, and the chat it opens on — a channel's or DM's sole
+// chat, a room's default. The route names the SPACE, never a chat
+// (FRONTEND.md §4.6): a side chat opens beside it in a panel, as view state in
+// the query, so there is no chat in the path to disagree with the space.
+//
+// The chat below it: its messages, and somewhere to type.
 //
 // Every row comes from the replica. Nothing here waits on the network, in
 // either direction — the list is a local read, and composing writes to the
@@ -32,22 +37,47 @@ import {
 } from '@/components/ui/message-scroller';
 import { ChatBubble } from '@/features/chat/ChatBubble';
 import { MessageComposer } from '@/features/chat/composer/MessageComposer';
+import { SpaceHeader } from '@/features/chat/SpaceHeader';
+import { RoomActivity } from '@/features/local-rooms/RoomActivity';
+import { mainChat } from '../../shared/spaces.ts';
 import { Approvals } from '@/features/local-rooms/Approvals';
-import { LocalRoomHeader } from '@/features/local-rooms/LocalRoomHeader';
 import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
 import { RoomModePicker } from '@/features/local-rooms/RoomModePicker';
 import { useRoomSlashCommands } from '@/features/local-rooms/useRoomSlashCommands';
 
 type Scope = 'workspace' | 'local';
 
-/** The message read selected by the route's storage scope. */
+/** The reads selected by the route's storage scope. */
 const SCOPES = {
-  workspace: { list: 'messages.list', empty: 'Nothing here yet. Say something — it is written to this device first.' },
-  local: { list: 'local.messages.list', empty: 'Ask Claude anything about this folder. It runs as your own Claude Code, here on this Mac.' },
+  workspace: { space: 'space.get', list: 'messages.list', empty: 'Nothing here yet. Say something — it is written to this device first.' },
+  local: { space: 'local.space.get', list: 'local.messages.list', empty: 'Ask Claude anything about this folder. It runs as your own Claude Code, here on this Mac.' },
 } as const;
 
-export function Chat({ scope = 'workspace' }: { scope?: Scope }) {
-  const { chatId } = useParams();
+export function Space({ scope = 'workspace' }: { scope?: Scope }) {
+  const { spaceId = '' } = useParams();
+  // Both reads return the same `Space` rows; the cast names one of them.
+  const { rows, status, error } = useQuery(SCOPES[scope].space as 'space.get', { spaceId });
+  const chat = rows?.[0] ? mainChat(rows[0]) : null;
+
+  if (status === 'loading' && error === null) return null;
+  if (!chat) {
+    return <p className="p-6 text-sm text-muted-foreground">This space is not on this device.</p>;
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <SpaceHeader
+        spaceId={spaceId}
+        scope={scope}
+        details={scope === 'local' ? <RoomActivity spaceId={spaceId} /> : undefined}
+      />
+      {/* Keyed by chat, so moving between spaces starts a fresh scroller and composer. */}
+      <Chat key={chat.id} spaceId={spaceId} chatId={chat.id} scope={scope} />
+    </div>
+  );
+}
+
+function Chat({ spaceId, chatId, scope }: { spaceId: string; chatId: string; scope: Scope }) {
   const { state } = useSession();
   const me = scope === 'local'
     ? 'act_local_me'
@@ -55,11 +85,11 @@ export function Chat({ scope = 'workspace' }: { scope?: Scope }) {
 
   // Both reads take `{ chatId }` and return the same rows; the cast names one of
   // them for the type checker, which cannot follow a key chosen at runtime.
-  const { rows: messages, status } = useQuery(SCOPES[scope].list as 'messages.list', { chatId: chatId ?? '' });
+  const { rows: messages, status } = useQuery(SCOPES[scope].list as 'messages.list', { chatId });
   const replying = (messages ?? []).some(message => message.state === 'streaming');
   // The replies paused on the person. Always read, for one hook order in both
   // scopes; a workspace chat has no local approvals and gets none.
-  const { rows: approvals } = useQuery('local.approvals.list', { chatId: scope === 'local' ? chatId ?? '' : '' });
+  const { rows: approvals } = useQuery('local.approvals.list', { chatId: scope === 'local' ? chatId : '' });
 
   return (
     // Fills the pane. The shell pads nothing — a route opts into padding by
@@ -68,7 +98,6 @@ export function Chat({ scope = 'workspace' }: { scope?: Scope }) {
     // `-m-10` and pinned itself to `h-svh`, which is a layout arguing with
     // itself and was wrong by the height of the top bar the moment one existed.
     <div className="flex min-h-0 flex-1 flex-col">
-      {scope === 'local' && chatId && <LocalRoomHeader chatId={chatId} />}
       <MessageScrollerProvider
         autoScroll
         defaultScrollPosition="end"
@@ -104,13 +133,13 @@ export function Chat({ scope = 'workspace' }: { scope?: Scope }) {
               })}
 
               {/* What a paused reply is waiting on, where the reply is. */}
-              {scope === 'local' && chatId && <Approvals chatId={chatId} />}
+              {scope === 'local' && <Approvals chatId={chatId} />}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />
         </MessageScroller>
 
-        <ComposerAtLiveEdge chatId={chatId} scope={scope} replying={replying} />
+        <ComposerAtLiveEdge spaceId={spaceId} chatId={chatId} scope={scope} replying={replying} />
       </MessageScrollerProvider>
     </div>
   );
@@ -130,21 +159,20 @@ function FollowAtLiveEdge() {
   return null;
 }
 
-function ComposerAtLiveEdge(props: { chatId: string | undefined; scope: Scope; replying: boolean }) {
+function ComposerAtLiveEdge({ spaceId, ...props }: { spaceId: string; chatId: string; scope: Scope; replying: boolean }) {
   const { scrollToEnd } = useMessageScroller();
-  const { chatId, scope } = props;
-  const local = scope === 'local' && chatId ? chatId : undefined;
+  const local = props.scope === 'local';
   // Open from the model button, or from /model and /effort in the composer.
   const [modelMenu, setModelMenu] = useState(false);
   const openModelMenu = useCallback(() => setModelMenu(true), []);
-  const slash = useRoomSlashCommands(local, openModelMenu);
+  const slash = useRoomSlashCommands(local ? spaceId : undefined, local ? props.chatId : undefined, openModelMenu);
   return (
     <MessageComposer
       {...props}
       onSent={() => scrollToEnd({ behavior: 'smooth' })}
-      approvalControl={local ? className => <RoomModePicker chatId={local} className={className} /> : undefined}
+      approvalControl={local ? className => <RoomModePicker spaceId={spaceId} className={className} /> : undefined}
       modelControl={local
-        ? className => <RoomModelPicker chatId={local} className={className} open={modelMenu} onOpenChange={setModelMenu} />
+        ? className => <RoomModelPicker spaceId={spaceId} className={className} open={modelMenu} onOpenChange={setModelMenu} />
         : undefined}
       {...(slash ? { slash } : {})}
     />

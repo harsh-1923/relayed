@@ -520,6 +520,13 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   /** The sidebar: spaces this actor is in, each with its chats. */
   'spaces.list': () => (storage.hasWorkspace ? storage.spaces() : []),
 
+  /** One space and its chats. An array, as every read is: one row, or none. */
+  'space.get': (params) => {
+    const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+    const space = spaceId && storage.hasWorkspace ? storage.space(spaceId) : null;
+    return space ? [space] : [];
+  },
+
   /**
    * The person's Claude Code, as one row: not installed, signed out, ready, or
    * an error (LOCAL-ROOMS.md §3.2). An array because every read in the

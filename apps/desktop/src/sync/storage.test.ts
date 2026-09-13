@@ -699,3 +699,25 @@ test('Storage refuses a key the catalogue does not have', () => {
   s.openAccount(s.createAccount('dev_1'));
   assert.throws(() => s.setPreference('appearance.mood', 'blue'), /unknown preference/);
 });
+
+test('a space reads by id in the same shape the sidebar lists, and a DM is given a name', () => {
+  const { storage } = seeded(root(), [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  storage.workspace.exec(`
+    INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility, membership_policy, created_at, updated_at) VALUES
+      ('spc_eng', 'wsp_a', 'channel', 'engineering', 'engineering', 'public', 'open', 0, 0),
+      ('spc_dm',  'wsp_a', 'dm',      NULL,          NULL,          NULL,     'sealed', 0, 0);
+    INSERT INTO chats (id, workspace_id, space_id, kind, name, created_at, updated_at) VALUES
+      ('cht_eng', 'wsp_a', 'spc_eng', 'sole', NULL, 0, 0),
+      ('cht_dm',  'wsp_a', 'spc_dm',  'sole', NULL, 0, 0);
+  `);
+
+  const eng = storage.space('spc_eng');
+  assert.deepEqual(eng, {
+    id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering', visibility: 'public',
+    chats: [{ id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null, unread: 0, mentions: 0 }],
+  });
+  assert.deepEqual(storage.spaces().find(space => space.id === 'spc_eng'), eng, 'one shape for the list and the single read');
+  assert.equal(storage.space('spc_dm')?.name, 'Direct message');
+  assert.equal(storage.space('spc_dm')?.visibility, null);
+  assert.equal(storage.space('spc_missing'), null);
+});

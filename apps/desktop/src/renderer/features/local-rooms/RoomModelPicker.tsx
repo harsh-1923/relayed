@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { ChevronDown } from '@relayed/icons';
 import { DEFAULT_ROOM_MODEL } from '../../../shared/claude.ts';
-import type { ClaudeModel, EffortLevel, LocalRoom } from '../../../preload/api';
+import type { ClaudeModel, EffortLevel, LocalRoomSettings } from '../../../preload/api';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -24,17 +24,17 @@ const EFFORT_LABELS: Record<EffortLevel, string> = {
 /** Radio values are strings; the model's own default is this one. */
 const DEFAULT_EFFORT = 'default';
 
-export function RoomModelPicker({ chatId, className, open, onOpenChange }: {
-  chatId: string;
+export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
+  spaceId: string;
   className?: string;
   /** Controlled, so /model and /effort can open it from the composer. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const { rows: rooms } = useQuery('local.rooms.list');
+  const { rows } = useQuery('local.rooms.get', { spaceId });
   const { rows: statuses } = useQuery('claude.status');
   const [error, setError] = useState<string | null>(null);
-  const room = rooms?.find(candidate => candidate.chats.some(chat => chat.id === chatId));
+  const room = rows?.[0];
   if (!room) return null;
 
   const status = statuses?.[0];
@@ -44,7 +44,7 @@ export function RoomModelPicker({ chatId, className, open, onOpenChange }: {
 
   const save = (model: string | null, effort: EffortLevel | null) => {
     setError(null);
-    void call(api => api.query('local.rooms.setModel', { spaceId: room.id, model, effort }))
+    void call(api => api.query('local.rooms.setModel', { spaceId, model, effort }))
       .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); });
   };
 
@@ -95,7 +95,7 @@ export function RoomModelPicker({ chatId, className, open, onOpenChange }: {
   );
 }
 
-function Efforts({ room, model, onChoose }: { room: LocalRoom; model: ClaudeModel; onChoose: (effort: EffortLevel | null) => void }) {
+function Efforts({ room, model, onChoose }: { room: LocalRoomSettings; model: ClaudeModel; onChoose: (effort: EffortLevel | null) => void }) {
   return (
     <>
       <DropdownMenuSeparator />

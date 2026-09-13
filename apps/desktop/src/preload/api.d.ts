@@ -1,11 +1,14 @@
 import type { StoredPart } from '@relayed/protocol';
 import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
-import type { AgentStream, LocalRoom } from '../shared/local-rooms.ts';
+import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
+import type { Space } from '../shared/spaces.ts';
+import type { ContentPanelType, Panel } from '../shared/panels.ts';
 
 export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
 } from '../shared/claude.ts';
-export type { AgentStream, LocalRoom, LocalRoomChat } from '../shared/local-rooms.ts';
+export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
+export type { Space, SpaceChat } from '../shared/spaces.ts';
 
 export interface DbInfo {
   open: boolean;
@@ -55,26 +58,6 @@ export interface ReplicaActor {
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
-}
-
-/** One chat in the sidebar. `name` is null for a space's sole chat. */
-export interface ReplicaChat {
-  id: string;
-  spaceId: string;
-  kind: string;
-  name: string | null;
-  unread: number;
-  mentions: number;
-}
-
-/** A space and the chats inside it — the sidebar, as the replica holds it. */
-export interface ReplicaSpace {
-  id: string;
-  kind: string;
-  name: string | null;
-  slug: string | null;
-  visibility: string;
-  chats: ReplicaChat[];
 }
 
 /**
@@ -239,7 +222,9 @@ export interface RelayedApi {
   query(op: "auth.reopenBrowser"): Promise<{ reopened: boolean }>;
   query(op: "dev.setOffline", params: { offline: boolean }): Promise<AppState>;
   query(op: "actors.list"): Promise<ReplicaActor[]>;
-  query(op: "spaces.list"): Promise<ReplicaSpace[]>;
+  query(op: "spaces.list"): Promise<Space[]>;
+  /** One space and its chats: one row, or none when this replica does not hold it. */
+  query(op: "space.get", params: { spaceId: string }): Promise<Space[]>;
   query(op: "prefs.list"): Promise<PreferenceRow[]>;
   /** The person's own Claude Code, as one row (LOCAL-ROOMS.md §3.2). Probes once, then answers from memory. */
   query(op: "claude.status"): Promise<ClaudeStatus[]>;
@@ -247,6 +232,10 @@ export interface RelayedApi {
   query(op: "claude.refresh"): Promise<null>;
   /** Local rooms: the account's, most recently active first (LOCAL-ROOMS.md §7). */
   query(op: "local.rooms.list"): Promise<LocalRoom[]>;
+  /** One local room as a space, in the replica's shape: one row, or none. */
+  query(op: "local.space.get", params: { spaceId: string }): Promise<Space[]>;
+  /** What only a local room has: its folder, how Claude runs there, whether it is replying. One row, or none. */
+  query(op: "local.rooms.get", params: { spaceId: string }): Promise<LocalRoomSettings[]>;
   /** Create a room about a folder. Without `cwd` the person picks one; cancelling returns null. */
   query(
     op: "local.rooms.create",
@@ -262,6 +251,17 @@ export interface RelayedApi {
   ): Promise<{ id: string; replyId: string }>;
   /** Stop Claude mid-reply in this chat. */
   query(op: "local.turn.stop", params: { chatId: string }): Promise<null>;
+  /** A side chat in a local room, created with its panel (PANELS.md §4.1). */
+  query(op: "local.chats.create", params: { spaceId: string; name: string; kind: "public" | "private" }): Promise<{ chatId: string; panelId: string }>;
+  /** Every panel in a room, shared and local, oldest first. */
+  query(op: "local.panels.list", params: { spaceId: string }): Promise<Panel[]>;
+  /** Open a content panel on this device only. Opening the same thing again returns the same panel. */
+  query(op: "local.panels.open", params: { spaceId: string; workspaceId?: string | null; type: ContentPanelType; payload: Record<string, unknown>; title?: string | null; openedFromChatId?: string | null }): Promise<{ id: string }>;
+  query(op: "local.panels.touch", params: { panelId: string }): Promise<null>;
+  /** Share a local panel into its local room. One-way. */
+  query(op: "local.panels.share", params: { panelId: string }): Promise<null>;
+  /** Delete a local panel, or tombstone a shared content panel. Chat panels go with their chat. */
+  query(op: "local.panels.remove", params: { panelId: string }): Promise<null>;
   /** How Claude may act in a room without asking. Live sessions take it from their next tool call. */
   query(op: "local.rooms.setMode", params: { spaceId: string; mode: RoomMode }): Promise<null>;
   /** The slash commands this chat's folder offers. Empty until Claude Code has been asked; readers are woken when it answers. */

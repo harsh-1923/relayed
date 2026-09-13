@@ -184,3 +184,24 @@ test('the first message in a room, and only the first, is handed on for naming',
   await withNaming.handlers['local.messages.send']({ chatId, body: 'second' });
   assert.deepEqual(named, [{ spaceId, text: 'first' }]);
 });
+
+test('panels through the handlers: a side chat and a URL appear in the room, and each change wakes its panel list', async () => {
+  const { rooms, invalidated } = harness();
+  const { spaceId } = await rooms.handlers['local.rooms.create'](undefined) as { spaceId: string };
+  const panelsTopic = `local:space:${spaceId}:panels`;
+
+  const chat = rooms.handlers['local.chats.create']({ spaceId, name: 'try fix B', kind: 'private' });
+  assert.ok(invalidated.at(-1)?.includes(panelsTopic));
+  const { id: webId } = rooms.handlers['local.panels.open']({ spaceId, type: 'web', payload: { url: 'https://example.com' } });
+  assert.ok(invalidated.at(-1)?.includes(panelsTopic));
+
+  assert.deepEqual(rooms.handlers['local.panels.list']({ spaceId }).map(p => [p.id, p.scope]),
+    [[chat.panelId, 'shared'], [webId, 'local']]);
+
+  assert.throws(() => rooms.handlers['local.panels.open']({ spaceId, type: 'chat', payload: {} }), /content panel/);
+  assert.throws(() => rooms.handlers['local.chats.create']({ spaceId, name: 'x', kind: 'default' }), /public or private/);
+
+  rooms.handlers['local.panels.share']({ panelId: webId });
+  rooms.handlers['local.panels.remove']({ panelId: webId });
+  assert.deepEqual(rooms.handlers['local.panels.list']({ spaceId }).map(p => p.id), [chat.panelId]);
+});

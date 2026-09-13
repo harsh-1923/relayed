@@ -21,6 +21,7 @@ import { newId } from './ids.ts';
 import { readPreferences, writePreference } from './prefs.ts';
 import { isPreferenceKey, specOf, type PreferenceRow } from '../shared/prefs.ts';
 import * as p from './paths.ts';
+import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
 
 /**
  * Two subjects in one row — the workspace, and me in it — so every field says
@@ -68,26 +69,6 @@ export interface ReplicaActor {
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
-}
-
-/** One chat in the sidebar. `name` is null for a space's sole chat. */
-export interface ReplicaChat {
-  id: string;
-  spaceId: string;
-  kind: string;
-  name: string | null;
-  unread: number;
-  mentions: number;
-}
-
-/** A space and the chats inside it — the sidebar, as the replica holds it. */
-export interface ReplicaSpace {
-  id: string;
-  kind: string;
-  name: string | null;
-  slug: string | null;
-  visibility: string;
-  chats: ReplicaChat[];
 }
 
 /**
@@ -747,35 +728,41 @@ export class Storage {
    * (SYNC-FLOWS.md §4). Both are small and indexed, and the shape the surface
    * wants is a tree.
    */
-  spaces(): ReplicaSpace[] {
+  spaces(): Space[] {
+    return this.#readSpaces(null);
+  }
+
+  /** One space and its chats, or null. The same shape as `spaces()`, and as a local room's. */
+  space(spaceId: string): Space | null {
+    return this.#readSpaces(spaceId)[0] ?? null;
+  }
+
+  #readSpaces(spaceId: string | null): Space[] {
     const spaces = this.workspace.prepare(`
-      SELECT id, kind, name, slug, visibility, lifecycle
-        FROM spaces WHERE lifecycle = 'active' ORDER BY name
-    `).all() as Record<string, unknown>[];
+      SELECT id, kind, name, slug, visibility
+        FROM spaces WHERE lifecycle = 'active' AND (?1 IS NULL OR id = ?1) ORDER BY name
+    `).all(spaceId) as { id: string; kind: string; name: string | null; slug: string | null; visibility: string | null }[];
 
     const chats = this.workspace.prepare(`
       SELECT c.id, c.space_id, c.kind, c.name,
              COALESCE(s.chat_unread, 0)   AS unread,
              COALESCE(s.mention_count, 0) AS mentions
         FROM chats c LEFT JOIN chat_state s ON s.chat_id = c.id
+       WHERE ?1 IS NULL OR c.space_id = ?1
        ORDER BY c.id
-    `).all() as Record<string, unknown>[];
+    `).all(spaceId) as { id: string; space_id: string; kind: string; name: string | null; unread: number; mentions: number }[];
 
     return spaces.map(space => ({
-      id: String(space['id']),
-      kind: String(space['kind']),
-      name: (space['name'] as string | null) ?? null,
-      slug: (space['slug'] as string | null) ?? null,
-      visibility: (space['visibility'] as string | null) ?? 'public',
+      id: space.id,
+      kind: space.kind,
+      name: spaceName(space),
+      slug: space.slug,
+      visibility: space.visibility,
       chats: chats
-        .filter(chat => chat['space_id'] === space['id'])
-        .map(chat => ({
-          id: String(chat['id']),
-          spaceId: String(chat['space_id']),
-          kind: String(chat['kind']),
-          name: (chat['name'] as string | null) ?? null,
-          unread: Number(chat['unread'] ?? 0),
-          mentions: Number(chat['mentions'] ?? 0),
+        .filter(chat => chat.space_id === space.id)
+        .map((chat): SpaceChat => ({
+          id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
+          unread: Number(chat.unread), mentions: Number(chat.mentions),
         })),
     }));
   }

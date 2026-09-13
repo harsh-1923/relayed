@@ -9,18 +9,21 @@
 // source of truth, so adding a read here is what makes it enforceable
 // everywhere else. Nothing to remember.
 import type {
-  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, PendingApproval, ReplicaActor, ReplicaSpace, ReplicaMessage, PreferenceRow,
+  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, LocalRoomSettings, PendingApproval, ReplicaActor, ReplicaMessage, PreferenceRow, Space,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
 /** Every read the live-query client owns: its arguments and its row type. */
 export interface Queries {
   'actors.list': { args: undefined; rows: ReplicaActor[] };
-  'spaces.list': { args: undefined; rows: ReplicaSpace[] };
+  'spaces.list': { args: undefined; rows: Space[] };
+  'space.get': { args: { spaceId: string }; rows: Space[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'prefs.list': { args: undefined; rows: PreferenceRow[] };
   'claude.status': { args: undefined; rows: ClaudeStatus[] };
   'local.rooms.list': { args: undefined; rows: LocalRoom[] };
+  'local.space.get': { args: { spaceId: string }; rows: Space[] };
+  'local.rooms.get': { args: { spaceId: string }; rows: LocalRoomSettings[] };
   'local.messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'local.approvals.list': { args: { chatId: string }; rows: PendingApproval[] };
   'local.commands.list': { args: { chatId: string }; rows: ClaudeCommand[] };
@@ -39,6 +42,9 @@ export const TOPICS: TopicsFor = {
   // on the coarse one. A chat arriving in a space I am in wakes it through
   // `spaces`, which is what `chat.created` invalidates alongside.
   'spaces.list': () => [topic.spaces()],
+  // `spaces` as well as the space's own topic: a rename or a new chat arrives
+  // on the space stream, which invalidates both.
+  'space.get': ({ spaceId }) => [topic.space(spaceId), topic.spaces()],
   // Only this chat's messages. `chatState` is NOT here: a read cursor moving
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.
@@ -52,6 +58,10 @@ export const TOPICS: TopicsFor = {
   // when a probe finishes.
   'claude.status': () => [topic.claude()],
   'local.rooms.list': () => [topic.localRooms()],
+  // Every write to a local room — a rename, a new chat, a mode, a reply starting
+  // or ending — already wakes `local:rooms`, so both single-room reads ride it.
+  'local.space.get': () => [topic.localRooms()],
+  'local.rooms.get': () => [topic.localRooms()],
   'local.messages.list': ({ chatId }) => [topic.localMessages(chatId)],
   'local.approvals.list': ({ chatId }) => [topic.localApprovals(chatId)],
   'local.commands.list': () => [topic.localCommands()],

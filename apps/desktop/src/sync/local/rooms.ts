@@ -11,6 +11,7 @@ import { topic } from '../../shared/topics.ts';
 import type { AgentStream } from '../../shared/local-rooms.ts';
 import { isEffortLevel, isRoomMode, type ApprovalDecision, type RoomMode, type RunnerEvent } from '../../shared/claude.ts';
 import type { RunnerLink } from '../runner.ts';
+import { isContentPanelType } from '../../shared/panels.ts';
 import type { LocalStore } from './store.ts';
 
 export interface LocalRoomsDeps {
@@ -37,6 +38,20 @@ export function createLocalRooms(deps: LocalRoomsDeps) {
   const handlers = {
     'local.rooms.list': () => deps.store()?.rooms() ?? [],
 
+    /** One local room as a space, in the replica's shape. One row, or none. */
+    'local.space.get': (params: unknown) => {
+      const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+      const space = spaceId ? deps.store()?.space(spaceId) : null;
+      return space ? [space] : [];
+    },
+
+    /** What only a local room has: its folder, and how Claude runs there. One row, or none. */
+    'local.rooms.get': (params: unknown) => {
+      const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+      const settings = spaceId ? deps.store()?.roomSettings(spaceId) : null;
+      return settings ? [settings] : [];
+    },
+
     /**
      * Create a room about a folder. Without a `cwd` the person is asked to
      * choose one; cancelling creates nothing and returns null.
@@ -49,6 +64,69 @@ export function createLocalRooms(deps: LocalRoomsDeps) {
       const created = store.createRoom({ name: given?.name, cwd });
       deps.invalidate([topic.localRooms()]);
       return created;
+    },
+
+    /** A side chat, and its panel (PANELS.md §4.1). */
+    'local.chats.create': (params: unknown) => {
+      const { spaceId, name, kind } = (params ?? {}) as { spaceId?: string; name?: string; kind?: unknown };
+      if (!spaceId || typeof name !== 'string') throw new Error('spaceId and name required');
+      if (kind !== 'public' && kind !== 'private') throw new Error('kind must be public or private');
+      const created = required().createChat(spaceId, { name, kind });
+      deps.invalidate([topic.localRooms(), topic.localPanels(spaceId)]);
+      return created;
+    },
+
+    'local.panels.list': (params: unknown) => {
+      const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+      return spaceId ? deps.store()?.panels(spaceId) ?? [] : [];
+    },
+
+    /**
+     * Open a content panel on this device (PANELS.md §5.1). Returns its id; the
+     * same thing opened twice in a room is the same panel.
+     */
+    'local.panels.open': (params: unknown) => {
+      const given = (params ?? {}) as {
+        spaceId?: string; workspaceId?: string | null; type?: unknown; payload?: unknown; title?: string | null; openedFromChatId?: string | null;
+      };
+      if (!given.spaceId) throw new Error('spaceId required');
+      if (!isContentPanelType(given.type)) throw new Error('type must be a content panel type');
+      if (!given.payload || typeof given.payload !== 'object') throw new Error('payload required');
+      const id = required().openLocalPanel({
+        spaceId: given.spaceId, workspaceId: given.workspaceId ?? null, type: given.type,
+        payload: given.payload as Record<string, unknown>, title: given.title ?? null, openedFromChatId: given.openedFromChatId ?? null,
+      });
+      deps.invalidate([topic.localPanels(given.spaceId)]);
+      return { id };
+    },
+
+    /** Looked at, so kept from the sweep. Changes nothing a reader shows, so wakes nobody. */
+    'local.panels.touch': (params: unknown) => {
+      const panelId = (params as { panelId?: string } | undefined)?.panelId;
+      if (!panelId) throw new Error('panelId required');
+      required().touchLocalPanel(panelId);
+      return null;
+    },
+
+    /** Share a local panel into its local room, so it goes with the room at publish (§5.2). */
+    'local.panels.share': (params: unknown) => {
+      const panelId = (params as { panelId?: string } | undefined)?.panelId;
+      if (!panelId) throw new Error('panelId required');
+      const store = required();
+      const spaceId = store.panelSpace(panelId);
+      store.sharePanelLocally(panelId);
+      if (spaceId) deps.invalidate([topic.localPanels(spaceId)]);
+      return null;
+    },
+
+    'local.panels.remove': (params: unknown) => {
+      const panelId = (params as { panelId?: string } | undefined)?.panelId;
+      if (!panelId) throw new Error('panelId required');
+      const store = required();
+      const spaceId = store.panelSpace(panelId);
+      store.removePanel(panelId);
+      if (spaceId) deps.invalidate([topic.localPanels(spaceId)]);
+      return null;
     },
 
     'local.messages.list': (params: unknown) => {

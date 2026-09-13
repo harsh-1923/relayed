@@ -16,7 +16,9 @@ import { newId } from '../ids.ts';
 import { localMigrations } from '../migrations/local.ts';
 import { DEFAULT_ROOM_MODE, type EffortLevel, type PendingApproval, type RoomMode } from '../../shared/claude.ts';
 import type { ReplicaMessage } from '../storage.ts';
-import type { LocalRoom } from '../../shared/local-rooms.ts';
+import type { LocalRoom, LocalRoomSettings } from '../../shared/local-rooms.ts';
+import { spaceName, type Space } from '../../shared/spaces.ts';
+import type { ContentPanelType, Panel } from '../../shared/panels.ts';
 import { DEFAULT_ROOM_TITLE, type TitleTurn } from './titles.ts';
 
 /** The two actors every local room holds (migrations/local.ts). */
@@ -33,6 +35,9 @@ export interface TurnContext {
   effort: EffortLevel | null;
   sessionId: string | null;
 }
+
+/** How long a local panel lives unopened (PANELS.md §5.5). A starting point, not a measurement. */
+export const LOCAL_PANEL_MAX_AGE_MS = 14 * 24 * 60 * 60_000;
 
 export interface LocalDraft {
   chatId: string;
@@ -69,6 +74,8 @@ export class LocalStore {
     store.failStreaming('Interrupted when Relayed closed.');
     // Every ask belonged to a child that died with the app.
     db.exec('DELETE FROM approvals');
+    // Nothing is on screen before the store is open, so every stale panel may go (PANELS.md §5.5).
+    store.sweepLocalPanels();
     return store;
   }
 
@@ -132,24 +139,57 @@ export class LocalStore {
     return { spaceId, chatId };
   }
 
+  /** The room directory: every active local room, most recently active first, as a space with its settings. */
   rooms(): LocalRoom[] {
-    const rooms = this.db.prepare(`
-      SELECT s.id, s.name, s.last_activity_at, l.cwd, l.mode, l.model, l.effort,
+    const spaces = new Map(this.#readSpaces(null).map(space => [space.id, space]));
+    return this.#readSettings(null).flatMap(({ spaceId, ...settings }) => {
+      const space = spaces.get(spaceId);
+      return space ? [{ ...space, ...settings }] : [];
+    });
+  }
+
+  /** One local room as a space, in the replica's shape (shared/spaces.ts), or null. */
+  space(spaceId: string): Space | null {
+    return this.#readSpaces(spaceId)[0] ?? null;
+  }
+
+  /** What only a local room has, or null. */
+  roomSettings(spaceId: string): LocalRoomSettings | null {
+    return this.#readSettings(spaceId)[0] ?? null;
+  }
+
+  #readSpaces(spaceId: string | null): Space[] {
+    const spaces = this.db.prepare(`
+      SELECT s.id, s.kind, s.name, s.slug, s.visibility
+        FROM spaces s JOIN local_rooms l ON l.space_id = s.id
+       WHERE s.lifecycle = 'active' AND (?1 IS NULL OR s.id = ?1)
+    `).all(spaceId) as { id: string; kind: string; name: string | null; slug: string | null; visibility: string | null }[];
+    const chats = this.db.prepare(`
+      SELECT id, space_id, kind, name FROM chats
+       WHERE ?1 IS NULL OR space_id = ?1
+       ORDER BY CASE kind WHEN 'default' THEN 0 ELSE 1 END, created_at
+    `).all(spaceId) as { id: string; space_id: string; kind: string; name: string | null }[];
+
+    return spaces.map(space => ({
+      id: space.id, kind: space.kind, name: spaceName(space), slug: space.slug, visibility: space.visibility,
+      // A local room has one reader, who is always caught up: nothing is unread.
+      chats: chats.filter(chat => chat.space_id === space.id)
+        .map(chat => ({ id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name, unread: 0, mentions: 0 })),
+    }));
+  }
+
+  #readSettings(spaceId: string | null): LocalRoomSettings[] {
+    const rows = this.db.prepare(`
+      SELECT s.id, s.last_activity_at, l.cwd, l.mode, l.model, l.effort,
              EXISTS (SELECT 1 FROM messages m JOIN chats c ON c.id = m.chat_id
                       WHERE c.space_id = s.id AND m.state = 'streaming') AS busy
         FROM spaces s JOIN local_rooms l ON l.space_id = s.id
-       WHERE s.lifecycle = 'active'
+       WHERE s.lifecycle = 'active' AND (?1 IS NULL OR s.id = ?1)
        ORDER BY s.last_activity_at DESC
-    `).all() as { id: string; name: string; last_activity_at: number; cwd: string; mode: RoomMode; model: string | null; effort: EffortLevel | null; busy: number }[];
-    const chats = this.db.prepare(`
-      SELECT id, space_id, kind, name FROM chats
-       ORDER BY CASE kind WHEN 'default' THEN 0 ELSE 1 END, created_at
-    `).all() as { id: string; space_id: string; kind: string; name: string | null }[];
-
-    return rooms.map(room => ({
-      id: room.id, name: room.name, cwd: room.cwd, mode: room.mode, model: room.model, effort: room.effort,
-      busy: room.busy === 1, lastActivityAt: room.last_activity_at,
-      chats: chats.filter(chat => chat.space_id === room.id).map(({ id, kind, name }) => ({ id, kind, name })),
+    `).all(spaceId) as { id: string; last_activity_at: number; cwd: string; mode: RoomMode; model: string | null; effort: EffortLevel | null; busy: number }[];
+    return rows.map(row => ({
+      spaceId: row.id, cwd: row.cwd, mode: row.mode, model: row.model, effort: row.effort,
+      busy: row.busy === 1, lastActivityAt: row.last_activity_at,
     }));
   }
 
@@ -232,6 +272,150 @@ export class LocalStore {
       `).run(noteId, chatId, next, LOCAL_AGENT, deriveBody(parts), partsJson(parts), now);
     });
     return noteId;
+  }
+
+  // ── chats and panels (PANELS.md §4–§5) ───────────────────────────────────
+
+  /**
+   * A side chat in a room, and its panel, in one transaction (PANELS.md §4.1).
+   * The chat and its panel cannot exist apart: a chat with no panel has nowhere
+   * to be shown, and `panel_chat` makes a second panel impossible.
+   *
+   * A private chat gets explicit chat memberships, as in a synced room
+   * (DESIGN.md §7.3). Both actors, because Claude works in every chat of a
+   * local room.
+   */
+  createChat(spaceId: string, input: { name: string; kind: 'public' | 'private' }, now = Date.now()): { chatId: string; panelId: string } {
+    const name = input.name.trim();
+    if (name.length === 0) throw new Error('a side chat needs a name');
+    if (!this.room(spaceId)) throw new Error(`no local room ${spaceId}`);
+    const chatId = newId('cht');
+    const panelId = newId('pnl');
+
+    this.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO chats (id, workspace_id, space_id, kind, name, created_by_actor_id, created_at, updated_at)
+        VALUES (?, 'local', ?, ?, ?, ?, ?, ?)
+      `).run(chatId, spaceId, input.kind, name, LOCAL_ME, now, now);
+      if (input.kind === 'private') {
+        const member = this.db.prepare("INSERT INTO memberships VALUES ('chat', ?, ?, ?, ?, NULL)");
+        member.run(chatId, LOCAL_ME, 'admin', now);
+        member.run(chatId, LOCAL_AGENT, 'member', now);
+      }
+      this.db.prepare(`
+        INSERT INTO panels (id, workspace_id, space_id, type, chat_id, created_by_actor_id, created_at, updated_at)
+        VALUES (?, 'local', ?, 'chat', ?, ?, ?, ?)
+      `).run(panelId, spaceId, chatId, LOCAL_ME, now, now);
+      this.db.prepare('INSERT INTO chat_sessions (chat_id, updated_at) VALUES (?, ?)').run(chatId, now);
+    });
+    return { chatId, panelId };
+  }
+
+  /** Every panel the room holds, shared and local, oldest first. */
+  panels(spaceId: string): Panel[] {
+    const shared = this.db.prepare(`
+      SELECT id, space_id, type, chat_id, payload, title, opened_from_chat_id, created_at
+        FROM panels WHERE space_id = ? AND removed_at IS NULL
+    `).all(spaceId) as PanelRow[];
+    const local = this.db.prepare(`
+      SELECT id, space_id, type, NULL AS chat_id, payload, title, opened_from_chat_id, created_at
+        FROM local_panels WHERE space_id = ? AND share_op_id IS NULL
+    `).all(spaceId) as PanelRow[];
+    return [...shared.map(row => toPanel(row, 'shared')), ...local.map(row => toPanel(row, 'local'))]
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * Open a content panel on this device only (PANELS.md §5.1).
+   *
+   * Opening the same thing twice in a room returns the panel already there,
+   * touched, rather than a second copy — so an agent that opens a URL on every
+   * turn does not fill the strip.
+   */
+  openLocalPanel(input: {
+    spaceId: string; workspaceId?: string | null; type: ContentPanelType; payload: Record<string, unknown>;
+    title?: string | null; openedFromChatId?: string | null;
+  }, now = Date.now()): string {
+    const payload = JSON.stringify(validPayload(input.type, input.payload));
+    const existing = this.db.prepare(`
+      SELECT id FROM local_panels WHERE space_id = ? AND type = ? AND payload = ? AND share_op_id IS NULL
+    `).get(input.spaceId, input.type, payload) as { id: string } | undefined;
+    if (existing) {
+      this.db.prepare('UPDATE local_panels SET last_opened_at = ? WHERE id = ?').run(now, existing.id);
+      return existing.id;
+    }
+    const id = newId('pnl');
+    this.db.prepare(`
+      INSERT INTO local_panels (id, workspace_id, space_id, type, payload, title, opened_from_chat_id, created_at, last_opened_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.workspaceId ?? null, input.spaceId, input.type, payload,
+      input.title ?? null, input.openedFromChatId ?? null, now, now);
+    return id;
+  }
+
+  /** Mark a local panel as looked at, which is what keeps it from the sweep (§5.5). */
+  touchLocalPanel(panelId: string, now = Date.now()): void {
+    this.db.prepare('UPDATE local_panels SET last_opened_at = ? WHERE id = ?').run(now, panelId);
+  }
+
+  /** The room a panel is in, local or shared, or null. For routing an invalidation. */
+  panelSpace(panelId: string): string | null {
+    const row = (this.db.prepare('SELECT space_id FROM panels WHERE id = ?').get(panelId)
+      ?? this.db.prepare('SELECT space_id FROM local_panels WHERE id = ?').get(panelId)) as { space_id: string } | undefined;
+    return row?.space_id ?? null;
+  }
+
+  /**
+   * Share a local panel into a LOCAL room: the row moves to `panels`, keeping
+   * its id, so it goes with the room at publish (§5.2). Both tables are in this
+   * file, so unlike a synced room's share it is one transaction and there is
+   * nothing to recover.
+   */
+  sharePanelLocally(panelId: string, now = Date.now()): void {
+    this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT l.* FROM local_panels l JOIN local_rooms r ON r.space_id = l.space_id WHERE l.id = ?
+      `).get(panelId) as { space_id: string; type: string; payload: string; title: string | null; opened_from_chat_id: string | null; created_at: number } | undefined;
+      if (!row) throw new Error(`no local panel ${panelId} in a local room`);
+      this.db.prepare(`
+        INSERT INTO panels (id, workspace_id, space_id, type, chat_id, payload, title, opened_from_chat_id,
+                            created_by_actor_id, created_at, updated_at)
+        VALUES (?, 'local', ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+      `).run(panelId, row.space_id, row.type, row.payload, row.title, row.opened_from_chat_id, LOCAL_ME, row.created_at, now);
+      this.db.prepare('DELETE FROM local_panels WHERE id = ?').run(panelId);
+    });
+  }
+
+  /**
+   * Remove a panel. A local one is deleted; a shared content panel is
+   * tombstoned (§5.4). A chat panel is refused: it goes when its chat does.
+   */
+  removePanel(panelId: string, now = Date.now()): void {
+    if (this.db.prepare('DELETE FROM local_panels WHERE id = ?').run(panelId).changes > 0) return;
+    const row = this.db.prepare('SELECT type FROM panels WHERE id = ? AND removed_at IS NULL').get(panelId) as { type: string } | undefined;
+    if (!row) throw new Error(`no panel ${panelId}`);
+    if (row.type === 'chat') throw new Error('a chat panel is removed with its chat');
+    this.db.prepare('UPDATE panels SET removed_at = ?, updated_at = ? WHERE id = ?').run(now, now, panelId);
+  }
+
+  /**
+   * Forget local panels nobody has opened in `maxAgeMs`, and those whose local
+   * room is gone (§5.5). Ids in `open` are on screen and kept whatever their age.
+   * A synced room's orphans are not judged here: its spaces are in another file.
+   */
+  sweepLocalPanels(open: ReadonlySet<string> = new Set(), now = Date.now(), maxAgeMs = LOCAL_PANEL_MAX_AGE_MS): number {
+    const candidates = this.db.prepare(`
+      SELECT id FROM local_panels
+       WHERE last_opened_at < ?
+          OR (workspace_id IS NULL AND space_id NOT IN (SELECT id FROM spaces))
+    `).all(now - maxAgeMs) as { id: string }[];
+    const remove = this.db.prepare('DELETE FROM local_panels WHERE id = ?');
+    let removed = 0;
+    for (const { id } of candidates) {
+      if (open.has(id)) continue;
+      removed += Number(remove.run(id).changes);
+    }
+    return removed;
   }
 
   // ── approvals (§8.5) ─────────────────────────────────────────────────────
@@ -433,3 +617,35 @@ const partsJson = (parts: readonly MessagePart[]): string | null => (parts.lengt
 
 /** Parts this store wrote itself, read back for a restart's recovery. */
 const parse = (json: string | null): MessagePart[] => (readStoredParts(json) ?? []) as MessagePart[];
+
+type PanelRow = {
+  id: string; space_id: string; type: string; chat_id: string | null; payload: string;
+  title: string | null; opened_from_chat_id: string | null; created_at: number;
+};
+
+function toPanel(row: PanelRow, scope: Panel['scope']): Panel {
+  let payload: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(row.payload);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+  } catch { /* a payload this build cannot read is drawn as empty, not dropped */ }
+  return {
+    id: row.id, spaceId: row.space_id, type: row.type, chatId: row.chat_id, payload,
+    title: row.title, openedFromChatId: row.opened_from_chat_id, scope, createdAt: row.created_at,
+  };
+}
+
+/**
+ * What a content panel's payload must hold, keeping only those fields. Only
+ * `web` has producers today; the other types accept what they are given until
+ * theirs exist (PANELS.md §3.3).
+ */
+function validPayload(type: ContentPanelType, payload: Record<string, unknown>): Record<string, unknown> {
+  if (type !== 'web') return payload;
+  const url = typeof payload['url'] === 'string' ? payload['url'] : '';
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new Error(`not a URL: ${url}`); }
+  // A panel is a web page, never a way into the app's own schemes or the disk (LOCAL-ROOMS.md §10.4).
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error(`a web panel opens http and https only, not ${parsed.protocol}`);
+  return { url: parsed.href };
+}

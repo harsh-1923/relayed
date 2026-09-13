@@ -97,8 +97,8 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 7,
-      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts'] });
+    { from: 1, to: 8,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])
@@ -355,4 +355,26 @@ test('upgrading carries a chat cursor across into stream_state', () => {
   assert.equal(state['chat_unread'], 6);
   assert.equal('synced_through_rev' in state, false, 'and the moved ones are gone');
   after.close();
+});
+
+test('a replica that reports version 7 without a drafts table gets one, and a correct one keeps its drafts', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relayed-drafts-repair-'));
+  try {
+    // The development-era shape: version 7 applied, but it was not 'drafts'.
+    const stale = openDatabase(join(dir, 'stale.db'));
+    migrate(stale, workspaceMigrations.filter(m => m.version <= 6));
+    stale.exec('ALTER TABLE messages ADD COLUMN parts TEXT; PRAGMA user_version = 7');
+    assert.deepEqual(migrate(stale, workspaceMigrations).applied, ['8:drafts-repair']);
+    stale.prepare("INSERT INTO drafts (chat_id, body, revision, updated_at) VALUES ('cht_1', 'hi', 1, 0)").run();
+    stale.close();
+
+    const right = openDatabase(join(dir, 'right.db'));
+    migrate(right, workspaceMigrations.filter(m => m.version <= 7));
+    right.prepare("INSERT INTO drafts (chat_id, body, revision, updated_at) VALUES ('cht_1', 'kept', 1, 0)").run();
+    migrate(right, workspaceMigrations);
+    assert.equal((right.prepare('SELECT body FROM drafts').get() as { body: string }).body, 'kept');
+    right.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

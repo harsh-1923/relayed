@@ -17,7 +17,6 @@ export function LocalRoomRow({ room, active }: { room: LocalRoom; active: boolea
   const [draft, setDraft] = useState(room.name);
   const [naming, setNaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const entry = room.chats.find(chat => chat.kind === 'default') ?? room.chats[0];
 
   const startRename = () => {
     setDraft(room.name);
@@ -68,9 +67,8 @@ export function LocalRoomRow({ room, active }: { room: LocalRoom; active: boolea
           <SidebarItem
             label={room.name}
             icon={ChatDefault}
-            to={entry ? `/local/c/${entry.id}` : undefined}
+            to={`/local/s/${room.id}`}
             isActive={active}
-            disabled={!entry}
             labelClassName={naming ? 'shimmer' : undefined}
             title={error ?? undefined}
             onDoubleClick={startRename}

@@ -19,7 +19,7 @@ import { LocalRoomRow } from './LocalRoomRow';
 
 export function LocalRoomsDirectory() {
   const { rows: rooms } = useQuery('local.rooms.list');
-  const { chatId } = useParams();
+  const { spaceId } = useParams();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   // Folders collapsed by hand this session. Everything starts open.
@@ -27,17 +27,17 @@ export function LocalRoomsDirectory() {
 
   // Arriving at a room — from a link, the palette, a new room — opens its folder
   // once; after that the person can close it again.
-  const activeFolder = rooms?.find(room => room.chats.some(chat => chat.id === chatId))?.cwd;
+  const activeFolder = rooms?.find(room => room.id === spaceId)?.cwd;
   useEffect(() => {
     if (activeFolder) setClosed(prev => toggled(prev, activeFolder, false));
-  }, [activeFolder, chatId]);
+  }, [activeFolder, spaceId]);
 
   const create = () => {
     setError(null);
     void (async () => {
       try {
         const created = await call(api => api.query('local.rooms.create'));
-        if (created) void navigate(`/local/c/${created.chatId}`);
+        if (created) void navigate(`/local/s/${created.spaceId}`);
       } catch (e) {
         setError((e as Error).message);
       }
@@ -72,7 +72,7 @@ export function LocalRoomsDirectory() {
             <CollapsibleContent>
               <SidebarMenuSub>
                 {folder.rooms.map(room => (
-                  <LocalRoomRow key={room.id} room={room} active={room.chats.some(chat => chat.id === chatId)} />
+                  <LocalRoomRow key={room.id} room={room} active={room.id === spaceId} />
                 ))}
               </SidebarMenuSub>
             </CollapsibleContent>

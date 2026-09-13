@@ -14,11 +14,11 @@ import type { SlashCommandControl } from '@/features/chat/composer/MessageCompos
 import { call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
 
-export function useRoomSlashCommands(chatId: string | undefined, openModelPicker: () => void): SlashCommandControl | undefined {
+export function useRoomSlashCommands(spaceId: string | undefined, chatId: string | undefined, openModelPicker: () => void): SlashCommandControl | undefined {
   const { rows: commands } = useQuery('local.commands.list', { chatId: chatId ?? '' });
-  const { rows: rooms } = useQuery('local.rooms.list');
+  const { rows } = useQuery('local.rooms.get', { spaceId: spaceId ?? '' });
   const { rows: statuses } = useQuery('claude.status');
-  const room = rooms?.find(candidate => candidate.chats.some(chat => chat.id === chatId));
+  const room = rows?.[0];
   const status = statuses?.[0];
 
   return useMemo(() => {
@@ -35,15 +35,15 @@ export function useRoomSlashCommands(chatId: string | undefined, openModelPicker
             : undefined;
           if (!model) { openModelPicker(); return true; }
           const effort = room.effort && model.efforts.includes(room.effort) ? room.effort : null;
-          await call(api => api.query('local.rooms.setModel', { spaceId: room.id, model: model.value, effort }));
+          await call(api => api.query('local.rooms.setModel', { spaceId: room.spaceId, model: model.value, effort }));
           return true;
         }
         case 'effort': {
           const level = args.toLocaleLowerCase();
           if (level === 'default') {
-            await call(api => api.query('local.rooms.setModel', { spaceId: room.id, model: room.model, effort: null }));
+            await call(api => api.query('local.rooms.setModel', { spaceId: room.spaceId, model: room.model, effort: null }));
           } else if (isEffortLevel(level)) {
-            await call(api => api.query('local.rooms.setModel', { spaceId: room.id, model: room.model ?? DEFAULT_ROOM_MODEL, effort: level }));
+            await call(api => api.query('local.rooms.setModel', { spaceId: room.spaceId, model: room.model ?? DEFAULT_ROOM_MODEL, effort: level }));
           } else {
             openModelPicker();
           }
@@ -53,8 +53,8 @@ export function useRoomSlashCommands(chatId: string | undefined, openModelPicker
           await call(api => api.query('local.chats.clearSession', { chatId }));
           return true;
         case 'rename':
-          if (args) await call(api => api.query('local.rooms.rename', { spaceId: room.id, name: args }));
-          else await call(api => api.query('local.rooms.regenerateTitle', { spaceId: room.id }));
+          if (args) await call(api => api.query('local.rooms.rename', { spaceId: room.spaceId, name: args }));
+          else await call(api => api.query('local.rooms.regenerateTitle', { spaceId: room.spaceId }));
           return true;
       }
     };

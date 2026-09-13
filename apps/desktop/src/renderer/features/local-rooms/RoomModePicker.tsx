@@ -16,9 +16,9 @@ import { useQuery } from '@/lib/query';
 import { cn } from '@/lib/utils';
 
 /** `className` styles the trigger, so it can sit among the composer's own buttons. */
-export function RoomModePicker({ chatId, className }: { chatId: string; className?: string }) {
-  const { rows: rooms } = useQuery('local.rooms.list');
-  const room = rooms?.find(candidate => candidate.chats.some(chat => chat.id === chatId));
+export function RoomModePicker({ spaceId, className }: { spaceId: string; className?: string }) {
+  const { rows } = useQuery('local.rooms.get', { spaceId });
+  const room = rows?.[0];
   const [error, setError] = useState<string | null>(null);
   if (!room) return null;
 
@@ -28,7 +28,7 @@ export function RoomModePicker({ chatId, className }: { chatId: string; classNam
   const choose = (mode: RoomMode) => {
     if (mode === room.mode) return;
     setError(null);
-    void call(api => api.query('local.rooms.setMode', { spaceId: room.id, mode }))
+    void call(api => api.query('local.rooms.setMode', { spaceId, mode }))
       .catch((e: unknown) => { setError(e instanceof Error ? e.message : String(e)); });
   };
 

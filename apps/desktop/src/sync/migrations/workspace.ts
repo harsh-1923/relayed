@@ -488,4 +488,27 @@ export const workspaceMigrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 8,
+    name: 'drafts-repair',
+    up: `
+      -- Version 7 again, for replicas that never ran it. During development a
+      -- different version 7 (adding messages.parts) was applied and later
+      -- replaced by 'drafts' under the same number, so those replicas report
+      -- version 7 with no drafts table — every draft read failed, and the
+      -- composer waiting on it never appeared. IF NOT EXISTS makes this a no-op
+      -- on every replica that is already right.
+      CREATE TABLE IF NOT EXISTS drafts (
+        chat_id     TEXT    NOT NULL,
+        draft_kind  TEXT    NOT NULL DEFAULT 'compose',
+        context_key TEXT    NOT NULL DEFAULT 'root',
+        body        TEXT    NOT NULL,
+        revision    INTEGER NOT NULL,
+        updated_at  INTEGER NOT NULL,
+        PRIMARY KEY (chat_id, draft_kind, context_key),
+        CHECK (draft_kind IN ('compose','edit')),
+        CHECK (revision >= 1)
+      );
+    `,
+  },
 ];

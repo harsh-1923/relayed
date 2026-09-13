@@ -4,9 +4,9 @@
 // arrives through the live-query client on a push, which correlates with
 // navigation not at all (§4.3).
 //
-// Space routes are deliberately absent. §4.6 settles their shape
-// (/w/:wsId/s/:spaceId, panes in the query) and they arrive with the first
-// real surface; adding empty ones now would be scaffolding nobody can test.
+// A space is addressed by its id, in both scopes: /w/:wsId/s/:spaceId and
+// /local/s/:spaceId (§4.6). Never by chat — a side chat opens in a panel beside
+// the space, and panels are view state in the query (§4.7).
 import { Navigate, Route, Routes } from 'react-router';
 import { AppShell } from './shell/AppShell';
 import { Page } from './shell/Page';
@@ -18,7 +18,7 @@ import { CreateWorkspace } from '@/routes/CreateWorkspace';
 import { JoinWorkspace } from '@/routes/JoinWorkspace';
 import { WorkspaceHome } from '@/routes/WorkspaceHome';
 import { People } from '@/routes/People';
-import { Chat } from '@/routes/Chat';
+import { Space } from '@/routes/Space';
 import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
@@ -50,13 +50,13 @@ export function Router() {
           by everything below without adding a path segment.
 
           `Page` is what pads a surface and makes it the thing that scrolls.
-          Chat is deliberately NOT wrapped: it fills the pane and owns its own
+          Space is deliberately NOT wrapped: it fills the pane and owns its own
           scroll container (see shell/Page.tsx). */}
       <Route element={<AppShell />}>
         <Route path="/account" element={<Page><Account /></Page>} />
-        {/* A local room's chat (LOCAL-ROOMS.md §11.3): the synced chat's view, in
-            the local scope. Outside /w/ because a local room is account-tier. */}
-        <Route path="/local/c/:chatId" element={<Chat scope="local" />} />
+        {/* A local room (LOCAL-ROOMS.md §11.3): the synced space's view, in the
+            local scope. Outside /w/ because a local room is account-tier. */}
+        <Route path="/local/s/:spaceId" element={<Space scope="local" />} />
         <Route path="/settings" element={<Page><AccountSettings /></Page>}>
           <Route index element={<Navigate to="general" replace />} />
           <Route path="general" element={<AccountSettingsGeneral />} />
@@ -70,11 +70,7 @@ export function Router() {
             workspace.switch (invariant 56). */}
         <Route path="/w/:wsId" element={<WorkspaceGate />}>
           <Route index element={<Page><WorkspaceHome /></Page>} />
-          {/* §4.6 settles the space route as /w/:wsId/s/:spaceId. A chat is
-              addressed directly because that is what the sidebar links to and
-              what a person means by "open #general" — the space is derivable
-              from the chat, and the reverse needs a second lookup. */}
-          <Route path="c/:chatId" element={<Chat />} />
+          <Route path="s/:spaceId" element={<Space />} />
           <Route path="people" element={<Page><People /></Page>} />
           <Route path="settings" element={<Page><Settings /></Page>}>
             <Route index element={<Navigate to="members" replace />} />

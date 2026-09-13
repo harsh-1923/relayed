@@ -17,7 +17,7 @@ test('a room is a directory: a space, its default chat, both members, and nothin
   assert.equal(room?.id, spaceId);
   assert.equal(room?.cwd, root);
   assert.equal(room?.name, 'New room', 'named by what is said in it, not by the folder it already sits under');
-  assert.deepEqual(room?.chats, [{ id: chatId, kind: 'default', name: null }]);
+  assert.deepEqual(room?.chats, [{ id: chatId, spaceId, kind: 'default', name: null, unread: 0, mentions: 0 }]);
   assert.equal(room?.busy, false);
 
   const members = store.db.prepare('SELECT actor_id, role FROM memberships WHERE scope_id = ? ORDER BY actor_id').all(spaceId);
@@ -139,5 +139,22 @@ test('/clear forgets the chat\'s session and says so in the chat, but not while 
   assert.equal(store.turnContext(chatId)?.sessionId, null);
   const note = store.messages(chatId).at(-1);
   assert.deepEqual([note?.authorType, note?.state, note?.body], ['agent', 'acked', '_New session._']);
+  store.close();
+});
+
+test('a local room reads as a space, in the replica\'s shape, with its settings apart', () => {
+  const { root, store } = open();
+  const { spaceId, chatId } = store.createRoom({ cwd: root, name: 'Flaky test' });
+
+  assert.deepEqual(store.space(spaceId), {
+    id: spaceId, kind: 'room', name: 'Flaky test', slug: null, visibility: 'private',
+    chats: [{ id: chatId, spaceId, kind: 'default', name: null, unread: 0, mentions: 0 }],
+  });
+  const settings = store.roomSettings(spaceId);
+  assert.deepEqual({ ...settings, lastActivityAt: 0 }, {
+    spaceId, cwd: root, mode: 'auto', model: null, effort: null, busy: false, lastActivityAt: 0,
+  });
+  assert.equal(store.space('spc_missing'), null);
+  assert.equal(store.roomSettings('spc_missing'), null);
   store.close();
 });

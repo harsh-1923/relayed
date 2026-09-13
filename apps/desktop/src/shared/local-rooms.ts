@@ -1,22 +1,15 @@
 // A local room as the screen sees it (docs/LOCAL-ROOMS.md §6–§8).
 import type { EffortLevel, RoomMode } from './claude.ts';
+import type { Space } from './spaces.ts';
 
 //
-// The room's chats and messages use the replica's own shapes — a local room is
-// read the way a synced one is — so what is here is only what a replica room
-// has no word for: the directory it is about, and whether Claude is working.
+// A local room IS a space: its space and chats are read in the replica's own
+// shape (shared/spaces.ts). What is here is only what a replica room has no
+// word for: the directory it is about, and how Claude runs there.
 
-export interface LocalRoomChat {
-  id: string;
-  /** `default` is the room's shared floor; `public` and `private` are side chats. */
-  kind: string;
-  name: string | null;
-}
-
-export interface LocalRoom {
-  id: string;
-  name: string;
-  /** The directory every chat in the room works in. Chosen by the person, shown in the header. */
+export interface LocalRoomSettings {
+  spaceId: string;
+  /** The directory every chat in the room works in. Chosen by the person and shown in the room directory. */
   cwd: string;
   /** How Claude may act here without asking. */
   mode: RoomMode;
@@ -24,11 +17,13 @@ export interface LocalRoom {
   model: string | null;
   /** How hard it thinks, or null for the model's default. */
   effort: EffortLevel | null;
-  chats: LocalRoomChat[];
   /** A reply is being written somewhere in the room. One turn per room at a time (§8.1). */
   busy: boolean;
   lastActivityAt: number;
 }
+
+/** A row of the room directory: the space, and its settings beside it. */
+export type LocalRoom = Space & Omit<LocalRoomSettings, 'spaceId'>;
 
 /** What Claude is writing now. Ephemeral: never stored (§8.3). */
 export interface AgentStream {

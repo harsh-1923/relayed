@@ -98,10 +98,13 @@ const editorExtensions = [
 
 export function MessageComposer(props: MessageComposerProps) {
   const draftQuery = props.scope === 'local' ? 'local.drafts.get' : 'drafts.get';
-  const { rows: drafts, status } = useQuery(draftQuery as 'drafts.get', { chatId: props.chatId ?? '' });
+  const { rows: drafts, status, error } = useQuery(draftQuery as 'drafts.get', { chatId: props.chatId ?? '' });
   const initialBody = drafts?.[0]?.body ?? '';
 
-  if (!props.chatId || status === 'loading') {
+  // A draft that cannot be read is a lost draft, not a lost composer: a failed
+  // read never settles out of `loading`, and waiting on it hid the composer for
+  // good on a replica missing its drafts table (workspace.ts version 8).
+  if (!props.chatId || (status === 'loading' && error === null)) {
     return <div className="mx-auto h-16 w-full max-w-4xl shrink-0" />;
   }
 

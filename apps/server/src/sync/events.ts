@@ -106,10 +106,18 @@ export interface SpaceCreated {
   lifecycle: 'active' | 'dormant' | 'archived';
 }
 
+/**
+ * A chat every member of its space may see. `private` is absent on purpose:
+ * this event is catalogued on the SPACE stream, whose audience is every space
+ * member, and a private chat's existence is not advertised to non-members
+ * (DESIGN.md §7.2). A private chat is announced on its own chat stream, whose
+ * audience is the access predicate (PANELS.md §7.1) — so writing one here is a
+ * compile error rather than a leak.
+ */
 export interface ChatCreated {
   id: string;
   space_id: string;
-  kind: 'sole' | 'default' | 'public' | 'private';
+  kind: 'sole' | 'default' | 'public';
   name: string | null;
 }
 

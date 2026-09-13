@@ -205,4 +205,58 @@ export const localMigrations: readonly Migration[] = [
       ALTER TABLE local_rooms ADD COLUMN effort TEXT;
     `,
   },
+  {
+    version: 6,
+    name: 'panels',
+    // Surfaces open beside a room's main chat (PANELS.md §3).
+    up: `
+      -- What a synced room will hold, column for column: chat panels, and
+      -- content panels once shared. One table discriminated by type, as spaces
+      -- are by kind. diff, file and attachment are reserved now because SQLite
+      -- cannot alter a CHECK (see workspace.ts version 6).
+      CREATE TABLE panels (
+        id                  TEXT PRIMARY KEY,
+        workspace_id        TEXT NOT NULL,
+        space_id            TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        type                TEXT NOT NULL,
+        chat_id             TEXT REFERENCES chats(id) ON DELETE CASCADE,
+        payload             TEXT NOT NULL DEFAULT '{}',
+        title               TEXT,
+        opened_from_chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+        created_by_actor_id TEXT,
+        created_at          INTEGER NOT NULL,
+        updated_at          INTEGER NOT NULL,
+        removed_at          INTEGER,
+        CHECK (type IN ('chat','web','diff','file','attachment')),
+        -- The explicit IS NOT NULL / IS NULL is load-bearing (DESIGN.md §13.5).
+        CHECK (CASE WHEN type = 'chat' THEN chat_id IS NOT NULL
+                                       ELSE chat_id IS NULL END)
+      );
+      CREATE INDEX panel_space ON panels(space_id) WHERE removed_at IS NULL;
+      CREATE UNIQUE INDEX panel_chat ON panels(chat_id) WHERE type = 'chat';
+
+      -- Content panels that exist only on this device (PANELS.md §3.4). Never
+      -- a chat panel: chats always sync. No foreign keys, because a synced
+      -- room's space is in the workspace replica, another file.
+      CREATE TABLE local_panels (
+        id                  TEXT PRIMARY KEY,
+        workspace_id        TEXT,
+        space_id            TEXT NOT NULL,
+        type                TEXT NOT NULL,
+        payload             TEXT NOT NULL DEFAULT '{}',
+        title               TEXT,
+        opened_from_chat_id TEXT,
+        share_op_id         TEXT,
+        created_at          INTEGER NOT NULL,
+        last_opened_at      INTEGER NOT NULL,
+        CHECK (type IN ('web','diff','file','attachment'))
+      );
+      CREATE INDEX local_panel_space ON local_panels(space_id, last_opened_at DESC);
+
+      -- Every non-default chat already here gets its panel (§4.1).
+      INSERT INTO panels (id, workspace_id, space_id, type, chat_id, created_by_actor_id, created_at, updated_at)
+        SELECT 'pnl_' || upper(hex(randomblob(16))), workspace_id, space_id, 'chat', id, created_by_actor_id, created_at, updated_at
+          FROM chats WHERE kind IN ('public','private');
+    `,
+  },
 ];
