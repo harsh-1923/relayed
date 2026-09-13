@@ -2,6 +2,7 @@ import type { StoredPart } from '@relayed/protocol';
 import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
 import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 import type { Space } from '../shared/spaces.ts';
+import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel } from '../shared/panels.ts';
 
 export type {
@@ -290,6 +291,21 @@ export interface RelayedApi {
     op: "prefs.set",
     params: { key: string; value: unknown },
   ): Promise<null>;
+  /** Delete one preference row, returning the key to its default. */
+  query(op: "prefs.clear", params: { key: string }): Promise<null>;
+  /**
+   * Sets and clears committed together or not at all. A hard keybinding
+   * conflict rejects the batch with a message starting `keybinding conflict`.
+   */
+  query(
+    op: "prefs.apply",
+    params: {
+      changes: (
+        | { op: "set"; key: string; value: unknown }
+        | { op: "clear"; key: string }
+      )[];
+    },
+  ): Promise<null>;
   query(
     op: "messages.list",
     params: { chatId: string },
@@ -362,6 +378,11 @@ export interface RelayedApi {
     channel: "invalidate",
     fn: (change: { invalidation: number; topics: string[] }) => void,
   ): () => void;
+  /**
+   * A command chosen from the application menu. Only IDs on the menu's
+   * allow-list arrive; the returned function unsubscribes.
+   */
+  onCommand(fn: (id: NativeCommandId) => void): () => void;
   /**
    * Property name marking a reply superseded by a workspace switch. Present on
    * the RESOLVED value — contextBridge drops custom properties from Errors.

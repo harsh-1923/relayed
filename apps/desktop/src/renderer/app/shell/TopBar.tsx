@@ -20,8 +20,10 @@ import { useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
 import { OfflineSwitch } from '@/features/dev/OfflineSwitch';
+import { CommandInspector } from '@/features/dev/CommandInspector';
 import { Button } from '@/components/ui/button';
 import { useSidebar } from '@/components/ui/sidebar';
+import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
 import { cn } from '@/lib/utils';
 
 /**
@@ -33,7 +35,7 @@ const TRAFFIC_LIGHTS = 78;
 
 export function TopBar() {
   const { state } = useSession();
-  const { isMobile, open } = useSidebar();
+  const { isMobile, open, toggleSidebar } = useSidebar();
   const { canBack, canForward, back, forward } = useBackForward();
 
   // Asked of the sidebar itself rather than worked out from the URL: a toggle
@@ -42,6 +44,17 @@ export function TopBar() {
   const hasSidebar = useSidebarPresent();
   const alignNavigationToSidebar = hasSidebar && !isMobile;
   const sidebarCollapsed = alignNavigationToSidebar && !open;
+
+  // Registered here rather than in SidebarProvider (vendored shadcn, which
+  // shipped its own window listener) or in the sidebar (absent on some routes):
+  // the bar is always mounted and already knows whether a sidebar is on screen.
+  useCommandHandler('shell.sidebar.toggle', { layer: 'shell', enabled: hasSidebar, run: toggleSidebar });
+  // Here for the same reason: the arrows are here, and so is the only honest
+  // answer to whether either direction leads anywhere (use-back-forward).
+  useCommandHandler('navigation.back', { layer: 'route', enabled: canBack, run: back });
+  useCommandHandler('navigation.forward', { layer: 'route', enabled: canForward, run: forward });
+  const backCommand = useCommand('navigation.back');
+  const forwardCommand = useCommand('navigation.forward');
 
   return (
     <header
@@ -68,10 +81,16 @@ export function TopBar() {
         {hasSidebar && <SidebarToggle />}
 
         <div className={cn('flex items-center gap-1', alignNavigationToSidebar && 'ml-auto')}>
-          <Bare label="Back" onClick={back} disabled={!canBack}>
+          <Bare
+            label="Back" onClick={() => backCommand.execute()} disabled={!canBack}
+            shortcutLabel={backCommand.shortcutLabel} ariaKeyShortcuts={backCommand.ariaKeyShortcuts}
+          >
             <ArrowLeft className="size-4" />
           </Bare>
-          <Bare label="Forward" onClick={forward} disabled={!canForward}>
+          <Bare
+            label="Forward" onClick={() => forwardCommand.execute()} disabled={!canForward}
+            shortcutLabel={forwardCommand.shortcutLabel} ariaKeyShortcuts={forwardCommand.ariaKeyShortcuts}
+          >
             <ArrowRight className="size-4" />
           </Bare>
         </div>
@@ -100,6 +119,7 @@ export function TopBar() {
             does, the whole span is what you grab to move the window. */}
         <div className="min-w-0 flex-1" />
 
+        <CommandInspector />
         <OfflineSwitch />
       </div>
     </header>
@@ -108,9 +128,14 @@ export function TopBar() {
 
 /** `SidebarTrigger`, minus the drag region that would otherwise eat its click. */
 function SidebarToggle() {
-  const { toggleSidebar } = useSidebar();
+  const toggle = useCommand('shell.sidebar.toggle');
   return (
-    <Bare label="Toggle sidebar" onClick={toggleSidebar}>
+    <Bare
+      label="Toggle sidebar"
+      shortcutLabel={toggle.shortcutLabel}
+      ariaKeyShortcuts={toggle.ariaKeyShortcuts}
+      onClick={() => toggle.execute()}
+    >
       <SidebarDefault className="size-3.5" />
     </Bare>
   );
@@ -123,16 +148,20 @@ function SidebarToggle() {
  * nothing to do makes the bar's contents jump as you navigate.
  */
 function Bare({
-  label, onClick, disabled, children,
+  label, shortcutLabel, ariaKeyShortcuts, onClick, disabled, children,
 }: {
   label: string;
+  shortcutLabel?: string | null;
+  ariaKeyShortcuts?: string | undefined;
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <Button
-      variant="ghost" size="icon" aria-label={label} title={label}
+      variant="ghost" size="icon" aria-label={label}
+      title={shortcutLabel ? `${label} (${shortcutLabel})` : label}
+      aria-keyshortcuts={disabled ? undefined : ariaKeyShortcuts}
       onClick={onClick} disabled={disabled}
       className={cn('no-drag size-7 text-muted-foreground hover:text-foreground',
                     'disabled:opacity-30')}

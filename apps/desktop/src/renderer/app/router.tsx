@@ -29,6 +29,7 @@ import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
 import { AccountSettingsAgent } from '@/routes/AccountSettingsAgent';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
 import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
+import { AccountSettingsShortcuts } from '@/routes/AccountSettingsShortcuts';
 import { NotFound } from '@/routes/NotFound';
 
 export function Router() {
@@ -63,6 +64,7 @@ export function Router() {
           <Route path="appearance" element={<AccountSettingsAppearance />} />
           <Route path="agent" element={<AccountSettingsAgent />} />
           <Route path="notifications" element={<AccountSettingsNotifications />} />
+          <Route path="shortcuts" element={<AccountSettingsShortcuts />} />
           <Route path="advanced" element={<AccountSettingsAdvanced />} />
         </Route>
 

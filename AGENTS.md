@@ -59,7 +59,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PREFERENCES.md`](docs/PREFERENCES.md) | What a person chooses: the `preferences` table, the shared catalogue, and why a row per key rather than a JSON blob. |
-| [`docs/SHORTCUTS.md`](docs/SHORTCUTS.md) | **Proposal.** Command catalogue, shortcut resolution, scopes, customization, native menus, and the implementation plan. |
+| [`docs/SHORTCUTS.md`](docs/SHORTCUTS.md) | **Built**, with the platform matrix still to run by hand. The command catalogue and bus, shortcut matching, stored bindings, the keyboard shortcuts settings page, the application menu, and composer send. Evidence in [`spikes/hotkeys/`](spikes/hotkeys/README.md) (`pnpm verify:hotkeys`). |
 | [`docs/COMPOSER.md`](docs/COMPOSER.md) | **Proposal.** Tiptap-based Slack-like rich editing, the editor-independent message document, durable actor and audience mentions, collapsed links, local drafts and the atomic send transition. |
 | [`docs/AGENT-RUNTIME.md`](docs/AGENT-RUNTIME.md) | The agent service: one endpoint in two modes, the pi loop, the provider table, and what bounds a run. |
 | [`docs/AGENT-RESPONSES.md`](docs/AGENT-RESPONSES.md) | **Proposal, backed by spikes.** How an agent's reply is represented, produced, stored, streamed, rendered and acted on: message parts, OpenUI Lang blocks through one `show_ui` tool, the library contract. Evidence in [`spikes/genui/`](spikes/genui/README.md). |
@@ -229,6 +229,7 @@ pnpm test            # all packages
 pnpm spike:sync      # sync-protocol model tests — must stay green
 pnpm spike:authz     # authorization model tests
 pnpm check:boundaries # the rules below, run by typecheck too
+pnpm verify:hotkeys  # keyboard shortcut spikes under real Electron (spikes/hotkeys)
 pnpm otel:smoke      # prove the telemetry loop works before debugging the app
 ```
 
@@ -239,10 +240,11 @@ confusion twice — check `ps` before concluding a change did not apply.
 
 ## Non-negotiables
 
-Full list in `docs/DESIGN.md` §14 — 71 invariants; the reasoning for 37–47 lives
-in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, and for 55–70 in
-`docs/FRONTEND.md` §12, each paired with the failure it prevents. Nine are
-enforced by `pnpm check:boundaries` rather than by being remembered. The ones
+Full list in `docs/DESIGN.md` §14 — 73 invariants; the reasoning for 37–47 lives
+in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, for 55–71 in
+`docs/FRONTEND.md` §12, and for 72–73 in `docs/SHORTCUTS.md`, each paired with
+the failure it prevents. The ones that can be checked mechanically are held by
+the eleven rules in `pnpm check:boundaries` rather than by being remembered. The ones
 most easily broken by a reasonable-looking change:
 
 | | |

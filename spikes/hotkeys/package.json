@@ -13,6 +13,12 @@
   "main": "main.cjs",
   "scripts": {
     "bundle": "esbuild renderer.jsx --bundle --format=iife --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=dist/renderer.js",
-    "test": "npm run bundle && ../../apps/desktop/node_modules/.bin/electron ."
+    "test": "npm run bundle && ../../apps/desktop/node_modules/.bin/electron .",
+    "bundle:bus": "esbuild bus.jsx --bundle --format=iife --jsx=automatic --alias:react=./../../apps/desktop/node_modules/react --alias:react-dom=./../../apps/desktop/node_modules/react-dom --alias:@tiptap/react=./../../apps/desktop/node_modules/@tiptap/react --alias:@tiptap/starter-kit=./../../apps/desktop/node_modules/@tiptap/starter-kit --tsconfig=../../apps/desktop/tsconfig.web.json --define:process.env.NODE_ENV=\\\"development\\\" --define:import.meta.env.DEV=true --outfile=dist/bus.js",
+    "test:bus": "npm run bundle:bus && ../../apps/desktop/node_modules/.bin/electron bus.cjs",
+    "bundle:menu": "esbuild menu-entry.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/menu.cjs && esbuild ../../apps/desktop/src/preload/index.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload.cjs",
+    "test:menu": "npm run bundle:menu && ../../apps/desktop/node_modules/.bin/electron menu.cjs",
+    "bundle:composer": "esbuild composer.jsx --bundle --format=iife --jsx=automatic --alias:react=./../../apps/desktop/node_modules/react --alias:react-dom=./../../apps/desktop/node_modules/react-dom --alias:@tiptap/react=./../../apps/desktop/node_modules/@tiptap/react --alias:@tiptap/starter-kit=./../../apps/desktop/node_modules/@tiptap/starter-kit --tsconfig=../../apps/desktop/tsconfig.web.json --define:process.env.NODE_ENV=\\\"development\\\" --define:import.meta.env.DEV=true --outfile=dist/composer.js",
+    "test:composer": "npm run bundle:composer && ../../apps/desktop/node_modules/.bin/electron composer.cjs"
   }
 }

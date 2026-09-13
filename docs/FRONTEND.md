@@ -287,6 +287,7 @@ loop.
 /settings/appearance             → system theme and window material
 /settings/notifications          → app-wide notification preferences
 /settings/advanced               → local data and diagnostics preferences
+/settings/shortcuts              → keyboard shortcuts: view, record, disable, reset (SHORTCUTS.md)
 
 ```
 
@@ -538,7 +539,7 @@ Feature-first below the shell, type-first only where a library owns the folder.
 
 ```
 renderer/
-  main.tsx          the root: HashRouter, the state provider, the top bar, the router
+  main.tsx          the root: HashRouter, the state provider, the command bus, the top bar, the router
   app/              application-wide and ROUTE-INDEPENDENT
     state.tsx         AppState enters here; useSession, useActiveWorkspace
     router.tsx        the route table (§4.6)
@@ -548,7 +549,9 @@ renderer/
     shell/            the chrome every signed-in surface sits in
       AppShell.tsx      the layout route
       Page.tsx          padding and the scroll container, opted into per route
-      TopBar.tsx        the window's title bar
+      TopBar.tsx        the window's title bar; sidebar, back and forward commands
+      SearchPalette.tsx the search dialog and `app.search.open`, for every route
+      AppCommands.tsx   renders nothing; open settings and open keyboard shortcuts
       use-back-forward/ whether Back and Forward lead anywhere (§6.1b)
         use-back-forward.ts
         use-back-forward.test.ts
@@ -569,6 +572,7 @@ renderer/
     <shared>/       ours, used by more than one feature
   lib/
     ipc.ts          the narrow bridge to the preload surface
+    Commands.tsx      mounts the command bus with the platform and stored bindings (§6.4)
     query/          the live-query client, its registry and its catalogue
     hooks/          hooks that belong to no particular thing
     utils.ts        formatting and class helpers
@@ -600,6 +604,7 @@ the one import line to `@relayed/icons` with aliases, as above. The check that
 catches a missed one is `grep -rn lucide apps/desktop/src`: nothing should match,
 and `lucide-react` is not installed, so a missed line also fails `pnpm
 typecheck`.
+    commands/       the command bus: provider, registry, dispatch, Shortcut, recorder (SHORTCUTS.md)
 
 ### 6.1a Naming
 
@@ -741,17 +746,41 @@ draining exactly when the window is in the background.
 That makes it three, not two — the count in this heading is deliberately not
 maintained; `tools/check-boundaries.mjs` is the list.
 
-### 6.4 A command and shortcut seam — proposed, not built
+The keyboard shortcut work added two more, both described in `SHORTCUTS.md`:
+**`shortcuts/no-global-key-listener`** (no `window` or `document` key listener in
+the renderer outside `lib/commands/CommandProvider.tsx`) and
+**`shortcuts/tanstack-only-in-the-driver`** (no TanStack Hotkeys import outside
+`shared/shortcuts/tanstack-driver.ts`).
 
-`cmdk` is already a dependency, but it supplies a search or palette surface,
-not an application command model. Keybindings, buttons, native menus, editor
-keymaps and a future command palette need to invoke stable semantic command IDs
-through one registry before forty components own their own `keydown` handlers.
+### 6.4 A command and shortcut seam — built
 
-[`SHORTCUTS.md`](SHORTCUTS.md) is the full proposal: process ownership, named
-precedence layers, TanStack Hotkeys behind a replaceable adapter, local
-preference overrides, the settings surface, native menu integration and the
-executable rollout. Nothing in that proposal is built yet.
+Keys, buttons, the application menu and editor keymaps invoke stable semantic
+command IDs through one registry, rather than each component owning a `keydown`
+handler. [`SHORTCUTS.md`](SHORTCUTS.md) is the design; what the renderer needs
+to know:
+
+- **One key listener.** `lib/commands/CommandProvider.tsx`, mounted by
+  `app/Commands.tsx` inside `AppStateProvider` and above `SidebarProvider`, so a
+  command's lifetime is the window's, not a sidebar's or a route's. A boundary
+  rule refuses any other window or document key listener.
+- **Features register handlers, never listeners.** `useCommandHandler(id, {
+  layer, enabled, run })` at the narrowest owner; `useCommand(id)` for a button's
+  `execute`, `enabled`, title and `aria-keyshortcuts`; `<Shortcut command={id} />`
+  to show keys. Never hand-write `⌘K` in a label.
+- **Layers, not mount order.** `application` < `shell` < `workspace` < `route` <
+  `editor` < `overlay` < `recorder`. Two enabled handlers for one command in one
+  layer is a defect: development throws, production runs neither.
+- **A focused component keeps its own keys.** Arrow keys in a list, Escape in a
+  dialog and Tiptap's formatting stay with the component. The composer's send
+  key stays in its capture-phase handler but reads the bus's binding.
+- **Bindings are preferences.** `keybindings.<id>` rows on the ordinary
+  `prefs.list` live read, edited at `/settings/shortcuts` (`PREFERENCES.md`).
+- **`cmdk` is the search dialog**, not a command palette. A palette, when built,
+  lists catalogue commands and calls `useCommand(id).execute`.
+
+To add a command: a catalogue entry in `shared/shortcuts/catalogue.ts`, a
+`useCommandHandler` at its owner, and `useCommand` at every visible entry point
+(`SHORTCUTS.md` §12.1).
 
 ---
 
@@ -1435,6 +1464,8 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 5. **Optimistic UI and the composer.** DESIGN §10.2 specifies optimistic apply in the
    engine. What the renderer shows for a message that is written, unsent, and
    possibly failing — and how that interacts with the outbox hint already on
+| 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
+| 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing a character through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
    the rail — is unspecified.
 6. **Whether `can()` needs space and chat grants on the client.** `AUTHZ.md`
    §14 item 5 holds this open. The route table's `/r/:spaceId` is the first
@@ -1468,11 +1499,13 @@ are referenced from four documents.
    The workspace sidebar is a pixel-constrained resizable panel on desktop:
    256px initially, 224px minimum and 320px maximum. Dragging below the minimum
    collapses it to zero; the separator, title-bar control and keyboard shortcut
-   all drive the same shadcn sidebar state. Below the desktop breakpoint the
+   (the `shell.sidebar.toggle` command, §6.4) all drive the same shadcn sidebar
+   state. Below the desktop breakpoint the
    existing shadcn Sheet remains the sidebar and slides over the route, offset
    below the 40px window title bar.
 
-   The workspace switcher, Command-K search and five primary destinations stay
+   The workspace switcher, search (whose dialog and `app.search.open` handler
+   live at the root, §6.4) and five primary destinations stay
    pinned in the sidebar header. Space sections — channels, rooms, group
    messages and direct messages — occupy the bounded content region below and
    scroll independently, so a large directory cannot hide the primary controls.

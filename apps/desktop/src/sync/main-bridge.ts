@@ -57,3 +57,11 @@ export const setBlobAccount = (accountId: string | null) =>
  */
 export const setThemeSource = (source: 'system' | 'light' | 'dark') =>
   callMain<void>('theme:source', { source });
+
+/**
+ * Tell main the menu's Relayed items and their current bindings
+ * (SHORTCUTS.md §6.3). Same split as the theme: the rows live in a database only
+ * this process opens, and the menu is a main-process object.
+ */
+export const setMenuShortcuts = (items: readonly unknown[]) =>
+  callMain<void>('shortcuts:menu', { items });

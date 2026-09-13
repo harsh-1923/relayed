@@ -18,6 +18,10 @@
 // a broken screen. Writes DO fail, in the engine, because the renderer is a
 // surface and not an authority (§7).
 
+import { isConfigurableCommandId, type ConfigurableCommandId } from './shortcuts/catalogue.ts';
+import { encodeBindings } from './shortcuts/schema.ts';
+import type { Platform } from './shortcuts/tanstack-driver.ts';
+
 /** Which database holds the row. Only `account` has a writer today (§4). */
 export type PreferenceTier = 'account' | 'workspace';
 
@@ -97,6 +101,28 @@ export interface PreferenceRow {
 export const isPreferenceKey = (key: string): key is PreferenceKey =>
   Object.hasOwn(PREFERENCES, key);
 
+/**
+ * A person's bindings for one command (SHORTCUTS.md §9.2).
+ *
+ * A DERIVED family rather than seven entries above: the suffix must be a
+ * configurable command in the command catalogue, so the vocabulary stays closed
+ * without being restated. Kept out of `PreferenceKey`, whose value types are
+ * read off `parse` — a binding list is decoded by the shortcut resolver against
+ * the reading platform, never by `decode`.
+ */
+export const KEYBINDING_PREFIX = 'keybindings.';
+
+export type KeybindingKey = `keybindings.${ConfigurableCommandId}`;
+
+export const isKeybindingKey = (key: string): key is KeybindingKey =>
+  typeof key === 'string' && key.startsWith(KEYBINDING_PREFIX) && isConfigurableCommandId(key.slice(KEYBINDING_PREFIX.length));
+
+export const keybindingKey = (id: ConfigurableCommandId): KeybindingKey => `${KEYBINDING_PREFIX}${id}`;
+
+/** Every key the engine will write: the fixed catalogue and the keybinding family. */
+export const isWritablePreferenceKey = (key: string): key is PreferenceKey | KeybindingKey =>
+  typeof key === 'string' && (isPreferenceKey(key) || isKeybindingKey(key));
+
 export const specOf = <K extends PreferenceKey>(key: K): PreferenceSpec<PreferenceValue<K>> =>
   PREFERENCES[key] as unknown as PreferenceSpec<PreferenceValue<K>>;
 
@@ -130,7 +156,16 @@ export function decode<K extends PreferenceKey>(
  * — a surface offering a value the catalogue does not allow, or a key that does
  * not exist — so they are loud.
  */
-export function encode(key: string, value: unknown): { value: string; reach: PreferenceReach } {
+export function encode(
+  key: string, value: unknown, platform?: Platform,
+): { value: string; reach: PreferenceReach } {
+  if (isKeybindingKey(key)) {
+    // Canonical for the WRITING platform — the spelling its recorder produces.
+    // Required rather than defaulted: a guessed platform would store `Mod+K`
+    // where the person meant Control on a Mac.
+    if (!platform) throw new Error(`a platform is required to encode ${key}`);
+    return { value: encodeBindings(value, platform), reach: 'local' };
+  }
   if (!isPreferenceKey(key)) throw new Error(`unknown preference: ${key}`);
   const spec = specOf(key);
   if (spec.parse(value) === null) {

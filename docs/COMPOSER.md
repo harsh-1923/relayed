@@ -157,6 +157,12 @@ before selection or send. Outside code blocks, Return sends and Shift-Return
 inserts a break. Mod-Return sends from every block. Inside code, Return remains
 a newline.
 
+Those are the defaults of the `composer.message.send` command, and a person can
+change them in keyboard shortcuts settings. The rules generalize: a binding
+without Control, Alt or Command never sends inside a code block, and nothing
+sends while the menu is open or during composition (`send-key.ts`;
+SHORTCUTS.md §10, §12.3).
+
 ## Formatting and links
 
 The toolbar exposes bold, italic, strike, inline code, quote, code block,

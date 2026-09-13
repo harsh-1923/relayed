@@ -140,6 +140,31 @@ const RULES = [
     allow: [],
   },
   {
+    id: 'shortcuts/no-global-key-listener',
+    doc: 'SHORTCUTS.md §18 — no feature owns a document or window keydown listener',
+    why: 'Two of them already fought: the sidebar\'s window-level Mod+B stole '
+       + 'bold from the composer, and search\'s Mod+K lived in a sidebar that '
+       + 'settings unmounts. A listener outside the bus bypasses layer '
+       + 'precedence, the editable-focus policy and remapping, and its label '
+       + 'drifts from what it matches. Register a handler with '
+       + 'useCommandHandler instead; a focused component handles its own keys '
+       + 'with an element prop such as onKeyDown.',
+    pattern: /(?:window|document|globalThis)\.addEventListener\(\s*['"]key(?:down|up|press)['"]/,
+    where: [/apps\/desktop\/src\/renderer\//],
+    allow: [/apps\/desktop\/src\/renderer\/lib\/commands\/CommandProvider\.tsx$/],
+  },
+  {
+    id: 'shortcuts/tanstack-only-in-the-driver',
+    doc: 'SHORTCUTS.md §11 — only the driver imports TanStack Hotkeys',
+    why: 'The library is alpha, and its matcher breaks the logical-key contract '
+       + '(a key typing "-" at the physical Slash position matches Mod+/). A '
+       + 'second importer can reach for matchesKeyboardEvent or useHotkey, and '
+       + 'an upgrade stops being one file. Import from shared/shortcuts instead.',
+    pattern: /from\s+['"]@tanstack\/(?:react-)?hotkeys['"]|import\(\s*['"]@tanstack\/(?:react-)?hotkeys['"]\s*\)/,
+    where: [/apps\/desktop\//],
+    allow: [/apps\/desktop\/src\/shared\/shortcuts\/tanstack-driver\.ts$/],
+  },
+  {
     id: 'identity/no-layer-1-on-the-client',
     doc: 'DESIGN.md §6.3 — nothing below Layer 2 references an identity',
     why: 'Replicating identity_id would hand every workspace member a directory '

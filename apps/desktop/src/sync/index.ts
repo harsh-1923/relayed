@@ -13,7 +13,10 @@ import {
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, openBrowser, pickFolder, setBlobAccount, setThemeSource } from './main-bridge.ts';
+import { vault as bridgeVault, openBrowser, pickFolder, setBlobAccount, setMenuShortcuts, setThemeSource } from './main-bridge.ts';
+import { KEYBINDING_PREFIX } from '../shared/prefs.ts';
+import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts';
+import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
@@ -22,6 +25,7 @@ import { enqueue } from './outbox.ts';
 import { installNetworkGate } from './network.ts';
 import { topic, INVALIDATE_CHANNEL } from '../shared/topics.ts';
 import { decode } from '../shared/prefs.ts';
+import type { PreferenceChange } from './prefs.ts';
 import { createInvalidator } from './invalidate.ts';
 import { createLink } from './link.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
@@ -111,6 +115,21 @@ function applyTheme(): Promise<void> {
   return setThemeSource(decode('appearance.theme', storage.preferences()));
 }
 
+/**
+ * The menu's shortcuts, from the open account's keybinding rows — or the
+ * defaults when there is no account. Sent wherever the theme is, since both are
+ * account preferences main applies, and after any keybinding write.
+ */
+function applyMenuShortcuts(): Promise<void> {
+  const platform = platformOf(process.platform);
+  const overrides = new Map<string, unknown>();
+  for (const row of storage.preferences()) {
+    if (!row.key.startsWith(KEYBINDING_PREFIX)) continue;
+    try { overrides.set(row.key.slice(KEYBINDING_PREFIX.length), JSON.parse(row.value)); } catch { /* resolves as invalid */ }
+  }
+  return setMenuShortcuts(nativeMenuItems(resolveBindings(overrides, platform), platform));
+}
+
 // EAGER, and deliberately not inside `startSyncing` below.
 //
 // That deferral exists to keep the network out of the path to first render, and
@@ -121,6 +140,7 @@ function applyTheme(): Promise<void> {
 // renderer, so in practice this lands well before `ready-to-show`; §9 records
 // why the remaining race is accepted rather than closed.
 void applyTheme();
+void applyMenuShortcuts();
 
 // What multi-account and multi-workspace were built on assumptions about.
 // Sampled at boot because that is when both are known without extra work.
@@ -225,6 +245,7 @@ function adoptSession(s: OurSession): void {
   void setBlobAccount(storage.accountId);
   // The account may have changed under us, and each one keeps its own theme.
   void applyTheme();
+  void applyMenuShortcuts();
   // Whatever this replica ALREADY holds. On a fresh one that is nothing, which
   // is the whole reason `avatarsWanted` exists below: the directory arrives
   // over the socket seconds later, and this call cannot see it.
@@ -647,9 +668,10 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   /**
    * Every preference, undecoded.
    *
-   * ONE read for all of them rather than one per key. The table is under ten
-   * rows — a missing row is the default and defaults are never written — so a
-   * per-key query would be ten subscriptions and ten reads to save nothing,
+   * ONE read for all of them rather than one per key. The table holds tens of
+   * rows at most — a missing row is the default and defaults are never written,
+   * and keyboard shortcuts add one per customized command — so a per-key query
+   * would be that many subscriptions and reads to save nothing,
    * and one shared entry means two surfaces reading the same key share a fetch.
    *
    * Decoding happens in the renderer, against the same shared catalogue this
@@ -670,6 +692,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const { key, value } = (params ?? {}) as { key?: string; value?: unknown };
     if (!key) throw new Error('key required');
     storage.setPreference(key, value);
+    if (key.startsWith(KEYBINDING_PREFIX)) void applyMenuShortcuts();
     // The one preference that also lives outside the database (§9). Gated on
     // the key rather than run unconditionally, so adding a preference does not
     // quietly add an IPC round trip to every write.
@@ -683,6 +706,38 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // Written fine, subscribed coarse: this names the key, and a reader
     // subscribed to `prefs` is woken by the prefix rule in topics.ts.
     invalidate([topic.pref(key)]);
+    return null;
+  },
+
+  /**
+   * Return one preference to its default by deleting its row — reset, as
+   * distinct from a set to an empty keybinding list, which disables
+   * (SHORTCUTS.md §9.1). Same key authorization as `prefs.set`.
+   */
+  'prefs.clear': async (params) => {
+    const { key } = (params ?? {}) as { key?: string };
+    if (!key) throw new Error('key required');
+    storage.clearPreference(key);
+    if (key.startsWith(KEYBINDING_PREFIX)) void applyMenuShortcuts();
+    if (key === 'appearance.theme') await applyTheme();
+    invalidate([topic.pref(key)]);
+    return null;
+  },
+
+  /**
+   * Several sets and clears, committed together or not at all. What
+   * "Replace existing" and "Reset all shortcuts" need, because a two-write
+   * sequence can fail halfway (SHORTCUTS.md §9.2). A hard keybinding conflict
+   * rejects the whole batch with a message starting `keybinding conflict`.
+   */
+  'prefs.apply': async (params) => {
+    const { changes } = (params ?? {}) as { changes?: PreferenceChange[] };
+    if (!Array.isArray(changes)) throw new Error('changes required');
+    storage.applyPreferences(changes);
+    const keys = changes.map(change => change.key);
+    if (keys.some(key => key.startsWith(KEYBINDING_PREFIX))) void applyMenuShortcuts();
+    if (keys.includes('appearance.theme')) await applyTheme();
+    invalidate(keys.map(key => topic.pref(key)));
     return null;
   },
 
@@ -754,6 +809,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // just adopted owns the theme now, and signing out of the last one leaves
     // no rows at all, which correctly decodes back to the system default.
     void applyTheme();
+    void applyMenuShortcuts();
 
     push();
     return view();

@@ -2700,6 +2700,8 @@ test.
 | 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (§13.9), so telemetry stops draining exactly when it is least observed |
 | 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
 | 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined — 1,600 members was 69% of the frame and 20× the chats (§9.9) |
+| 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
+| 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
 
 ### Scenarios to test explicitly
 

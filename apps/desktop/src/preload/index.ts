@@ -1,6 +1,7 @@
 // Holds the MessagePort and exposes a narrow API. The renderer never sees the
 // port itself, and never sees anything resembling arbitrary SQL (§13.2).
 import { contextBridge, ipcRenderer } from 'electron';
+import { isNativeCommandId, type NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 
 let port: MessagePort | null = null;
 let nextId = 1;
@@ -98,5 +99,21 @@ function subscribe(channel: string, fn: (data: unknown) => void): () => void {
   return () => { set.delete(fn); };
 }
 
+/**
+ * A command chosen from the application menu (SHORTCUTS.md §6.5).
+ *
+ * Only a command ID crosses, and only one on the menu's allow-list: main cannot
+ * make the renderer execute an arbitrary string, and the renderer never
+ * receives `ipcRenderer`. The listener is removed by the returned function, so a
+ * provider remounted by a reload does not execute a command twice.
+ */
+function onCommand(fn: (id: NativeCommandId) => void): () => void {
+  const listener = (_event: unknown, id: unknown) => {
+    if (isNativeCommandId(id)) fn(id);
+  };
+  ipcRenderer.on('command:invoke', listener);
+  return () => { ipcRenderer.removeListener('command:invoke', listener); };
+}
+
 // Narrow surface only: no port, no tokens, no arbitrary SQL (§13.2).
-contextBridge.exposeInMainWorld('relayed', { query, subscribe, STALE });
+contextBridge.exposeInMainWorld('relayed', { query, subscribe, onCommand, STALE });

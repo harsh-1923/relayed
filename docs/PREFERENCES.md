@@ -17,6 +17,7 @@ to everything the engine knows.
 | Does anything sync? | **No.** Every row is `reach='local'` | 5 |
 | Then why is there a `reach` column? | It has to be on rows written *before* sync exists | 5 |
 | Where do defaults live? | In code. **A missing row is the default** | 7 |
+| Keyboard shortcuts? | One `keybindings.<command id>` row per customized command, written through `prefs.set`, `prefs.clear` and the transactional `prefs.apply` | 8, 11; SHORTCUTS.md §9 |
 | How does the theme actually apply? | `nativeTheme.themeSource` in main for the window, `<Theme />` for the tokens — both from the stored value | 9 |
 
 ---
@@ -182,8 +183,9 @@ DESIGN.md §13.5, and asserted in both spellings in `account-schema.test.ts`
 rather than trusted.
 
 No index. The primary key serves point reads, and the table holds only what
-somebody actually changed (§7), so the scan behind a settings panel is a handful
-of rows.
+somebody actually changed (§7). Keyboard shortcuts add one row per customized
+command (SHORTCUTS.md §9), so the bound is the fixed catalogue plus the command
+catalogue — tens of rows, still a scan nobody will measure.
 
 ---
 
@@ -230,12 +232,18 @@ Nothing new. Both are the paths DESIGN.md §11 already describes.
 read    useQuery('prefs.list')  →  registry  →  prefs.list  →  SELECT
 write   call api.query('prefs.set')  →  UPSERT  →  invalidate('prefs:<key>')
                                                 →  push  →  registry refetches
+clear   call api.query('prefs.clear')  →  DELETE  →  invalidate('prefs:<key>')
+batch   call api.query('prefs.apply')  →  BEGIN … COMMIT  →  invalidate each key
 ```
+
+`prefs.apply` exists because some changes are only valid together: moving a
+keyboard shortcut from one command to another is two rows that must commit or
+fail as one (SHORTCUTS.md §9.2).
 
 **One query for every preference, not one per key.** `prefs.list` returns the
 whole table, and `usePreference(key)` resolves a single value out of it against
-the catalogue. The table is under ten rows, so a per-key query would be ten
-subscriptions and ten reads to save nothing — and one shared entry means two
+the catalogue. The table holds tens of rows at most, so a per-key query would be
+that many subscriptions and reads to save nothing — and one shared entry means two
 surfaces reading the same key share a fetch.
 
 **Written fine, subscribed coarse.** The write invalidates
@@ -356,6 +364,10 @@ that the first writer is one key, end to end, with its own test.
 
 1. One entry in `src/shared/prefs.ts` — tier, reach, fallback, parse.
 2. A control that calls `prefs.set`.
+
+A keyboard shortcut is not added here at all: adding a command to the command
+catalogue (`src/shared/shortcuts/catalogue.ts`) makes its `keybindings.<id>` key
+writable (SHORTCUTS.md §9.2).
 
 That is the whole list while the key is account-tier. A **workspace**-tier key
 additionally needs the replica's copy of the table (§4), which is one migration

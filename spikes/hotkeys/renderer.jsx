@@ -34,7 +34,16 @@ Document.prototype.removeEventListener = function (type, ...rest) {
   return removeEventListener.call(this, type, ...rest);
 };
 
-const EDITABLE_INPUT_TYPES = new Set(['', 'text', 'search', 'url', 'tel', 'email', 'password', 'number']);
+const EDITABLE_INPUT_TYPES = new Set([
+  '',
+  'text',
+  'search',
+  'url',
+  'tel',
+  'email',
+  'password',
+  'number',
+]);
 
 function isEditableTarget(event) {
   for (const node of event.composedPath()) {
@@ -69,7 +78,8 @@ function dispatch(event) {
   if (!id) return skips.push(`unbound:${chord}`);
   const definition = catalogue[id];
   if (event.repeat && definition.repeat !== 'allow') return skips.push('repeat');
-  if (definition.inputPolicy === 'deny-editable' && isEditableTarget(event)) return skips.push('editable');
+  if (definition.inputPolicy === 'deny-editable' && isEditableTarget(event))
+    return skips.push('editable');
   event.preventDefault();
   invocations.push({ id, chord, prevented: event.defaultPrevented });
 }
@@ -89,8 +99,14 @@ const observed = [];
 
 window.addEventListener('keydown', event => {
   observed.push({
-    key: event.key, code: event.code, meta: event.metaKey, ctrl: event.ctrlKey,
-    alt: event.altKey, shift: event.shiftKey, repeat: event.repeat, trusted: event.isTrusted,
+    key: event.key,
+    code: event.code,
+    meta: event.metaKey,
+    ctrl: event.ctrlKey,
+    alt: event.altKey,
+    shift: event.shiftKey,
+    repeat: event.repeat,
+    trusted: event.isTrusted,
   });
 });
 
@@ -105,7 +121,11 @@ window.spike = {
   counts: () => ({ ...listenerCounts }),
   mount() {
     root = createRoot(document.getElementById('root'));
-    root.render(<StrictMode><Dispatcher /></StrictMode>);
+    root.render(
+      <StrictMode>
+        <Dispatcher />
+      </StrictMode>,
+    );
   },
   unmount() {
     root.unmount();
@@ -122,7 +142,12 @@ window.spike = {
     recorded.length = 0;
     document.activeElement?.blur?.();
   },
-  read: () => ({ invocations: [...invocations], skips: [...skips], observed: [...observed], recorded: [...recorded] }),
+  read: () => ({
+    invocations: [...invocations],
+    skips: [...skips],
+    observed: [...observed],
+    recorded: [...recorded],
+  }),
   focus(selector) {
     document.querySelector(selector).focus();
     return document.activeElement === document.querySelector(selector);
@@ -201,29 +226,77 @@ window.spike = {
     };
     const physicalSlash = { key: '-', code: 'Slash', metaKey: true };
     const optionK = { key: '˚', code: 'KeyK', metaKey: false, altKey: true };
-    const altGraphEvent = new KeyboardEvent('keydown', { key: '@', code: 'KeyQ', ctrlKey: true, altKey: true, modifierAltGraph: true });
+    const altGraphEvent = new KeyboardEvent('keydown', {
+      key: '@',
+      code: 'KeyQ',
+      ctrlKey: true,
+      altKey: true,
+      modifierAltGraph: true,
+    });
     const result = {
       composing: run({ key: 'k', code: 'KeyK', metaKey: true, isComposing: true }),
       composingMatcherSays: matchesKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true, isComposing: true }), 'Mod+K', 'mac'),
-      altGraph: run({ key: 'k', code: 'KeyK', ctrlKey: true, altKey: true, modifierAltGraph: true }),
+        new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true, isComposing: true }),
+        'Mod+K',
+        'mac',
+      ),
+      altGraph: run({
+        key: 'k',
+        code: 'KeyK',
+        ctrlKey: true,
+        altKey: true,
+        modifierAltGraph: true,
+      }),
       altGraphModifierState: altGraphEvent.getModifierState('AltGraph'),
       altGraphMatcherSays: matchesKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', ctrlKey: true, altKey: true, modifierAltGraph: true }),
-        'Control+Alt+Q', 'windows'),
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          ctrlKey: true,
+          altKey: true,
+          modifierAltGraph: true,
+        }),
+        'Control+Alt+Q',
+        'windows',
+      ),
       physicalSlashDispatcher: run(physicalSlash),
-      physicalSlashMatcherSays: matchesKeyboardEvent(new KeyboardEvent('keydown', physicalSlash), 'Mod+/', 'mac'),
-      optionKMatcherSaysAltK: matchesKeyboardEvent(new KeyboardEvent('keydown', optionK), 'Alt+K', 'mac'),
+      physicalSlashMatcherSays: matchesKeyboardEvent(
+        new KeyboardEvent('keydown', physicalSlash),
+        'Mod+/',
+        'mac',
+      ),
+      optionKMatcherSaysAltK: matchesKeyboardEvent(
+        new KeyboardEvent('keydown', optionK),
+        'Alt+K',
+        'mac',
+      ),
       optionKNormalized: normalizeHotkeyFromEvent(new KeyboardEvent('keydown', optionK), 'mac'),
       cyrillicMatcherSays: matchesKeyboardEvent(
-        new KeyboardEvent('keydown', { key: 'л', code: 'KeyK', metaKey: true }), 'Mod+K', 'mac'),
-      windowsCtrlK: normalizeHotkeyFromEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true }), 'windows'),
-      windowsMetaK: normalizeHotkeyFromEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true }), 'windows'),
+        new KeyboardEvent('keydown', { key: 'л', code: 'KeyK', metaKey: true }),
+        'Mod+K',
+        'mac',
+      ),
+      windowsCtrlK: normalizeHotkeyFromEvent(
+        new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true }),
+        'windows',
+      ),
+      windowsMetaK: normalizeHotkeyFromEvent(
+        new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: true }),
+        'windows',
+      ),
       textboxRole: (() => {
         const box = document.querySelector('[role=textbox]');
         invocations.length = 0;
         skips.length = 0;
-        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB', metaKey: true, bubbles: true, cancelable: true }));
+        box.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            code: 'KeyB',
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
         return { invocations: [...invocations], skips: [...skips] };
       })(),
       shadowInput: (() => {
@@ -231,7 +304,16 @@ window.spike = {
         const input = host.shadowRoot.querySelector('input');
         invocations.length = 0;
         skips.length = 0;
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', code: 'KeyB', metaKey: true, bubbles: true, cancelable: true, composed: true }));
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'b',
+            code: 'KeyB',
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+          }),
+        );
         return { invocations: [...invocations], skips: [...skips] };
       })(),
     };

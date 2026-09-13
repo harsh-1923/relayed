@@ -3,7 +3,7 @@
 // resizable panel, mobile Sheet and title-bar toggle remain one mechanism.
 import { Link, useLocation } from 'react-router';
 import {
-  ArrowLeft, Bot, ColorPalette, FilterHorizontal, NotificationBellOn, Tools,
+  ArrowLeft, Bot, ColorPalette, FilterHorizontal, KeyboardWired, NotificationBellOn, Tools,
 } from '@relayed/icons';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
@@ -19,6 +19,7 @@ const SETTINGS_NAVIGATION = [
   { to: '/settings/appearance', label: 'Appearance', icon: ColorPalette },
   { to: '/settings/agent', label: 'Claude Agent', icon: Bot },
   { to: '/settings/notifications', label: 'Notifications', icon: NotificationBellOn },
+  { to: '/settings/shortcuts', label: 'Keyboard shortcuts', icon: KeyboardWired },
   { to: '/settings/advanced', label: 'Advanced', icon: Tools },
 ] as const;
 

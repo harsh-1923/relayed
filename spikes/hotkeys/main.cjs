@@ -33,14 +33,16 @@ async function run(win) {
   const fresh = () => page('spike.reset()');
   const read = () => page('spike.read()');
 
-  await page(`spike.setCatalogue(${JSON.stringify({
-    'app.search.open': { hotkeys: ['Mod+K'], inputPolicy: 'allow-editable' },
-    'shell.sidebar.toggle': { hotkeys: ['Mod+B'], inputPolicy: 'deny-editable' },
-    'navigation.back': { hotkeys: ['Mod+['], inputPolicy: 'deny-editable' },
-    'navigation.forward': { hotkeys: ['Mod+]'], inputPolicy: 'deny-editable' },
-    'app.settings.open': { hotkeys: ['Mod+,'], inputPolicy: 'allow-editable' },
-    'app.shortcuts.open': { hotkeys: ['Mod+/'], inputPolicy: 'allow-editable' },
-  })})`);
+  await page(
+    `spike.setCatalogue(${JSON.stringify({
+      'app.search.open': { hotkeys: ['Mod+K'], inputPolicy: 'allow-editable' },
+      'shell.sidebar.toggle': { hotkeys: ['Mod+B'], inputPolicy: 'deny-editable' },
+      'navigation.back': { hotkeys: ['Mod+['], inputPolicy: 'deny-editable' },
+      'navigation.forward': { hotkeys: ['Mod+]'], inputPolicy: 'deny-editable' },
+      'app.settings.open': { hotkeys: ['Mod+,'], inputPolicy: 'allow-editable' },
+      'app.shortcuts.open': { hotkeys: ['Mod+/'], inputPolicy: 'allow-editable' },
+    })})`,
+  );
 
   // ── Library lifecycle under React StrictMode ──────────────────────────────
   await check('StrictMode mount leaves exactly one document keydown listener', async () => {
@@ -64,7 +66,10 @@ async function run(win) {
     await fresh();
     await press('K', ['meta']);
     const { invocations } = await read();
-    assert.deepEqual(invocations.map(hit => hit.id), ['app.search.open']);
+    assert.deepEqual(
+      invocations.map(hit => hit.id),
+      ['app.search.open'],
+    );
     assert.equal(invocations[0].prevented, true);
   });
 
@@ -80,12 +85,21 @@ async function run(win) {
     assert.deepEqual((await read()).invocations, []);
   });
 
-  for (const [keyCode, id] of [['/', 'app.shortcuts.open'], [',', 'app.settings.open'], ['[', 'navigation.back'], [']', 'navigation.forward']]) {
+  for (const [keyCode, id] of [
+    ['/', 'app.shortcuts.open'],
+    [',', 'app.settings.open'],
+    ['[', 'navigation.back'],
+    [']', 'navigation.forward'],
+  ]) {
     await check(`Cmd+${keyCode} invokes ${id}`, async () => {
       await fresh();
       await press(keyCode, ['meta']);
       const { invocations, observed } = await read();
-      assert.deepEqual(invocations.map(hit => hit.id), [id], JSON.stringify(observed));
+      assert.deepEqual(
+        invocations.map(hit => hit.id),
+        [id],
+        JSON.stringify(observed),
+      );
     });
   }
 
@@ -109,7 +123,11 @@ async function run(win) {
 
   await check('auto-repeat is ignored unless the command opts in', async () => {
     await fresh();
-    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: ['meta', 'isAutoRepeat'] });
+    win.webContents.sendInputEvent({
+      type: 'keyDown',
+      keyCode: 'K',
+      modifiers: ['meta', 'isAutoRepeat'],
+    });
     await settle();
     const { invocations, skips, observed } = await read();
     assert.equal(observed[0]?.repeat, true, 'Chromium did not mark the event as repeat');
@@ -118,39 +136,58 @@ async function run(win) {
   });
 
   for (const [selector, editable] of [
-    ['#text', true], ['#textarea', true], ['#select', true], ['#editable', true],
-    ['#button', false], ['#checkbox', false], ['#capture', false],
+    ['#text', true],
+    ['#textarea', true],
+    ['#select', true],
+    ['#editable', true],
+    ['#button', false],
+    ['#checkbox', false],
+    ['#capture', false],
   ]) {
-    await check(`deny-editable Mod+B with focus on ${selector} ${editable ? 'is skipped' : 'dispatches'}`, async () => {
-      await fresh();
-      assert.equal(await page(`spike.focus('${selector}')`), true, 'could not focus');
-      await press('B', ['meta']);
-      const { invocations, skips } = await read();
-      if (editable) {
-        assert.deepEqual(invocations, []);
-        assert.deepEqual(skips, ['editable']);
-      } else {
-        assert.deepEqual(invocations.map(hit => hit.id), ['shell.sidebar.toggle']);
-      }
-    });
+    await check(
+      `deny-editable Mod+B with focus on ${selector} ${editable ? 'is skipped' : 'dispatches'}`,
+      async () => {
+        await fresh();
+        assert.equal(await page(`spike.focus('${selector}')`), true, 'could not focus');
+        await press('B', ['meta']);
+        const { invocations, skips } = await read();
+        if (editable) {
+          assert.deepEqual(invocations, []);
+          assert.deepEqual(skips, ['editable']);
+        } else {
+          assert.deepEqual(
+            invocations.map(hit => hit.id),
+            ['shell.sidebar.toggle'],
+          );
+        }
+      },
+    );
   }
 
   await check('allow-editable Mod+K still dispatches from a focused textarea', async () => {
     await fresh();
     await page(`spike.focus('#textarea')`);
     await press('K', ['meta']);
-    assert.deepEqual((await read()).invocations.map(hit => hit.id), ['app.search.open']);
+    assert.deepEqual(
+      (await read()).invocations.map(hit => hit.id),
+      ['app.search.open'],
+    );
   });
 
   // ── One listener, dynamic bindings ────────────────────────────────────────
   await check('rebinding changes matching without touching the listener count', async () => {
     await fresh();
     const before = (await page('spike.counts()')).keydown;
-    await page(`spike.setCatalogue({ 'app.search.open': { hotkeys: ['Mod+Shift+P'], inputPolicy: 'allow-editable' } })`);
+    await page(
+      `spike.setCatalogue({ 'app.search.open': { hotkeys: ['Mod+Shift+P'], inputPolicy: 'allow-editable' } })`,
+    );
     await press('K', ['meta']);
     await press('P', ['meta', 'shift']);
     const { invocations } = await read();
-    assert.deepEqual(invocations.map(hit => hit.chord), ['Mod+Shift+P']);
+    assert.deepEqual(
+      invocations.map(hit => hit.chord),
+      ['Mod+Shift+P'],
+    );
     assert.equal((await page('spike.counts()')).keydown, before);
   });
 
@@ -167,10 +204,15 @@ async function run(win) {
     assert.equal(binding.hotkey, 'Mod+Shift+J');
     assert.deepEqual(invocations, [], 'the recorder must beat the dispatcher');
     await page('spike.stopRecorder()');
-    await page(`spike.setCatalogue({ 'app.search.open': { hotkeys: [${JSON.stringify(binding.hotkey)}], inputPolicy: 'allow-editable' } })`);
+    await page(
+      `spike.setCatalogue({ 'app.search.open': { hotkeys: [${JSON.stringify(binding.hotkey)}], inputPolicy: 'allow-editable' } })`,
+    );
     await fresh();
     await press('J', ['meta', 'shift']);
-    assert.deepEqual((await read()).invocations.map(hit => hit.id), ['app.search.open']);
+    assert.deepEqual(
+      (await read()).invocations.map(hit => hit.id),
+      ['app.search.open'],
+    );
   });
 
   await check('recorder: a pure modifier press does not record', async () => {
@@ -199,14 +241,17 @@ async function run(win) {
     await page('spike.stopRecorder()');
   });
 
-  await check('recorder: default ignoreInputs refuses a focused text input as capture control', async () => {
-    await fresh();
-    await page(`spike.focus('#text')`);
-    await page('spike.startRecorder()');
-    await press('J', ['meta']);
-    assert.deepEqual((await read()).recorded, []);
-    await page('spike.stopRecorder()');
-  });
+  await check(
+    'recorder: default ignoreInputs refuses a focused text input as capture control',
+    async () => {
+      await fresh();
+      await page(`spike.focus('#text')`);
+      await page('spike.startRecorder()');
+      await press('J', ['meta']);
+      assert.deepEqual((await read()).recorded, []);
+      await page('spike.stopRecorder()');
+    },
+  );
 
   await check('recorder: destroy removes its capture listener', async () => {
     const before = (await page('spike.counts()')).keydown;
@@ -224,36 +269,51 @@ async function run(win) {
     assert.deepEqual(synthetic.composing.skips, ['composing']);
   });
 
-  await check('constructed: TanStack matcher does NOT filter composition (Relayed must)', async () => {
-    assert.equal(synthetic.composingMatcherSays, true);
-  });
+  await check(
+    'constructed: TanStack matcher does NOT filter composition (Relayed must)',
+    async () => {
+      assert.equal(synthetic.composingMatcherSays, true);
+    },
+  );
 
   await check('constructed: AltGraph modifier state is readable and skips dispatch', async () => {
     assert.equal(synthetic.altGraphModifierState, true);
     assert.deepEqual(synthetic.altGraph.skips, ['altgraph']);
   });
 
-  await check('constructed: TanStack matcher treats AltGraph as Control+Alt (Relayed must filter)', async () => {
-    assert.equal(synthetic.altGraphMatcherSays, true);
-  });
+  await check(
+    'constructed: TanStack matcher treats AltGraph as Control+Alt (Relayed must filter)',
+    async () => {
+      assert.equal(synthetic.altGraphMatcherSays, true);
+    },
+  );
 
-  await check('constructed: physical Slash producing "-" does not match Mod+/ in the Relayed index', async () => {
-    assert.deepEqual(synthetic.physicalSlashDispatcher.invocations, []);
-  });
+  await check(
+    'constructed: physical Slash producing "-" does not match Mod+/ in the Relayed index',
+    async () => {
+      assert.deepEqual(synthetic.physicalSlashDispatcher.invocations, []);
+    },
+  );
 
-  await check('constructed: TanStack matcher DOES match it through its event.code fallback', async () => {
-    assert.equal(synthetic.physicalSlashMatcherSays, true);
-  });
+  await check(
+    'constructed: TanStack matcher DOES match it through its event.code fallback',
+    async () => {
+      assert.equal(synthetic.physicalSlashMatcherSays, true);
+    },
+  );
 
   await check('constructed: textbox role and shadow-DOM input count as editable', async () => {
     assert.deepEqual(synthetic.textboxRole.skips, ['editable']);
     assert.deepEqual(synthetic.shadowInput.skips, ['editable']);
   });
 
-  await check('constructed: Windows Control+K normalizes to Mod+K, Windows Meta+K does not', async () => {
-    assert.equal(synthetic.windowsCtrlK, 'Mod+K');
-    assert.equal(synthetic.windowsMetaK, 'Meta+K');
-  });
+  await check(
+    'constructed: Windows Control+K normalizes to Mod+K, Windows Meta+K does not',
+    async () => {
+      assert.equal(synthetic.windowsCtrlK, 'Mod+K');
+      assert.equal(synthetic.windowsMetaK, 'Meta+K');
+    },
+  );
 
   // ── Pure functions across platforms ───────────────────────────────────────
   const pure = await page('spike.pure()');
@@ -329,12 +389,23 @@ app.whenReady().then(async () => {
   const failed = results.filter(result => !result.ok);
   console.log(`\nElectron ${process.versions.electron} | Chromium ${process.versions.chrome}\n`);
   for (const result of results) {
-    console.log(`  ${result.ok ? 'ok  ' : 'FAIL'} ${result.name}${result.ok ? '' : `\n       -> ${result.detail}`}`);
+    console.log(
+      `  ${result.ok ? 'ok  ' : 'FAIL'} ${result.name}${result.ok ? '' : `\n       -> ${result.detail}`}`,
+    );
   }
   console.log('\nRecorded, not asserted:');
-  console.log('  Cmd+Shift+/ event:', JSON.stringify(shifted.observed), 'dispatcher:', shifted.skip);
-  console.log('  Option+K normalizes to:', details.synthetic?.optionKNormalized,
-    '| matcher says Alt+K:', details.synthetic?.optionKMatcherSaysAltK);
+  console.log(
+    '  Cmd+Shift+/ event:',
+    JSON.stringify(shifted.observed),
+    'dispatcher:',
+    shifted.skip,
+  );
+  console.log(
+    '  Option+K normalizes to:',
+    details.synthetic?.optionKNormalized,
+    '| matcher says Alt+K:',
+    details.synthetic?.optionKMatcherSaysAltK,
+  );
   console.log('  Cmd+л (KeyK) matcher says Mod+K:', details.synthetic?.cyrillicMatcherSays);
   console.log('  display:', JSON.stringify(details.pure?.display));
   console.log('  validate:', JSON.stringify(details.pure?.validate));

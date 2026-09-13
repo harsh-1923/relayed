@@ -10,12 +10,11 @@
 // and the account switcher is in the FOOTER. The directory between them is the
 // only part that scrolls, so the things you reach most often never disappear
 // behind a long list of spaces.
-import { useEffect, useState } from 'react';
 // import type { CSSProperties } from 'react';
-import { useNavigate } from 'react-router';
 import { useSession } from '../../state';
 // import { useDialKit, type DialConfig } from 'dialkit';
-import { SearchDefault, UserTwo } from '@relayed/icons';
+import { SearchDefault } from '@relayed/icons';
+import { destinationsFor } from '../SearchPalette';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
 import { AccountSwitcher } from './AccountSwitcher';
@@ -24,22 +23,10 @@ import { LocalRoomsDirectory } from '@/features/local-rooms/LocalRoomsDirectory'
 import { SidebarItem } from '@/components/SidebarItem';
 import { Button } from '@/components/ui/button';
 import {
-  Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput,
-  CommandItem, CommandList,
-} from '@/components/ui/command';
-import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, useSidebar,
 } from '@/components/ui/sidebar';
+import { useCommand } from '@/lib/commands/CommandProvider';
 import { cn } from '@/lib/utils';
-
-/**
- * Destinations that exist. A row here is a promise that clicking it goes
- * somewhere, so nothing is listed ahead of the screen it would open.
- * Workspace-tier, so absent while no workspace is open.
- */
-const destinationsFor = (wsId: string | null) => wsId === null ? [] : [
-  { label: 'People', icon: UserTwo, to: `/w/${wsId}/people` },
-];
 
 /* DialKit is temporarily disabled. Keep the controls beside their consumer so
  * restoring the design-tuning surface is a small, reviewable change.
@@ -86,9 +73,8 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
   // From state, not the URL: a local room's route has no workspace in its path.
   const wsId = useSession().state.workspaceId;
-  const navigate = useNavigate();
   const destinations = destinationsFor(wsId);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const search = useCommand('app.search.open');
   /* DialKit is temporarily disabled.
   const itemTokens = useDialKit('Sidebar items', SIDEBAR_ITEM_CONTROLS, {
     persist: true,
@@ -108,20 +94,6 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
   useAnnounceSidebar();
-
-  useEffect(() => {
-    function handleCommandPaletteShortcut(event: KeyboardEvent) {
-      if (event.key.toLowerCase() !== 'k' || (!event.metaKey && !event.ctrlKey)) {
-        return;
-      }
-
-      event.preventDefault();
-      setCommandPaletteOpen(true);
-    }
-
-    window.addEventListener('keydown', handleCommandPaletteShortcut);
-    return () => window.removeEventListener('keydown', handleCommandPaletteShortcut);
-  }, []);
 
   return (
     // Desktop is inline because the resizable panel owns its width. Mobile is
@@ -143,9 +115,10 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
             variant="ghost"
             size="icon"
             aria-label="Search"
-            aria-keyshortcuts="Meta+K Control+K"
-            title="Search (Command K)"
-            onClick={() => setCommandPaletteOpen(true)}
+            aria-keyshortcuts={search.enabled ? search.ariaKeyShortcuts : undefined}
+            title={search.shortcutLabel ? `Search (${search.shortcutLabel})` : 'Search'}
+            disabled={!search.enabled}
+            onClick={() => search.execute()}
             className="size-6 text-muted-foreground hover:text-foreground"
           >
             <SearchDefault className="size-4" />
@@ -174,38 +147,6 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
       <SidebarFooter className="border-t border-border/40">
         <AccountSwitcher />
       </SidebarFooter>
-
-      <CommandDialog
-        open={commandPaletteOpen}
-        onOpenChange={setCommandPaletteOpen}
-        title="Search Relayed"
-        description="Search for a space, person or action"
-      >
-        <Command>
-          <CommandInput autoFocus placeholder="Search Relayed…" />
-          <CommandList>
-            <CommandEmpty>No results found.</CommandEmpty>
-            <CommandGroup heading="Go to">
-              {destinations.map(destination => {
-                const Icon = destination.icon;
-                return (
-                  <CommandItem
-                    key={destination.label}
-                    value={destination.label}
-                    onSelect={() => {
-                      setCommandPaletteOpen(false);
-                      void navigate(destination.to);
-                    }}
-                  >
-                    <Icon />
-                    <span>{destination.label}</span>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </CommandDialog>
     </Sidebar>
   );
 }

@@ -27,6 +27,8 @@ import { ComposerSuggestions, forwardSuggestionKey, type ComposerTrigger } from 
 import { RelayedMention } from './relayed-mention.ts';
 import { RelayedCommand, restoreCommandChip } from './relayed-command.ts';
 import { shouldShowComposerPlaceholder } from './placeholder.ts';
+import { isSendKey } from './send-key.ts';
+import { useCommandBindings, useCommandHandler } from '@/lib/commands/CommandProvider';
 import './composer.css';
 
 type Scope = 'workspace' | 'local';
@@ -179,6 +181,9 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
       : true,
   });
   const safeActiveIndex = suggestions.length === 0 ? 0 : Math.min(activeIndex, suggestions.length - 1);
+  const { platform, effective } = useCommandBindings();
+  const sendHotkeys = effective.find(binding => binding.id === 'composer.message.send')?.hotkeys ?? [];
+  const focused = useEditorState({ editor, selector: ({ editor: currentEditor }) => currentEditor?.isFocused ?? false });
 
   async function send(): Promise<void> {
     if (!editor || sending) return;
@@ -245,6 +250,13 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
 
   suggestionKeyHandlerRef.current = event => forwardSuggestionKey(event, suggestionCommandRef.current);
 
+  // Send, registered on the bus for entry points other than this composer's own
+  // keys and button — a palette or menu acting on "the composer you are in".
+  // Enabled only while this editor has focus: a space and a side chat can each
+  // mount a composer, and two eligible handlers in the editor layer would be a
+  // defect the registry refuses to guess between.
+  useCommandHandler('composer.message.send', { layer: 'editor', enabled: focused, run: () => void send() });
+
   if (!editor) return null;
 
   return (
@@ -261,13 +273,19 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
       {error ? <p className="pb-2 text-sm text-destructive" role="alert">{error}</p> : null}
       <div
         className="composer-shell"
+        // Capture phase, and in this component rather than the document
+        // listener: it must run after the suggestion menu has had Return and
+        // before ProseMirror inserts a paragraph (SHORTCUTS.md §12.3). The keys
+        // are the bus's binding for send, so a remap applies here.
         onKeyDownCapture={event => {
-          if (event.nativeEvent.isComposing) return;
-          if (trigger) return;
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey || (!event.shiftKey && !editor.isActive('codeBlock')))) {
-            event.preventDefault();
-            void send();
-          }
+          if (!isSendKey(event.nativeEvent, {
+            platform,
+            hotkeys: sendHotkeys,
+            suggestionOpen: trigger !== null,
+            inCodeBlock: editor.isActive('codeBlock'),
+          })) return;
+          event.preventDefault();
+          void send();
         }}
       >
         {/*<FormattingToolbar editor={editor} />*/}

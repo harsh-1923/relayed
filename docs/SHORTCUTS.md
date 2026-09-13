@@ -1,11 +1,19 @@
 # Commands and keyboard shortcuts
 
-> **Status: a proposal, not yet the design of record.** Only the first step
-> is done: the TanStack behavior spike admitted `@tanstack/hotkeys@0.8.0` in a
-> narrowed role (§11). No application code is built. It refines the shortcut seam named in the frontend doc's
-> shell architecture section (`FRONTEND.md`, the command and shortcut seam in
-> §6.4). Until the implementation and its accompanying design-doc edits land,
-> the current code and the existing design docs win.
+> **Status: built.** Nine of the ten implementation steps are done (§17); what
+> remains is the hand-run platform matrix (§15.6) and the observability decision
+> (§16). The frontend doc's command and shortcut seam (`FRONTEND.md` §6.4)
+> points here, and this document describes the code as it is. Where a section
+> kept its original plan, it says what was built instead and why.
+>
+> In brief: `@tanstack/hotkeys@0.8.0` parses, formats and records, but matching
+> is Relayed's (§11); the command catalogue, binding schema and resolver live in
+> `apps/desktop/src/shared/shortcuts/`; one renderer command bus owns every
+> Relayed shortcut and every catalogued command has a handler; bindings persist
+> as `keybindings.<id>` preference rows; `/settings/shortcuts` records, replaces,
+> disables and resets them; the application menu shows Search, Settings and
+> Keyboard Shortcuts with their current bindings; and composer send follows its
+> binding.
 >
 > Companion to [`FRONTEND.md`](FRONTEND.md), which owns the renderer and routing
 > boundaries; [`PREFERENCES.md`](PREFERENCES.md), which owns persistence for
@@ -110,9 +118,16 @@ is needed.
 | Main never calls `Menu.setApplicationMenu`, so Electron installs its default menu. | Standard Edit and Window roles work, but no menu item can reach a Relayed action, so native discovery and accelerators cannot share the renderer action. |
 | Preferences currently know only a fixed appearance key. | Shortcut rows need a closed, derived family of keys plus a delete operation for reset. |
 
-There is no disagreement between code and the existing docs: the frontend doc
-calls for a seam and marks no implementation. This proposal makes that seam
-precise enough to build and test.
+**Resolved by the shell migration step.** `SearchPalette` (mounted beside the
+top bar) owns the search dialog and registers `app.search.open`; `TopBar`
+registers `shell.sidebar.toggle` with `enabled` set to whether a sidebar is on
+screen. The vendored `SidebarProvider` listener is removed by a marked patch,
+and the `shortcuts/no-global-key-listener` boundary rule fails if a shadcn
+update restores it or any renderer code adds a window or document key listener.
+Both buttons take their title and `aria-keyshortcuts` from the command.
+
+The table above is the state before this work began, kept because each row is
+the reason for a rule elsewhere in this document.
 
 ---
 
@@ -237,7 +252,7 @@ opens the database itself.
 
 ### 6.1 Shared: the bounded vocabulary and pure data
 
-Proposed home:
+Home:
 
 ```text
 apps/desktop/src/shared/shortcuts/
@@ -257,17 +272,29 @@ application, and the shared folder already exists for cross-process contracts.
 
 ### 6.2 Renderer: command state and execution
 
-Proposed home:
+Home:
 
 ```text
 apps/desktop/src/renderer/lib/commands/
-  CommandProvider.tsx
-  registry.ts
-  context.ts
-  use-command-handler.ts
-  use-command.ts
-  Shortcut.tsx
+  CommandProvider.tsx  provider, the one keydown listener, useCommandHandler, useCommand,
+                       useCommandBindings, useCommandInspector
+  Shortcut.tsx         a command's or a chord's keys, with its ARIA label
+  registry.ts          handlers per command, layer precedence, execution outcomes
+  dispatch.ts          the dispatch algorithm as a pure decision, and the binding index
+  editable.ts          editable-focus classification over the composed path
+  commands.test.ts
+apps/desktop/src/renderer/app/Commands.tsx   mounts the provider with the session's platform
+apps/desktop/src/renderer/features/dev/CommandInspector.tsx   development builds only
 ```
+
+Built. The provider takes an `overrides` prop — decoded `keybindings.<id>`
+values, empty until persistent overrides land — and layers the inspector's
+session-only remaps over it. The resolved list is the single state the keyboard
+index, `useCommand` labels, `Shortcut` and the settings page all read. The registry and
+the decision have no React or DOM, so their rules run under `node --test`; the
+listener itself is proven against trusted key events by
+`spikes/hotkeys` (`npm run test:bus`), which mounts this provider rather than a
+prototype.
 
 `CommandProvider` sits inside `AppStateProvider` and above `SidebarProvider`,
 `TopBar`, and the route tree. `HashRouter` wraps `AppStateProvider` in
@@ -328,8 +355,9 @@ arbitrary string.
 
 ## 7. The command contract
 
-The exact spelling can change during implementation, but the public concepts
-must remain this small.
+Built in `shared/shortcuts/catalogue.ts`. The public concepts must remain this
+small. A definition carries its binding's `layer` because conflicts are judged
+from the catalogue, before any handler is mounted.
 
 ```ts
 type CommandLayer =
@@ -350,6 +378,7 @@ interface CommandDefinition {
   readonly title: string;
   readonly description: string;
   readonly category: 'Application' | 'Navigation' | 'View' | 'Composer';
+  readonly layer: CommandLayer;
   readonly defaultBindings: PlatformBindings;
   readonly configurable: boolean;
   readonly inputPolicy: 'allow-editable' | 'deny-editable' | 'focused-editor';
@@ -386,10 +415,13 @@ useCommandHandler('shell.sidebar.toggle', {
 });
 ```
 
-`enabled` may also be a predicate over the typed command context. There is no
-string parser and no public bag of arbitrary context keys in the first release.
-When repeated conditions emerge, they become named fields in
-`CommandContextSnapshot`.
+`enabled` is a boolean today. No handler has yet needed a context fact the
+dispatcher does not already apply (editable focus is the binding's input
+policy), so the typed context snapshot is not built. When repeated conditions
+emerge, `enabled` becomes a predicate over named fields of a
+`CommandContextSnapshot`; there is still no string parser and no public bag of
+arbitrary context keys. `run` may be a fresh closure every render: the bus
+always calls the latest, and only a change of `enabled` notifies subscribers.
 
 A command may have handlers in different layers, but the same command may not
 have two eligible handlers in the same layer. Development throws with both
@@ -470,12 +502,17 @@ know that a real command winner exists first.
 
 Modifier matching is exact. `Mod+K` does not also match `Mod+Shift+K`.
 
+A `focused-editor` command is never in the document adapter's index. Its
+editor's own keymap dispatches it (§12.3); for composer send that is the
+existing capture-phase path, so a plain Enter in an unrelated text field can
+never reach the send handler.
+
 ### 8.3 Conflict classes
 
 | Conflict | Treatment |
 |---|---|
-| Same normalized chord in the same or overlapping layer family | Hard conflict. Saving offers **Replace existing** or **Cancel**. |
-| Same chord in ordered, mutually meaningful layers | Allowed shadow. The higher active layer wins and the settings row explains where. |
+| Same normalized chord on two commands in the same layer, or on two commands in **ambient** layers (`application`, `shell`, `workspace`, `route`) | Hard conflict: ambient layers are live whatever has focus, so one command could never be reached. Saving offers **Replace existing** or **Cancel**. |
+| Same chord where at most one command is ambient and the rest are in distinct **focused** layers (`editor`, `overlay`, `recorder`) | Allowed shadow. The highest layer wins while it has focus, the ambient command works everywhere else, and the settings row explains where. |
 | Browser, OS, or assistive-technology reserved chord | Block when reliably known; otherwise warn and require explicit confirmation. |
 | Chord unavailable on the current platform or layout | Do not activate it; show it as unavailable and keep the stored value so another platform can still use it later. |
 | Duplicate defaults | Catalogue test failure. The application must never ship a silent hard conflict. |
@@ -517,30 +554,51 @@ preference semantics, not new exceptions.
 
 ### 9.2 Extending the closed preference catalogue
 
-The preference vocabulary stays closed. `isPreferenceKey` accepts a keybinding
-key only when all three are true:
+Built in `shared/prefs.ts` and `sync/prefs.ts`. The preference vocabulary stays
+closed: `isKeybindingKey` accepts a key only when it has the exact
+`keybindings.` prefix and the suffix is a configurable command ID, and the
+engine accepts its value only if the shortcut schema parses it on the host
+platform. `isWritablePreferenceKey` is the union the engine authorizes against.
 
-- it has the exact `keybindings.` prefix;
-- the suffix is a known configurable command ID; and
-- its JSON value passes the shortcut schema and normalization gate.
+`KeybindingKey` is a **separate** type, not folded into `PreferenceKey` as this
+section first proposed. `PreferenceKey`'s value types are read off each entry's
+`parse`, which is what makes `usePreference('appearance.theme')` return a
+literal union; a binding list is decoded by the shortcut resolver against the
+reading platform instead, so a union would have widened every existing key's
+type for no caller. `encode` takes the platform as a third argument and refuses
+a keybinding key without one, rather than guessing and storing `Mod+K` where a
+Mac user meant Control.
 
-`PreferenceKey` becomes the union of the existing fixed keys and
-`` `keybindings.${ConfigurableCommandId}` ``. Defaults are still not written.
-The preference doc's rationale that a settings-panel scan reads "a handful" of
-rows (`PREFERENCES.md` §6) must be updated in the same implementation change:
-the table remains bounded by the catalogue, but it grows with every customized
-command.
+Defaults are still not written. The table remains bounded by the catalogue, but
+it grows with every customized command; the "handful of rows" rationale in
+`PREFERENCES.md` and the `prefs.list` handler now says so.
 
-`prefs.clear` routes through the existing `clearPreference` storage helper,
-invalidates `prefs:<key>`, and performs the same key authorization as
-`prefs.set`.
+**`prefs.clear`** deletes one row. It shares `prefs.set`'s key authorization and
+invalidates `prefs:<key>`. A keybinding clear goes through the same conflict
+check as a set, because the default it restores may already be another
+command's chord.
 
-`prefs.apply` accepts a discriminated list of `set` and `clear` changes. The
-engine validates every proposed value, resolves the resulting complete known
-binding set, rejects hard conflicts, then commits all rows in one SQLite
-transaction. This is required for **Replace existing** and **Reset all**: a
-two-write sequence can leave the person with neither binding or both if the
-second write fails.
+**`prefs.apply`** takes a list of `set` and `clear` changes. The engine
+validates every change and refuses a key named twice, then — if any keybinding
+key is touched — resolves the resulting complete binding set and refuses a hard
+conflict **that involves a touched command**, and only then commits every row
+in one SQLite transaction, rolling back if a statement fails. The scoping is
+deliberate: a release that turns a default into a chord someone already uses is
+a conflict for the settings page to show, not a reason to refuse every
+unrelated write. A refusal's message starts `keybinding conflict:` and names the
+chord and commands. A single keybinding `prefs.set` takes the same path.
+
+This is required for **Replace existing** and **Reset all**: a two-write
+sequence can leave the person with neither binding or both if the second write
+fails.
+
+The renderer reads the rows through the ordinary `prefs.list` live query in
+`app/Commands.tsx` and passes them to `CommandProvider` as `overrides`, so a
+write in another window or a reset repaints every shortcut with no second state
+mechanism. An account switch re-reads them through the workspace epoch, which
+advances when the new account's workspace opens; whether an account with no
+workspace re-reads is unverified, and the theme preference shares that path. The
+development inspector's **Save** and **Reset** call the same handlers directly.
 
 ### 9.3 Invalid rows and downgrade behavior
 
@@ -568,21 +626,34 @@ This is the first useful set, not a claim that every action deserves a key.
 | Open keyboard shortcuts — `app.shortcuts.open` | `Mod+/` | `Mod+/` | Allowed in editable focus; application layer | Yes |
 | Send message — `composer.message.send` | `Enter`, `Mod+Enter` | `Enter`, `Mod+Enter` | Focused editor only; editor layer | No |
 
+**Where each handler lives.** Search in `app/shell/SearchPalette.tsx`, enabled
+once a workspace is open. Sidebar toggle, back and forward in `TopBar`, which is
+always mounted and already holds whether a sidebar is on screen and whether
+either history direction leads anywhere (`use-back-forward`); with nowhere to
+go, the key is left alone. Open settings and open keyboard shortcuts in
+`app/shell/AppCommands.tsx`, mounted at the root and enabled while an account
+is open, navigating to `/settings/general` and `/settings/shortcuts`. The back
+and forward buttons execute their commands and show their shortcuts.
+
 The sidebar decision is intentional: `Mod+B` remains a familiar shell binding
 outside editable controls, while Tiptap keeps standard bold behavior inside the
-composer. The binding policy belongs to the catalogue and is applied only to
+composer. Two things protect the editor, and the command bus spike shows each:
+Tiptap's bold keymap calls `preventDefault` before the event reaches the
+document, which the dispatcher's first guard honours, and the binding's
+deny-editable policy covers editable controls that do not. The binding policy belongs to the catalogue and is applied only to
 keyboard dispatch; clicking the sidebar button still works while an editor has
 focus.
 
-Composer send is one command with two defaults, and they are not symmetric.
-Today `Mod+Enter` always sends, while plain `Enter` sends only when the
-selection is outside a code block; `Shift+Enter` inserts a line break. That
-code-block condition is an editor-context fact the `composer.message.send`
-handler's `enabled` predicate must preserve per binding, so a remapped plain
-key cannot start sending from inside a code block. Suggestion acceptance sits in
-the overlay layer and wins Enter while open. The existing capture-phase send
-path stays editor-owned until an executable integration test proves another
-event phase preserves that ordering.
+Composer send is one command with two defaults, and they are not symmetric:
+`Mod+Enter` sends from every block, while plain `Enter` sends only outside a code
+block, and `Shift+Enter` inserts a line break. The rule generalizes to any
+binding: **a binding without Control, Alt or Command does not send inside a
+code block**; a modified one does. An open suggestion menu owns Return — modified
+or not — and composition never sends. See §12.3 for where that runs.
+
+A focused editor may bind an unmodified key only when it is Return, with or
+without Shift (`bindingProblem`): a bare letter, Tab, Backspace or arrow would
+take that key from the text being typed.
 
 Formatting commands are not customizable in the first release. Tiptap's local
 keymap continues to own bold, italic, lists, undo, and redo. A later formatting
@@ -640,7 +711,7 @@ The project is officially alpha and its API is subject to change. Therefore:
 |---|---|
 | A real non-US layout, a real IME, and trusted Windows and Linux events | The manual platform matrix |
 | A native menu accelerator and the renderer dispatcher firing exactly once | The native application menu step |
-| The desktop production build with the import in place | The shared command contract step |
+| The production build with the import in place | ✅ Proven. The shared contract step ran it under Electron's Node with the dependency external; the renderer command bus step bundled it into the renderer build. |
 
 ### 11.2 Installation
 
@@ -687,19 +758,40 @@ owns, the integration must remove or override the built-in binding at a known
 extension priority; it may not add a second listener and hope propagation
 chooses correctly.
 
-Composer send remains on the proven capture path initially, but its callback
-becomes `execute('composer.message.send')`. This gets one action definition and
-user customization without changing the timing that protects suggestions.
+**Built for composer send, differently from the plan above.** The composer
+keeps its capture-phase `onKeyDownCapture` handler — it must run after the
+suggestion menu has had Return and before ProseMirror inserts a paragraph — and
+that handler now asks `isSendKey` (`features/chat/composer/send-key.ts`) with the
+bus's effective bindings for `composer.message.send`. So a remap applies with
+the existing timing, and the document adapter never indexes the command.
+
+The keyboard path calls the composer's own `send()` rather than
+`execute('composer.message.send')`, for a reason the plan did not anticipate:
+a space and a side chat can each mount a composer, so the bus handler is enabled
+only while its editor has focus, and that flag reaches the registry in an effect
+after the render that follows focusing. A key pressed in that gap could resolve
+to `disabled` and fall through as a newline — not observed, but not worth
+risking on the one key people press most. The keys already know which composer
+they are in. The bus handler is still registered, for entry points that do not —
+a future palette or menu item acting on the focused composer.
+
+Behavior changes from the hard-coded check it replaced, both from exact
+modifier matching: Control+Return no longer sends on macOS (the binding is
+Command+Return), and Alt+Return no longer sends anywhere.
+
+The `addKeyboardShortcuts` bridge described above remains the route for
+promoting a Tiptap-owned formatting command into the catalogue.
 
 ### 12.4 Add a native menu entry
 
 Only catalogue definitions marked `nativeMenu` may enter the main-process menu
-template. Safe effective chords convert to Electron accelerator syntax in the
-shared driver. Clicking the menu sends the command ID to the focused renderer,
+template. The primary effective chord converts to Electron accelerator syntax
+in the shared driver. A chord ending in a layout-produced character such as `?`
+has no accelerator and stays renderer-owned. Clicking the menu sends the command ID to the focused renderer,
 which executes it through the bus.
 
-Commands denied in editable focus are not registered as native accelerators:
-main cannot see DOM focus, so it cannot enforce that policy correctly.
+A menu command must be `allow-editable`, and the catalogue test fails
+otherwise: main cannot see DOM focus, so it could not honour a deny policy.
 
 ---
 
@@ -729,21 +821,45 @@ rows are meaningful.
 
 ### 13.2 Recording flow
 
-1. Activating **Record shortcut** mounts the recorder layer and focuses a
-   clearly labelled capture control.
-2. The next complete chord is shown in platform notation before it is saved.
-3. Escape cancels. Backspace or Delete removes the selected binding only when
-   the capture control explains that behavior.
-4. Pure modifier presses do not save.
+Built in `routes/AccountSettingsShortcuts.tsx` with
+`lib/commands/use-shortcut-recorder.ts`. Where it differs from the first
+proposal, the difference is stated.
+
+1. **Record** (or **Add**, when the command already has a binding) is itself
+   the capture control: a button, because TanStack's recorder ignores key
+   presses while a text input has focus. Its label reads "Press keys… Esc to
+   cancel" while recording. No separate recorder-layer handler is registered:
+   the recorder listens on document capture and stops propagation, which the
+   command bus spike shows is enough for no command to fire while recording.
+2. The recorded chord is written immediately rather than shown for
+   confirmation first; the new binding appears in the row the moment the write
+   lands. A chord that needs a decision stops before writing (steps 5 and 6).
+3. Escape cancels. A bare Backspace also cancels — the recorder reports it as
+   an empty chord — rather than removing a binding; each binding has its own
+   remove button instead.
+4. Pure modifier presses do not record.
 5. A hard conflict offers **Replace existing** or **Cancel**. Replace submits
-   the new command and removal from the old command in one atomic `prefs.apply`.
-6. A reserved or unreliable chord explains the risk before confirmation; known
-   destructive OS reservations are blocked.
+   the new chord and its removal from the other command in one `prefs.apply`.
+6. Two kinds of chord are refused with an explanation, in the engine as well as
+   here (`bindingProblem` in `shared/shortcuts/resolve.ts`): a **reserved** chord
+   the OS or Electron's standard Edit and Window roles own — copy, paste, undo,
+   select all, quit, close, hide, minimize, app switching — and a
+   **character-only** chord (no Control, Alt or Command, and not a function
+   key) on any command that is not a focused editor's. There is no warn-and-
+   confirm tier yet: nothing outside the reserved list is reliably known to be
+   dangerous.
 7. Successful writes apply immediately through live-query invalidation. There
    is no Save page button and no second draft authority.
 
-**Reset all shortcuts** uses the same atomic operation to clear every known
-keybinding row. It cannot touch appearance or a key unknown to this build.
+Each row also has **Disable** (writes an empty list) and **Reset to default**
+(clears the row), and shows Custom, Disabled, Conflict or "Unreadable, using
+default". A hard conflict names the other command; a shadow names what wins
+while it has focus. Signed out, the page shows defaults, row controls are
+absent and **Reset all** is disabled.
+
+**Reset all** asks for confirmation, then uses the same atomic operation to
+clear the row of every command not at its default. It cannot touch appearance
+or a key unknown to this build.
 
 ### 13.3 Display and assistive metadata
 
@@ -763,34 +879,60 @@ exposes them all.
 
 ## 14. Native menu design
 
-Relayed currently runs on Electron's default menu, which already supplies the
-standard Edit and Window roles. Calling `Menu.setApplicationMenu` replaces that
-menu entirely, so the replacement must restore every role the default provided
-before adding Relayed entries; otherwise copy, paste, and undo accelerators
-silently disappear on macOS.
+Built in `apps/desktop/src/main/menu.ts`, installed from `main/index.ts` before
+the first window.
 
-The first application menu uses Electron roles wherever a role exists:
+**What it replaces.** Without `Menu.setApplicationMenu` Electron installs a
+default menu, and on macOS that menu is what makes copy, paste and undo work in
+a text field. Setting a menu discards it wholesale, so the replacement keeps
+every role the default carried. Read from Electron 44 at runtime, the macOS
+default is App (about, services, hide, hide others, show all, quit), File
+(close), Edit (undo through select all, substitutions, speech), View (reload,
+force reload, developer tools, zoom, full screen) and Window (minimize, zoom,
+bring all to front). There is no Help menu to keep.
 
-- application/about/settings/quit conventions on macOS;
-- Edit roles for undo, redo, cut, copy, paste, delete, and select all; and
-- Window roles for minimize, zoom, and front/window behavior.
+| Platform | Menu |
+|---|---|
+| macOS | **Relayed**: About · **Settings… ⌘,** · Services · Hide · Hide Others · Show All · Quit — then the File, Edit and Window role menus, and **View**: **Search ⌘K** · **Keyboard Shortcuts ⌘/** · reload, developer tools, zoom and full screen roles |
+| Windows, Linux | **File**: **Settings… Ctrl+,** · Quit — then the Edit and Window role menus, and the same **View** |
 
-Relayed-specific menu entries invoke command IDs. Main rebuilds the affected
-menu sections when sync supplies a new safe-binding snapshot after account open,
-account switch, write, or clear.
+Role menus are used as roles wherever nothing is added to them, so Electron keeps
+supplying their contents. Only catalogue commands marked `nativeMenu` appear,
+and each must be `allow-editable` (the catalogue test holds that).
 
-A binding has one keyboard owner on a platform:
+**One keyboard owner: the renderer.** This section first proposed the opposite
+for menu-safe commands — main owning the accelerator and the renderer omitting
+it. That was dropped because it cannot be verified here: `sendInputEvent` never
+reaches menu accelerators, and driving real keystrokes needs an accessibility
+permission. So the design does not depend on the order in which macOS offers a
+key to the menu and to the page:
 
-- if it is installed as an active native menu accelerator, the renderer
-  document adapter omits it and receives the resulting command invocation from
-  main;
-- if it is contextual, editor-owned, overlay-owned, or unsafe for main, the
-  renderer owns it and the menu item has no active accelerator; and
-- standard Electron roles are never duplicated in the command catalogue.
+- a Relayed item carries its accelerator for **display** only;
+- on Windows and Linux, `registerAccelerator: false` means exactly that;
+- macOS always registers a menu accelerator, so `before-input-event` calls
+  `setIgnoreMenuShortcuts(true)` for the one key press that matches a Relayed
+  item's current binding — matched through the same driver the renderer uses —
+  and `false` for every other press, so role shortcuts such as copy still reach
+  the menu; and
+- the renderer's command bus handles the key as it does every other shortcut,
+  with layers, editable focus and remapping intact.
 
-This avoids a menu accelerator and a renderer listener both executing one key
-press. The admission spike must verify Electron's event behavior, and an
-integration test asserts exactly one invocation.
+A menu **click** sends only the command ID to the focused window; the preload
+drops any ID not on the menu allow-list and the renderer executes it through
+the bus. The three menu commands are idempotent, so even if the guard failed on
+some platform a doubled invocation would open search or navigate twice, not do
+something twice.
+
+**Keeping labels current.** Sync owns the preference rows, so it tells main the
+menu items' effective bindings over `shortcuts:menu` (validated on arrival)
+wherever it applies the theme — boot, account adoption, sign-out — and after any
+keybinding `prefs.set`, `prefs.clear` or `prefs.apply`. Main starts from the
+defaults. The development inspector's session-only remaps do not reach the menu.
+
+**Role chords are reserved.** A binding on a chord a kept role owns — reload,
+zoom, developer tools, full screen, hide others, paste and match style, besides
+the edit and window chords — would fire the role as well, so `bindingProblem`
+refuses them.
 
 Electron's `globalShortcut` module is not used. If a future feature truly needs
 to work while Relayed is unfocused, it gets a separate design covering OS
@@ -885,6 +1027,7 @@ pnpm --filter @relayed/desktop build
 pnpm check:boundaries
 pnpm test
 pnpm spike:sync
+pnpm verify:hotkeys
 ```
 
 The sync protocol spike is not logically about shortcuts; it is still required
@@ -892,7 +1035,11 @@ because preference and process-boundary work touches the sync engine.
 
 ---
 
-## 16. Observability proposal — agree before implementation
+## 16. Observability — proposed, not added
+
+**Status: no marker is emitted.** Neither marker below has been agreed, so
+neither exists; until one is, the tests, the spikes and the development command
+inspector are what the first release relies on.
 
 No instrumentation is authorized by this plan. The observability doc requires
 agreement on the question and cost before adding a marker. The useful proposal
@@ -922,15 +1069,15 @@ looks plausible.
 | Named step | Order | Work | Proof before moving on |
 |---|---:|---|---|
 | **TanStack behavior spike** — ✅ done, [`spikes/hotkeys/`](../spikes/hotkeys/README.md) | 1 | Build `spikes/hotkeys/`, run the admission cases, choose and exactly pin or reject the dependency. Record official docs and the decision in `STACK.md`. | The spike passes with real DOM events. The desktop production build moved to the next step, because the dependency may not enter app code before admission. |
-| **Shared command contract** | 2 | Install the pinned dependency. Add the catalogue, persisted schema, resolver, platform type, TanStack core adapter, Electron accelerator formatter, and unit tests. Add the import boundary rule. No UI yet. | Every proposed default resolves without a hard conflict on macOS, Windows, and Linux, and the desktop production build passes with the import in place. |
-| **Renderer command bus** | 3 | Add root `CommandProvider`, registry, named layers, typed context, execution outcomes, and the single renderer adapter. | A test surface invokes one command from a key and a button; StrictMode leaks nothing. |
-| **Existing shell migration** | 4 | Move search and sidebar toggle into root-lifetime commands. Delete their component-owned window listeners. Derive the search button's labels. | `Mod+K` works on workspace and settings routes; `Mod+B` toggles the sidebar outside the composer and leaves bold alone inside it. |
-| **Presentation seam** | 5 | Add `useCommand`, `Shortcut`, menu/tooltip/ARIA formatters, and a development inspector. Convert existing visible entry points. | Remapping a test override updates matching and every displayed representation from one state. |
-| **Persistent overrides** | 6 | Extend the closed preference key family, add `prefs.clear` and transactional `prefs.apply`, resolve live overrides, update preference rationale, and test real SQLite behavior. | Custom, disabled, replacement, reset-all rollback, corrupt, signed-out, and account-switch flows work offline. |
-| **Shortcut settings surface** | 7 | Add `/settings/shortcuts`, searchable grouped rows, recorder, conflict flow, disable/reset, and reset all. | A person can complete every flow by hand without reopening the app; the recorder cannot trigger another command. |
-| **Native application menu** | 8 | Build standard-role menus, send safe command IDs through preload, distribute safe effective bindings from sync, and enforce one keyboard owner. | Menu click and accelerator each execute once; custom bindings update after write, clear, and account switch. |
-| **Composer adapter** | 9 | Route send through its command, preserve capture timing, make suggestion precedence explicit, and add the focused editor integration tests. | Suggestions, IME, Enter, `Mod+Enter`, remapped send, and editor bold all behave as the composer contract says. |
-| **Hardening and documentation closeout** | 10 | Run the platform matrix, decide observability markers, update `FRONTEND.md`, `PREFERENCES.md`, `COMPOSER.md`, and the design invariants if needed. | Full repository checks pass and each claimed flow has been exercised by hand on its owning platform. |
+| **Shared command contract** — ✅ done, `shared/shortcuts/` | 2 | Install the pinned dependency. Add the catalogue, persisted schema, resolver, platform type, TanStack core adapter, Electron accelerator formatter, and unit tests. Add the import boundary rule. No UI yet. | Every proposed default resolves without a hard conflict on macOS, Windows, and Linux. The contract runs under Electron's Node with the dependency external. |
+| **Renderer command bus** — ✅ done, `renderer/lib/commands/` | 3 | Add root `CommandProvider`, registry, named layers, execution outcomes, and the single renderer adapter. The typed context waits for its first consumer. | A test surface invokes one command from a key and a button; StrictMode leaks nothing; the renderer production build passes with the dependency bundled. |
+| **Existing shell migration** — ✅ done; confirm by hand in the app | 4 | Move search and sidebar toggle into root-lifetime commands. Delete their component-owned window listeners. Derive the search button's labels. | `Mod+K` works on workspace and settings routes; `Mod+B` toggles the sidebar outside the composer and leaves bold alone inside it. |
+| **Presentation seam** — ✅ done | 5 | Add `useCommand`, `Shortcut`, menu/tooltip/ARIA formatters, and a development inspector. Convert existing visible entry points. | Remapping a test override updates matching and every displayed representation from one state. |
+| **Persistent overrides** — ✅ done; confirm by hand in the app | 6 | Extend the closed preference key family, add `prefs.clear` and transactional `prefs.apply`, resolve live overrides, update preference rationale, and test real SQLite behavior. | Custom, disabled, replacement, reset-all rollback, corrupt, signed-out, and account-switch flows work offline. |
+| **Shortcut settings surface** — ✅ done; confirm by hand in the app | 7 | Add `/settings/shortcuts`, searchable grouped rows, recorder, conflict flow, disable/reset, and reset all. | A person can complete every flow by hand without reopening the app; the recorder cannot trigger another command. |
+| **Native application menu** — ✅ done; confirm the key path by hand | 8 | Build standard-role menus, send safe command IDs through preload, distribute safe effective bindings from sync, and enforce one keyboard owner. | Menu click and accelerator each execute once; custom bindings update after write, clear, and account switch. |
+| **Composer adapter** — ✅ done; confirm by hand in the app | 9 | Route send through its command, preserve capture timing, make suggestion precedence explicit, and add the focused editor integration tests. | Suggestions, IME, Enter, `Mod+Enter`, remapped send, and editor bold all behave as the composer contract says. |
+| **Hardening and documentation closeout** — docs done; platform matrix and observability decision open | 10 | Run the platform matrix, decide observability markers, update `FRONTEND.md`, `PREFERENCES.md`, `COMPOSER.md`, and the design invariants if needed. | Full repository checks pass and each claimed flow has been exercised by hand on its owning platform. |
 
 The first shippable vertical slice is the renderer command bus plus migration of
 search and sidebar toggle. Persistent customization is the next slice, not a
@@ -941,7 +1088,24 @@ reason to postpone removing the two competing document listeners.
 ## 18. Definition of done
 
 The framework is complete for its first release when all of these statements
-are true:
+are true. Status as of 2026-09-14:
+
+| Statement | Status |
+|---|---|
+| No feature-owned global key listener | ✅ `shortcuts/no-global-key-listener` boundary rule |
+| Search works on every route | ✅ root `SearchPalette`; confirm by hand |
+| Sidebar toggle and Tiptap bold have tested ownership | ✅ command bus spike |
+| One execution path for keys, buttons and menu items | ✅ bus, menu spike |
+| Effective bindings = defaults + live overrides | ✅ `app/Commands.tsx`, engine tests |
+| Record, replace, disable and reset offline | ✅ settings page; confirm by hand |
+| Conflict, input, composition, AltGraph, repeat, exact-modifier tests | ✅ unit tests and spikes (AltGraph and IME with constructed events) |
+| Labels and ARIA cannot drift from matching | ✅ remap spike |
+| Standard editing and OS conventions stay native | ✅ menu roles kept; reserved chords refused |
+| Main and preload accept only menu-safe command IDs | ✅ `parseMenuItems`, preload allow-list, menu spike |
+| Platform and layout matrix exercised by hand | ⏳ open |
+| Stack doc, implementation docs, repository checks | ✅ |
+
+The original statements:
 
 - No feature-owned application shortcut installs a document or window keydown
   listener outside the driver or an approved focused-component adapter; a

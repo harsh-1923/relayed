@@ -14,7 +14,10 @@ import { Router } from '@/app/router';
 import { Telemetry } from '@/app/Telemetry';
 import { Theme } from '@/app/Theme';
 import { TopBar } from '@/app/shell/TopBar';
+import { SearchPalette } from '@/app/shell/SearchPalette';
+import { AppCommands } from '@/app/shell/AppCommands';
 import { SidebarProvider } from '@/components/ui/sidebar';
+import { Commands } from '@/app/Commands';
 
 // The FIRST GUESS, before React mounts and before the stored preference has
 // been read: whatever this machine is set to. `<Theme />` below takes over from
@@ -53,15 +56,23 @@ createRoot(document.getElementById('root')!).render(
             nothing reads, a server-rendering trick that is dead on file:// —
             so the toggle is deliberately session-only until there is somewhere
             honest to keep it. */}
+        {/* The command bus: one keyboard listener and every command handler,
+            for the window's lifetime (SHORTCUTS.md §6.2). */}
+        <Commands>
         <SidebarProvider className="h-svh min-h-0 flex-col overflow-hidden">
           {/* Outside the route tree on purpose, and above it: it is the window's
               title bar now, so every screen needs it — including the ones a cut
               network or a signed-out session strands you on. */}
           <TopBar />
+          {/* The search dialog and its command, for every route (SHORTCUTS.md §10). */}
+          <SearchPalette />
+          {/* Renders nothing: the settings and shortcuts commands, for every route. */}
+          <AppCommands />
           <div className="flex min-h-0 flex-1">
             <Router />
           </div>
         </SidebarProvider>
+        </Commands>
       </AppStateProvider>
     </HashRouter>
     {/* <DialRoot /> */}

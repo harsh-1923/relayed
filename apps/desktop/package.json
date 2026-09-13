@@ -21,6 +21,7 @@
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "@shadcn/react": "^0.3.1",
+    "@tanstack/hotkeys": "0.8.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-mention": "^3.31.3",
     "@tiptap/markdown": "^3.31.3",

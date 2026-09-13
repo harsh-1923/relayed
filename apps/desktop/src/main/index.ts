@@ -2,7 +2,7 @@
 // handshake. Deliberately thin — it does NOT own the database or the socket
 // (DESIGN.md §5).
 import {
-  app, BrowserWindow, dialog, ipcMain, nativeTheme, powerMonitor, shell, utilityProcess,
+  app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, shell, utilityProcess,
   MessageChannelMain,
 } from 'electron';
 import { dirname, join } from 'node:path';
@@ -11,6 +11,28 @@ import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
 import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
+import {
+  buildMenuTemplate, defaultMenuItems, parseMenuItems, shouldIgnoreMenuShortcut, type NativeMenuItem,
+} from './menu';
+import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
+import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
+
+// ── The application menu (SHORTCUTS.md §14; the reasoning is in menu.ts) ────
+const menuPlatform = platformOf(process.platform);
+/** Defaults until sync reports the open account's bindings over `shortcuts:menu`. */
+let menuItems: NativeMenuItem[] = defaultMenuItems(menuPlatform);
+
+/** A menu click becomes a command in the focused window, and only a command ID travels. */
+function invokeCommand(id: NativeCommandId): void {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  win?.webContents.send('command:invoke', id);
+}
+
+function installMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(
+    buildMenuTemplate(menuPlatform, menuItems, invokeCommand, app.name),
+  ));
+}
 
 // MUST run before anything reads app.getPath('userData').
 //
@@ -252,6 +274,14 @@ function createWindow(): BrowserWindow {
     });
   }
 
+  // The renderer's command bus owns every Relayed shortcut; on macOS the menu
+  // would also act on one, so it is told to ignore menu shortcuts for exactly
+  // the key presses that match a Relayed item (menu.ts). Re-decided on every
+  // input, which is how Electron documents `setIgnoreMenuShortcuts`.
+  win.webContents.on('before-input-event', (_event, input) => {
+    win.webContents.setIgnoreMenuShortcuts(shouldIgnoreMenuShortcut(input, menuPlatform, menuItems));
+  });
+
   win.once('ready-to-show', () => {
     win.show();
     emit('app.boot', { to_first_render: Date.now() - bootStarted, from_local: true });
@@ -310,6 +340,9 @@ app.whenReady().then(() => {
   // paint and the system appearance is the right thing to be showing if it
   // loses — or if there is no account, or the engine never starts.
   nativeTheme.themeSource = 'system';
+  // Before the first window, so there is never a moment with Electron's default
+  // menu in place of the one that carries Relayed's items.
+  installMenu();
 
   // Dev only, macOS only: unpackaged Electron shows its own icon in the Dock,
   // because the real one is baked into the .app bundle at package time. This
@@ -365,7 +398,7 @@ app.whenReady().then(() => {
   syncProcess.on('message', (m: unknown) => {
     const msg = m as {
       type?: string; rid?: number; token?: string; url?: string;
-      accountId?: string; workspaceId?: string; source?: string;
+      accountId?: string; workspaceId?: string; source?: string; items?: unknown;
     };
     const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
     // A vault slot is per (account, workspace) — STORAGE.md §9.
@@ -397,6 +430,18 @@ app.whenReady().then(() => {
         break;
       // The folder a local room is about (LOCAL-ROOMS.md §7). Always chosen by
       // the person, so this is the only way a directory enters one.
+      // The open account's bindings for the menu's Relayed items, from the
+      // preference rows only sync reads (SHORTCUTS.md §6.3). Validated because
+      // it arrives over IPC; a malformed list leaves the menu as it was.
+      case 'shortcuts:menu': {
+        const items = parseMenuItems(msg.items);
+        if (items) {
+          menuItems = items;
+          installMenu();
+        }
+        reply(null);
+        break;
+      }
       case 'dialog:folder': {
         const [win] = BrowserWindow.getAllWindows();
         const options: Electron.OpenDialogOptions = {

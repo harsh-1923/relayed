@@ -18,8 +18,9 @@ import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
 import { newId } from './ids.ts';
-import { readPreferences, writePreference } from './prefs.ts';
-import { isPreferenceKey, specOf, type PreferenceRow } from '../shared/prefs.ts';
+import { applyPreferences, readPreferences, writePreference, type PreferenceChange } from './prefs.ts';
+import { isKeybindingKey, isPreferenceKey, isWritablePreferenceKey, specOf, type PreferenceRow } from '../shared/prefs.ts';
+import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
 import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
 
@@ -860,8 +861,36 @@ export class Storage {
 
   /** Set one preference. Throws on an unknown key or a value outside its domain. */
   setPreference(key: string, value: unknown): void {
+    if (isKeybindingKey(key)) {
+      // Account-tier like every key today; the platform is the one this
+      // process runs on, which is the one the person recorded on.
+      writePreference(this.#preferenceDb('account'), key, value, platformOf(process.platform));
+      return;
+    }
     if (!isPreferenceKey(key)) throw new Error(`unknown preference: ${key}`);
     writePreference(this.#preferenceDb(specOf(key).tier), key, value);
+  }
+
+  /**
+   * Return one preference to its default by removing its row. Same key
+   * authorization as a set, and a keybinding clear is conflict-checked: the
+   * default it falls back to may already be someone else's chord.
+   */
+  clearPreference(key: string): void {
+    this.applyPreferences([{ op: 'clear', key }]);
+  }
+
+  /** Sets and clears in one transaction, or none (SHORTCUTS.md §9.2). */
+  applyPreferences(changes: readonly PreferenceChange[]): void {
+    for (const change of changes) {
+      if (!isWritablePreferenceKey(change?.key)) throw new Error(`unknown preference: ${String(change?.key)}`);
+      // One database per batch. Every writable key is account-tier today; a
+      // workspace-tier key in a batch would need a transaction across two files.
+      if (!isKeybindingKey(change.key) && specOf(change.key).tier !== 'account') {
+        throw new Error(`${change.key} cannot be applied with account-tier preferences`);
+      }
+    }
+    applyPreferences(this.#preferenceDb('account'), changes, platformOf(process.platform));
   }
 
   // ── blobs (§13.3) ───────────────────────────────────────────────────────
