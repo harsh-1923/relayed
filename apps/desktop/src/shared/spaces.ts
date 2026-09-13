@@ -5,6 +5,9 @@
 // column, so the read is too. What only a local room has — its folder, how
 // Claude runs there — is a separate read (`LocalRoomSettings`), never mixed in.
 
+/** Which store a space is read from: the workspace replica, or `local-rooms.db`. */
+export type SpaceScope = 'workspace' | 'local';
+
 export interface SpaceChat {
   id: string;
   spaceId: string;

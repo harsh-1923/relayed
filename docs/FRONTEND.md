@@ -741,11 +741,17 @@ draining exactly when the window is in the background.
 That makes it three, not two — the count in this heading is deliberately not
 maintained; `tools/check-boundaries.mjs` is the list.
 
-### 6.4 A shortcut registry — the seam, not the feature
+### 6.4 A command and shortcut seam — proposed, not built
 
-`cmdk` is already a dependency. One registry that keybindings register into is
-about 30 lines and is painful to retrofit once forty components own their own
-`keydown` handlers. Build the seam with the shell; leave the palette for later.
+`cmdk` is already a dependency, but it supplies a search or palette surface,
+not an application command model. Keybindings, buttons, native menus, editor
+keymaps and a future command palette need to invoke stable semantic command IDs
+through one registry before forty components own their own `keydown` handlers.
+
+[`SHORTCUTS.md`](SHORTCUTS.md) is the full proposal: process ownership, named
+precedence layers, TanStack Hotkeys behind a replaceable adapter, local
+preference overrides, the settings surface, native menu integration and the
+executable rollout. Nothing in that proposal is built yet.
 
 ---
 

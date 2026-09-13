@@ -47,6 +47,7 @@ export default tseslint.config(
       // A separate npm project with its own install, run by hand to verify
       // Electron behaviour. Not part of this workspace's graph.
       'spikes/electron-verify/**',
+      'spikes/hotkeys/**',
       // Declaration files describe types; there is no code in them to lint, and
       // type-aware rules on one report nothing but the cost of loading it.
       '**/*.d.ts',

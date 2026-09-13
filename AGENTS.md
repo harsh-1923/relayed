@@ -59,6 +59,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | Renderer architecture: routing, what the URL addresses, the read path, where state lives. |
 | [`docs/PREFERENCES.md`](docs/PREFERENCES.md) | What a person chooses: the `preferences` table, the shared catalogue, and why a row per key rather than a JSON blob. |
+| [`docs/SHORTCUTS.md`](docs/SHORTCUTS.md) | **Proposal.** Command catalogue, shortcut resolution, scopes, customization, native menus, and the implementation plan. |
 | [`docs/COMPOSER.md`](docs/COMPOSER.md) | **Proposal.** Tiptap-based Slack-like rich editing, the editor-independent message document, durable actor and audience mentions, collapsed links, local drafts and the atomic send transition. |
 | [`docs/AGENT-RUNTIME.md`](docs/AGENT-RUNTIME.md) | The agent service: one endpoint in two modes, the pi loop, the provider table, and what bounds a run. |
 | [`docs/AGENT-RESPONSES.md`](docs/AGENT-RESPONSES.md) | **Proposal, backed by spikes.** How an agent's reply is represented, produced, stored, streamed, rendered and acted on: message parts, OpenUI Lang blocks through one `show_ui` tool, the library contract. Evidence in [`spikes/genui/`](spikes/genui/README.md). |

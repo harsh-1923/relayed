@@ -8,7 +8,8 @@ export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
 } from '../shared/claude.ts';
 export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
-export type { Space, SpaceChat } from '../shared/spaces.ts';
+export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
+export type { ContentPanelType, Panel } from '../shared/panels.ts';
 
 export interface DbInfo {
   open: boolean;

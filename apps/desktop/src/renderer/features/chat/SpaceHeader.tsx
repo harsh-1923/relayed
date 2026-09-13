@@ -4,13 +4,12 @@
 // is working" — is passed in, not looked up here.
 import type { ReactNode } from 'react';
 import { useQuery } from '@/lib/query';
-
-type Scope = 'workspace' | 'local';
+import type { SpaceScope } from '../../../shared/spaces.ts';
 
 /** The read for one space, by scope. Both return the same `Space` rows. */
 const SPACE_READ = { workspace: 'space.get', local: 'local.space.get' } as const;
 
-export function SpaceHeader({ spaceId, scope, details }: { spaceId: string; scope: Scope; details?: ReactNode }) {
+export function SpaceHeader({ spaceId, scope, details }: { spaceId: string; scope: SpaceScope; details?: ReactNode }) {
   // The cast names one of the two reads for the type checker, which cannot
   // follow a key chosen at runtime; they take the same arguments and rows.
   const { rows } = useQuery(SPACE_READ[scope] as 'space.get', { spaceId });
@@ -18,7 +17,7 @@ export function SpaceHeader({ spaceId, scope, details }: { spaceId: string; scop
   if (!space) return null;
 
   return (
-    <header className="flex shrink-0 items-center gap-3 border-b border-border/60 px-6 py-2.5">
+    <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border/60 px-6">
       <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{space.name}</h1>
       {details}
     </header>

@@ -1,0 +1,18 @@
+{
+  "name": "hotkeys-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "TanStack Hotkeys admission spike (SHORTCUTS.md, TanStack behavior spike) — standalone, not a workspace member",
+  "dependencies": {
+    "@tanstack/hotkeys": "0.8.0",
+    "esbuild": "0.28.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "main": "main.cjs",
+  "scripts": {
+    "bundle": "esbuild renderer.jsx --bundle --format=iife --jsx=automatic --define:process.env.NODE_ENV=\\\"production\\\" --outfile=dist/renderer.js",
+    "test": "npm run bundle && ../../apps/desktop/node_modules/.bin/electron ."
+  }
+}

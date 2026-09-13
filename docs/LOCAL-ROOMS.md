@@ -498,8 +498,8 @@ scope:
 **Step 4 — the screen navigates** to `#/local/s/spc_7Q2M4K`. The room view
 mounts, resolves the space to its default chat with the same lookup a synced room
 uses (the unique `chat_singleton` index), and renders an empty chat with a
-composer. The header shows the folder path, because a room about a directory
-should say which one.
+composer. The room remains grouped under its folder in the sidebar; the shared
+chat header shows the room name without repeating that directory context.
 
 Nothing has been spawned yet. Total cost: four rows and one push.
 
@@ -742,6 +742,11 @@ lists in an SDK session — `/config`, `/doctor`, `/heapdump`, `/color` and simi
 | `/effort [level]` | Sets the room's effort, `default` clears it, else opens the picker |
 | `/clear` | Forgets the chat's session (`chat_sessions.session_id = NULL`), closes the child, and notes it in the chat; refused while Claude is replying |
 | `/rename [name]` | Renames the room, or regenerates its name (§7.1) |
+
+The compact composer model control opens a model-only list; descriptions remain
+available as item titles rather than making every row two lines tall. Effort is
+a nested radio submenu showing the current choice. Both menu surfaces use the
+same rounded card treatment as the composer.
 
 **Everything else** is sent as the message it is; Claude Code reads a message
 that starts with `/` as a command. Measured: `/context` and `/usage` answer as an

@@ -11,7 +11,7 @@ import { DEFAULT_ROOM_MODEL } from '../../../shared/claude.ts';
 import type { ClaudeModel, EffortLevel, LocalRoomSettings } from '../../../preload/api';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem,
-  DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
@@ -61,11 +61,11 @@ export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
         title={error ?? current?.description ?? chosen}
         className={cn(className, error && 'text-destructive')}
       >
-        <span>{current?.displayName ?? chosen}</span>
+        <span className="composer-model-name">{current?.displayName ?? chosen}</span>
         {room.effort && <span className="composer-model-tone">{EFFORT_LABELS[room.effort]}</span>}
         <ChevronDown />
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="end" className="w-72">
+      <DropdownMenuContent side="top" align="end" sideOffset={8} className="w-60 rounded-3xl! bg-card! p-1.5 shadow-lg">
         {models.length === 0 ? (
           <DropdownMenuGroup>
             <DropdownMenuLabel className="font-normal text-muted-foreground">
@@ -78,11 +78,13 @@ export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
               <DropdownMenuLabel>Model</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={current?.value ?? chosen} onValueChange={value => chooseModel(value as string)}>
                 {models.map(model => (
-                  <DropdownMenuRadioItem key={model.value} value={model.value} className="items-start py-1.5">
-                    <span className="flex flex-col gap-0.5">
-                      <span className="font-medium">{model.displayName}</span>
-                      {model.description && <span className="text-xs text-muted-foreground">{model.description}</span>}
-                    </span>
+                  <DropdownMenuRadioItem
+                    key={model.value}
+                    value={model.value}
+                    title={model.description ?? model.displayName}
+                    className="rounded-xl! px-2 py-1.5 font-medium"
+                  >
+                    <span className="truncate">{model.displayName}</span>
                   </DropdownMenuRadioItem>
                 ))}
               </DropdownMenuRadioGroup>
@@ -97,21 +99,27 @@ export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
 
 function Efforts({ room, model, onChoose }: { room: LocalRoomSettings; model: ClaudeModel; onChoose: (effort: EffortLevel | null) => void }) {
   return (
-    <>
-      <DropdownMenuSeparator />
-      <DropdownMenuGroup>
-        <DropdownMenuLabel>Effort</DropdownMenuLabel>
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger className="mt-1 rounded-xl! px-2 py-1.5">
+        <span>Effort</span>
+        <DropdownMenuShortcut className="mr-1 tracking-normal">
+          {room.effort ? EFFORT_LABELS[room.effort] : 'Default'}
+        </DropdownMenuShortcut>
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="min-w-40 rounded-2xl! bg-card! p-1.5 shadow-lg">
         <DropdownMenuRadioGroup
           value={room.effort ?? DEFAULT_EFFORT}
           onValueChange={value => onChoose(value === DEFAULT_EFFORT ? null : value as EffortLevel)}
         >
-          <DropdownMenuRadioItem value={DEFAULT_EFFORT}>Default</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value={DEFAULT_EFFORT} className="rounded-xl! px-2 py-1.5">Default</DropdownMenuRadioItem>
           {model.efforts.map(effort => (
-            <DropdownMenuRadioItem key={effort} value={effort}>{EFFORT_LABELS[effort]}</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem key={effort} value={effort} className="rounded-xl! px-2 py-1.5">
+              {EFFORT_LABELS[effort]}
+            </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
-      </DropdownMenuGroup>
-    </>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 

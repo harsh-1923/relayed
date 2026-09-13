@@ -33,6 +33,7 @@
     "spike:authz": "node spikes/authz-tests.mjs",
     "verify:sqlite": "npm --prefix spikes/electron-verify run sqlite",
     "verify:timer": "npm --prefix spikes/electron-verify run timer",
+    "verify:hotkeys": "npm --prefix spikes/hotkeys test",
     "test": "pnpm -r test",
     "mock": "node --env-file-if-exists=.env scripts/mock/run.ts",
     "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe",

@@ -57,12 +57,7 @@ export function WorkspaceSwitcher() {
           <DropdownMenuTrigger
             render={(
               <SidebarMenuButton
-                className="w-fit gap-2 px-2 text-base font-medium
-                           text-(--sidebar-item-foreground)
-                           hover:bg-(--sidebar-item-background)!
-                           hover:text-(--sidebar-item-foreground)!
-                           data-open:bg-(--sidebar-item-background)!
-                           data-open:text-(--sidebar-item-foreground)!"
+                className="w-fit gap-2 px-2 text-base font-medium"
               />
             )}
           >

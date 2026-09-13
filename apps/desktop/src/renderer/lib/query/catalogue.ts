@@ -9,7 +9,7 @@
 // source of truth, so adding a read here is what makes it enforceable
 // everywhere else. Nothing to remember.
 import type {
-  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, LocalRoomSettings, PendingApproval, ReplicaActor, ReplicaMessage, PreferenceRow, Space,
+  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, LocalRoomSettings, PendingApproval, ReplicaActor, ReplicaMessage, Panel, PreferenceRow, Space,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -24,6 +24,7 @@ export interface Queries {
   'local.rooms.list': { args: undefined; rows: LocalRoom[] };
   'local.space.get': { args: { spaceId: string }; rows: Space[] };
   'local.rooms.get': { args: { spaceId: string }; rows: LocalRoomSettings[] };
+  'local.panels.list': { args: { spaceId: string }; rows: Panel[] };
   'local.messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'local.approvals.list': { args: { chatId: string }; rows: PendingApproval[] };
   'local.commands.list': { args: { chatId: string }; rows: ClaudeCommand[] };
@@ -62,6 +63,7 @@ export const TOPICS: TopicsFor = {
   // or ending — already wakes `local:rooms`, so both single-room reads ride it.
   'local.space.get': () => [topic.localRooms()],
   'local.rooms.get': () => [topic.localRooms()],
+  'local.panels.list': ({ spaceId }) => [topic.localPanels(spaceId)],
   'local.messages.list': ({ chatId }) => [topic.localMessages(chatId)],
   'local.approvals.list': ({ chatId }) => [topic.localApprovals(chatId)],
   'local.commands.list': () => [topic.localCommands()],

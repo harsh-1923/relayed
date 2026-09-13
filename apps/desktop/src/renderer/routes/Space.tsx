@@ -1,180 +1,93 @@
-// One space: its header, and the chat it opens on — a channel's or DM's sole
-// chat, a room's default. The route names the SPACE, never a chat
-// (FRONTEND.md §4.6): a side chat opens beside it in a panel, as view state in
-// the query, so there is no chat in the path to disagree with the space.
+// One space: its header, the chat it opens on — a channel's or DM's sole chat,
+// a room's default — and, in a room, the panels open beside it.
 //
-// The chat below it: its messages, and somewhere to type.
-//
-// Every row comes from the replica. Nothing here waits on the network, in
-// either direction — the list is a local read, and composing writes to the
-// outbox and returns. That is the whole point: this surface behaves identically
-// with the server switched off, which is the property the aeroplane toggle in
-// the dev strip exists to prove.
-//
-// THE SENDER SEES ITS OWN MESSAGE TWICE and must not notice. Once as the
-// optimistic row written with the outbox entry, once as the `message.created`
-// event travelling the same path it takes to every other device. The upsert in
-// `effects.ts` is what makes the second one land on the first rather than beside
-// it; here it means a message never jumps or duplicates as it is acknowledged.
-//
-// ONE VIEW, TWO SCOPES (LOCAL-ROOMS.md §11). A local room's chat is read and
-// written through the local store instead of the replica, and the rows are the
-// same shape, so the difference is which read and which send — named once, in
-// SCOPES below; the composer owns the matching draft and send operations.
-//
-// SCROLLING IS THE SCROLLER'S, not ours. A first version used an overflow div
-// and a `scrollIntoView` on a ref, which is the hand-rolled stick-to-bottom the
-// primitive exists to replace — it does the anchoring, the position restore and
-// the jump-to-latest, and it yields the moment somebody scrolls up.
-import { useCallback, useEffect, useState } from 'react';
+// The route names the SPACE, never a chat (FRONTEND.md §4.6). A room's side
+// chats and pages are panels, and which panels are open is view state in the
+// query (`?p=`, PANELS.md §8), so there is no chat in the path to disagree with
+// the space, and stripping the query still lands in the right place.
+import { useEffect } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@/lib/query';
-import { useSession } from '@/app/state';
-import {
-  MessageScroller, MessageScrollerButton, MessageScrollerContent,
-  MessageScrollerProvider, MessageScrollerViewport, useMessageScroller,
-  useMessageScrollerScrollable,
-} from '@/components/ui/message-scroller';
-import { ChatBubble } from '@/features/chat/ChatBubble';
-import { MessageComposer } from '@/features/chat/composer/MessageComposer';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { ChatView } from '@/features/chat/ChatView';
 import { SpaceHeader } from '@/features/chat/SpaceHeader';
 import { RoomActivity } from '@/features/local-rooms/RoomActivity';
-import { mainChat } from '../../shared/spaces.ts';
-import { Approvals } from '@/features/local-rooms/Approvals';
-import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
-import { RoomModePicker } from '@/features/local-rooms/RoomModePicker';
-import { useRoomSlashCommands } from '@/features/local-rooms/useRoomSlashCommands';
+import { PanelContainer } from '@/features/panels/PanelContainer';
+import { PanelMenu } from '@/features/panels/PanelMenu';
+import { useOpenPanels } from '@/features/panels/useOpenPanels';
+import { call } from '@/lib/ipc';
+import { mainChat, type SpaceScope } from '../../shared/spaces.ts';
+import { resolveOpenPanels } from '../../shared/panels.ts';
 
-type Scope = 'workspace' | 'local';
+/** The one-space read, by storage scope. Both return the same `Space` rows. */
+const SPACE_READ = { workspace: 'space.get', local: 'local.space.get' } as const;
 
-/** The reads selected by the route's storage scope. */
-const SCOPES = {
-  workspace: { space: 'space.get', list: 'messages.list', empty: 'Nothing here yet. Say something — it is written to this device first.' },
-  local: { space: 'local.space.get', list: 'local.messages.list', empty: 'Ask Claude anything about this folder. It runs as your own Claude Code, here on this Mac.' },
-} as const;
-
-export function Space({ scope = 'workspace' }: { scope?: Scope }) {
+export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   const { spaceId = '' } = useParams();
-  // Both reads return the same `Space` rows; the cast names one of them.
-  const { rows, status, error } = useQuery(SCOPES[scope].space as 'space.get', { spaceId });
-  const chat = rows?.[0] ? mainChat(rows[0]) : null;
+  const { rows, status, error } = useQuery(SPACE_READ[scope] as 'space.get', { spaceId });
+  const space = rows?.[0] ?? null;
+  const chat = space ? mainChat(space) : null;
+
+  // Panels are a room's (DESIGN.md §7.1). Only a local room holds them today:
+  // the server writes no rooms yet, so a synced space has none to read, and the
+  // read is asked about nothing — one hook order in both scopes.
+  const hasPanels = scope === 'local' && space?.kind === 'room';
+  const { rows: panels, status: panelsStatus } = useQuery('local.panels.list', { spaceId: hasPanels ? spaceId : '' });
+  const openPanels = useOpenPanels();
+  const open = resolveOpenPanels(openPanels.ids, panels ?? []);
+
+  // Canonicalise the URL once the room's panels are known: a chat id becomes
+  // its panel's id, and an id that matches nothing leaves (§8).
+  const resolvedKey = open.map(panel => panel.id).join(',');
+  const { ids, active, replace } = openPanels;
+  useEffect(() => {
+    if (panelsStatus === 'loading') return;
+    if (resolvedKey === ids.join(',')) return;
+    const resolved = resolvedKey ? resolvedKey.split(',') : [];
+    const shown = open.find(panel => panel.id === active || panel.chatId === active)?.id ?? null;
+    replace(resolved, shown);
+  }, [panelsStatus, resolvedKey, ids, active, replace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A local panel looked at is kept from the sweep (§5.5).
+  const shownPanel = open.find(panel => panel.id === active);
+  useEffect(() => {
+    if (shownPanel?.scope === 'local') void call(api => api.query('local.panels.touch', { panelId: shownPanel.id }));
+  }, [shownPanel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (status === 'loading' && error === null) return null;
-  if (!chat) {
+  if (!space || !chat) {
     return <p className="p-6 text-sm text-muted-foreground">This space is not on this device.</p>;
   }
 
+  // With no tab open the space takes the whole pane, header included. With
+  // any open, the pane splits: the space on the left keeps its header, and the
+  // panel container on the right has its own row of tabs in the same line.
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <SpaceHeader
-        spaceId={spaceId}
-        scope={scope}
-        details={scope === 'local' ? <RoomActivity spaceId={spaceId} /> : undefined}
-      />
-      {/* Keyed by chat, so moving between spaces starts a fresh scroller and composer. */}
-      <Chat key={chat.id} spaceId={spaceId} chatId={chat.id} scope={scope} />
-    </div>
-  );
-}
-
-function Chat({ spaceId, chatId, scope }: { spaceId: string; chatId: string; scope: Scope }) {
-  const { state } = useSession();
-  const me = scope === 'local'
-    ? 'act_local_me'
-    : state.workspaces.find(w => w.workspaceId === state.workspaceId)?.actorId;
-
-  // Both reads take `{ chatId }` and return the same rows; the cast names one of
-  // them for the type checker, which cannot follow a key chosen at runtime.
-  const { rows: messages, status } = useQuery(SCOPES[scope].list as 'messages.list', { chatId });
-  const replying = (messages ?? []).some(message => message.state === 'streaming');
-  // The replies paused on the person. Always read, for one hook order in both
-  // scopes; a workspace chat has no local approvals and gets none.
-  const { rows: approvals } = useQuery('local.approvals.list', { chatId: scope === 'local' ? chatId : '' });
-
-  return (
-    // Fills the pane. The shell pads nothing — a route opts into padding by
-    // being wrapped in `Page` in the route table, and this one deliberately is
-    // not (app/shell/Page.tsx). The first version cancelled the shell's padding with
-    // `-m-10` and pinned itself to `h-svh`, which is a layout arguing with
-    // itself and was wrong by the height of the top bar the moment one existed.
-    <div className="flex min-h-0 flex-1 flex-col">
-      <MessageScrollerProvider
-        autoScroll
-        defaultScrollPosition="end"
-        scrollEdgeThreshold={64}
-      >
-        <FollowAtLiveEdge />
-        <MessageScroller>
-          <MessageScrollerViewport>
-            {/* One reading column: on a wide window, turns stay near each other
-                instead of pinned to opposite edges. The composer shares it. */}
-            <MessageScrollerContent className="mx-auto w-full max-w-4xl p-6">
-              {status === 'loading' && (
-                <p className="text-sm text-muted-foreground">Reading…</p>
-              )}
-              {status === 'empty' && (
-                <p className="text-sm text-muted-foreground">{SCOPES[scope].empty}</p>
-              )}
-
-              {(messages ?? []).map((message, index, allMessages) => {
-                const mine = message.authorId === me;
-                const previousMessage = allMessages[index - 1];
-                const nextMessage = allMessages[index + 1];
-                return (
-                  <ChatBubble
-                    key={message.id}
-                    message={message}
-                    mine={mine}
-                    startsGroup={previousMessage?.authorId !== message.authorId}
-                    endsGroup={nextMessage?.authorId !== message.authorId}
-                    waiting={approvals?.some(approval => approval.messageId === message.id) ?? false}
-                  />
-                );
-              })}
-
-              {/* What a paused reply is waiting on, where the reply is. */}
-              {scope === 'local' && <Approvals chatId={chatId} />}
-            </MessageScrollerContent>
-          </MessageScrollerViewport>
-          <MessageScrollerButton />
-        </MessageScroller>
-
-        <ComposerAtLiveEdge spaceId={spaceId} chatId={chatId} scope={scope} replying={replying} />
-      </MessageScrollerProvider>
-    </div>
-  );
-}
-
-function FollowAtLiveEdge() {
-  const { end: hasContentBelow } = useMessageScrollerScrollable();
-  const { scrollToEnd } = useMessageScroller();
-
-  useEffect(() => {
-    // The primitive leaves follow mode after any deliberate scroll. Reaching
-    // the live edge again is the reader opting back in, as in people-to-people
-    // chat: subsequent arrivals should remain visible until they scroll away.
-    if (!hasContentBelow) scrollToEnd({ behavior: 'auto' });
-  }, [hasContentBelow, scrollToEnd]);
-
-  return null;
-}
-
-function ComposerAtLiveEdge({ spaceId, ...props }: { spaceId: string; chatId: string; scope: Scope; replying: boolean }) {
-  const { scrollToEnd } = useMessageScroller();
-  const local = props.scope === 'local';
-  // Open from the model button, or from /model and /effort in the composer.
-  const [modelMenu, setModelMenu] = useState(false);
-  const openModelMenu = useCallback(() => setModelMenu(true), []);
-  const slash = useRoomSlashCommands(local ? spaceId : undefined, local ? props.chatId : undefined, openModelMenu);
-  return (
-    <MessageComposer
-      {...props}
-      onSent={() => scrollToEnd({ behavior: 'smooth' })}
-      approvalControl={local ? className => <RoomModePicker spaceId={spaceId} className={className} /> : undefined}
-      modelControl={local
-        ? className => <RoomModelPicker spaceId={spaceId} className={className} open={modelMenu} onOpenChange={setModelMenu} />
-        : undefined}
-      {...(slash ? { slash } : {})}
-    />
+    <ResizablePanelGroup id={`space-${spaceId}`} orientation="horizontal" className="min-h-0 flex-1">
+      <ResizablePanel id="space" minSize={360} className="min-h-0 min-w-0">
+        <div className="flex h-full min-h-0 flex-col">
+          <SpaceHeader
+            spaceId={spaceId}
+            scope={scope}
+            details={(
+              <>
+                {scope === 'local' && <RoomActivity spaceId={spaceId} />}
+                {hasPanels && <PanelMenu space={space} panels={panels ?? []} openPanels={openPanels} />}
+              </>
+            )}
+          />
+          {/* Keyed by chat, so moving between spaces starts a fresh scroller and composer. */}
+          <ChatView key={chat.id} spaceId={spaceId} chatId={chat.id} scope={scope} />
+        </div>
+      </ResizablePanel>
+      {open.length > 0 && (
+        <>
+          <ResizableHandle />
+          <ResizablePanel id="panels" defaultSize="42%" minSize={320} className="min-h-0 min-w-0">
+            <PanelContainer tabs={open} space={space} scope={scope} openPanels={openPanels} />
+          </ResizablePanel>
+        </>
+      )}
+    </ResizablePanelGroup>
   );
 }

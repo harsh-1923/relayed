@@ -146,23 +146,33 @@
   height: 1rem;
 }
 .composer-model {
-  gap: 0.25rem;
-  padding: 0 0.45rem;
+  max-width: 14rem;
+  gap: 0.2rem;
+  padding: 0 0.35rem;
   color: var(--foreground);
-  font-size: 0.825rem;
+  font-size: 0.78rem;
+}
+.composer-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .composer-model-tone {
+  flex: none;
   color: var(--muted-foreground);
 }
 .composer-model svg {
-  width: 1rem;
-  height: 1rem;
-  margin-left: 0.15rem;
+  width: 0.875rem;
+  height: 0.875rem;
+  margin-left: 0.05rem;
   color: var(--muted-foreground);
 }
 .composer-action:hover,
 .composer-approval:hover,
-.composer-model:hover {
+.composer-model:hover,
+.composer-approval[data-popup-open],
+.composer-model[data-popup-open] {
   background: var(--accent);
   color: var(--accent-foreground);
 }

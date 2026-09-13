@@ -36,3 +36,40 @@ export function parsePanelParam(value: string | null): string[] {
 }
 
 export const formatPanelParam = (ids: readonly string[]): string => ids.join(',');
+
+/**
+ * The panels `?p=` names, in its order, against what the room holds. An id is
+ * a panel id, or a chat id standing for that chat's panel — so a link written
+ * before panels existed still opens. Ids that match nothing are dropped: a
+ * removed panel, or another device's local one (§8).
+ */
+export function resolveOpenPanels<P extends Pick<Panel, 'id' | 'chatId'>>(ids: readonly string[], panels: readonly P[]): P[] {
+  const open: P[] = [];
+  for (const id of ids) {
+    const panel = panels.find(candidate => candidate.id === id) ?? panels.find(candidate => candidate.chatId === id);
+    if (panel && !open.includes(panel)) open.push(panel);
+  }
+  return open;
+}
+
+/**
+ * The tab shown in the panel container: `?pa=` when it names an open tab, else
+ * the last one opened. One panel is shown at a time; the rest wait as tabs.
+ */
+export function activePanelId(ids: readonly string[], requested: string | null): string | null {
+  if (requested && ids.includes(requested)) return requested;
+  return ids.at(-1) ?? null;
+}
+
+/**
+ * The tabs after closing one, and which is shown next. Closing a background tab
+ * leaves the shown one alone; closing the shown one moves to its right-hand
+ * neighbour, or its left when it was last — as a browser does.
+ */
+export function closePanelTab(ids: readonly string[], active: string | null, closing: string): { ids: string[]; active: string | null } {
+  const index = ids.indexOf(closing);
+  if (index === -1) return { ids: [...ids], active };
+  const next = ids.filter(id => id !== closing);
+  if (active !== closing) return { ids: next, active };
+  return { ids: next, active: next[index] ?? next[index - 1] ?? null };
+}

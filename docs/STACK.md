@@ -25,6 +25,7 @@ How builds reach users — packaging, signing, update channels — is
 | Client shell | **Electron** + electron-vite + electron-builder | §5 process architecture; distribution in [`RELEASE.md`](RELEASE.md) |
 | Client UI | **React**, shadcn/Tailwind, TanStack Virtual | Windowing a message list is not worth hand-rolling |
 | Client icons | **`@relayed/icons`** | One set, five styles per icon chosen at the call site; replaced lucide-react ([`FRONTEND.md`](FRONTEND.md) §6.1) |
+| Client shortcuts | **`@tanstack/hotkeys` 0.8.0**, core only, parse/normalize/format/record | Admitted by [`spikes/hotkeys/`](../spikes/hotkeys/README.md); its matcher breaks the logical-key contract, so matching is ours ([`SHORTCUTS.md`](SHORTCUTS.md) §11). Installed with the shared command contract step. |
 | Client routing | **React Router**, declarative mode, `HashRouter` | Loaders assume fetching is expensive; ours is ~1 ms from disk ([`FRONTEND.md`](FRONTEND.md) §4) |
 | Client read path | **Ours**, implementing §11 | A push-invalidated local replica is the data layer; a server-state cache is priced for a cost we do not pay (§5.2) |
 | Blobs | **S3-compatible** — R2 in production, MinIO locally | Egress cost dominates for a media-heavy chat client |
@@ -186,6 +187,7 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | React | https://react.dev | resolve |
 | React Router | https://reactrouter.com | resolve |
 | TanStack Virtual | https://tanstack.com/virtual/latest | resolve |
+| TanStack Hotkeys (core, `0.8.0` exact) | https://tanstack.com/hotkeys/latest/docs/reference | resolve |
 | Fastify | https://fastify.dev/docs/latest | `/fastify/fastify` |
 | @fastify/websocket | https://github.com/fastify/fastify-websocket | `/fastify/fastify-websocket` |
 | ws | https://github.com/websockets/ws | resolve |

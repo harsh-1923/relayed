@@ -74,6 +74,9 @@ export function ToolCalls({ parts, running }: { parts: readonly ToolPart[]; runn
   return (
     <Collapsible>
       <CollapsibleTrigger
+        // Marker renders a div, so Base UI supplies the button role and keyboard
+        // handling itself rather than expecting a native <button>.
+        nativeButton={false}
         render={<Marker />}
         className="group/tools cursor-pointer rounded-md py-0.5 transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
       >
