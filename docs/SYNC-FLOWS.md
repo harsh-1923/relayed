@@ -1306,9 +1306,20 @@ marks nothing edited: `message.edited` stays reserved for a person's own edit.
   "payload": { "id": "msg_…", "body": "Alice gave @triage access to Linear." } }
 ```
 
-`parts` joins that payload when messages carry parts on the server. The client
+For a message made of parts the payload carries the new `parts` too, replacing
+the old ones whole; without them the message is its body again. The client
 applies it **only if the row it holds is not newer** — repair reads current
 state, so a newer row can land before an older update arrives.
+
+**Parts** (`AGENT-RESPONSES.md` §3). A message made of them — an agent's reply,
+a card — carries `parts` on `message.created`, on `message.updated` and on every
+message row, and its `body` is the one the **server derived** from them. A
+`send` op may carry `m.parts`: the server checks them strictly (known kinds, the
+limits, `tool` and `ui` only from an agent, every UI block valid) and answers a
+refusal with a non-retryable `nack` of code `parts_refused`. The frame parse
+keeps them unchecked, so an unknown kind from a newer client reaches that check
+rather than making the whole frame malformed, and a client reads stored parts
+leniently: a kind it does not know falls back to `body`.
 
 A message only some people can see reaches the people on it with its list, and
 everyone else who reads the chat as a withheld revision (§7.1):

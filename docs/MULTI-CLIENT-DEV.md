@@ -387,6 +387,18 @@ The listed client shows it with "Only visible to you"; the others show nothing
 and keep receiving the chat. The full check is `WORKSPACE-AGENTS-IMPL.md` §5,
 by hand.
 
+**A message made of parts** (`AGENT-RESPONSES.md` phase 3) — what an agent run
+will write — goes through the same flag. The author must be an agent in the
+channel (create one in Settings → Agents, and pick the channel):
+
+```bash
+curl -X POST localhost:8787/dev/agent-message -H 'content-type: application/json' \
+  -d '{"chatId":"cht_…","authorId":"act_<agent>","parts":[{"kind":"markdown","text":"Deploy finished."},{"kind":"ui","lang":"openui-lang@0.5","library":"relayed-ui@1","source":"root = Card([h, s])\nh = CardHeader(\"api\", \"deployed in 42s\")\ns = Stat(\"Errors\", \"0\", \"success\")"}]}'
+```
+
+Both clients draw the card. The same request with a person's `authorId` is
+refused `parts_refused` — the check phase 3 is done by.
+
 ---
 
 ## 11. Status, and what is actually verified

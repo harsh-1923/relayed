@@ -894,3 +894,14 @@ test('a DIRECTORY PAGE stores an agent\'s summary with its row', () => {
   assert.equal(summaryOf(db, 'act_triage')['config_rev'], 2);
   db.close();
 });
+
+test('a fetched row stores its parts, and the version guard covers them like the body', () => {
+  const db = replica();
+  const parts = [{ kind: 'markdown', text: 'From the tail' }];
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 2, recent: [
+    { ...(tail(1, 1)[0] as MessageRow), parts }, tail(2, 2)[0] as MessageRow] });
+  const partsOf = (id: string) => (db.prepare('SELECT parts FROM messages WHERE id = ?').get(id) as { parts: string | null }).parts;
+  assert.deepEqual(JSON.parse(partsOf('msg_1') ?? 'null'), parts);
+  assert.equal(partsOf('msg_2'), null);
+  db.close();
+});

@@ -95,6 +95,8 @@ export interface MessageRow {
   replyCount: number;
   /** Null for the whole chat; else the list, which this reader is necessarily on. */
   visibleTo: string[] | null;
+  /** The parts `body` was derived from, as stored; null for a message that is its body. */
+  parts: unknown[] | null;
 }
 
 /**
@@ -442,7 +444,7 @@ export async function threadReplies(
 function messageRows(db: Kysely<DB>, readerId: string) {
   return db.selectFrom('messages as m')
     .select(['m.id', 'm.ord', 'm.rev', 'm.author_id', 'm.body', 'm.parent_id',
-             'm.deleted', 'm.edited_at', 'm.visible_to'])
+             'm.deleted', 'm.edited_at', 'm.visible_to', 'm.parts'])
     .select(eb => eb.selectFrom('messages as r')
       .select(eb2 => eb2.fn.countAll<number>().as('n'))
       .whereRef('r.parent_id', '=', 'm.id')
@@ -719,6 +721,7 @@ const toMessage = (row: {
   body: string; parent_id: string | null; deleted: boolean;
   edited_at: Date | string | null; reply_count: number | string | null;
   visible_to: string[] | null;
+  parts: unknown;
 }): MessageRow => ({
   id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
   body: row.body, parentId: row.parent_id, deleted: row.deleted,
@@ -727,6 +730,8 @@ const toMessage = (row: {
   // A correlated COUNT comes back as a bigint string from node-postgres.
   replyCount: Number(row.reply_count ?? 0),
   visibleTo: row.visible_to,
+  // JSONB arrives parsed. Anything but an array is not parts.
+  parts: Array.isArray(row.parts) ? row.parts : null,
 });
 
 export interface DirectoryRow {

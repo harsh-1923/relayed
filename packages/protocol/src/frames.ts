@@ -296,7 +296,13 @@ export const OpFrame = z.object({
   /** Present for a send. A delete needs nothing but its target. */
   m: z.object({
     parent_id: z.string().nullable().optional(),
+    /** What the client drew while it waited. With parts, the server derives its own. */
     body: z.string(),
+    /**
+     * Parts, checked strictly by the server — not here, where an unknown kind
+     * from a newer client must not make the whole frame malformed.
+     */
+    parts: z.array(z.unknown()).optional(),
   }).optional(),
 });
 export type OpFrame = z.infer<typeof OpFrame>;
@@ -552,6 +558,12 @@ const MessageRowFrame = z.object({
   edited_at: z.string().nullable().optional(),
   reply_count: z.number().int().nonnegative().optional(),
   visible_to: z.array(z.string()).nullable().optional(),
+  /**
+   * The parts the body was derived from, or null. Read LENIENTLY: a kind this
+   * build does not know was written by a newer one, and the message falls back
+   * to `body` rather than the frame being refused (AGENT-RESPONSES.md §3.1).
+   */
+  parts: z.array(z.unknown()).nullable().optional(),
 });
 export type MessageRowFrame = z.infer<typeof MessageRowFrame>;
 

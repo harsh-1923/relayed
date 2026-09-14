@@ -570,4 +570,22 @@ export const workspaceMigrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 12,
+    name: 'message-parts',
+    // A function, because some development replicas ALREADY have this column:
+    // the version 7 that was discarded (see 8, drafts-repair) added exactly
+    // `messages.parts TEXT`. A plain ALTER fails there with a duplicate column,
+    // and SQLite has no ADD COLUMN IF NOT EXISTS. Same name, same type, so a
+    // replica that has it is already right.
+    up: (db) => {
+      // The ordered parts an agent's reply is made of, as JSON, or NULL for a
+      // message that is its body (AGENT-RESPONSES.md §3). Read leniently: a
+      // kind this build does not know falls back to `body`.
+      const columns = db.prepare('PRAGMA table_info(messages)').all() as { name: string }[];
+      if (!columns.some(column => column.name === 'parts')) {
+        db.exec('ALTER TABLE messages ADD COLUMN parts TEXT');
+      }
+    },
+  },
 ];

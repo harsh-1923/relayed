@@ -2078,13 +2078,77 @@
       }
     },
     {
+      "id": 1000,
+      "type": "row",
+      "title": "Message parts (AGENT-RESPONSES.md \u00a73)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 105,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 1001,
+      "title": "Parts refused, by reason",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "A write refused because its parts do not parse, name a kind (tool/ui) the author may not write, or hold a UI block that does not validate. A rising forbidden_kind share is someone trying to draw a card under a person's name.",
+      "gridPos": {
+        "x": 0,
+        "y": 106,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({service_name=\"relayed-server\"} | metric_name=\"sync.parts.refused\" [$__auto])) by (parts_refusal)",
+          "legendFormat": "{{parts_refusal}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
       "id": 239,
       "type": "row",
       "title": "The sync event stream",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 105,
+        "y": 113,
         "w": 24,
         "h": 1
       },
@@ -2101,7 +2165,7 @@
       "description": "Ids live here and are forbidden as metric labels \u2014 traces and logs are indexed for high cardinality and metrics are not (\u00a75). This is where \"why did THIS person's message hang\" becomes answerable.",
       "gridPos": {
         "x": 0,
-        "y": 106,
+        "y": 114,
         "w": 24,
         "h": 10
       },

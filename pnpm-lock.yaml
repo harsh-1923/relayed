@@ -235,6 +235,9 @@ importers:
       '@relayed/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@relayed/genui':
+        specifier: workspace:*
+        version: link:../../packages/genui
       '@relayed/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

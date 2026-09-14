@@ -24,6 +24,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { PART_LIMITS, type MessagePart, type ToolPart } from '@relayed/protocol';
+import { count } from '@relayed/telemetry';
+import type { MetricLabelsFor } from '@relayed/telemetry/catalogue';
 import {
   formatForModel, LANG, LIBRARY_VERSION, SHOW_UI, summariseTool, uiInstructions, validateUi,
 } from '@relayed/genui';
@@ -137,6 +139,13 @@ interface Turn {
   started: Map<string, number>;
   deltaTimer: ReturnType<typeof setTimeout> | null;
   stopping: boolean;
+  /**
+   * A `show_ui` call in this turn has failed validation and not yet been
+   * followed by a valid one. What tells `genui.block` a later success is a
+   * `repair` rather than a first-try `valid`, and what tells `#finish` a
+   * `given_up` is owed if the turn ends here (AGENT-RESPONSES.md §9 phase 3).
+   */
+  uiRetrying: boolean;
 }
 
 /** An ask Claude Code is waiting on. `answer` settles it once; a second call does nothing. */
@@ -185,7 +194,7 @@ export class ChatSessions {
     if (!session) return;
     session.turn = {
       messageId: request.messageId, parts: [], openText: '', openUiJson: null, uiBlock: null,
-      started: new Map(), deltaTimer: null, stopping: false,
+      started: new Map(), deltaTimer: null, stopping: false, uiRetrying: false,
     };
     session.inbox.push(request.text);
   }
@@ -451,11 +460,17 @@ export class ChatSessions {
     if (!result.ok) {
       // The broken card's live preview goes; nothing of it is kept.
       turn.openUiJson = null;
+      turn.uiRetrying = true;
       this.#flushDelta(session, turn);
+      // The FIRST error only: what a dashboard reads as "the mistake", and one
+      // series per call rather than one per error the parser reported.
+      count('genui.error', { genui_error: knownGenuiErrorCode(result.errors[0]?.code) });
       return { isError: true, content: [{ type: 'text', text: formatForModel(result.errors) }] };
     }
     turn.parts.push({ kind: 'ui', lang: LANG, library: LIBRARY_VERSION, source });
     this.#emitParts(session, turn);
+    count('genui.block', { genui_outcome: turn.uiRetrying ? 'repaired' : 'valid' });
+    turn.uiRetrying = false;
     return { content: [{ type: 'text', text: 'Shown to the people in this chat.' }] };
   }
 
@@ -506,6 +521,9 @@ export class ChatSessions {
   #finish(session: Session, outcome: 'completed' | 'failed' | 'stopped', reason: string | null): void {
     const turn = session.turn;
     if (!turn) return;
+    // A `show_ui` call was still being repaired when the turn ended: the model
+    // never got another chance, so nothing of that attempt was kept.
+    if (turn.uiRetrying) count('genui.block', { genui_outcome: 'given_up' });
     session.turn = null;
     cancelAll(session);
     if (turn.deltaTimer) clearTimeout(turn.deltaTimer);
@@ -547,6 +565,24 @@ const restartDue = (session: Session): boolean =>
 const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '');
 
 /** Text shown exactly as printed: in a fence longer than any run of backticks inside it. */
+/**
+ * A validation error's code, narrowed to the telemetry catalogue's closed set.
+ *
+ * `@openuidev/lang-core`'s own codes are open — a parser update can add one —
+ * so an unrecognised code reads as `other` rather than being a compile error
+ * or a metric label the sink refuses (`packages/telemetry/src/metrics.ts`,
+ * the toolkit-label rule this mirrors).
+ */
+function knownGenuiErrorCode(code: string | undefined): MetricLabelsFor<'genui.error'>['genui_error'] {
+  const known: readonly string[] = [
+    'empty', 'too-large', 'parse-exception', 'no-root', 'wrong-root',
+    'incomplete', 'too-many-statements', 'data-not-allowed', 'state-not-allowed',
+    'unknown-lang', 'unknown-library',
+  ];
+  return known.includes(code ?? '')
+    ? code as MetricLabelsFor<'genui.error'>['genui_error'] : 'other';
+}
+
 function fenced(text: string): string {
   const longest = Math.max(2, ...Array.from(text.matchAll(/`+/g), match => match[0].length));
   const fence = '`'.repeat(longest + 1);

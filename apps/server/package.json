@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@relayed/authz": "workspace:*",
+    "@relayed/genui": "workspace:*",
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "fastify": "^5.2.0",

@@ -122,6 +122,38 @@ export interface LabelValues {
    * an apply that cannot write is not a pager that lost its page.
    */
   stage: 'frame' | 'apply' | 'catchup' | 'directory' | 'drain' | 'welcome';
+
+  // ── message parts (AGENT-RESPONSES.md §3, §9 phase 3) ────────────────────
+  /**
+   * Whether a model's `show_ui` call needed a retry before the block it wrote
+   * was stored. `given_up` is a turn that ended with an invalid call still
+   * outstanding — nothing of that attempt is kept, and the reply is text alone.
+   */
+  genui_outcome: 'valid' | 'repaired' | 'given_up';
+  /**
+   * Why a `show_ui` call failed validation — the parser's own codes plus the
+   * two the server adds for a block it cannot read at all. A closed allowlist,
+   * `other` for anything `@openuidev/lang-core` adds that this catalogue has
+   * not been updated for yet — never the block's source.
+   */
+  genui_error: 'empty' | 'too-large' | 'parse-exception' | 'no-root' | 'wrong-root'
+    | 'incomplete' | 'too-many-statements' | 'data-not-allowed' | 'state-not-allowed'
+    | 'unknown-lang' | 'unknown-library' | 'other';
+  /**
+   * Which library component failed to draw. The closed set is the library's
+   * own component names (`@relayed/genui`'s `library.ts`); `other` covers one
+   * added there before this catalogue is, so the metric never becomes a reason
+   * to delay a component.
+   */
+  genui_component: 'Card' | 'Stack' | 'CardHeader' | 'Text' | 'Stat' | 'Badge'
+    | 'Col' | 'Table' | 'List' | 'Callout' | 'FileRef' | 'Series' | 'BarChart'
+    | 'Actions' | 'Reply' | 'Link' | 'other';
+  /**
+   * Why the server refused a message's parts (AGENT-RESPONSES.md §7).
+   * `forbidden_kind` rising means something is trying to put a `tool` or `ui`
+   * part under a person's name — the costume rule (rule 1) failing to hold.
+   */
+  parts_refusal: 'invalid' | 'forbidden_kind' | 'invalid_ui';
 }
 
 export type LabelName = keyof LabelValues;
@@ -165,6 +197,14 @@ export const labelValues = {
   // number is the allowance the series budget reserves for live versions.
   version: Array.from({ length: 12 }, (_, i) => `v${i}`) as unknown as string[],
   stage: ['frame', 'apply', 'catchup', 'directory', 'drain', 'welcome'],
+  genui_outcome: ['valid', 'repaired', 'given_up'],
+  genui_error: ['empty', 'too-large', 'parse-exception', 'no-root', 'wrong-root',
+                'incomplete', 'too-many-statements', 'data-not-allowed', 'state-not-allowed',
+                'unknown-lang', 'unknown-library', 'other'],
+  genui_component: ['Card', 'Stack', 'CardHeader', 'Text', 'Stat', 'Badge',
+                     'Col', 'Table', 'List', 'Callout', 'FileRef', 'Series', 'BarChart',
+                     'Actions', 'Reply', 'Link', 'other'],
+  parts_refusal: ['invalid', 'forbidden_kind', 'invalid_ui'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
 /** Union members not present in `labelValues`. `never` when the sets agree. */
@@ -418,6 +458,14 @@ export const metrics = {
        + 'question anyone asks about a slow send and the one a client cannot '
        + 'answer about itself.',
   },
+  'sync.parts.refused': {
+    kind: 'counter', labels: ['parts_refusal'],
+    doc: 'AGENT-RESPONSES.md §7. A write refused because its parts do not '
+       + 'parse, name a kind (`tool`/`ui`) the author may not write, or hold a '
+       + 'UI block that does not validate. A `forbidden_kind` share rising is '
+       + 'someone trying to draw a card under a person\'s name; the server\'s '
+       + 'own refusal message never carries the source.',
+  },
   'sync.event.appended': {
     kind: 'counter', labels: ['stream'],
     doc: 'Events written to the log, by stream kind. Answers "how fast is the '
@@ -508,6 +556,28 @@ export const metrics = {
        + '(invariant 43): `unknown` climbing after a release is old clients '
        + 'meeting new frames and is CORRECT, while `malformed` is a bug and '
        + '`denied` is somebody asking for a stream they cannot read.',
+  },
+
+  // ── message parts, the renderer and the local runner (AGENT-RESPONSES.md §9) ─
+  'genui.block': {
+    kind: 'counter', labels: ['genui_outcome'],
+    doc: 'One `show_ui` call from the model resolved: stored on the first try, '
+       + 'stored after a repair, or the turn ended with the attempt abandoned. '
+       + 'Answers "is the UI prompt still working" — a rising `given_up` share '
+       + 'means the model is losing a fight the instructions should be winning.',
+  },
+  'genui.error': {
+    kind: 'counter', labels: ['genui_error'],
+    doc: 'Why one `show_ui` call was refused, by the parser\'s own code. '
+       + 'Answers "which mistake is growing" — the thing a prompt change is '
+       + 'meant to fix, and the only way to tell whether it did.',
+  },
+  'genui.render_error': {
+    kind: 'counter', labels: ['genui_component'],
+    doc: 'A stored, valid block still failed to DRAW — a renderer bug rather '
+       + 'than a model mistake. Answers "which of our components breaks", '
+       + 'which `genui.error` cannot: that one only sees blocks that never '
+       + 'made it past validation.',
   },
 
   // ── the sync engine, client side ─────────────────────────────────────────

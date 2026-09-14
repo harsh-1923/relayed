@@ -1265,6 +1265,10 @@ CREATE TABLE messages (
   -- (replica v10). Only ever set on a message this client is listed on — the
   -- server sends everyone else the revision alone — so it labels, never decides.
   visible_to  TEXT,
+  -- The ordered parts an agent's reply is made of, as JSON, or NULL for a
+  -- message that is its body (replica v12; AGENT-RESPONSES.md §3). `body` is
+  -- DERIVED from them by the server, never written by a model or a client.
+  parts       TEXT,
 
   -- Delegation attribution (§6.4). author_id is ALWAYS the acting actor — for
   -- an agent reply that is the agent, never the human. on_behalf_of_actor_id
@@ -1867,7 +1871,7 @@ The UI never waits on the network to show what you typed.
 
 | Kind | Target | Notes |
 |---|---|---|
-| `send` | message id | May reference blob ids that are not yet uploaded (§13.3) |
+| `send` | message id | May reference blob ids that are not yet uploaded (§13.3). May carry `parts`: the server derives `body` from them, and refuses `tool` and `ui` parts from anyone but an agent (`parts_refused`, not retryable — AGENT-RESPONSES.md §7) |
 | `edit` | message id | LWW on body |
 | `delete` | message id | Tombstone |
 | `react` | message id + emoji | `present: 0 \| 1` |

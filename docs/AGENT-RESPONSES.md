@@ -440,16 +440,32 @@ Each phase ends in something a person can use or see, not only a passing test.
 |---|---|---|
 | 1 ✅ | **`@relayed/genui`**: the library (§4.2) with `text()`, `validateUi`, the instructions, the snapshot guard in `pnpm test`. Uses the Zod `@relayed/protocol` already depends on | The guard fails on a reordered argument; `validateUi` passes the fixtures in `spikes/genui/1-prompt.mjs` |
 | 2 ✅ | **Renderer**: `features/chat/` binds `components/ui/*` (§6.2); §6.1 setup; part renderers; a dev route that plays the spike fixtures (stored, streamed, broken, throwing, click) | Every fixture renders with zero CSP violations, light and dark — verified in Chromium with the app's CSP, stylesheet and components; the production build contains no fixture. Not yet opened inside Electron |
-| 3 | **Message contract**: `parts` in the replica, the server schema and `@relayed/protocol`; derived `body`; server checks (§7.1); unknown kinds fall back to `body` | A hand-written agent message with a `ui` part syncs to two dev clients and renders on both; a human message with one is refused |
+| 3 ✅ | **Message contract**: `parts` in the replica, the server schema and `@relayed/protocol`; derived `body`; server checks (§7.1); unknown kinds fall back to `body` | A hand-written agent message with a `ui` part syncs to two dev clients and renders on both; a human message with one is refused. Built: `messages.parts JSONB` (migration 011, shape and size CHECKs) and replica v12; `writeMessage` and `updateMessage` take a body **or** parts, never both, check them (strict shape, `forbiddenPartKind` against the author, `uiPartRefusal` per block) and derive `body`; parts ride `message.created`, `message.updated` and every message row; a `send` op may carry `m.parts`, refused as `parts_refused`; `POST /dev/agent-message` writes an agent's parts by hand. Verified by tests on both sides and the refusal through a real socket; **the two-client check by hand is not done yet**, and the three markers below are not added until agreed |
 | 4 | **Service agent**: `apps/agent` appends the instructions and registers `show_ui`; a run's result carries parts; `spikes/genui/3-pi.mjs` becomes `pnpm eval:genui`. Records the custom-tool trigger in `AGENT-RUNTIME.md` | A run returns valid parts; the eval matches §8 or the change is explained |
 | 5 ✅ | **Local runner**: Claude Code with §5.3; `show_ui` input streamed on `agent:stream`; parts persisted when the turn completes. Depends on the local-room runner existing | A local room shows a card filling in while Claude writes it, and the same card after a restart. Built in `agent-runner/claude/turns.ts`: an in-process MCP server per session carries `show_ui`, the shared instructions are appended, a valid call becomes a `ui` part at its place in the reply and an invalid one goes back to Claude. Verified on a real Sonnet 5 turn (a stats, table and callout card, streamed, no table repeated in text); not yet looked at inside the app |
 | 6 | **Actions**: `Reply` → `messages.send` with `reply_to_ui`; `Link` → browser or a local web panel | Clicking "Apply the fix" posts that message as the clicker, and the agent acts on it |
 
-**Observability, to agree before phase 3** (`OBSERVABILITY.md` asks for the
-question each marker answers): `genui.block{outcome}` — valid, repaired, or
-given up — answers "is the prompt still working"; `genui.error{code}` answers
-"which mistake is growing"; `genui.render_error{component}` answers "which of our
-components breaks". All labels are closed sets.
+**Observability — agreed and built.** `OBSERVABILITY.md` asks for the question
+each marker answers: `genui.block{genui_outcome}` — valid, repaired, or given
+up — answers "is the prompt still working"; `genui.error{genui_error}` answers
+"which mistake is growing"; `genui.render_error{genui_component}` answers "which
+of our components breaks". A fourth was added at review, on the server side of
+this same phase: `sync.parts.refused{parts_refusal}` answers "is a client or an
+agent sending parts we refuse" — a rising `forbidden_kind` share is a `tool` or
+`ui` part reaching the server under a person's name, which rule 1 exists to
+stop. All four labels are closed sets that read as `other` for anything the
+catalogue has not been updated for, and none carries a block's source, a
+component's props, or a message body.
+
+Recorded: `genui.block` and `genui.error` in the local runner's `show_ui`
+handler (`agent-runner/claude/turns.ts`), the same place the service runtime
+will record them in phase 4; `genui.render_error` in the renderer's `UiBlock`,
+through `lib/telemetry` (the boundary that keeps the SDK out of the renderer);
+`sync.parts.refused` in the server's `contentOf`, the one place every write's
+parts are checked. Panels: `sync.parts.refused` on the Phase 2 dashboard
+(`infra/grafana/dashboards/relayed-phase2.json`) — required, because it shares
+the `sync.` prefix the dashboard test holds to that standard; the three `genui.*`
+metrics are not on a dashboard yet, same as most of Phase 1's early markers.
 
 ---
 
@@ -468,9 +484,9 @@ components breaks". All labels are closed sets.
 
 | Doc | Edit | Phase |
 |---|---|---|
-| `DESIGN.md`, client schema (§8.3) and write path (§10) | `parts`; derived `body`; only agents write `ui` parts | 3 |
+| `DESIGN.md`, client schema (§8.3) and write path (§10) ✅ | `parts`; derived `body`; only agents write `ui` parts | 3 |
 | `DESIGN.md`, IPC contract (§13.2) | the `agent:stream` push | 5 |
 | `FRONTEND.md`, validation at the boundaries (§8.4) ✅ | Zod in the renderer for the first time; `jitless` and why; the measured cost | 2 |
 | `AGENT-RUNTIME.md`, deliberately not built (§8) | `show_ui` is the first non-default tool; it touches no data | 4 |
 | `OBSERVABILITY.md` | the three markers above, once agreed | 3 |
-| `LOCAL-ROOMS.md`, tool calls inside the message (§8.4) | points here for the part shapes | 3 |
+| `LOCAL-ROOMS.md`, tool calls inside the message (§8.4) ✅ | points here for the part shapes | 3 |

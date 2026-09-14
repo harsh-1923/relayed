@@ -738,3 +738,19 @@ test('a space reads by id in the same shape the sidebar lists, and a DM is given
   assert.equal(storage.space('spc_dm')?.visibility, null);
   assert.equal(storage.space('spc_missing'), null);
 });
+
+test('the chat read returns a synced message\'s parts, and null for a malformed or absent column', () => {
+  // AGENT-RESPONSES.md §3.1: read leniently. A column that is not an array of
+  // kinds reads as no parts, and the message renders its body.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  const insert = storage.workspace.prepare(`
+    INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body, created_at, state, local_only, parts)
+    VALUES (?, 'cht_1', NULL, ?, ?, 'act_a', 'body', 0, 'acked', 0, ?)`);
+  insert.run('msg_1', 1, 1, JSON.stringify([{ kind: 'markdown', text: 'hi' }]));
+  insert.run('msg_2', 2, 2, '{"not":"an array"}');
+  insert.run('msg_3', 3, 3, null);
+
+  const parts = storage.messages('cht_1').map(m => [m.id, m.parts]);
+  assert.deepEqual(parts, [['msg_1', [{ kind: 'markdown', text: 'hi' }]], ['msg_2', null], ['msg_3', null]]);
+});

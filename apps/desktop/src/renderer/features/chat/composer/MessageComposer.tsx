@@ -15,11 +15,9 @@ import {
 } from '@/components/ui/command';
 import {
   ArrowUp,
-  ChevronDown,
   MicOn,
   PauseCircle,
   PlusDefault,
-  ShieldCheck,
 } from '@relayed/icons';
 import type { ClaudeCommand, ReplicaActor } from '../../../../preload/api';
 import { parseSlashCommand } from '../../../../shared/slash-commands.ts';
@@ -299,21 +297,10 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
             <button className="composer-action" type="button" aria-label="Add attachment" title="Add attachment">
               <PlusDefault />
             </button>
-            {props.approvalControl ? props.approvalControl('composer-approval') : (
-              <button className="composer-approval" type="button" aria-label="Choose approval mode">
-                <ShieldCheck />
-                <span>Approve for me</span>
-              </button>
-            )}
+            {props.scope === 'local' ? props.approvalControl?.('composer-approval') : null}
           </div>
           <div className="composer-footer-group composer-footer-group-end">
-            {props.modelControl ? props.modelControl('composer-model') : (
-              <button className="composer-model" type="button" aria-label="Choose model">
-                <span>GPT-5.6 Sol</span>
-                <span className="composer-model-tone">Light</span>
-                <ChevronDown />
-              </button>
-            )}
+            {props.scope === 'local' ? props.modelControl?.('composer-model') : null}
             <button className="composer-action" type="button" aria-label="Use voice input" title="Use voice input">
               <MicOn />
             </button>

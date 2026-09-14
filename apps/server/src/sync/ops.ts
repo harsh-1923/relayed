@@ -19,7 +19,9 @@ import { appendEvent, type AppendedEvent } from './events.ts';
 import {
   AudienceError, toColumn, fromColumn, receives, type Audience,
 } from './visibility.ts';
-import { startSpan, annotate, mark } from '@relayed/telemetry';
+import { Parts, forbiddenPartKind, type MessagePart } from '@relayed/protocol';
+import { deriveBody, uiPartRefusal } from '@relayed/genui';
+import { startSpan, annotate, mark, count } from '@relayed/telemetry';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -72,6 +74,12 @@ export interface SendInput {
   messageId: string;
   body: string;
   parentId?: string | null;
+  /**
+   * Parts, when the message is made of them. The server then derives `body`
+   * and the one sent is only what the client drew while it waited. A person's
+   * send may carry `markdown` and `reply_to_ui`; `tool` and `ui` are refused.
+   */
+  parts?: readonly unknown[];
 }
 
 /**
@@ -107,8 +115,8 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
     // the writer (WORKSPACE-AGENTS.md §8.8).
     const written = await writeMessage(trx, {
       chatId: input.chatId, messageId: input.messageId, authorId: input.actorId,
-      body: input.body, parentId: input.parentId ?? null,
-      audience: { kind: 'stream' },
+      parentId: input.parentId ?? null, audience: { kind: 'stream' },
+      ...(input.parts !== undefined ? { parts: input.parts } : { body: input.body }),
     });
     event = written.event;
     return written.ack;
@@ -129,15 +137,90 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   return { ack: applied.result, event };
 }
 
-export interface MessageWrite {
+/**
+ * What a message says: a body, or parts it is derived from — never both.
+ *
+ * "Both" would be two sources for what a reader sees, and the rule is that
+ * `body` is Relayed's, derived from the parts, and never a model's or a
+ * client's (AGENT-RESPONSES.md, decisions §1). The union makes passing both a
+ * compile error rather than a body silently ignored.
+ */
+export type MessageContent =
+  | { body: string; parts?: never }
+  | { parts: readonly unknown[]; body?: never };
+
+/** Parts a writer may not store, and why — for a nack, never carrying the source. */
+export class PartsRefusedError extends Error {
+  /** `invalid` shape, a kind this author may not write, or a `ui` block that does not validate. */
+  readonly reason: 'invalid' | 'forbidden_kind' | 'invalid_ui';
+  /** The forbidden kind, or the ui error code — a closed set, safe to report. */
+  readonly detail: string | null;
+  constructor(reason: 'invalid' | 'forbidden_kind' | 'invalid_ui', detail: string | null = null) {
+    super(detail ? `parts refused: ${reason} (${detail})` : `parts refused: ${reason}`);
+    this.name = 'PartsRefusedError';
+    this.reason = reason;
+    this.detail = detail;
+  }
+}
+
+/**
+ * The body and parts to store, from what a writer gave — checked as
+ * AGENT-RESPONSES.md's rules for rooms (§7) require:
+ *
+ * 1. the shape, strictly: known kinds, the part limits, nothing extra kept;
+ * 2. `tool` and `ui` parts only on an AGENT's message — on a person's they are
+ *    a costume (`forbiddenPartKind`, the same check the renderer makes);
+ * 3. every `ui` block validates, against a library this build can read —
+ *    because the server must be able to derive `body` from every block it
+ *    stores.
+ *
+ * The author's type is read only when there are parts, so a plain send costs
+ * no statement.
+ */
+async function contentOf(
+  trx: Transaction<DB>, authorId: string, content: MessageContent,
+): Promise<{ body: string; parts: MessagePart[] | null }> {
+  if (content.parts === undefined) return { body: content.body, parts: null };
+
+  const refuse = (reason: 'invalid' | 'forbidden_kind' | 'invalid_ui', detail: string | null = null): never => {
+    count('sync.parts.refused', { parts_refusal: reason });
+    throw new PartsRefusedError(reason, detail);
+  };
+
+  const validated = Parts.safeParse(content.parts);
+  if (!validated.success) {
+    // A direct throw, not through `refuse`: a helper called for its side
+    // effect does not narrow a discriminated union the way an inline
+    // `if (!x.success) throw` does, and `validated.data` is used below.
+    count('sync.parts.refused', { parts_refusal: 'invalid' });
+    throw new PartsRefusedError('invalid');
+  }
+  const parts = validated.data;
+
+  const author = await trx.selectFrom('actors').select('type')
+    .where('id', '=', authorId).executeTakeFirst();
+  const forbidden = forbiddenPartKind(author?.type ?? 'human', parts);
+  if (forbidden !== null) refuse('forbidden_kind', forbidden);
+
+  for (const part of parts) {
+    if (part.kind !== 'ui') continue;
+    const refusal = uiPartRefusal(part);
+    if (refusal !== null) refuse('invalid_ui', refusal);
+  }
+  return { body: deriveBody(parts), parts };
+}
+
+/** A JSONB value, serialised here: node-postgres would send an array as a Postgres array. */
+const jsonb = (value: unknown) => sql`${JSON.stringify(value)}::jsonb`;
+
+export type MessageWrite = {
   chatId: string;
   messageId: string;
   authorId: string;
-  body: string;
   parentId: string | null;
   /** Required, with no default: a writer that forgets must not compile (§8.5). */
   audience: Audience;
-}
+} & MessageContent;
 
 /**
  * Write one message and its event, inside a transaction the caller owns.
@@ -145,9 +228,9 @@ export interface MessageWrite {
  * THE ONLY FUNCTION THAT INSERTS A MESSAGE (a boundary rule holds it), which is
  * what makes the column's NULL safe to mean "the whole chat": the audience is a
  * required argument here, so no writer reaches the table without stating one.
- * A client's send calls this with `stream`; the server's own writers — the dev
- * route — the only writer of one while restricted messages are dormant — calls
- * it with a list, and an agent run's public cards with `stream`.
+ * A client's send and an agent run's reply and public cards call this with
+ * `stream`; the dev route, the only writer of a restricted message while those
+ * are dormant, calls it with a list.
  *
  * Authorising the AUTHOR is the caller's job, because the callers differ: a
  * client send checks `post` against the sender's grants before its op is
@@ -190,11 +273,14 @@ export async function writeMessage(
     }
   }
 
+  const { body, parts } = await contentOf(trx, input.authorId, input);
+
   const allocated = await allocateChat(trx, input.chatId, true);
   const row = await trx.insertInto('messages').values({
     id: input.messageId, chat_id: input.chatId, parent_id: input.parentId,
     ord: allocated.ord as number, rev: allocated.rev,
-    author_id: input.authorId, body: input.body, visible_to: visibleTo,
+    author_id: input.authorId, body, visible_to: visibleTo,
+    parts: parts === null ? null : jsonb(parts),
   }).returning('created_at').executeTakeFirstOrThrow();
 
   // The space's activity clock, which drives auto-dormancy and sidebar order.
@@ -223,9 +309,10 @@ export async function writeMessage(
     ord: allocated.ord as number,
     parent_id: input.parentId,
     author_id: input.authorId,
-    body: input.body,
+    body,
     created_at: ack.createdAt,
     ...(visibleTo !== null ? { visible_to: visibleTo } : {}),
+    ...(parts !== null ? { parts } : {}),
   }, fromColumn(visibleTo));
 
   return { ack, event };
@@ -325,11 +412,10 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
   return { ack: applied.result, event };
 }
 
-export interface MessageUpdate {
+export type MessageUpdate = {
   chatId: string;
   messageId: string;
-  body: string;
-}
+} & MessageContent;
 
 /**
  * Replace a message's content, as the server — `message.updated`.
@@ -354,7 +440,7 @@ export async function updateMessage(
   trx: Transaction<DB>, input: MessageUpdate,
 ): Promise<AppendedEvent> {
   const allocated = await allocateChat(trx, input.chatId, false);
-  const message = await trx.selectFrom('messages').select('visible_to')
+  const message = await trx.selectFrom('messages').select(['visible_to', 'author_id'])
     .where('id', '=', input.messageId).where('chat_id', '=', input.chatId)
     .where('deleted', '=', false)
     .executeTakeFirst();
@@ -362,13 +448,18 @@ export async function updateMessage(
   // this chat's message: both are simply not found.
   if (!message) throw new MessageNotFoundError(input.messageId);
 
-  // `rev` is not set here: the version rule bumps it (events.ts).
-  await trx.updateTable('messages').set({ body: input.body })
+  // Checked against the message's AUTHOR, not whoever is updating it: a card
+  // is an agent's message, and stays one.
+  const { body, parts } = await contentOf(trx, message.author_id, input);
+
+  // `rev` is not set here: the version rule bumps it (events.ts). Parts are
+  // replaced whole — NULL when the new content is a body alone.
+  await trx.updateTable('messages').set({ body, parts: parts === null ? null : jsonb(parts) })
     .where('id', '=', input.messageId).where('chat_id', '=', input.chatId)
     .execute();
 
   return appendEvent(trx, allocated, 'message.updated',
-    { id: input.messageId, body: input.body }, fromColumn(message.visible_to));
+    { id: input.messageId, body, ...(parts !== null ? { parts } : {}) }, fromColumn(message.visible_to));
 }
 
 /**

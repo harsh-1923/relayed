@@ -65,10 +65,11 @@ async function room() {
   return made;
 }
 
-const write = (input: Omit<MessageWrite, 'messageId' | 'authorId' | 'body' | 'parentId'>
-                     & Partial<MessageWrite>) =>
+const write = (input: { chatId: string; audience: MessageWrite['audience'];
+                        parentId?: string | null; body?: string; authorId?: string }) =>
   db.transaction().execute(trx => writeMessage(trx, {
-    messageId: ulid('msg'), authorId: agent, body: 'a private notice', parentId: null, ...input,
+    messageId: ulid('msg'), authorId: input.authorId ?? agent, parentId: input.parentId ?? null,
+    chatId: input.chatId, audience: input.audience, body: input.body ?? 'a private notice',
   }));
 
 const activity = async (spaceId: string): Promise<number> => {

@@ -240,3 +240,16 @@ test('a client op CANNOT CARRY AN AUDIENCE: the field is dropped, not refused', 
     m: { body: 'hi', parent_id: null },
   });
 });
+
+test('a send op KEEPS its parts, unchecked: the server checks them strictly, the parse must not', () => {
+  // A kind this build does not know, from a newer client, must reach the
+  // server's strict check rather than make the whole frame malformed here.
+  const read = readFrame(frame('op', {
+    op_id: 'op_2', kind: 'send', c: 'cht_1', target: 'msg_2',
+    m: { body: 'hi', parts: [{ kind: 'markdown', text: 'hi' }, { kind: 'from_the_future' }] },
+  }), INBOUND);
+  assert.equal(read.kind, 'frame');
+  if (read.kind !== 'frame') return;
+  assert.deepEqual((read.body as { m: { parts: unknown[] } }).m.parts,
+    [{ kind: 'markdown', text: 'hi' }, { kind: 'from_the_future' }]);
+});

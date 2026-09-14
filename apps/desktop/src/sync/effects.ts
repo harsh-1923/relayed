@@ -53,7 +53,13 @@ interface MessageCreated {
   author_id: string; body: string; created_at: string;
   /** Present only on a message some people cannot see — and this client is on it. */
   visible_to?: string[];
+  /** Present only on a message made of parts. Stored as sent, and read leniently. */
+  parts?: unknown[];
 }
+
+/** Parts as the replica stores them: JSON, or NULL for a message that is its body. */
+export const partsColumn = (parts: unknown): string | null =>
+  Array.isArray(parts) && parts.length > 0 ? JSON.stringify(parts) : null;
 
 /**
  * The replica's handlers, as one function `applyEvent` can call.
@@ -108,15 +114,15 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   // special case for "mine" is worth the conflict clause.
   db.prepare(`
     INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
-                          created_at, state, local_only, visible_to)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?)
+                          created_at, state, local_only, visible_to, parts)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       ord = excluded.ord, rev = excluded.rev, body = excluded.body,
       created_at = excluded.created_at, state = 'acked',
-      visible_to = excluded.visible_to
+      visible_to = excluded.visible_to, parts = excluded.parts
   `).run(body.id, stream.id, body.parent_id, body.ord, event.rev,
          body.author_id, body.body, Date.parse(body.created_at),
-         body.visible_to ? JSON.stringify(body.visible_to) : null);
+         body.visible_to ? JSON.stringify(body.visible_to) : null, partsColumn(body.parts));
 
   // `head_ord` is a MAX for the same reason `last_read_ord` is: events can
   // arrive after a `welcome` that already reported a higher head, and walking
@@ -195,11 +201,13 @@ function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): stri
  * accounted for (§11.2): a later fetch returns the current content anyway.
  */
 function messageUpdated(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
-  const { id, body } = event.payload as { id: string; body: string };
+  const { id, body, parts } = event.payload as { id: string; body: string; parts?: unknown[] };
+  // The parts are replaced WHOLE, and an update without them clears them: the
+  // event is the message's complete new content, not a patch.
   const result = db.prepare(`
-    UPDATE messages SET body = ?, rev = ?
+    UPDATE messages SET body = ?, parts = ?, rev = ?
      WHERE id = ? AND chat_id = ? AND deleted = 0 AND COALESCE(rev, 0) <= ?
-  `).run(body, event.rev, id, stream.id, event.rev);
+  `).run(body, partsColumn(parts), event.rev, id, stream.id, event.rev);
   return result.changes > 0 ? [topic.messages(stream.id)] : [];
 }
 

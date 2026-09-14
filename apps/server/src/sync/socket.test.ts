@@ -713,7 +713,7 @@ test('A GAP TAIL AND A BACKFILL PAGE ARE THE SAME SHAPE ON THE WIRE', opts, asyn
     'the same keys, or one of the two consumers is reading undefined');
   // Named explicitly as well, because a shared typo would satisfy the compare.
   assert.deepEqual(Object.keys(fromGap).toSorted(),
-    ['author_id', 'body', 'deleted', 'edited_at', 'id', 'ord', 'parent_id', 'reply_count', 'rev',
+    ['author_id', 'body', 'deleted', 'edited_at', 'id', 'ord', 'parent_id', 'parts', 'reply_count', 'rev',
      'visible_to']);
   peer.socket.close();
 });
@@ -998,6 +998,23 @@ test('AGENT_DEFINITION returns the instructions to a member, and found:false to 
 });
 
 // ─── writes ─────────────────────────────────────────────────────────────────
+
+test('a person\'s op carrying a UI PART is nacked parts_refused, not retryable, and nothing fans out',
+  opts, async () => {
+  // AGENT-RESPONSES.md §7, rule 1, through the socket a client actually uses.
+  const space = await createChannel(db, { workspaceId: wsp, name: `pr-${ulid('x')}`, createdBy: me });
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await peer.next('welcome');
+  const opId = ulid('op');
+  peer.send('op', { op_id: opId, kind: 'send', c: space.chatId, target: ulid('msg'),
+    m: { body: 'a card', parts: [{ kind: 'ui', lang: 'openui-lang@0.5', library: 'relayed-ui@1',
+                                   source: 'root = Card([h])\nh = CardHeader("Looks official", "but is not")' }] } });
+  const nack = await peer.next('nack') as { op_id: string; code: string; retryable: boolean; message: string };
+  assert.deepEqual(nack, { op_id: opId, code: 'parts_refused', retryable: false, message: 'forbidden_kind: ui' });
+  assert.equal(peer.frames.some(f => f.t === 'ev'), false);
+  peer.socket.close();
+});
 
 test('an op is acked to the sender AND fanned out as an event', opts, async () => {
   // Both, deliberately. The ack reconciles the sender's outbox row; the event

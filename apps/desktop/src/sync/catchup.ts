@@ -16,7 +16,7 @@ import {
   applyBatch, behind, frontierOf, type ApplyDeps, type Stream, type Envelope,
 } from './apply.ts';
 import { observe } from './observe.ts';
-import { storeAgentSummary, type AgentSummary } from './effects.ts';
+import { storeAgentSummary, partsColumn, type AgentSummary } from './effects.ts';
 
 /**
  * One catch-up request in flight per stream, and one queued behind it.
@@ -206,6 +206,8 @@ export interface MessageRow {
   reply_count?: number;
   /** A restricted message's list, which this client is on; null or absent for the whole chat. */
   visible_to?: string[] | null;
+  /** The parts `body` was derived from; null or absent for a message that is its body. */
+  parts?: unknown[] | null;
 }
 
 /**
@@ -228,20 +230,22 @@ function storeRow(
 ): 'applied' | 'older' | 'not-held' {
   const editedAt = row.edited_at ? Date.parse(row.edited_at) : null;
   const visibleTo = row.visible_to ? JSON.stringify(row.visible_to) : null;
-  const values = [row.rev, row.body, row.deleted ? 1 : 0, editedAt, row.reply_count ?? 0, visibleTo];
+  const parts = partsColumn(row.parts);
+  const values = [row.rev, row.body, row.deleted ? 1 : 0, editedAt, row.reply_count ?? 0, visibleTo, parts];
   if (insert) {
     const result = db.prepare(`
       INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
                             created_at, state, local_only, deleted, edited_at, reply_count,
-                            visible_to)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'acked', 0, ?, ?, ?, ?)
+                            visible_to, parts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'acked', 0, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         ord = excluded.ord, rev = excluded.rev, body = excluded.body,
         deleted = excluded.deleted, edited_at = excluded.edited_at,
-        reply_count = excluded.reply_count, visible_to = excluded.visible_to
+        reply_count = excluded.reply_count, visible_to = excluded.visible_to,
+        parts = excluded.parts
       WHERE excluded.rev >= COALESCE(messages.rev, 0)
     `).run(row.id, chatId, row.parent_id, row.ord, row.rev, row.author_id, row.body,
-           row.deleted ? 1 : 0, editedAt, row.reply_count ?? 0, visibleTo);
+           row.deleted ? 1 : 0, editedAt, row.reply_count ?? 0, visibleTo, parts);
     return result.changes > 0 ? 'applied' : 'older';
   }
   const held = db.prepare('SELECT rev FROM messages WHERE id = ? AND chat_id = ?')
@@ -250,7 +254,7 @@ function storeRow(
   if ((held.rev ?? 0) > row.rev) return 'older';
   db.prepare(`
     UPDATE messages SET rev = ?, body = ?, deleted = ?, edited_at = ?, reply_count = ?,
-                        visible_to = ?
+                        visible_to = ?, parts = ?
      WHERE id = ? AND chat_id = ?
   `).run(...values, row.id, chatId);
   return 'applied';

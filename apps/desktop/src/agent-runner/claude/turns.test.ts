@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { setSink } from '@relayed/telemetry';
 import type { RunnerEvent, TurnStart } from '../../shared/claude.ts';
 import { boundInput, ChatSessions, LOCAL_ROOM_MODEL, SHOW_UI_TOOL, textOf, type ToolResult } from './turns.ts';
 
@@ -240,6 +241,53 @@ test('an invalid block stores nothing and sends its errors back to Claude', asyn
   assert.equal(answer.isError, true);
   assert.match(answer.content[0]?.text ?? '', /unknown-component/);
   assert.ok(!events.some(event => event.event === 'turn.parts' && event.parts.some(part => part.kind === 'ui')));
+});
+
+test('genui.block is VALID on the first try, and genui.error names the code on a miss',
+  async () => {
+  const { sessions, showUi } = harness();
+  sessions.start(start());
+  await settle();
+
+  const calls: { name: string; labels: Record<string, string> }[] = [];
+  setSink({ count: (name, labels) => { calls.push({ name, labels: (labels ?? {}) as Record<string, string> }); },
+            event: () => {}, gauge: () => {}, histogram: () => {} });
+  await showUi(BLOCK);
+  assert.deepEqual(calls, [{ name: 'genui.block', labels: { genui_outcome: 'valid' } }]);
+
+  calls.length = 0;
+  await showUi('root = Card([x])\nx = Sparkline([1, 2])');
+  assert.deepEqual(calls, [{ name: 'genui.error', labels: { genui_error: 'other' } }],
+    'unknown-component is not in the catalogue\'s allowlist, so it reads as other');
+});
+
+test('genui.block is REPAIRED when a valid call follows an invalid one in the same turn',
+  async () => {
+  const { sessions, showUi } = harness();
+  sessions.start(start());
+  await settle();
+  await showUi('root = Card([x])\nx = Sparkline([1, 2])');
+
+  const calls: { name: string; labels: Record<string, string> }[] = [];
+  setSink({ count: (name, labels) => { calls.push({ name, labels: (labels ?? {}) as Record<string, string> }); },
+            event: () => {}, gauge: () => {}, histogram: () => {} });
+  await showUi(BLOCK);
+  assert.deepEqual(calls, [{ name: 'genui.block', labels: { genui_outcome: 'repaired' } }]);
+});
+
+test('genui.block is GIVEN_UP when the turn ends with an invalid call still outstanding',
+  async () => {
+  const { claude, sessions, showUi } = harness();
+  sessions.start(start());
+  await settle();
+  await showUi('root = Card([x])\nx = Sparkline([1, 2])');
+
+  const calls: { name: string; labels: Record<string, string> }[] = [];
+  setSink({ count: (name, labels) => { calls.push({ name, labels: (labels ?? {}) as Record<string, string> }); },
+            event: () => {}, gauge: () => {}, histogram: () => {} });
+  claude.send(success());
+  await settle();
+  assert.deepEqual(calls, [{ name: 'genui.block', labels: { genui_outcome: 'given_up' } }]);
 });
 
 test('a block being written streams as live ui, and a new block ends its preview', async () => {

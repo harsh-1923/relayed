@@ -257,6 +257,27 @@ test('a WITHHELD event advances the cursor as a KNOWN type, and moves nothing', 
   db.close();
 });
 
+test('PARTS ride message.created into the replica, and message.updated replaces or clears them', () => {
+  // AGENT-RESPONSES.md §3 on the synced path: stored as sent, replaced whole.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  const parts = [{ kind: 'markdown', text: 'Done.' },
+                 { kind: 'ui', lang: 'openui-lang@0.5', library: 'relayed-ui@1', source: 'root = Card([])' }];
+  applyEvent(deps, CHAT, { rev: 1, type: 'message.created', payload: {
+    id: 'msg_reply', ord: 1, parent_id: null, author_id: 'act_agent', body: 'Done.',
+    created_at: '2026-09-14T10:00:00.000Z', parts } });
+  const stored = () => (db.prepare("SELECT parts FROM messages WHERE id = 'msg_reply'").get() as { parts: string | null }).parts;
+  assert.deepEqual(JSON.parse(stored() ?? 'null'), parts);
+
+  applyEvent(deps, CHAT, { rev: 2, type: 'message.updated',
+    payload: { id: 'msg_reply', body: 'Resolved.', parts: [{ kind: 'markdown', text: 'Resolved.' }] } });
+  assert.deepEqual(JSON.parse(stored() ?? 'null'), [{ kind: 'markdown', text: 'Resolved.' }]);
+
+  applyEvent(deps, CHAT, { rev: 3, type: 'message.updated', payload: { id: 'msg_reply', body: 'Just text.' } });
+  assert.equal(stored(), null, 'an update without parts is a message that is its body');
+  db.close();
+});
+
 test('message.updated REPLACES the content, and never winds back a newer fetched row', () => {
   // WORKSPACE-AGENTS.md §7.4: an access card changing state for everyone in
   // the thread. The guard is the case that matters: repair can store a row at

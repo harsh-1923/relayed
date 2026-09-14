@@ -10,8 +10,24 @@ import { Component, useMemo, type ReactNode } from 'react';
 import { Renderer, type ActionEvent } from '@openuidev/react-lang';
 import type { UiPart } from '@relayed/protocol';
 import { libraryVersion, LIBRARY_VERSION, validateUi } from '@relayed/genui';
+import type { MetricLabelsFor } from '@relayed/telemetry/catalogue';
+import { count } from '@/lib/telemetry';
 import { uiLibrary } from './UiBlock.library';
 import '../markdown.css';
+
+/**
+ * A component name, narrowed to the telemetry catalogue's closed set.
+ *
+ * The library can gain a component the catalogue has not been updated for
+ * yet; that reads as `other` rather than throwing on a render error, which is
+ * the one moment this must not add a second failure to.
+ */
+const KNOWN_COMPONENTS: ReadonlySet<string> = new Set([
+  'Card', 'Stack', 'CardHeader', 'Text', 'Stat', 'Badge', 'Col', 'Table',
+  'List', 'Callout', 'FileRef', 'Series', 'BarChart', 'Actions', 'Reply', 'Link',
+]);
+const knownComponent = (name: string | undefined): MetricLabelsFor<'genui.render_error'>['genui_component'] =>
+  (KNOWN_COMPONENTS.has(name ?? '') ? name : 'other') as MetricLabelsFor<'genui.render_error'>['genui_component'];
 
 export interface UiBlockHandlers {
   /** A Reply was clicked: send `message` as the person who clicked it. */
@@ -57,7 +73,13 @@ export function UiBlock({
           response={part.source}
           isStreaming={streaming}
           onAction={onAction}
-          onError={errors => onErrors?.(errors.map(error => error.code))}
+          onError={errors => {
+            // A STORED, VALID block that still failed to draw — a renderer bug,
+            // not the model's mistake (`genui.error` only sees blocks that never
+            // passed validation). One count per broken component, not per error.
+            for (const error of errors) count('genui.render_error', { genui_component: knownComponent(error.component) });
+            onErrors?.(errors.map(error => error.code));
+          }}
           // OpenUI's global event bus: nothing here listens to it, and the renderer
           // holds no telemetry of its own (OBSERVABILITY.md, one SDK).
           publishObservability={false}

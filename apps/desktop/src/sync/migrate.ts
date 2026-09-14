@@ -19,7 +19,13 @@ import type { DatabaseSync } from 'node:sqlite';
 export interface Migration {
   readonly version: number;
   readonly name: string;
-  readonly up: string;
+  /**
+   * SQL, almost always. A function only where SQL cannot say it: SQLite has no
+   * `ADD COLUMN IF NOT EXISTS`, so a migration that must tolerate a column
+   * some replicas already have reads `table_info` first. It runs inside the
+   * same transaction as SQL would.
+   */
+  readonly up: string | ((db: DatabaseSync) => void);
 }
 
 export interface MigrationResult { from: number; to: number; applied: string[] }
@@ -33,7 +39,8 @@ export function migrate(db: DatabaseSync, migrations: readonly Migration[]): Mig
   for (const m of pending) {
     db.exec('BEGIN');
     try {
-      db.exec(m.up);
+      if (typeof m.up === 'string') db.exec(m.up);
+      else m.up(db);
       // Not parameterisable, and the value comes from our own migration list,
       // never from input — so interpolation is safe here specifically.
       db.exec(`PRAGMA user_version = ${m.version}`);

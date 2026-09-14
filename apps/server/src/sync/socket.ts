@@ -33,7 +33,7 @@ import {
   welcome, catchup, backfill, repair, threadReplies, streamHead, directoryPage,
   type Snapshot, type MessageRow,
 } from './feed.ts';
-import { send, deleteMessage, MessageNotFoundError } from './ops.ts';
+import { send, deleteMessage, MessageNotFoundError, PartsRefusedError } from './ops.ts';
 import { agentDefinition } from '../agents/definitions.ts';
 import { Forbidden } from '../authz/can.ts';
 import {
@@ -566,6 +566,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
             opId: frame.op_id, chatId: frame.c, actorId: claims.actorId,
             messageId: frame.target, body: frame.m?.body ?? '',
             parentId: frame.m?.parent_id ?? null,
+            ...(frame.m?.parts !== undefined ? { parts: frame.m.parts } : {}),
           })
         : await deleteMessage(deps.db, {
             opId: frame.op_id, chatId: frame.c, actorId: claims.actorId,
@@ -884,6 +885,7 @@ function rowOnWire(row: MessageRow): Record<string, unknown> {
     id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
     body: row.body, parent_id: row.parentId, deleted: row.deleted,
     edited_at: row.editedAt, reply_count: row.replyCount, visible_to: row.visibleTo,
+    parts: row.parts,
   };
 }
 
@@ -933,6 +935,14 @@ function nackFor(opId: string, err: unknown): Record<string, unknown> {
     return {
       op_id: opId, code: 'forbidden', retryable: false,
       message: 'You do not have permission to do that here.',
+    };
+  }
+  if (err instanceof PartsRefusedError) {
+    // Not retryable: the same parts will be refused the same way. The message
+    // names the reason and a closed-set detail — never the block's source.
+    return {
+      op_id: opId, code: 'parts_refused', retryable: false,
+      message: err.detail ? `${err.reason}: ${err.detail}` : err.reason,
     };
   }
   if (err instanceof MessageNotFoundError) {

@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { dirname, join } from 'node:path';
 import { emit, count, histogram } from '@relayed/telemetry';
 import type { Role } from '@relayed/authz';
-import type { StoredPart } from '@relayed/protocol';
+import { readStoredParts, type StoredPart } from '@relayed/protocol';
 import { openDatabase } from './db.ts';
 import { migrate } from './migrate.ts';
 import { accountMigrations } from './migrations/account.ts';
@@ -113,9 +113,9 @@ export interface ReplicaMessage {
   authorType: string | null;
   body: string;
   /**
-   * An agent reply's parts, read by the shared message view. Always null for a
-   * replica row: synced messages do not carry parts yet — only local rooms
-   * write them (sync/local/store.ts).
+   * The parts an agent's reply is made of, read by the shared message view, or
+   * null for a message that is its body. Synced from the server
+   * (AGENT-RESPONSES.md §3); local rooms write their own (sync/local/store.ts).
    */
   parts: StoredPart[] | null;
   createdAt: number;
@@ -800,7 +800,7 @@ export class Storage {
   messages(chatId: string, limit = 200): ReplicaMessage[] {
     const rows = this.workspace.prepare(`
       SELECT m.id, m.chat_id, m.parent_id, m.ord, m.author_id, m.body,
-             m.created_at, m.deleted, m.state, m.visible_to,
+             m.created_at, m.deleted, m.state, m.visible_to, m.parts,
              a.display_name, a.handle, a.avatar_blob, a.type
         FROM messages m
         LEFT JOIN actors a ON a.id = m.author_id
@@ -824,7 +824,9 @@ export class Storage {
       authorAvatarBlob: (row['avatar_blob'] as string | null) ?? null,
       authorType: (row['type'] as string | null) ?? null,
       body: String(row['body']),
-      parts: null,
+      // Leniently: anything that is not an array of kinds reads as no parts,
+      // and the message renders its body.
+      parts: readStoredParts((row['parts'] as string | null) ?? null),
       createdAt: Number(row['created_at'] ?? 0),
       deleted: Number(row['deleted'] ?? 0) === 1,
       state: String(row['state']),

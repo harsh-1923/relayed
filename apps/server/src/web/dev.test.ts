@@ -96,3 +96,27 @@ test('refuses an empty list, an author who cannot post, and a malformed body', o
   assert.equal((await post(app, { chatId, authorId: me, listed: 'everyone', body: 'x' })).statusCode, 400);
   await app.close();
 });
+
+test('agent-message writes an agent\'s parts with a derived body, and refuses a person\'s ui part', opts, async () => {
+  const { app, delivered, chatId } = await server();
+  const agentId = ulid('act');
+  const org_ = (await db.selectFrom('workspaces').select('org_id').where('id', '=', wsp).executeTakeFirstOrThrow()).org_id;
+  await db.insertInto('actors').values({
+    id: agentId, org_id: org_, workspace_id: wsp, type: 'agent', handle: `d-${agentId.slice(-8).toLowerCase()}`,
+    display_name: 'Agent', avatar_url: null, identity_kind: 'system', identity_id: null,
+    owner_actor_id: me, provisioned_by: 'api', state: 'active' }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: agentId, role: 'member' }).execute();
+  const space = (await db.selectFrom('chats').select('space_id').where('id', '=', chatId).executeTakeFirstOrThrow()).space_id;
+  await db.insertInto('memberships').values({ scope_type: 'space', scope_id: space, actor_id: agentId, role: 'member' }).execute();
+
+  const ui = { kind: 'ui', lang: 'openui-lang@0.5', library: 'relayed-ui@1',
+               source: 'root = Card([h])\nh = CardHeader("Deploy finished", "3 services")' };
+  const ok = await app.inject({ method: 'POST', url: '/dev/agent-message',
+    payload: { chatId, authorId: agentId, parts: [{ kind: 'markdown', text: 'Done.' }, ui] } });
+  assert.equal(ok.statusCode, 200, ok.body);
+  assert.equal((delivered.at(-1)?.payload as { body: string }).body, 'Done.\n\nDeploy finished: 3 services');
+
+  const refused = await app.inject({ method: 'POST', url: '/dev/agent-message', payload: { chatId, authorId: me, parts: [ui] } });
+  assert.deepEqual([refused.statusCode, refused.json()], [400, { error: 'parts_refused', reason: 'forbidden_kind', detail: 'ui' }]);
+  await app.close();
+});

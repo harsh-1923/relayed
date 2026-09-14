@@ -22,6 +22,7 @@
 import { sql, type Transaction } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { ulid } from '../db/ulid.ts';
+import type { MessagePart } from '@relayed/protocol';
 import { toColumn, type Audience } from './visibility.ts';
 
 // ─── Streams ────────────────────────────────────────────────────────────────
@@ -93,6 +94,11 @@ export interface MessageCreated {
    * is for drawing "only visible to you", never for deciding (§8.7).
    */
   visible_to?: string[];
+  /**
+   * Present only for a message made of parts, whose `body` was derived from
+   * them (AGENT-RESPONSES.md §3). A client that predates parts renders `body`.
+   */
+  parts?: MessagePart[];
 }
 
 /**
@@ -121,10 +127,15 @@ export interface MessageDeleted { id: string; parent_id: string | null }
  * message: that is a client op, marks the message edited, and has its own
  * rules. A card changing state is not an edit, and must not read as one.
  *
- * `parts` joins the payload when messages carry parts on the server
- * (AGENT-RESPONSES.md, phase 3) — a card's state lives in its part.
+ * `parts` rides along when the message has them — a card's state lives in its
+ * part — and replaces the old ones whole.
  */
-export interface MessageUpdated { id: string; body: string }
+export interface MessageUpdated {
+  id: string;
+  body: string;
+  /** The new parts, or absent when the message is its body alone. */
+  parts?: MessagePart[];
+}
 
 export interface SpaceCreated {
   id: string;

@@ -164,6 +164,12 @@ export interface MessagesTable {
    * audience argument is required (WORKSPACE-AGENTS.md §8.5).
    */
   visible_to: string[] | null;
+  /**
+   * The ordered parts an agent's reply is made of (AGENT-RESPONSES.md §3), or
+   * NULL for a message that is its body. JSONB; written only through
+   * `writeMessage` / `updateMessage`, which derive `body` from it.
+   */
+  parts: unknown;
 }
 
 /** An agent's definition, beside its actor row (WORKSPACE-AGENTS.md §4.3). */

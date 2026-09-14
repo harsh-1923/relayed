@@ -112,7 +112,7 @@ Each row is folded into the proposal in the commit that builds it.
 
 | Needs | For | Where it is designed | Blocks |
 |---|---|---|---|
-| **Message parts in the server schema, the replica and `@relayed/protocol`** | The agent's reply parts, the `access_request` card, and `parts` in the `message.updated` payload | `AGENT-RESPONSES.md`, implementation phases §9, phase 3 | Steps 3 and 5 |
+| ✅ **Message parts in the server schema, the replica and `@relayed/protocol`** — built | The agent's reply parts, the `access_request` card, and `parts` in the `message.updated` payload | `AGENT-RESPONSES.md`, implementation phases §9, phase 3 | Nothing now; steps 3 and 5 build on it |
 | **`show_ui` registered in the service runtime** | Rich replies. Not required: a reply of Markdown alone is valid | `AGENT-RESPONSES.md`, phase 4 | Nothing |
 | **DMs** (`createDm`) | Invoking by DM (D2) | `DESIGN.md`, build order §15, Phase 5 | Only the DM trigger |
 
@@ -868,7 +868,7 @@ This step can run in parallel with steps 1–3.
 |---|---|
 | **Changes** `apps/desktop/src/sync/auth/loopback.ts` | `listenForCallback` takes a path and parameter names (D9). Sign-in keeps its defaults |
 | **New** `apps/desktop/src/sync/connect.ts` | `connections.connect(toolkit, accessRequestId?)`: listen, `POST /connections`, open `start_url` in the system browser, receive the loopback redirect, check `state`, `POST …/complete`. Never a `BrowserWindow` (`PHASE-1-IDENTITY.md`, the desktop auth flow §6) |
-| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 12: `connections` and `agent_permissions` projections |
+| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 13: `connections` and `agent_permissions` projections |
 | **Changes** `apps/desktop/src/sync/storage.ts`, `sync/link.ts` | Apply both from `welcome` and from their push frames; invalidate their topics |
 | **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/settings/connectors` and `…/connectors/:toolkit` |
 | **New** `apps/desktop/src/renderer/routes/SettingsConnectors.tsx`, `features/connectors/ToolkitPage.tsx` | Yours and Browse ([§7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([§7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
@@ -1083,16 +1083,17 @@ apps/server/src/agents/
 |---|---|---|
 | 009 | `restricted_messages` (dormant) | 1 |
 | 010 | `agents` | 2 |
-| 011 | `agent_runs` | 3 |
-| 012 | `connections` | 4 |
-| 013 | `broker` | 5 |
+| 011 | `message_parts` | `AGENT-RESPONSES.md` phase 3 |
+| 012 | `agent_runs` | 3 |
+| 013 | `connections` | 4 |
+| 014 | `broker` | 5 |
 
 Steps that run in parallel must renumber on merge rather than share a number.
 Every CHECK added gets one test per constraint, against Postgres
 (`AGENTS.md`, rule 2).
 
 Replica migrations in `apps/desktop/src/sync/migrations/workspace.ts`:
-version 9 (step 0), 10 (step 1), 11 (step 2), 12 (step 4).
+version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4).
 
 ### 11.3 Telemetry by step
 
@@ -1227,7 +1228,7 @@ plus what this plan raised.
 
 | Question | Blocks | Decide by |
 |---|---|---|
-| Per-toolkit or per-tool permissions | Step 4's table shape | Before migration 012 |
+| Per-toolkit or per-tool permissions | Step 4's table shape | Before migration 013 |
 | The tool cap | Step 5's editor limit | The tool-definitions spike |
 | Cost visibility and ceilings | Nothing in v1 | Before production traffic |
 | Group DMs with an agent | Nothing until DMs exist | With DMs (D2) |
