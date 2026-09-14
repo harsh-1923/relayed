@@ -719,12 +719,33 @@ export const AgentDefinitionOk = z.object({
 export type AgentDefinitionOk = z.infer<typeof AgentDefinitionOk>;
 
 /** Every frame this client accepts. */
+/**
+ * The working indicator (WORKSPACE-AGENTS.md §5.7). A delivery-address push,
+ * not a `sync_event` — it takes no revision, and a lost one is cosmetic: the
+ * reply arrives regardless.
+ *
+ * `seq` rises per run; a client drops anything with a lower `seq` than it
+ * holds, or anything arriving after `ended`, so a push crossing the answer on
+ * the wire cannot leave the indicator stuck on "working" under a finished reply.
+ */
+export const AgentActivity = z.object({
+  chat_id: z.string(),
+  thread_id: z.string(),
+  agent_id: z.string(),
+  run_id: z.string(),
+  seq: z.number().int().nonnegative(),
+  state: z.enum(['queued', 'running', 'waiting', 'ended']),
+  /** The current tool's name, from the catalogue; absent while queued or waiting. */
+  label: z.string().optional(),
+});
+export type AgentActivity = z.infer<typeof AgentActivity>;
+
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
   repair_ok: RepairOk, thread_ok: ThreadOk,
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
-  agent_definition_ok: AgentDefinitionOk,
+  agent_definition_ok: AgentDefinitionOk, agent_activity: AgentActivity,
 };
 
 /**

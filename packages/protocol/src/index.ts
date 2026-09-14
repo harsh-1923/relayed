@@ -5,3 +5,4 @@
 // shared while loading grants stays local to each side.
 export * from './frames.ts';
 export * from './parts.ts';
+export * from './agent-run.ts';

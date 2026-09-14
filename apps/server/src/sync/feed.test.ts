@@ -771,6 +771,30 @@ test('welcome shows only chats the actor belongs to', opts, async () => {
   assert.ok(!ids.includes(theirs), 'a chat in a space `me` never joined is not listed');
 });
 
+test('welcome carries only the membership scopes a replica can store — never `agent`',
+  opts, async () => {
+  // A regression: an `agent` membership (maintainership, WORKSPACE-AGENTS.md
+  // §4.3) reaching `applyWelcome` failed the replica's CHECK constraint and
+  // rolled back the WHOLE welcome — silently stranding every stream with no
+  // catch-up scheduler, discovered live when a desktop client's messages and
+  // agent replies both stopped syncing after the person maintained an agent.
+  const other = ulid('act');
+  await db.insertInto('actors').values({
+    id: other, org_id: org, workspace_id: wsp, type: 'agent',
+    handle: `f-${other.slice(-6).toLowerCase()}`, display_name: 'Triage',
+    avatar_url: null, identity_kind: 'system', identity_id: null,
+    owner_actor_id: me, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values(
+    { scope_type: 'agent', scope_id: other, actor_id: me, role: 'admin', left_at: null }).execute();
+
+  const { memberships } = await welcome(db, wsp, me);
+  assert.ok(memberships.every(m => m.scopeType !== 'agent'),
+    'the client\'s CHECK only allows workspace, space and chat');
+  assert.ok(memberships.some(m => m.scopeType === 'workspace'),
+    'and a scope it DOES know still arrives');
+});
+
 test('SPIKE §6.6: removal freezes a chat — it leaves welcome, and re-add restores it',
   opts, async () => {
   const { spaceId, chatId } = await channel();

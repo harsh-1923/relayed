@@ -84,18 +84,18 @@ Each row is folded into the proposal in the commit that builds it.
 | # | Decision or correction | Why | Proposal part to edit | Step |
 |---|---|---|---|---|
 | D1 | ✅ *Folded.* **A client op that carries an audience has the field dropped, not refused.** The op schema never declares one, a protocol test asserts an op carrying `visible_to` or `audience` parses with them dropped, and the boundary rule `sync/no-client-audience` keeps `writeMessage` out of `socket.ts` | The proposal said such a send "is refused". But incoming frames are parsed permissively and unknown fields are dropped — an unknown field is never an error (invariant 66, `DESIGN.md` §9.10). Refusing one would be the only `.strict()` parse in the protocol. *Built differently from first planned:* a line-based rule over `frames.ts` could not tell the op schema from the row schemas, which do carry `visible_to` | [Who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) | 1 |
-| D2 | **Invoking by DM waits for DMs to exist.** v1 invokes on mentions in channels | The server creates channels only. `spaces.ts` names `createDm` and `createRoom` as Phase 5 siblings | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
+| D2 | ✅ *Folded.* **Invoking by DM waits for DMs to exist.** v1 invokes on mentions in channels | The server creates channels only. `spaces.ts` names `createDm` and `createRoom` as Phase 5 siblings | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
 | D3 | ✅ *Folded.* **Creating, editing and deactivating agents are HTTPS commands, not outbox ops** | They need a live handle check, happen rarely, and nobody creates an agent offline. The same shape invitations use (`apps/server/src/auth/invitations.ts`) | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
-| D4 | **The grant is an HS256 JWT signed with `AGENT_GRANT_SECRET`,** audience `relayed-agent-tools`, through `jose` | Only the server signs and verifies it, so a shared secret suffices. `jose` is already the session-token library (`apps/server/src/auth/tokens.ts`). A separate secret and audience keep a session token and a grant from standing in for each other, as the proposal requires | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 3 |
-| D5 | **The dispatcher starts only when the runtime is configured** (`AGENT_RUNTIME_URL`, `AGENT_S2S_KEY`, `AGENT_GRANT_SECRET`), and logs one line naming what is missing | The same behaviour `pnpm dev` already has for `apps/agent` (`AGENT-RUNTIME.md`, local development §11). A server without a runtime must still boot | [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | 3 |
-| D6 | **The mention parser moves to `apps/server/src/sync/mentions.ts`**, used by both the counters and `invocationsFor` | The proposal requires "one parser, the one the counters use". Today it is a private helper (`mentionPattern`) inside `feed.ts` | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
+| D4 | ✅ *Folded.* **The grant is an HS256 JWT signed with `AGENT_GRANT_SECRET`,** audience `relayed-agent-tools`, through `jose` | Only the server signs and verifies it, so a shared secret suffices. `jose` is already the session-token library (`apps/server/src/auth/tokens.ts`). A separate secret and audience keep a session token and a grant from standing in for each other, as the proposal requires | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 3 |
+| D5 | ✅ *Folded.* **The dispatcher starts only when the runtime is configured** (`AGENT_RUNTIME_URL`, `AGENT_S2S_KEY`, `AGENT_GRANT_SECRET`), and logs one line naming what is missing | The same behaviour `pnpm dev` already has for `apps/agent` (`AGENT-RUNTIME.md`, local development §11). A server without a runtime must still boot | [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | 3 |
+| D6 | ✅ *Folded.* **The mention parser moves to `apps/server/src/sync/mentions.ts`**, used by both the counters and `invocationsFor` | The proposal requires "one parser, the one the counters use". Today it is a private helper (`mentionPattern`) inside `feed.ts` | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
 | D7 | **The Composio webhook route parses its own raw body** | The server's JSON content parser (`apps/server/src/index.ts`) turns the body into an object, losing the exact bytes the HMAC signature covers. The route registers a scoped content parser that keeps the raw string | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | 4 |
 | D8 | **Webhook delivery ids are deduplicated in a table** (`composio_webhook_deliveries`, swept after 24 h) | The proposal says "dedupes on `webhook-id`" without saying where. There is no Redis on the write path, and a table keeps the dedupe durable across a restart | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | 4 |
 | D9 | **The sign-in loopback listener is generalised** to take a path and parameter names | `listenForCallback` (`apps/desktop/src/sync/auth/loopback.ts`) is built for `/auth/callback?code&state`. The connect flow returns `/connected?session_uri&state`. One listener with one set of tests beats a copy | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) | 4 |
 | D10 | **Toolkits are enabled by a script, not a screen** (`apps/server/scripts/enable-toolkit.ts`) | The proposal makes enabling "our decision". Nothing in v1 needs an admin UI for it, and a script leaves a reviewable record | [The catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) | 4 |
 | D11 | ✅ *Folded.* **Step 2's editor ships without its Tools section**, which arrives in step 4 | The picker lists the catalogue, which step 4 creates. An agent with no tools is valid, and it is exactly what step 3 runs | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 4 |
 | D12 | ✅ *Folded.* **Agent summaries get their own replica table** (`agent_summaries`), not columns on `actors` | Keeps the actor row identical for people and agents on the client, as it is on the server (`DESIGN.md`, the actor model §6.3) | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
-| D13 | **`agent_activity` reaches the renderer through the bridge's push channel**, as `agent:stream` already does (`apps/desktop/src/renderer/lib/agent-stream.ts`) | It is ephemeral. Writing it to the replica would make every client store and invalidate a value that is stale within a minute | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | 3 |
+| D13 | ✅ *Folded.* **`agent_activity` reaches the renderer through the bridge's push channel**, as `agent:stream` already does (`apps/desktop/src/renderer/lib/agent-stream.ts`) | It is ephemeral. Writing it to the replica would make every client store and invalidate a value that is stale within a minute. *Built differently from first planned:* the `seq`/`ended` dropping rules live in the renderer's `useChatActivity` hook, not in `sync/link.ts` — `link.ts` forwards the frame verbatim, mirroring the split `invalidate` already keeps between deciding a topic changed and a query deciding what to do about it | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | 3 |
 | D14 | ✅ *Folded.* **Every existing `appendEvent` call gains an explicit `{ kind: 'stream' }`** — eight today: `ops.ts` (`message.created`, `message.deleted`), `directory.ts` (`recordActor`), and five in `spaces.ts` (`space.created`, `chat.created` and the founder's `space.member_added` when a channel is created; `space.member_added` and `space.member_removed` afterwards) | The proposal makes the audience a required argument. That is only a guard if every call is edited on purpose, not defaulted | [What happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone) | 1 |
 | D15 | ✅ *Folded.* **Access cards are public; only their actor acts on them.** Each client draws the card for its own person from `actor_id`; the card's coarse `state` lives on the message; the server refuses anyone but the request's actor. Restricted messages stay built as a **dormant capability** | Hidden from the room, a card leaves everyone else seeing a mention answered by nothing — the room has to see that the agent is waiting, and on whom. Raised by the dev after step 1 was built | [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), [§8.1](WORKSPACE-AGENTS.md#81-why-this-exists-and-why-nothing-in-v1-uses-it), invariant 88 | 1, 5 |
 | D16 | ✅ *Folded.* **`message.updated`, a new chat event: the server replacing a message's complete content**, not marked edited. `message.edited` stays reserved for a person's own edit | A card changing state must reach everyone, and nobody else holds the actor's connections to derive it from. A person's edit is a client op with LWW and an "edited" mark, which a card changing state is not | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | 1 |
@@ -704,9 +704,30 @@ failure (`AGENTS.md`, rule 8 allows saying so).
 - message parts (§3.1);
 - the pi-with-no-local-tools spike (§4.1).
 
+**Status: built** — server, protocol, runtime, client and their tests, as below.
+**Confirmed by hand** against a real provider (Anthropic, through the desktop
+app): a mention starts a run, and the reply lands as a thread reply with
+`on_behalf_of`/`delegation_id` set. **Not yet confirmed by hand**: Stop, and a
+server restart mid-run — both are covered by `reply.test.ts` and
+`dispatcher.test.ts` (the stop-wins race, the lease sweep) but not yet clicked
+through the running app. **Not run**: the pi-with-no-local-tools spike this
+step's "First" list names — it was never
+built as a script; the questions it was meant to answer (`Type.Unsafe` for a
+raw JSON Schema tool parameter; whether cancelling a run aborts an in-flight
+broker `fetch`) are still open, harmlessly, since `tools` is always `[]` until
+step 5. **One real bug found and fixed along the way**, unrelated to this
+step's own code: a `scope_type = 'agent'` membership (step 2) reaching a
+desktop replica's `applyWelcome` failed its CHECK constraint and rolled back
+the *entire* welcome — no spaces, no chats, no catch-up — for anyone who
+maintained an agent. Fixed on both ends: the server's `welcome` now sends only
+the scopes a replica declares (`workspace`, `space`, `chat`), and the replica
+skips a scope it does not recognise instead of throwing. Regression tests in
+`apps/server/src/sync/feed.test.ts` and `apps/desktop/src/sync/storage.test.ts`.
+
 ### Schema
 
-**New** `apps/server/src/db/migrations/011_agent_runs.sql`: `agent_runs` exactly as
+**New** `apps/server/src/db/migrations/012_agent_runs.sql` (renumbered when
+message parts took 011): `agent_runs` exactly as
 in [§5.2](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write), including:
 - `not_before`, `defer_reason` and `stopped_by`;
 - the `interrupted` state;
@@ -718,16 +739,16 @@ in [§5.2](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write), including:
 |---|---|---|
 | **New** `apps/server/src/sync/mentions.ts` | `mentionedActorIds(body)` and the SQL `LIKE` pattern, moved from `feed.ts` (D6) | §5.1 |
 | **New** `apps/server/src/agents/checkpoints.ts` | The six functions and their closed result types, with the v1 bodies from [§5.9](WORKSPACE-AGENTS.md#59-checkpoints-where-later-features-plug-in). `beforeToolCall` and `afterToolCall` exist and return `stop('tool_not_allowed')` until step 5. **Adding a result variant is the only sanctioned way to add a feature here**, which the file's header says | §5.9 |
-| **Changes** `apps/server/src/sync/ops.ts` | Inside `writeMessage`'s transaction, for a person's `chat` message: `invocationsFor(trx, message)`, one `agent_runs` insert per agent. The created run ids leave through the closure, never the ledger, so a replay wakes nothing | §5.1, §5.2, invariant 76 |
+| **Changes** `apps/server/src/sync/ops.ts` | Inside `sendInner`'s `applyOnce` transaction, right after `writeMessage`: `invocationsFor(trx, message)`, one `agent_runs` insert per agent. `Applied` gains `runIds: string[]` (empty on a replay or a delete), read through the same closure pattern as `event` — captured rather than put in the ops ledger, so a replay hands back the stored ack and never reaches the insert | §5.1, §5.2, invariant 76 |
 | **Changes** `apps/server/src/sync/socket.ts` | After `fanout` for a send that created runs, `dispatcher.wake()` | §5.3 |
 | **New** `apps/server/src/agents/dispatcher.ts` | Starts only when configured (D5). Wake plus a 5 s poll; the claim query from §5.3; `admitRun`; prepare (config snapshot, transcript, grant, `reply_message_id`); call; finish. A lease sweep marks expired `running` rows `interrupted`, with a notice. On `SIGTERM` it stops claiming; leases cover what is left | §5.3 |
 | **New** `apps/server/src/agents/transcript.ts` | The builder in [§5.6](WORKSPACE-AGENTS.md#56-what-the-agent-reads): what both the agent and the invoker may read (using `sync/visibility.ts`); the thread or the last 40 top-level messages; 24 KB; labels for the agent's own replies and for other agents; only this agent's mention stripped | §5.6 |
 | **New** `apps/server/src/agents/grant.ts` | `signGrant` and `verifyGrant` (D4). Claims `{ sub, act: { sub }, run, chat, exp }` | §5.5 |
 | **New** `apps/server/src/agents/runtime-client.ts` | `POST /run` in stream mode through `undici.request`, with `bodyTimeout` set above the runtime's 25 s keepalive. SSE parsing validated against the protocol schemas. A stream that ends without `done` returns `interrupted` | §5.3, stream traps |
-| **New** `apps/server/src/agents/reply.ts` | `deliverReply`: in one transaction, re-read the run; if `cancelled`, post nothing; else `writeMessage` as the agent. Sets `on_behalf_of_actor_id`, `delegation_id = run id`, `parent_id` = the trigger's thread ([§5.7](WORKSPACE-AGENTS.md#57-the-reply)), parts, op id `op_<runId>`. Then the terminal state, guarded by `WHERE state = 'running'` | §5.7, §5.8 |
+| **New** `apps/server/src/agents/reply.ts` | `deliverReply`: in one transaction, re-read the run `FOR UPDATE`; post only when it is still `running` **or `queued`** — the second so a run stopped before it was ever claimed still gets its "Stopped by X" notice (§5.8's "a queued or deferred run is cancelled without the runtime ever hearing of it" — missed on the first pass, caught by `reply.test.ts`, fixed by widening `checkpoints.deliverReply` and the update's `WHERE state IN ('running', 'queued')`). Otherwise `writeMessage` as the agent, setting `on_behalf_of_actor_id`, `delegation_id = run id`, `parent_id` = the trigger's thread ([§5.7](WORKSPACE-AGENTS.md#57-the-reply)), parts, op id `op_<runId>` | §5.7, §5.8 |
 | **New** `apps/server/src/agents/notices.ts` | One notice per refusal code and non-answer outcome — the closed sets in §5.7 | §5.7 |
 | **New** `apps/server/src/agents/activity.ts` | `agent_activity` to the chat's audience through `pushToActor`: `seq` per run, `ended` final, sent on change plus at most one refresh a minute | §5.7 |
-| **Changes** `apps/server/src/agents/routes.ts` | `POST /agent-runs/:id/stop` — invoker only; row first, then the runtime's cancel | §5.8 |
+| **Changes** `apps/server/src/agents/routes.ts` | `POST /agent-runs/:id/stop` — invoker only. *Built differently from first planned:* the runtime is signalled by aborting the `AbortController` already threaded through `callRuntime` for that run — closing the open stream request, which `apps/agent` already treats as a disconnect — rather than a second `POST /run/:runId/cancel`; `apps/agent`'s own cancel route is unused by the dispatcher as a result. The row transitions inside the same guarded write as the notice (`reply.ts`, above), not as a separate update first | §5.8 |
 | **Changes** `apps/server/src/index.ts`, `env.ts` | Starts the dispatcher; adds §4.2's step-3 variables | D5 |
 
 ### Protocol
@@ -750,41 +771,48 @@ in [§5.2](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write), including:
 
 | File | Change |
 |---|---|
-| **Changes** `apps/desktop/src/sync/link.ts`, `sync/index.ts` | `agent_activity` goes to the renderer over the bridge (D13), dropping anything with a lower `seq` or arriving after `ended` |
-| **New** `apps/desktop/src/renderer/lib/agent-activity.ts` | Subscribes per thread, like `agent-stream.ts` |
+| **New** `apps/desktop/src/shared/agent-activity.ts` | The `AgentActivity` wire shape and the `agent:activity` channel name — the same split `local-rooms.ts`/`AGENT_STREAM_CHANNEL` already has |
+| **Changes** `apps/desktop/src/sync/link.ts`, `sync/index.ts` | `agent_activity` goes to the renderer over the bridge (D13), forwarded verbatim — the `seq`/`ended` dropping happens in the renderer hook below, not here (D13, built differently) |
+| **New** `apps/desktop/src/renderer/lib/agent-activity.ts` | `useChatActivity(chatId)`: subscribes, and drops a push with a lower `seq` than it holds or a state of `ended` (removing the run) |
 | **New** `apps/desktop/src/renderer/features/agents/RunIndicator.tsx` | "Triage is working · Searching Linear", "busy — starting shortly", and **Stop** for the invoker only |
-| **Changes** `apps/desktop/src/renderer/features/chat/` thread view | Shows the indicator under the trigger's thread. Notices are ordinary messages and need nothing new |
+| **Changes** `apps/desktop/src/renderer/features/chat/ChatView.tsx` | *Built differently from first planned:* there is no separate thread view yet — replies render inline, in `ord` order, in the one flat message list. The indicator is attached to the message whose id matches the push's `thread_id`, which is exactly the trigger for a fresh top-level mention. **Known gap:** for a mention added to an *existing* thread, `thread_id` is the thread's root, not the actual invoker, so Stop can be shown to the thread's starter rather than whoever typed the mention — narrow, and left as a comment at the call site rather than fixed by widening the wire payload |
 
 ### Tests
 
 | Test | File |
 |---|---|
-| **No mention is lost:** a committed send has its run; a rolled-back one has none; a replayed op creates no second run | `apps/server/src/sync/ops.test.ts` |
-| An agent's own message, and a message mentioning an agent not in the space, create no run | `ops.test.ts` |
-| Two dispatchers never claim one run (`SKIP LOCKED`); a deferred run is not reclaimed before `not_before` | **new** `apps/server/src/agents/dispatcher.test.ts` |
-| Each refusal code posts exactly one notice; `invoker_busy` defers | `dispatcher.test.ts` |
-| An expired lease becomes `interrupted` with a notice, and is never retried | `dispatcher.test.ts` |
-| **Stop wins:** stopping between `done` and the reply transaction posts no answer and keeps `cancelled` | **new** `apps/server/src/agents/reply.test.ts` |
-| Two people mention one agent in one thread: two runs, two answers in that thread | `dispatcher.test.ts` |
-| The transcript excludes what either the agent or the invoker cannot read, labels the agent's own replies, and strips only its mention | **new** `apps/server/src/agents/transcript.test.ts` |
-| A grant with the wrong audience, an expired one, and one signed with the session key are all rejected | **new** `apps/server/src/agents/grant.test.ts` |
-| A stream that goes quiet for longer than a keepalive is not cut; one that ends without `done` is `interrupted` | **new** `apps/server/src/agents/runtime-client.test.ts` |
-| The stall timeout fires only while the model is generating; an empty errored turn is `failed`; `palette: 'none'` exposes no built-in tool | **new** `apps/agent/src/agent.test.ts` — the runtime's first test file — against the stub provider `AGENT-RUNTIME.md` §11 already uses |
+| **No mention is lost:** a committed send has its run; a replayed op creates no second run; a mention of an agent not a member of the chat, or with no mention at all, starts none | `apps/server/src/sync/ops.test.ts` |
+| `SKIP LOCKED`: two dispatchers polling the same table never claim the same run; a deferred run is not reclaimed before its own `not_before` | **new** `apps/server/src/agents/dispatcher.test.ts` |
+| One refusal code end to end (invoker gone inactive, never reaching the runtime); `invoker_busy` defers rather than refuses | `dispatcher.test.ts` |
+| An expired lease is swept and posted as `interrupted` | `dispatcher.test.ts` |
+| Two people mention one agent in one thread: two independent runs, two answers, neither dedup'd nor shared | `dispatcher.test.ts` |
+| Every non-answer outcome's notice text (`refused`, `failed`, `timeout`, `interrupted`, `cancelled`); a completed run's parts and `on_behalf_of`/`delegation_id` | **new** `apps/server/src/agents/reply.test.ts` |
+| **Stop wins:** an answer for an already-cancelled run posts nothing; calling `deliverReply` twice writes exactly one message; **a queued (never-claimed) run that is stopped is both transitioned and given its notice** — the bug this session's own reading of the code found and fixed (`checkpoints.deliverReply`, above) | `reply.test.ts` |
+| The transcript excludes what either the agent or the invoker cannot read, labels the agent's own replies and other agents', strips only its own mention, and keeps the trigger even when the byte budget drops everything older | **new** `apps/server/src/agents/transcript.test.ts` |
+| A grant round-trips to the claims it was signed with; a wrong run id, an expired token, a wrong audience, and one signed with a different secret are each rejected with the right `reason` | **new** `apps/server/src/agents/grant.test.ts` |
+| A tool round trip, deltas/reasoning read past, a keepalive and an unknown event skipped; a stream ending without `done` is `interrupted`; a 429, a 5xx, and nothing listening are each `RuntimeUnavailableError` | **new** `apps/server/src/agents/runtime-client.test.ts` |
+| The stall timeout fires only while the model is generating (not the wall clock); an empty errored turn is `failed`; `palette: 'none'` sends the model no built-in tools where `'default'` does; a cancel wins over the reason pi reports while unwinding | **new** `apps/agent/src/agent.test.ts` — the runtime's first test file, against a small OpenAI-chat-completions stub built for it (the spike named in this step's "First" list never was) |
+| A regression: an `agent`-scope membership (step 2) must not roll back the whole `welcome`, and a client must skip a scope it does not recognise rather than throw | **new** cases in `apps/server/src/sync/feed.test.ts` and `apps/desktop/src/sync/storage.test.ts` |
 
 ### By hand
 
 The proposal's step 3:
-1. Mention `@triage` in a channel: the answer arrives in the trigger's thread.
-2. Two people mention it in one thread: two answers.
-3. Stop one mid-run: "Stopped by …", and no answer.
-4. Kill the server mid-run: `interrupted`, with a notice.
+1. Mention `@triage` in a channel: the answer arrives in the trigger's thread. **Done** — against Anthropic, through the desktop app.
+2. Two people mention it in one thread: two answers. **Not yet done by hand** (covered by `dispatcher.test.ts`).
+3. Stop one mid-run: "Stopped by …", and no answer. **Not yet done by hand** (covered by `reply.test.ts`).
+4. Kill the server mid-run: `interrupted`, with a notice. **Not yet done by hand** (covered by `dispatcher.test.ts`'s lease sweep).
 
 ### Observability
 
-`agent.run{outcome}`, `agent.run.refused{refusal}`, `agent.run.deferred{reason}`
-and `agent.run.queue_wait` ([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)).
-The runtime-side markers `AGENT-RUNTIME.md` §8 already designed land here too,
-since this is its first real traffic.
+`agent.run{run_outcome}`, `agent.run.refused{run_refusal}`,
+`agent.run.deferred{run_defer_reason}` and `agent.run.queue_wait`
+([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)) —
+`run_outcome`/`run_refusal`/`run_defer_reason` rather than reusing `outcome`
+etc., since those label names were already declared for other metrics with
+conflicting value sets, and the catalogue does not allow one label name two
+different domains. The runtime-side markers `AGENT-RUNTIME.md` §8 already
+designed do not land in this change — nothing in step 3 emits them yet; see the
+runtime doc's own status note below.
 
 ### Docs, in the same commit
 

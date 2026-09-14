@@ -85,6 +85,16 @@ export function visibleTo(alias: MessageAlias, readerId: string): RawBuilder<boo
   return sql<boolean>`(${column} IS NULL OR ${readerId} = ANY(${column}))`;
 }
 
+/**
+ * The intersection: a message BOTH readers may see. What an agent's transcript
+ * is built from (WORKSPACE-AGENTS.md §5.6) — the same requirement `DESIGN.md`
+ * §6.4 makes of every Relayed resource an agent reads on someone's behalf.
+ */
+export function visibleToBoth(alias: MessageAlias, readerA: string, readerB: string): RawBuilder<boolean> {
+  const column = sql.ref(`${alias}.visible_to`);
+  return sql<boolean>`(${column} IS NULL OR (${readerA} = ANY(${column}) AND ${readerB} = ANY(${column})))`;
+}
+
 /** Whether a reader of the stream receives this event's content. */
 export function receives(audience: Audience, readerId: string): boolean {
   return audience.kind === 'stream' || audience.actors.includes(readerId);

@@ -154,6 +154,14 @@ export interface LabelValues {
    * part under a person's name — the costume rule (rule 1) failing to hold.
    */
   parts_refusal: 'invalid' | 'forbidden_kind' | 'invalid_ui';
+
+  // ── agent runs (WORKSPACE-AGENTS.md §5, §11) ─────────────────────────────
+  /** A run's terminal state. Not `outcome`: that label already has a fixed, unrelated set (auth). */
+  run_outcome: 'completed' | 'failed' | 'cancelled' | 'timeout' | 'refused' | 'interrupted';
+  /** Why a claimed run did not start at all (`admitRun`, §5.3). */
+  run_refusal: 'invoker_inactive' | 'agent_inactive' | 'not_a_member' | 'trigger_deleted';
+  /** Why a run stays queued a little longer (`admitRun`, §5.3). */
+  run_defer_reason: 'invoker_busy' | 'runtime_busy';
 }
 
 export type LabelName = keyof LabelValues;
@@ -205,6 +213,9 @@ export const labelValues = {
                      'Col', 'Table', 'List', 'Callout', 'FileRef', 'Series', 'BarChart',
                      'Actions', 'Reply', 'Link', 'other'],
   parts_refusal: ['invalid', 'forbidden_kind', 'invalid_ui'],
+  run_outcome: ['completed', 'failed', 'cancelled', 'timeout', 'refused', 'interrupted'],
+  run_refusal: ['invoker_inactive', 'agent_inactive', 'not_a_member', 'trigger_deleted'],
+  run_defer_reason: ['invoker_busy', 'runtime_busy'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
 /** Union members not present in `labelValues`. `never` when the sets agree. */
@@ -572,6 +583,34 @@ export const metrics = {
        + 'Answers "which mistake is growing" — the thing a prompt change is '
        + 'meant to fix, and the only way to tell whether it did.',
   },
+  // ── agent runs (WORKSPACE-AGENTS.md §5.3, §11) ───────────────────────────
+  'agent.run': {
+    kind: 'counter', labels: ['run_outcome'],
+    doc: 'A run reached a terminal state. Six values, never `queued` or '
+       + '`running` — this counts what a run ENDED as. A rising `interrupted` '
+       + 'share outside a deploy window means leases are expiring while the '
+       + 'runtime is still healthy, which points at the timeout, not an outage.',
+  },
+  'agent.run.refused': {
+    kind: 'counter', labels: ['run_refusal'],
+    doc: 'A claimed run that did not start at all, by `admitRun`\'s refusal '
+       + 'code (§5.3) — the breakdown behind `agent.run{run_outcome:refused}`. '
+       + 'A rising `not_a_member` share means agents are being mentioned in '
+       + 'rooms they have since left.',
+  },
+  'agent.run.deferred': {
+    kind: 'counter', labels: ['run_defer_reason'],
+    doc: '`invoker_busy` against `runtime_busy`: whether one person is '
+       + 'saturating their own concurrency limit or the runtime needs more '
+       + 'capacity — opposite fixes, and this is the only place they are told apart.',
+  },
+  'agent.run.queue_wait': {
+    kind: 'histogram', unit: 'ms', labels: [],
+    doc: 'Time from a run being created to being claimed. Answers whether the '
+       + 'poll interval is still short enough, and rises before anyone notices '
+       + 'a mention going unanswered for longer than they expect.',
+  },
+
   'genui.render_error': {
     kind: 'counter', labels: ['genui_component'],
     doc: 'A stored, valid block still failed to DRAW — a renderer bug rather '

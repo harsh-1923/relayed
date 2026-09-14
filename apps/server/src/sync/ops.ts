@@ -22,6 +22,8 @@ import {
 import { Parts, forbiddenPartKind, type MessagePart } from '@relayed/protocol';
 import { deriveBody, uiPartRefusal } from '@relayed/genui';
 import { startSpan, annotate, mark, count } from '@relayed/telemetry';
+import { invocationsFor } from '../agents/checkpoints.ts';
+import { ulid } from '../db/ulid.ts';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -64,6 +66,8 @@ export interface Ack {
 export interface Applied {
   ack: Ack;
   event?: AppendedEvent;
+  /** Runs a mention in this send just admitted (WORKSPACE-AGENTS.md §5.2). Empty on a replay. */
+  runIds: string[];
 }
 
 export interface SendInput {
@@ -105,6 +109,9 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   // the event in there too would make a replay hand back an event as well, and
   // the caller would fan out a message that was already delivered.
   let event: AppendedEvent | undefined;
+  // Same reasoning as `event`: a replay must not start a second run for a
+  // mention that already ran once (invariant 76's sibling).
+  let runIds: string[] = [];
 
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'send',
@@ -119,6 +126,26 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
       ...(input.parts !== undefined ? { parts: input.parts } : { body: input.body }),
     });
     event = written.event;
+
+    // THE HANDOFF, INSIDE THE SAME TRANSACTION as the message and its event
+    // (WORKSPACE-AGENTS.md §5.2). `send()` is reached only from a client op —
+    // every actor here is a person, and a client send is always for the whole
+    // chat — so §5.1's other two conditions (a person, the op is `send`) hold
+    // by construction; only "does it mention a member agent" is asked.
+    const body = (written.event.payload as { body: string }).body;
+    const invocations = await invocationsFor(trx, { chatId: input.chatId, authorId: input.actorId, body });
+    if (invocations.length > 0) {
+      const chat = await trx.selectFrom('chats').select('workspace_id')
+        .where('id', '=', input.chatId).executeTakeFirstOrThrow();
+      const rows = invocations.map(invocation => ({
+        id: ulid('run'), workspace_id: chat.workspace_id, agent_actor_id: invocation.agentActorId,
+        invoker_actor_id: input.actorId, chat_id: input.chatId, trigger_message_id: input.messageId,
+        state: 'queued' as const,
+      }));
+      await trx.insertInto('agent_runs').values(rows).execute();
+      runIds = rows.map(row => row.id);
+    }
+
     return written.ack;
   });
 
@@ -133,8 +160,8 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   // an attribute that is absent reads as absent, while a zero reads as one.
   annotate({ replayed: applied.replayed, ord: applied.result.ord ?? undefined,
              rev: applied.result.rev });
-  if (applied.replayed || !event) return { ack: applied.result };
-  return { ack: applied.result, event };
+  if (applied.replayed || !event) return { ack: applied.result, runIds: [] };
+  return { ack: applied.result, event, runIds };
 }
 
 /**
@@ -220,6 +247,13 @@ export type MessageWrite = {
   parentId: string | null;
   /** Required, with no default: a writer that forgets must not compile (§8.5). */
   audience: Audience;
+  /**
+   * Delegation attribution (§5.7, `DESIGN.md` §6.4): whose authority the
+   * author spent, and the run that spent it. Absent for an ordinary message —
+   * a person's send never sets these, and neither does a card in v1.
+   */
+  onBehalfOfActorId?: string;
+  delegationId?: string;
 } & MessageContent;
 
 /**
@@ -281,6 +315,8 @@ export async function writeMessage(
     ord: allocated.ord as number, rev: allocated.rev,
     author_id: input.authorId, body, visible_to: visibleTo,
     parts: parts === null ? null : jsonb(parts),
+    on_behalf_of_actor_id: input.onBehalfOfActorId ?? null,
+    delegation_id: input.delegationId ?? null,
   }).returning('created_at').executeTakeFirstOrThrow();
 
   // The space's activity clock, which drives auto-dormancy and sidebar order.
@@ -313,6 +349,8 @@ export async function writeMessage(
     created_at: ack.createdAt,
     ...(visibleTo !== null ? { visible_to: visibleTo } : {}),
     ...(parts !== null ? { parts } : {}),
+    ...(input.onBehalfOfActorId ? { on_behalf_of_actor_id: input.onBehalfOfActorId } : {}),
+    ...(input.delegationId ? { delegation_id: input.delegationId } : {}),
   }, fromColumn(visibleTo));
 
   return { ack, event };
@@ -408,8 +446,8 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
   // Narrowed rather than cast: `event` is always set when the work ran, but the
   // compiler cannot see that through a closure, and a cast here would be the one
   // place a genuine bug could hide behind an assertion.
-  if (applied.replayed || !event) return { ack: applied.result };
-  return { ack: applied.result, event };
+  if (applied.replayed || !event) return { ack: applied.result, runIds: [] };
+  return { ack: applied.result, event, runIds: [] };
 }
 
 export type MessageUpdate = {

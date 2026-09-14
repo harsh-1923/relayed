@@ -4,7 +4,6 @@
 // The map is small and load-bearing: it is what makes /cancel possible, what
 // lets readiness report honestly, and what lets SIGTERM say which runs it is
 // about to kill. In-process, which is correct for one replica and wrong for two.
-import { randomUUID } from 'node:crypto';
 import { env } from './env.ts';
 
 export type RunStatus = 'completed' | 'failed' | 'cancelled' | 'timeout';
@@ -45,10 +44,17 @@ export const beginDraining = (): void => { draining = true; };
 export const isDraining = (): boolean => draining;
 export const activeCount = (): number => active.size;
 
-/** Capacity check and registration in one step, so two requests cannot both pass. */
-export function admit(mode: RunMode, provider: string, abort: ActiveRun['abort']): ActiveRun | null {
+/**
+ * Capacity check and registration in one step, so two requests cannot both pass.
+ *
+ * `runId` is the caller's — the server's `agent_runs.id` — never minted here
+ * (WORKSPACE-AGENTS.md §5.4): two ids for one run is exactly the drift a
+ * runtime-minted id would invite.
+ */
+export function admit(runId: string, mode: RunMode, provider: string, abort: ActiveRun['abort']): ActiveRun | null {
   if (active.size >= env.maxConcurrentRuns) return null;
-  const run: ActiveRun = { runId: randomUUID(), mode, provider, startedAtMs: Date.now(), abort };
+  if (active.has(runId)) return null;
+  const run: ActiveRun = { runId, mode, provider, startedAtMs: Date.now(), abort };
   active.set(run.runId, run);
   return run;
 }

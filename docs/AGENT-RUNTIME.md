@@ -5,13 +5,18 @@ run the loop to completion, return the answer — as a single response or as a
 stream, the caller's choice.
 
 This is the Phase 6 agent service from [`DESIGN.md`](DESIGN.md) §6.5, built
-first in its smallest honest form. It does **not** yet touch Relayed's data, run
-on anyone's behalf, or speak the sync protocol. It runs a prompt and answers.
+first in its smallest honest form. It does **not** yet touch Relayed's data or
+speak the sync protocol itself — the server does both and calls this service
+over HTTP, exactly as before. It now does run **with** somebody's identity
+attached, since workspace agents (WORKSPACE-AGENTS.md §5): `runId`, `palette`
+and a delegation grant arrive on every request, and every reply the server
+writes carries who asked. It still runs a prompt and answers.
 
 **Status:** built and running. `apps/agent`, one process, both modes verified
-end to end against a stub provider (§11).
+end to end against a stub provider (§11); the `/run` request's four new fields
+verified against a real provider through workspace agents' first real traffic.
 
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-14
 
 ---
 
@@ -113,27 +118,40 @@ GET  /healthz/ready  readiness — 503 while draining
 
 ```jsonc
 {
-  "prompt": "…",          // required
-  "systemPrompt": "…",    // optional — replaces the default
-  "model": "…",           // optional — a key from the provider table (§4)
-  "thinkingLevel": "medium"
+  "runId": "run_01N1…",   // required, since WORKSPACE-AGENTS.md §5.4 — the
+                           // SERVER's id (on the run row, the grant, the
+                           // reply); the runtime no longer mints its own
+  "prompt": "…",           // required
+  "systemPrompt": "…",     // optional — replaces the default
+  "model": "…",            // optional — a key from the provider table (§4)
+  "thinkingLevel": "medium",
+  "palette": "none",       // "default" (a local room's own Claude Code) or
+                           // "none" (a workspace agent — §5, the bash problem)
+  "tools": [ { "name": "…", "description": "…", "parameters": { /* JSON Schema */ } } ],
+  "grant": "eyJ…"          // present only when `tools` is non-empty (§5.5)
 }
 ```
 
-**That is the whole body, and keeping it that way is a decision.** The field
-count on a run endpoint is the clearest available measure of whether the runtime
-still has a boundary: the reference implementation this design was drawn from
-reached roughly sixty fields, destructured into a ninety-parameter positional
-function, because every feature that could not find a home elsewhere became one
-more optional field. Every addition here should have to argue for itself.
+**The field count on a run endpoint is the clearest available measure of
+whether the runtime still has a boundary**, and it crossed the line the plan
+called the "third field" the moment `runId` landed alongside `palette` and
+`tools`: the reference implementation this design was drawn from reached
+roughly sixty fields, destructured into a ninety-parameter positional function,
+because every feature that could not find a home elsewhere became one more
+optional field. Every addition here still has to argue for itself — the table
+in WORKSPACE-AGENTS.md §5.4 is where `runId`, `palette`, `tools` and `grant`
+each did.
 
 **Caps are server policy, not request fields.** A caller may not ask for a
 longer timeout or more turns. If the caller could, the cap would not be one.
 
-**The wire format gets a Zod schema in `@relayed/protocol` when it gains its
-third field.** `FRONTEND.md` §8.3 already names the first wire format as Zod's
-adoption trigger; this is that wire format. The schema covers the SSE frames
-too — a stream whose frames are untyped is a wire format that nobody validates.
+**The wire format has a Zod schema in `@relayed/protocol`** (`agent-run.ts`),
+crossing the trigger this doc named before any of these fields existed —
+`FRONTEND.md` §8.3's "the first wire format" rule. The schema covers the SSE
+frames too — a stream whose frames are untyped is a wire format that nobody
+validates. `routes.ts` parses every request against it before a single token
+is spent; `runs.ts`'s `admit()` takes the parsed `runId` rather than minting
+its own.
 
 Every request carries `x-agent-key`, compared in constant time. `/health` and
 `/healthz/ready` are the only unauthenticated routes.
@@ -334,20 +352,28 @@ non-negotiables for v0:
    gateway key is scoped and revocable in one place.
 3. **The prompt is authored by us, not by an end user.**
 
-**Point 3 is the trigger, and it is the one that will be crossed first.** The
-moment an end user's text reaches `prompt` — which is the entire purpose of this
-service in Phase 6 — untrusted input is authoring shell commands. At that point
-`bash` must move into a sandbox with its own filesystem and no network path back
-to us, or be removed from the palette.
+**Point 3 is the trigger, and it was crossed by workspace agents
+(WORKSPACE-AGENTS.md §5).** A person's own text — whatever they wrote when
+they mentioned an agent — reaches `prompt` as the transcript's last line, and
+nothing about it is authored by us. Removing the palette, not sandboxing it,
+is the answer taken: `palette: 'none'` in the request (§3) gives `agent.ts` the
+allowlist `['show_ui', ...tools.map(name)]`, with none of `bash`, `read`,
+`write`, `edit`, `grep`, `find` or `ls` — `TOOLS` (the full coding palette) is
+now reached only by `palette: 'default'`, which nothing but a local room's own
+Claude Code sends. A remote tool call, when one exists (steps 4/5), goes to
+`AGENT_BROKER_URL` instead, carrying the run's grant — a network boundary the
+service's own filesystem is never inside of.
 
-The honest version of this doc says: **v0 is safe because of who is allowed to
-call it, not because of anything the runtime does.** Do not let that fact become
-implicit. When the caller changes, the containment must change in the same
-commit.
+The honest version of this doc still says: **the coding palette is safe
+because of who is allowed to reach it, not because of anything the runtime
+does about it.** That is still true of `palette: 'default'` — a local room's
+Claude Code, on the person's own machine, is safe for the same reason v0 was —
+and it is why a workspace agent gets no vote in it: `palette: 'none'` is not a
+sandbox, it is the tool simply not being offered.
 
-An intermediate step exists if it is needed sooner: pi exposes
-`createReadOnlyTools` alongside `createCodingTools`, so dropping `bash`, `write`
-and `edit` is a one-line change to the palette, not a redesign.
+An intermediate step exists if `palette: 'none'` is ever not narrow enough: pi
+exposes `createReadOnlyTools` alongside `createCodingTools`, so dropping only
+`bash`, `write` and `edit` is a one-line change to the palette, not a redesign.
 
 ---
 
@@ -358,7 +384,8 @@ One process. N concurrent runs. Each run owns:
 - an `AgentSession` over an in-memory session store,
 - a temp directory as its cwd, removed in a `finally`,
 - an `AbortController`,
-- an entry in an in-process `activeRuns` map, keyed by `runId`.
+- an entry in an in-process `activeRuns` map, keyed by `runId` — the caller's
+  id (WORKSPACE-AGENTS.md §5.4) since step 3, never one this process mints.
 
 **That map is the highest-value twenty lines in the service.** It is what makes
 `/cancel` possible, what lets `/healthz/ready` report honestly, what lets SIGTERM
@@ -373,9 +400,20 @@ Every run is bounded on four axes, all server-configured:
 | Bound | Why it exists |
 |---|---|
 | **Wall clock** per run | A provider that stalls without erroring holds a connection and a token budget forever |
+| **Model-call stall timeout** (`AGENT_MODEL_STALL_MS`, default 120000) | The wall clock alone let a provider that hung mid-turn — without erroring, without closing the stream — hold a run for its full timeout before anything noticed (a Claw lesson, WORKSPACE-AGENTS.md §5.3). Armed on every sign of model activity (`message_update`, `turn_end`, a tool call ending), paused while a tool is executing — that has the wall clock as its own bound — and fires `failed`, not `timeout`: the run did not run out of its budget, the model simply stopped answering |
 | **Turn cap** | A loop that cannot make progress will happily spend the whole timeout discovering that |
 | **Concurrency cap** | Runs are memory-hungry; unbounded admission turns a burst into an OOM that kills the runs already in flight |
 | **Tool output cap** | pi truncates by default (`DEFAULT_MAX_BYTES`/`DEFAULT_MAX_LINES`); do not raise it without a number to justify the new one |
+
+**An empty turn is also now a bound, of a kind — narrower than §3's rule
+reads.** §3 says an empty `text` is a real `completed` outcome, "usually
+[meaning] the model produced nothing after its last tool call" — and that
+stays true whenever `toolCalls` is non-empty. What is new: empty text **and**
+no tool calls **and** nothing thrown is reported `failed` —
+`'the run produced no output'` — rather than `completed`. Left alone this read
+as an agent that genuinely had nothing to say; in practice it is a provider
+that degraded without erroring (the same Claw lesson as the stall timer, from
+the other direction).
 
 Over the cap, `/run` returns **429**, not a queue. A queue here would be a second
 scheduler competing with whatever the caller already has, and the caller is in a
@@ -441,18 +479,32 @@ measure yet.** Every threshold worth alerting on — the timeout, the concurrenc
 cap, the turn cap — is currently a guess (§12), and a dashboard of guesses is
 worse than none because it looks authoritative.
 
-**The trigger is the first real traffic.** At that point the catalogue additions
-are already designed and should land together:
+**The trigger arrived — workspace agents (WORKSPACE-AGENTS.md §5) are this
+runtime's first real traffic — and it was crossed on the SERVER side first**:
+`packages/telemetry`'s catalogue now has `agent.run{run_outcome}`,
+`agent.run.refused{run_refusal}`, `agent.run.deferred{run_defer_reason}` and
+`agent.run.queue_wait`, all counted from `apps/server/src/agents/dispatcher.ts`
+(WORKSPACE-AGENTS-IMPL.md §7's Observability). **`agent.run` is therefore
+already taken**, with a label set about the dispatcher's own state machine
+(refused / deferred / completed / …), not this service's. The table below is
+revised to not collide with it — still not wired, still waiting on its own
+trigger reading the runtime's numbers rather than a guess (§12 item 3):
 
 | Signal | Answers |
 |---|---|
-| `agent.run{run, mode}` | Completed / failed / cancelled / timeout, split by transport |
+| `agent.turn{status, mode}` | Completed / failed / cancelled / timeout, split by transport — was proposed as `agent.run{run, mode}`, renamed to leave the dispatcher's `agent.run` alone |
 | `agent.run.duration` | What a run costs in wall clock — the number that sets the timeout and decides §7 |
 | `agent.run.turns` | Whether the turn cap is a real ceiling or a formality |
 | `agent.tool{tool, result}` | Which tools the model reaches for, and which fail |
 | `agent.run.rejected{rejected}` | "At capacity" against "malformed request" — opposite fixes |
 | `agent.tokens{direction}` | The cost signal |
 | `agent.provider{provider, run}` | Whether a failure spike belongs to one provider or to the runtime |
+
+`agent.run.duration`, `.turns` and `.rejected` also sit under the `agent.run`
+prefix as sub-metrics rather than labels of it, which the catalogue's naming
+already treats as distinct declarations — nothing here collides with the
+dispatcher's own `agent.run`, only a bare metric literally named `agent.run`
+would have.
 
 Two constraints already established, so they are not rediscovered:
 **`runId` and a model id are not labels** — both are unbounded cardinality
@@ -481,7 +533,7 @@ the trigger that makes each one necessary, so they are adopted on purpose.
 | **MCP / any non-default tool** | The agent needs Relayed's own data or a third-party connector |
 | **Subagents and agent-to-agent delegation** | Real task decomposition. Note `DESIGN.md` §6.4 forbids delegation *chaining* at the authorization layer — that constraint applies here too |
 | **Provider fallback chains** | Only if a gateway is not already doing it (§4). Prefer buying this over building it |
-| **Per-user credentials / delegation** | **The first moment the agent acts on behalf of a human.** See below |
+| **Per-user credentials / delegation** | **The first moment the agent acts on behalf of a human — crossed by workspace agents (WORKSPACE-AGENTS.md §5), delegation half only.** See below |
 
 ### The one that is not merely deferred
 
@@ -501,6 +553,18 @@ failure because it has no second authority to confuse.
 When delegation does arrive, the shape is already decided (§6.4: RFC 8693 `act`
 claims, room + time + action scope, minted at execution time). The runtime's job
 is to verify it, bind it to the run, and refuse to start without it.
+
+**Delegation half built, credentials half still not.** Workspace agents
+(WORKSPACE-AGENTS.md §5) mint exactly this shape — `apps/server/src/agents/grant.ts`'s
+HS256 JWT, `sub` the invoker, `act.sub` the agent, scoped to one `run` and
+`chat`, minted at claim time — and every reply now carries `on_behalf_of_actor_id`
+and `delegation_id` so "who acted, for whom" is on the record. What has **not**
+arrived is the other half this section is about: no tool call reaches user
+data yet (`tools` is always `[]` until steps 4/5's connector store), and
+verification is a future server-side broker's job, never this runtime's — the
+grant passes through `apps/agent` in a tool call's `Authorization` header and
+is never inspected here. The confused-deputy argument above still holds for
+everything this runtime can currently do.
 
 ---
 
@@ -549,6 +613,8 @@ annotated block.
 | `AGENT_PROVIDER_<NAME>_BASE_URL`, `_API_KEY`, `_MODELS` | The endpoint, its key, and the model ids it serves |
 | `AGENT_PROVIDER_<NAME>_CONTEXT_WINDOW`, `_MAX_TOKENS`, `_REASONING`, `_THINKING_OFF` | The per-model metadata pi cannot discover (§4) |
 | `AGENT_MAX_CONCURRENT_RUNS`, `AGENT_RUN_TIMEOUT_MS`, `AGENT_MAX_TURNS` | The bounds from §6 |
+| `AGENT_MODEL_STALL_MS` | Default `120000` — the stall bound from §6, on top of the wall clock |
+| `AGENT_BROKER_URL` | Where a remote tool calls back (WORKSPACE-AGENTS.md §5.4). Unset until a run carries `tools` (steps 4/5) |
 | `AGENT_STREAM_COALESCE_MS`, `AGENT_STREAM_REASONING`, `AGENT_DRAIN_TIMEOUT_MS` | Stream and shutdown behaviour |
 
 **Fail closed at boot, not per request.** A missing key must stop the process,
@@ -558,8 +624,28 @@ escape hatch, including for local development.
 
 ### What has actually been verified
 
-Against a local stub speaking OpenAI chat-completions — not against a real
-provider, which needs keys:
+Two different things are true of this section now, and worth telling apart.
+
+**Checked in, and re-run by `pnpm test`** (`apps/agent/src/agent.test.ts`,
+built for workspace agents' step 3 — this runtime's first test file): a small
+OpenAI-chat-completions stub, one HTTP server per test file with a swappable
+handler, standing in for a real provider.
+
+- **A completed run's text, usage and provider tag**, from a scripted SSE
+  reply.
+- **An empty turn — no text, no tool calls, nothing thrown — is `failed`**,
+  not `completed` (§6).
+- **The model-call stall timeout** fires on a turn that starts and then goes
+  silent, well under the wall clock (§6).
+- **`palette: 'none'` sends the model no tools at all; `'default'` sends the
+  coding palette** — asserted from the actual `tools` array the stub server
+  received, not inferred from behaviour.
+- **A cancel wins over the reason pi reports while unwinding** (§3's rule that
+  the reason already recorded is the true one).
+
+**Verified once, by hand, against the same local stub, and never captured as a
+test** — still true as claims, but nobody should point at a green suite for
+them:
 
 - **Both modes, same terminal payload.** JSON and SSE return an identical
   result object for the same run. That equivalence is the whole contract in §3
@@ -572,22 +658,22 @@ provider, which needs keys:
   with reasoning on (§4, trap 2).
 - **Admission control**: five concurrent runs against a cap of four — four
   accepted, the fifth refused with 429 immediately.
-- **Cancel**: the run ends `cancelled` with no `error` field, and the stream
-  receives its terminal frame before close.
 - **Drain**: `SIGTERM` flips readiness to 503, logs the in-flight run, lets it
   finish, and exits. The stream still receives its `done` frame.
 - **Cleanup**: no `relayed-agent-*` workspace survives a run.
 
-A real provider is the one thing left, and it needs a key and a base URL.
+A real provider has since answered too: workspace agents' step 3 ran a mention
+through Anthropic end to end, through the desktop app.
 
 ## 12. Open questions
 
 1. **Where the temp workspace lives.** A tmpfs bounds the blast radius of a
    runaway `write` but makes the run's memory footprint include its files; a disk
    path is the reverse. Needs a measured run, not an opinion.
-2. **Whether `bash` survives the first end-user prompt.** §5's trigger. The
-   answer is a sandbox or a smaller palette, and it should be decided before the
-   trigger is crossed rather than during.
+2. ~~**Whether `bash` survives the first end-user prompt.**~~ **Settled: a
+   smaller palette, not a sandbox.** §5's trigger was crossed by workspace
+   agents; `palette: 'none'` removes `bash` (and every other built-in) from
+   what the model is offered, rather than letting it run somewhere contained.
 3. **Timeout and concurrency defaults.** Every number in §6 is currently a guess.
    They should be set from `agent.run.duration` once real runs exist — a default
    picked from intuition and then never revisited is how a cap stops meaning

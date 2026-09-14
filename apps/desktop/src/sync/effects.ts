@@ -55,6 +55,9 @@ interface MessageCreated {
   visible_to?: string[];
   /** Present only on a message made of parts. Stored as sent, and read leniently. */
   parts?: unknown[];
+  /** Present only on an agent's reply: whose authority it spent, and the run that spent it. */
+  on_behalf_of_actor_id?: string;
+  delegation_id?: string;
 }
 
 /** Parts as the replica stores them: JSON, or NULL for a message that is its body. */
@@ -114,15 +117,17 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   // special case for "mine" is worth the conflict clause.
   db.prepare(`
     INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
-                          created_at, state, local_only, visible_to, parts)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?, ?)
+                          created_at, state, local_only, visible_to, parts,
+                          on_behalf_of_actor_id, delegation_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       ord = excluded.ord, rev = excluded.rev, body = excluded.body,
       created_at = excluded.created_at, state = 'acked',
       visible_to = excluded.visible_to, parts = excluded.parts
   `).run(body.id, stream.id, body.parent_id, body.ord, event.rev,
          body.author_id, body.body, Date.parse(body.created_at),
-         body.visible_to ? JSON.stringify(body.visible_to) : null, partsColumn(body.parts));
+         body.visible_to ? JSON.stringify(body.visible_to) : null, partsColumn(body.parts),
+         body.on_behalf_of_actor_id ?? null, body.delegation_id ?? null);
 
   // `head_ord` is a MAX for the same reason `last_read_ord` is: events can
   // arrive after a `welcome` that already reported a higher head, and walking

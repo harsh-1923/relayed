@@ -104,6 +104,8 @@ export interface SocketDeps {
    * would mean every test ran a code path production does not.
    */
   onEvent?: (name: string, detail?: Record<string, unknown>) => void;
+  /** Nudged after a send admits a run, so it need not wait for the next poll (WORKSPACE-AGENTS.md §5.3). */
+  dispatcher?: { wake(): void };
 }
 
 export interface SyncSocket {
@@ -592,6 +594,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // out here would deliver a duplicate to every other device while the
       // sender's own ack correctly reported one.
       if (applied.event) await fanout(deps.db, registry, applied.event);
+      // Latency only: the dispatcher's own poll would find this run anyway.
+      if (applied.runIds.length > 0) deps.dispatcher?.wake();
     } catch (err) {
       recordOp(frame.kind, false, performance.now() - started);
       const nack = nackFor(frame.op_id, err);

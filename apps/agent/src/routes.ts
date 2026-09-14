@@ -6,8 +6,9 @@
 // field could not guarantee.
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { RunRequest as RunRequestSchema, type RunRequest } from '@relayed/protocol';
 import { env } from './env.ts';
-import { startRun, NULL_SINK, THINKING_LEVELS, type RunRequest, type ThinkingLevel } from './agent.ts';
+import { startRun, NULL_SINK } from './agent.ts';
 import { UnknownModelError } from './providers.ts';
 import { openSse } from './stream.ts';
 import { admit, cancel, isDraining, release, type RunMode } from './runs.ts';
@@ -21,41 +22,17 @@ function authorized(req: FastifyRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-interface RunBody {
-  prompt?: unknown;
-  systemPrompt?: unknown;
-  model?: unknown;
-  thinkingLevel?: unknown;
-}
-
-/** Rejects before a single token is spent. A 500 after spending is the wrong default. */
-function parseBody(body: RunBody): RunRequest | string {
-  if (typeof body?.prompt !== 'string' || body.prompt.trim().length === 0) {
-    return 'prompt is required and must be a non-empty string';
-  }
-  if (body.systemPrompt !== undefined && typeof body.systemPrompt !== 'string') {
-    return 'systemPrompt must be a string';
-  }
-  if (body.model !== undefined && typeof body.model !== 'string') {
-    return 'model must be a string';
-  }
-  if (body.thinkingLevel !== undefined
-      && !THINKING_LEVELS.includes(body.thinkingLevel as ThinkingLevel)) {
-    return `thinkingLevel must be one of: ${THINKING_LEVELS.join(', ')}`;
-  }
-  // An empty string is "not provided", not "a model named nothing". Callers
-  // template these fields (a Postman variable, an env var, a config value), and
-  // an unfilled template should fall back to the default rather than 400.
-  const blank = (v: unknown): string | undefined => {
-    const trimmed = typeof v === 'string' ? v.trim() : '';
-    return trimmed.length > 0 ? trimmed : undefined;
-  };
-  return {
-    prompt: body.prompt.trim(),
-    systemPrompt: blank(body.systemPrompt),
-    model: blank(body.model),
-    thinkingLevel: body.thinkingLevel as ThinkingLevel | undefined,
-  };
+/**
+ * Rejects before a single token is spent. A 500 after spending is the wrong
+ * default. Validated against the same schema the server built the request
+ * from (`@relayed/protocol`, WORKSPACE-AGENTS.md §5.4) — `runId`, `palette`
+ * and `tools` included, so this and the dispatcher can never quietly drift.
+ */
+function parseBody(body: unknown): RunRequest | string {
+  const result = RunRequestSchema.safeParse(body);
+  if (!result.success) return result.error.issues[0]?.message ?? 'invalid request body';
+  if (result.data.prompt.trim().length === 0) return 'prompt is required and must be a non-empty string';
+  return result.data;
 }
 
 export async function runRoutes(app: FastifyInstance): Promise<void> {
@@ -64,7 +41,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     if (!authorized(req)) await reply.code(401).send({ error: 'invalid or missing x-agent-key' });
   });
 
-  app.post('/run', async (req: FastifyRequest<{ Body: RunBody }>, reply: FastifyReply) => {
+  app.post('/run', async (req: FastifyRequest, reply: FastifyReply) => {
     if (isDraining()) {
       return reply.code(503).send({ error: 'draining' });
     }
@@ -92,7 +69,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     // Declared for the run we are about to start, then replaced once the
     // handle exists. A cancel cannot arrive before the slot is registered.
     let abortHandle: ((why: 'failed' | 'cancelled' | 'timeout') => void) | undefined;
-    const active = admit(mode, provider, why => abortHandle?.(why));
+    const active = admit(parsed.runId, mode, provider, why => abortHandle?.(why));
     if (!active) {
       return reply.code(429).send({ error: 'at capacity', maxConcurrentRuns: env.maxConcurrentRuns });
     }
@@ -104,7 +81,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     if (mode === 'stream') {
       reply.hijack();
       const sse = openSse(reply.raw, active.runId);
-      const run = startRun(active.runId, parsed, sse.sink);
+      const run = startRun(parsed, sse.sink);
       abortHandle = run.abort;
       // Nobody is listening and there is nowhere to put the answer.
       sse.onClose(() => run.abort('cancelled'));
@@ -117,7 +94,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       return reply;
     }
 
-    const run = startRun(active.runId, parsed, NULL_SINK);
+    const run = startRun(parsed, NULL_SINK);
     abortHandle = run.abort;
     // The connection IS the destination; if it goes away, stop spending.
     req.raw.on('close', () => { if (!reply.sent) run.abort('cancelled'); });

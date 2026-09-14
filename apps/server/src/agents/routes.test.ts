@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import type { AppendedEvent } from '../sync/events.ts';
+import { Registry } from '../sync/registry.ts';
 import { agentRoutes } from './routes.ts';
 
 const up = await reachable();
@@ -45,6 +46,7 @@ async function server() {
   await app.register(agentRoutes({
     db,
     deliver: async (event) => { delivered.push(event); return { audience: 0, delivered: 0, dropped: 0, withheld: 0 }; },
+    registry: new Registry(),
     // `Bearer <actor id>` stands in for a signed token.
     caller: async (authorization) => {
       const actorId = (authorization ?? '').replace(/^Bearer /, '');

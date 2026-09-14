@@ -172,6 +172,30 @@ export interface MessagesTable {
   parts: unknown;
 }
 
+/** A run of an agent, from a mention to its reply (WORKSPACE-AGENTS.md §5.2). */
+export interface AgentRunsTable {
+  id: string;
+  workspace_id: string;
+  agent_actor_id: string;
+  invoker_actor_id: string;
+  chat_id: string;
+  trigger_message_id: string;
+  attempt: Generated<number>;
+  state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout'
+    | 'refused' | 'interrupted';
+  refusal: string | null;
+  /** The definition this run used, captured at claim (§5.3): instructions, model, tools, config_rev. */
+  config: unknown;
+  reply_message_id: string | null;
+  not_before: Timestamp | null;
+  defer_reason: string | null;
+  stopped_by: string | null;
+  lease_until: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  started_at: Timestamp | null;
+  finished_at: Timestamp | null;
+}
+
 /** An agent's definition, beside its actor row (WORKSPACE-AGENTS.md §4.3). */
 export interface AgentsTable {
   actor_id: string;
@@ -272,4 +296,5 @@ export interface DB {
   sync_events: SyncEventsTable;
   agents: AgentsTable;
   agent_tools: AgentToolsTable;
+  agent_runs: AgentRunsTable;
 }

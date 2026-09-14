@@ -1,6 +1,7 @@
 import type { StoredPart } from '@relayed/protocol';
 import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
 import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
+import type { AgentActivity } from '../shared/agent-activity.ts';
 import type { Space } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel } from '../shared/panels.ts';
@@ -9,6 +10,7 @@ export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
 } from '../shared/claude.ts';
 export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
+export type { AgentActivity } from '../shared/agent-activity.ts';
 export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel } from '../shared/panels.ts';
 
@@ -438,9 +440,13 @@ export interface RelayedApi {
   ): Promise<AgentAnswer<{ agent_id: string; maintainers: string[] }>>;
   /** Null when the socket is not live: unreachable, which is not "not found". */
   query(op: "agents.definition", params: { agentId: string }): Promise<AgentDefinition | null>;
+  /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
+  query(op: "agents.stopRun", params: { runId: string }): Promise<AgentAnswer<{ run_id: string; state: string }>>;
   subscribe(channel: "app:state", fn: (s: AppState) => void): () => void;
   /** The live text of a reply Claude is writing. Never stored; the parts carry it in the end. */
   subscribe(channel: "agent:stream", fn: (stream: AgentStream) => void): () => void;
+  /** The working indicator for a workspace agent's run. Never stored. */
+  subscribe(channel: "agent:activity", fn: (activity: AgentActivity) => void): () => void;
   /**
    * Something in the replica changed. Carries the topics affected and NOT
    * the rows — the renderer re-reads what it holds (DESIGN.md §11.2).

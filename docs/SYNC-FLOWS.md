@@ -1306,6 +1306,26 @@ marks nothing edited: `message.edited` stays reserved for a person's own edit.
   "payload": { "id": "msg_…", "body": "Alice gave @triage access to Linear." } }
 ```
 
+**`agent_activity`** is the working indicator for a queued or running agent
+run (`WORKSPACE-AGENTS.md` §5.7). Unlike everything else on this page it is
+**not** a `sync_event` — it takes no revision, is never staged, replayed or
+repaired, and a lost one is cosmetic: the reply arrives through the ordinary
+write path regardless. It is a plain delivery-address push, sent to the chat's
+current audience the same way `pushToActor` reaches anyone:
+
+```json
+{ "t": "agent_activity", "chat_id": "cht_01M244…", "thread_id": "msg_01M2451Q8C…",
+  "agent_id": "act_01M2F41RXYZV0QA9Z50MM0GXAV", "run_id": "run_01M2FEZJM4…",
+  "seq": 3, "state": "running", "label": "Searching Linear" }
+```
+
+`seq` rises per run and `ended` is final — pushes can cross on the wire, so a
+client drops anything with a lower `seq` than it already holds for that run,
+and drops anything at all once it has seen `ended`. Sent on change, plus a
+refresh at most once a minute while nothing changes, so a client that
+reconnects mid-run learns the state without every member of the chat being
+pushed to on every dispatcher tick.
+
 For a message made of parts the payload carries the new `parts` too, replacing
 the old ones whole; without them the message is its body again. The client
 applies it **only if the row it holds is not newer** — repair reads current

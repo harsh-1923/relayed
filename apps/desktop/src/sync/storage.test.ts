@@ -521,6 +521,42 @@ test('A WORKSPACE MEMBERSHIP FROM WELCOME IS STORED', () => {
   db.close();
 });
 
+test('AN UNKNOWN MEMBERSHIP SCOPE IS SKIPPED, NOT A ROLLED-BACK WELCOME', () => {
+  // The same failure mode as the test above, from the other direction: the
+  // server started sending an `agent` membership (maintainership,
+  // WORKSPACE-AGENTS.md §4.3) once agents existed, and this replica's CHECK
+  // only ever allowed workspace, space and chat. Every welcome for someone who
+  // maintained an agent threw partway through and rolled back — no spaces, no
+  // chats, no cursors, no catch-up — discovered live as messages and agent
+  // replies both silently stopping for exactly those people.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  assert.doesNotThrow(() => {
+    storage.applyWelcome(welcomePayload({
+      memberships: [
+        { scopeType: 'workspace', scopeId: 'wsp_1', role: 'owner' },
+        { scopeType: 'agent', scopeId: 'act_triage', role: 'admin' },
+        { scopeType: 'space', scopeId: 'spc_eng', role: 'admin' },
+      ],
+    }));
+  });
+
+  const db = new DatabaseSync(
+    join(dir, 'accounts', storage.accountId!, 'workspaces', 'wsp_1', 'relayed.db'));
+  const rows = db.prepare(
+    'SELECT scope_type, scope_id, role FROM memberships ORDER BY scope_type').all() as
+      { scope_type: string; scope_id: string; role: string }[];
+  assert.deepEqual(rows.map(r => ({ ...r })), [
+    { scope_type: 'space', scope_id: 'spc_eng', role: 'admin' },
+    { scope_type: 'workspace', scope_id: 'wsp_1', role: 'owner' },
+  ], 'the scope this replica cannot store is dropped; the ones it can survive');
+
+  // The rest of the transaction survived — a partial welcome is no welcome.
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM spaces').get() as { n: number }).n, 1);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM chats').get() as { n: number }).n, 1);
+  db.close();
+});
+
 test('welcome makes every badge correct with NO messages held', () => {
   // R2, and the whole reason the frame carries head state rather than history.
   // "I have it" and "I know it exists" are different facts; only the second is

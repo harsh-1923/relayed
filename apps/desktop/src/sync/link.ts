@@ -14,7 +14,7 @@
 // all. The moment it starts holding opinions it becomes a second place where
 // the frontier rule lives.
 import type { DatabaseSync } from 'node:sqlite';
-import type { Welcome, DirectoryOk, AgentDefinitionOk } from '@relayed/protocol';
+import type { Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity } from '@relayed/protocol';
 import { Connection, type LinkState, type SocketLike } from './transport/connection.ts';
 import type { Gate } from './network.ts';
 import {
@@ -49,6 +49,13 @@ export interface LinkDeps {
   invalidate(topics: string[]): void;
   /** Everything `welcome` carried, for storage to write. */
   onWelcome(body: Welcome): void;
+  /**
+   * The working indicator (WORKSPACE-AGENTS.md §5.7) — a delivery-address
+   * push, not a `sync_event`. Forwarded as-is; the renderer applies the
+   * `seq`/`ended` rules, not this layer (the same split `invalidate` keeps
+   * with topics).
+   */
+  onActivity?(activity: AgentActivity): void;
   onState?(state: LinkState): void;
   onEvent?(name: string, detail?: Record<string, unknown>): void;
   /** Test seams, exactly as on the connection itself. */
@@ -430,6 +437,11 @@ export function createLink(deps: LinkDeps): Link {
       const waiting = awaitingDefinition.get(answer.agent_id) ?? [];
       awaitingDefinition.delete(answer.agent_id);
       for (const resolve of waiting) resolve(answer);
+      return;
+    }
+
+    if (t === 'agent_activity') {
+      deps.onActivity?.(body as AgentActivity);
       return;
     }
   }

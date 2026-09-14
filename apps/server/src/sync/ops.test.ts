@@ -27,6 +27,7 @@ const me = ulid('act');
 const bob = ulid('act');
 const agent = ulid('act');       // the author of a restricted message
 const outsider = ulid('act');    // in the workspace, never in the room
+const triage = ulid('act');      // type='agent' — the mention-starts-a-run tests (WORKSPACE-AGENTS.md §5.1)
 
 before(async () => {
   if (!up) return;
@@ -46,6 +47,15 @@ before(async () => {
       scope_type: 'workspace', scope_id: wsp, actor_id: id, role: 'member',
     }).execute();
   }
+  await db.insertInto('actors').values({
+    id: triage, org_id: org, workspace_id: wsp, type: 'agent',
+    handle: `o-${triage.slice(-6).toLowerCase()}`, display_name: 'Triage',
+    avatar_url: null, identity_kind: 'system', identity_id: null,
+    owner_actor_id: me, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({
+    scope_type: 'workspace', scope_id: wsp, actor_id: triage, role: 'member',
+  }).execute();
 });
 
 after(async () => {
@@ -200,6 +210,67 @@ test('a client send is always for the whole chat', opts, async () => {
   assert.equal(row.visible_to, null);
   assert.equal((event?.payload as Record<string, unknown>)['visible_to'], undefined,
     'and its payload carries no list');
+});
+
+// ── the mention → run handoff (WORKSPACE-AGENTS.md §5.1, §5.2) ──────────────
+//
+// Inserted inside the SAME transaction as the message and its event, so a
+// replayed op cannot start a second run — the same idempotency guarantee the
+// message write itself gets from `applyOnce`.
+
+test('mentioning a member agent starts exactly one run, in the same send', opts, async () => {
+  const { chatId } = await room();
+  await joinSpace(db, (await db.selectFrom('chats').select('space_id')
+    .where('id', '=', chatId).executeTakeFirstOrThrow()).space_id, triage);
+  const { ack, runIds } = await send(db, {
+    opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
+    body: `[Triage](actor:${triage}) can you help`,
+  });
+  assert.equal(runIds.length, 1);
+
+  const run = await db.selectFrom('agent_runs')
+    .select(['agent_actor_id', 'invoker_actor_id', 'chat_id', 'trigger_message_id', 'state', 'workspace_id'])
+    .where('id', '=', runIds[0] ?? '').executeTakeFirstOrThrow();
+  assert.deepEqual(run, {
+    agent_actor_id: triage, invoker_actor_id: bob, chat_id: chatId,
+    trigger_message_id: ack.messageId, state: 'queued', workspace_id: wsp,
+  });
+});
+
+test('a replayed op does not start a second run for the same mention', opts, async () => {
+  const { chatId } = await room();
+  await joinSpace(db, (await db.selectFrom('chats').select('space_id')
+    .where('id', '=', chatId).executeTakeFirstOrThrow()).space_id, triage);
+  const opId = ulid('op');
+  const messageId = ulid('msg');
+  const body = `[Triage](actor:${triage}) again please`;
+
+  const first = await send(db, { opId, chatId, actorId: bob, messageId, body });
+  const replay = await send(db, { opId, chatId, actorId: bob, messageId, body });
+
+  assert.equal(first.runIds.length, 1);
+  assert.equal(replay.runIds.length, 0, 'a replay reaches the stored ack and never reaches the insert');
+
+  const rows = await db.selectFrom('agent_runs').select('id')
+    .where('trigger_message_id', '=', messageId).execute();
+  assert.equal(rows.length, 1, 'exactly one run for the mention, however many times the op is retried');
+});
+
+test('mentioning an agent that is not a member of the chat starts no run', opts, async () => {
+  const { chatId } = await room();   // `triage` never joins this room's space
+  const { runIds } = await send(db, {
+    opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
+    body: `[Triage](actor:${triage}) hello`,
+  });
+  assert.deepEqual(runIds, []);
+});
+
+test('a message with no mention starts no run', opts, async () => {
+  const { chatId } = await room();
+  const { runIds } = await send(db, {
+    opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'), body: 'just talking to Bob',
+  });
+  assert.deepEqual(runIds, []);
 });
 
 // ── message.updated: the server replacing a message's content ───────────────

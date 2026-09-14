@@ -16,15 +16,22 @@ import { Forbidden } from '../authz/can.ts';
 import { caller as bearerCaller, type Caller } from '../auth/caller.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import type { FanoutResult } from '../sync/fanout.ts';
+import type { Registry } from '../sync/registry.ts';
 import {
   createAgent, updateAgent, deactivateAgent, setMaintainers, handleAvailability,
   AgentInvalidError, HandleTakenError, AgentNotFoundError, AgentDeactivatedError,
   type AgentFields,
 } from './definitions.ts';
+import { triggerRef, claimReplyMessageId, postFinishedNotice } from './dispatcher.ts';
+import type { FinishedRun } from './reply.ts';
 
 export interface AgentRouteDeps {
   db: Kysely<DB>;
   deliver: (event: AppendedEvent) => Promise<FanoutResult>;
+  /** For the stop route's notice: fanned-out reply, and the working indicator's end (§5.7, §5.8). */
+  registry: Registry;
+  /** Aborts an in-flight run's runtime call; absent when the dispatcher never started (D5). */
+  dispatcher?: { cancel(runId: string): void };
   /** Injected so a test needs no signing key; production reads the bearer token. */
   caller?: (authorization: string | undefined) => Promise<Caller | null>;
 }
@@ -126,6 +133,44 @@ export function agentRoutes(deps: AgentRouteDeps) {
         await deliverAll([await deactivateAgent(deps.db, { agentId: req.params.id, by: me.actorId })]);
         return reply.send({ agent_id: req.params.id, state: 'deactivated' });
       } catch (err) { return refuse(reply, err); }
+    });
+
+    /**
+     * Stop a run in flight, invoker-only (§5.8): aborts the runtime call if one
+     * is running, then writes the same "Stopped by X" notice a natural finish
+     * would, through the shared `op_<runId>` ledger — so a `done` arriving at
+     * the same moment loses the race rather than landing a second message.
+     */
+    app.post<{ Params: { id: string } }>('/agent-runs/:id/stop', async (req, reply) => {
+      const me = await who(req.headers.authorization);
+      if (!me) return reply.code(401).send({ error: 'unauthenticated' });
+
+      const run = await deps.db.selectFrom('agent_runs')
+        .select(['id', 'chat_id', 'agent_actor_id', 'invoker_actor_id', 'trigger_message_id',
+                 'reply_message_id', 'state'])
+        .where('id', '=', req.params.id).executeTakeFirst();
+      if (!run) return reply.code(404).send({ error: 'not_found' });
+      if (run.invoker_actor_id !== me.actorId) return reply.code(403).send({ error: 'forbidden', action: 'stop' });
+      if (run.state !== 'queued' && run.state !== 'running') {
+        return reply.send({ run_id: run.id, state: run.state });
+      }
+
+      deps.dispatcher?.cancel(run.id);
+
+      const trigger = await triggerRef(deps.db, run.trigger_message_id, run.chat_id);
+      const replyMessageId = run.reply_message_id ?? await claimReplyMessageId(deps.db, run.id);
+      const finished: FinishedRun = {
+        id: run.id, chatId: run.chat_id, agentActorId: run.agent_actor_id,
+        invokerActorId: run.invoker_actor_id, replyMessageId,
+        replyParentId: trigger?.parentId ?? trigger?.id ?? run.trigger_message_id,
+      };
+      // The notice reads "Stopped by <name>" (§5.7) — a name, never the id
+      // `can()` and everything else here works in.
+      const stopper = await deps.db.selectFrom('actors').select('display_name')
+        .where('id', '=', me.actorId).executeTakeFirst();
+      await postFinishedNotice(deps.db, deps.registry, finished,
+        { state: 'cancelled', by: stopper?.display_name ?? 'someone' });
+      return reply.send({ run_id: run.id, state: 'cancelled' });
     });
 
     app.put<{ Params: { id: string }; Body: { actor_ids?: unknown } }>(

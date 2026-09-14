@@ -171,4 +171,17 @@ export const env = {
   /** Thinking text is debug output, not part of the answer (§3). Off by default. */
   exposeReasoning: read('AGENT_STREAM_REASONING') === 'true',
   drainTimeoutMs: num('AGENT_DRAIN_TIMEOUT_MS', 30_000),
+  /**
+   * Where a remote tool calls back (WORKSPACE-AGENTS.md §5.4). Configuration,
+   * never a request field — a callback URL taken from the body would let
+   * anything that can reach `/run` send a run's tool calls, and its grant,
+   * somewhere else. Unset until a run actually carries tools (steps 4/5).
+   */
+  agentBrokerUrl: read('AGENT_BROKER_URL'),
+  /**
+   * No stream events while the model is generating, for this long, ends the
+   * turn `failed` — paused during tool execution, which has its own budget.
+   * Bounds a provider that stalls without erroring (Claw lessons, §5.3).
+   */
+  modelStallMs: num('AGENT_MODEL_STALL_MS', 120_000),
 } as const;

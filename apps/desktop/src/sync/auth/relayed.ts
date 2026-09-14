@@ -184,6 +184,10 @@ export const deactivateAgent = (accessToken: string, agentId: string) =>
 export const setAgentMaintainers = (accessToken: string, agentId: string, actorIds: string[]) =>
   request<{ agent_id: string; maintainers: string[] }>('PUT',
     `/agents/${encodeURIComponent(agentId)}/maintainers`, accessToken, { actor_ids: actorIds });
+/** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
+export const stopAgentRun = (accessToken: string, runId: string) =>
+  request<{ run_id: string; state: string }>('POST',
+    `/agent-runs/${encodeURIComponent(runId)}/stop`, accessToken, {});
 
 interface RawSession {
   needs_workspace?: boolean;

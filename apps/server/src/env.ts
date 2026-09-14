@@ -32,4 +32,17 @@ export const env = {
   otlpEndpoint: process.env['OTEL_EXPORTER_OTLP_ENDPOINT'] ?? null,
   /** Registers `/dev` routes (web/dev.ts). Never set outside a developer's machine. */
   devRoutes: devRoutes(),
+
+  // ── workspace agents, step 3 (WORKSPACE-AGENTS-IMPL.md §4.2) ─────────────
+  //
+  // All three OPTIONAL, and deliberately: a server with no runtime configured
+  // must still boot (the plan's D5) — every other feature works without an
+  // agent ever running. The dispatcher checks these itself at startup and
+  // logs which is missing rather than the process refusing to start.
+  /** Internal address of `apps/agent`. */
+  agentRuntimeUrl: process.env['AGENT_RUNTIME_URL'] ?? null,
+  /** The runtime's own `x-agent-key`; the server now holds it too, to call `/run`. */
+  agentS2sKey: process.env['AGENT_S2S_KEY'] ?? null,
+  /** Signs the tool-call grant (D4). A separate secret and audience from session tokens — never in `apps/agent`. */
+  agentGrantSecret: process.env['AGENT_GRANT_SECRET'] ?? null,
 } as const;

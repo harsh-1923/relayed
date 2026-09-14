@@ -11,6 +11,7 @@ import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 import { startRetention } from './sync/retention.ts';
 import { devRoutes } from './web/dev.ts';
 import { agentRoutes } from './agents/routes.ts';
+import { startDispatcher, type Dispatcher } from './agents/dispatcher.ts';
 
 useOtlpIfConfigured('server');
 
@@ -52,15 +53,26 @@ await app.register(landingRoutes);
 // The sync socket, on Fastify's own HTTP server rather than a second listener:
 // one port, one TLS terminator, and an upgrade that a proxy already knows how
 // to route. Attached before `listen` so no connection can arrive first.
+// `startDispatcher` needs the socket's registry to push activity and fan out
+// replies, and the socket needs the dispatcher to wake it — a genuine cycle,
+// broken with a holder set right after both exist. Nothing calls `wake()`
+// before then; the earliest an op can arrive is after `listen`, below.
+let dispatcher: Dispatcher | undefined;
 const sync = attachSyncSocket(app.server, {
   db,
   onEvent: (name, detail) => { app.log.debug({ ...detail }, name); },
+  dispatcher: { wake: () => dispatcher?.wake() },
 });
 app.log.info({ path: SYNC_PATH }, 'sync socket attached');
 
+dispatcher = startDispatcher(db, sync.registry);
+
 // After the socket, because agent writes deliver their directory events through
 // it the moment they commit.
-await app.register(agentRoutes({ db, deliver: sync.deliver }));
+await app.register(agentRoutes({
+  db, deliver: sync.deliver, registry: sync.registry,
+  dispatcher: { cancel: (runId) => dispatcher?.cancel(runId) },
+}));
 
 // Development only, and said so in the log: a route that writes messages
 // nobody authenticated is fine on a laptop and nowhere else.
@@ -83,7 +95,7 @@ const stopPoller = startPoller(Number(process.env['WORKOS_POLL_MS'] ?? 30_000));
 const stopRetention = startRetention(db, Number(process.env['RETENTION_MS'] ?? 3_600_000),
   (deleted, passes) => { app.log.info({ deleted, passes }, 'retention swept'); });
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { stopPoller(); stopRetention(); void pool.end(); process.exit(0); });
+  process.once(sig, () => { stopPoller(); stopRetention(); dispatcher?.stop(); void pool.end(); process.exit(0); });
 }
 
 await app.listen({ port: env.port, host: '127.0.0.1' });

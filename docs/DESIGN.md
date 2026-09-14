@@ -562,8 +562,14 @@ Consequences:
   visible product behavior, not a bug — it falls directly out of the outbox
   model (§10).
 - Agent replies arrive as ordinary messages through the normal write path, and
-  reach clients through ordinary live events. No streaming; if partial output is
-  ever wanted it will be batched into discrete messages.
+  reach clients through ordinary live events. No streaming to the room's
+  synced history; if partial output is ever wanted there it will be batched
+  into discrete messages — the question was left open here and is still open.
+  What workspace agents (`WORKSPACE-AGENTS.md` §5) *did* build, streaming
+  server-side only: the dispatcher calls the runtime over SSE so a **working
+  indicator** can say what tool an agent is using right now, and the reply
+  itself still lands as one ordinary message, into the triggering message's
+  own thread — never the flat room stream — once the run finishes.
 - Agent invocation is therefore **online-only**, while reading stays local-first.
   A clean boundary worth preserving.
 
@@ -2517,9 +2523,27 @@ a visible product behavior that falls directly out of the write path (§10), not
 bug to engineer around.
 
 **Replies are ordinary messages.** They travel the normal write path and reach
-clients as normal live events. No streaming; any future partial output will be
-batched into discrete messages. Attribution rides on `author_id` (always the
-agent) plus `on_behalf_of_actor_id` (whose authority was spent).
+clients as normal live events, into the triggering message's own thread. No
+streaming to the room's synced history; any future partial output there will
+be batched into discrete messages. Server-side, the run itself streams over
+SSE from the dispatcher to a runtime process (`AGENT-RUNTIME.md`), which is
+what lets a **working indicator** show live while nothing has been posted yet
+— an ephemeral push (`agent_activity`), never a `sync_event`. Attribution rides
+on `author_id` (always the agent) plus `on_behalf_of_actor_id` (whose authority
+was spent) and `delegation_id` (which run — one delegation record per reply,
+built as `agent_runs` in `WORKSPACE-AGENTS.md` §5).
+
+**A run is dispatched, not requested inline.** The mention starts an
+`agent_runs` row inside the same transaction as the message (never in
+fanout, which runs after commit and is allowed to miss — a mention lost
+between commit and fanout would never be answered); a server-side dispatcher
+polls for queued rows (plus an in-process wake for latency) and claims one at
+a time per agent-in-thread with `SELECT ... FOR UPDATE SKIP LOCKED`, so two
+server processes can never both run it. This is the delegation half of the
+per-user-credentials work `AGENT-RUNTIME.md` §9 named as not-yet-built; the
+credentials half — a tool call actually reaching a person's own connected
+account — is still ahead of it (steps 4/5, the connector store and the
+broker).
 
 **Client versions in the wild.** Updates are opt-in, so old clients persist for
 months — see [`RELEASE.md`](RELEASE.md) for the distribution model and §9.10 for
@@ -2734,6 +2758,8 @@ test.
 | 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined — 1,600 members was 69% of the frame and 20× the chats (§9.9) |
 | 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
 | 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
+| 76 | A mention's run is inserted **in the same transaction as the message it mentions** (`ops.ts`, `sendInner`), never in fanout | A crash or a rollback between the two would either lose a run the message implies, or run one for a message that was never actually sent (`WORKSPACE-AGENTS.md` §5.2) |
+| 77 | A workspace agent's palette holds **no local tools** — `palette: 'none'` removes `bash`, `read`, `write`, `edit`, `grep`, `find` and `ls` | A person's own text, reaching `prompt` as the transcript's last line, would otherwise author shell commands on the runtime's own filesystem (`AGENT-RUNTIME.md` §5, "the bash problem"; `WORKSPACE-AGENTS.md` §5.4) |
 | 78 | A restricted message's **revision** reaches every reader of the chat; its **content** reaches only the listed — the rest receive `withheld` | Either a leak, or every unlisted reader's chat stops updating for good (`SYNC-FLOWS.md` §7.1) |
 | 79 | Visibility filters run **in SQL, before `LIMIT`**, from one module (`visibility.ts`) every read path imports | Backfill reports a short page as complete and history below it is never fetched; a badge counts a message its reader can never open |
 | 80 | A restricted message's list is **never empty**, and only `writeMessage` inserts a message, with a required audience | A narrowed list becomes `{}` and reads as everyone or no one; a second writer that forgets the column writes a card for the whole chat |

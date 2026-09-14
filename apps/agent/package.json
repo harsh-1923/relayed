@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
+    "@relayed/protocol": "workspace:*",
     "fastify": "^5.2.0"
   },
   "devDependencies": {

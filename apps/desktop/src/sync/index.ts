@@ -21,7 +21,7 @@ import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
-  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, type AgentInput,
+  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, stopAgentRun, type AgentInput,
 } from './auth/relayed.ts';
 import { newId } from './ids.ts';
 import { enqueue } from './outbox.ts';
@@ -41,6 +41,7 @@ import * as paths from './paths.ts';
 import type { OurSession } from './auth/relayed.ts';
 import type { ClaudeStatus } from '../shared/claude.ts';
 import { AGENT_STREAM_CHANNEL } from '../shared/local-rooms.ts';
+import { AGENT_ACTIVITY_CHANNEL } from '../shared/agent-activity.ts';
 
 interface Request { id: number; op: string; params?: unknown }
 type Reply =
@@ -352,6 +353,12 @@ const link = createLink({
     // Every badge in the sidebar is correct as of this line, with the message
     // table still empty. Waking the surfaces is what makes that visible.
     invalidate([topic.spaces(), topic.actors()]);
+  },
+  // Forwarded straight to the renderer, exactly as `AGENT_STREAM_CHANNEL` is:
+  // never stored, never an invalidation. The renderer applies the `seq` and
+  // `ended` rules itself (WORKSPACE-AGENTS.md §5.7).
+  onActivity: (activity) => {
+    for (const p of ports) p.postMessage({ push: AGENT_ACTIVITY_CHANNEL, data: activity });
   },
   // `onEvent` is deliberately not passed. It is a test seam now, not the
   // wiring: the engine records every marker through `sync/observe.ts` on the
@@ -885,6 +892,12 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
    * same as `found: false`.
    */
   'agents.definition': async (params) => link.definition((params as { agentId: string }).agentId),
+  /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
+  'agents.stopRun': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return stopAgentRun(token, (params as { runId: string }).runId);
+  },
 
   'auth.join': async (params) => {
     const p = params as { workspaceId: string; handle: string };

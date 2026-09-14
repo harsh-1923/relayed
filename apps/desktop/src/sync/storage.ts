@@ -179,6 +179,9 @@ const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
   state: r['state'] === 'removed' ? 'removed' : 'active',
 });
 
+/** The membership scopes the replica's CHECK allows — the ones `can()` reasons about. */
+const KNOWN_SCOPES: ReadonlySet<string> = new Set(['workspace', 'space', 'chat']);
+
 const getMeta = (db: DatabaseSync, k: string): string | null => {
   const row = db.prepare('SELECT v FROM meta WHERE k = ?').get(k) as { v: string } | undefined;
   return row?.v ?? null;
@@ -682,7 +685,12 @@ export class Storage {
         ON CONFLICT(scope_type, scope_id, actor_id) DO UPDATE SET
           role = excluded.role, left_at = NULL
       `);
+      // Skipped, not inserted: a scope this client cannot reason about is a
+      // grant it must not honour, and inserting one fails the CHECK and rolls
+      // back the WHOLE welcome — which leaves the link with no catch-up
+      // scheduler, and every stream stalled at its first missed revision.
       for (const row of payload.memberships) {
+        if (!KNOWN_SCOPES.has(row.scopeType)) continue;
         membership.run(row.scopeType, row.scopeId, payload.actorId, row.role, now);
       }
 

@@ -11,6 +11,7 @@ import { type Stream } from './events.ts';
 import { spaceMembers } from './spaces.ts';
 import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
+import { mentionPattern } from './mentions.ts';
 import { agentSummaries } from '../agents/summary.ts';
 import type { AgentSummary } from './events.ts';
 
@@ -546,18 +547,6 @@ export interface WelcomePayload {
   streams: WelcomeStream[];
 }
 
-/**
- * How a mention of an actor looks in a stored body.
- *
- * Messages use a canonical Markdown application link whose target is the
- * actor id. Its label is only a human-readable fallback; identity and mention
- * counting depend on the durable target.
- *
- * Defined once because two paths count mentions, and a pattern that differed
- * between them would make a badge disagree with itself depending on whether it
- * arrived in `welcome` or in a later `counters` push.
- */
-const mentionPattern = (actorId: string): string => `%](actor:${actorId})%`;
 
 /**
  * Head state and counters for every chat an actor can reach in a workspace.
@@ -650,6 +639,11 @@ async function welcomeSpaces(db: Kysely<DB>, actorId: string): Promise<WelcomeSp
  * space when a surface asks for it; sending every membership in the workspace
  * would be members × spaces in the worst case, which is precisely the shape
  * invariant 71 forbids.
+ *
+ * Only the scopes a client's `can()` reasons about. An `agent` membership is a
+ * maintainer, not a read grant — its affordances come back with the agent's
+ * definition (`you`) — and a replica refuses a scope it does not know, which
+ * rolled back the whole welcome and left the client with no catch-up at all.
  */
 async function welcomeMemberships(
   db: Kysely<DB>, actorId: string,
@@ -658,6 +652,7 @@ async function welcomeMemberships(
     .select(['scope_type', 'scope_id', 'role'])
     .where('actor_id', '=', actorId)
     .where('left_at', 'is', null)
+    .where('scope_type', 'in', ['workspace', 'space', 'chat'])
     .execute();
   return rows.map(row => ({
     scopeType: row.scope_type, scopeId: row.scope_id, role: row.role,

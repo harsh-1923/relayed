@@ -22,7 +22,7 @@
 // and a `scrollIntoView` on a ref, which is the hand-rolled stick-to-bottom the
 // primitive exists to replace — it does the anchoring, the position restore and
 // the jump-to-latest, and it yields the moment somebody scrolls up.
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@/lib/query';
 import { useSession } from '@/app/state';
 import {
@@ -36,6 +36,8 @@ import { Approvals } from '@/features/local-rooms/Approvals';
 import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
 import { RoomModePicker } from '@/features/local-rooms/RoomModePicker';
 import { useRoomSlashCommands } from '@/features/local-rooms/useRoomSlashCommands';
+import { useChatActivity } from '@/lib/agent-activity';
+import { RunIndicator } from '@/features/agents/RunIndicator';
 import type { SpaceScope } from '../../../shared/spaces.ts';
 
 /** The message read, and what an empty chat says, by storage scope. */
@@ -57,6 +59,9 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
   // The replies paused on the person. Always read, for one hook order in both
   // scopes; a workspace chat has no local approvals and gets none.
   const { rows: approvals } = useQuery('local.approvals.list', { chatId: scope === 'local' ? chatId : '' });
+  // Workspace agents only (WORKSPACE-AGENTS.md §5.7) — a local room's own
+  // Claude Code has no `agent_runs` row and never pushes this.
+  const activity = useChatActivity(scope === 'workspace' ? chatId : '');
 
   return (
     // Fills the pane. The shell pads nothing — a route opts into padding by
@@ -88,14 +93,29 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
                 const previousMessage = allMessages[index - 1];
                 const nextMessage = allMessages[index + 1];
                 return (
-                  <ChatBubble
-                    key={message.id}
-                    message={message}
-                    mine={mine}
-                    startsGroup={previousMessage?.authorId !== message.authorId}
-                    endsGroup={nextMessage?.authorId !== message.authorId}
-                    waiting={approvals?.some(approval => approval.messageId === message.id) ?? false}
-                  />
+                  // A Fragment, not a wrapping element: `ChatBubble`'s
+                  // `MessageScrollerItem` must stay a direct child of
+                  // `MessageScrollerContent` for the scroller's own anchoring —
+                  // `Approvals` below is already a plain sibling for the same
+                  // reason.
+                  <Fragment key={message.id}>
+                    <ChatBubble
+                      message={message}
+                      mine={mine}
+                      startsGroup={previousMessage?.authorId !== message.authorId}
+                      endsGroup={nextMessage?.authorId !== message.authorId}
+                      waiting={approvals?.some(approval => approval.messageId === message.id) ?? false}
+                    />
+                    {/* Attached to the trigger, whose thread this is (§5.7). Gates
+                        Stop on `mine` — the common case, a fresh top-level
+                        mention, where the trigger IS the thread root; a mention
+                        added to an existing thread can show Stop to that
+                        thread's starter rather than the actual invoker, a narrow
+                        misattribution accepted for now. */}
+                    {activity.filter(run => run.threadId === message.id).map(run => (
+                      <RunIndicator key={run.runId} run={run} isInvoker={mine} />
+                    ))}
+                  </Fragment>
                 );
               })}
 

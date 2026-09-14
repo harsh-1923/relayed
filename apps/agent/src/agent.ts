@@ -11,10 +11,15 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   SessionManager,
+  type CreateAgentSessionOptions,
+  type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
+import type { RunRequest, RunTool, ThinkingLevel } from '@relayed/protocol';
 import { env } from './env.ts';
 import { modelRuntime, resolveModel } from './providers.ts';
 import type { RunResult, RunStatus, ToolCall } from './runs.ts';
+
+export type { RunRequest };
 
 /**
  * pi's defaults, named explicitly.
@@ -22,18 +27,17 @@ import type { RunResult, RunStatus, ToolCall } from './runs.ts';
  * Passing the list rather than relying on the default keeps the palette stable
  * across pi versions — 0.85 added `powershell` to the built-in set, which this
  * process has no use for and would otherwise have silently acquired.
+ *
+ * Only for `palette: 'default'` — a local room's own Claude Code (unused
+ * here). A workspace agent (`palette: 'none'`) gets none of these
+ * (WORKSPACE-AGENTS.md §5.4).
  */
 export const TOOLS = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const;
 
-export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
-export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'minimal', 'low', 'medium', 'high'];
-
-export interface RunRequest {
-  prompt: string;
-  systemPrompt?: string | undefined;
-  model?: string | undefined;
-  thinkingLevel?: ThinkingLevel | undefined;
-}
+/** The wire's vocabulary (`@relayed/protocol`) to pi's own — `'none'` is pi's `'off'`. */
+const PI_THINKING_LEVEL: Record<ThinkingLevel, NonNullable<CreateAgentSessionOptions['thinkingLevel']>> = {
+  none: 'off', low: 'low', medium: 'medium', high: 'high',
+};
 
 /** Where loop events go. The JSON mode passes one that drops everything. */
 export interface RunSink {
@@ -75,11 +79,47 @@ export interface RunHandle {
 }
 
 /**
+ * One remote tool, registered as a pi `customTools` entry whose `execute`
+ * calls the broker — the only place a workspace agent's tool calls go
+ * (WORKSPACE-AGENTS.md §5.4, §5.5). `runId` and `grant` come from the run
+ * that registered it, never from the tool call itself.
+ *
+ * `parameters` is Composio's JSON Schema, passed through as-is rather than
+ * converted to a TypeBox schema: whether pi's validation accepts a raw JSON
+ * Schema object here, or needs `Type.Unsafe`, is exactly what
+ * `spikes/agent-tools/` (WORKSPACE-AGENTS-IMPL.md) is meant to settle — and
+ * nothing exercises this path until a run actually carries tools (steps 4/5).
+ */
+function remoteTool(tool: RunTool, runId: string, grant: string | undefined): ToolDefinition {
+  return {
+    name: tool.name,
+    label: tool.name,
+    description: tool.description,
+    parameters: tool.parameters as unknown as ToolDefinition['parameters'],
+    // Errors are signalled by THROWING, never by a return value (pi's
+    // convention): a return is always reported to the model as success.
+    async execute(toolCallId, params, signal) {
+      if (!env.agentBrokerUrl) throw new Error('no tool broker is configured for this runtime');
+      const res = await fetch(`${env.agentBrokerUrl}/agent/tools`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${grant ?? ''}` },
+        body: JSON.stringify({ runId, toolCallId, tool: tool.name, arguments: params }),
+        ...(signal ? { signal } : {}),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`tool call failed (${res.status}): ${text}`);
+      return { content: [{ type: 'text', text }], details: undefined };
+    },
+  };
+}
+
+/**
  * Start a run. Returns as soon as the loop is running, so the caller can
  * register the handle before awaiting — otherwise a cancel arriving in the
  * first milliseconds has nothing to cancel.
  */
-export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHandle {
+export function startRun(req: RunRequest, sink: RunSink): RunHandle {
+  const { runId } = req;
   const startedAtMs = Date.now();
 
   // The first reason wins: a timeout that fires while a cancel is landing must
@@ -110,6 +150,19 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
 
     const timer = setTimeout(() => abort('timeout'), env.runTimeoutMs);
 
+    // A provider that stalls without erroring holds the run forever otherwise
+    // (Claw lessons, WORKSPACE-AGENTS.md §5.3). Paused during tool execution,
+    // which has the run's own wall-clock timeout as its bound, not this one.
+    let stallTimer: NodeJS.Timeout | undefined;
+    const armStall = (): void => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(
+        () => abort('failed', `the model produced nothing for ${env.modelStallMs}ms`),
+        env.modelStallMs,
+      );
+    };
+    const pauseStall = (): void => { clearTimeout(stallTimer); stallTimer = undefined; };
+
     try {
       const runtime = await modelRuntime();
       // A fresh agentDir per run, inside the disposable workspace: pi otherwise
@@ -128,6 +181,19 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
       });
       await resourceLoader.reload();
 
+      // `palette: 'none'` removes `bash`, `read`, `write`, `edit`, `grep`,
+      // `find` and `ls` — a workspace agent's prompt is written by whoever
+      // mentions it, and this is what answers that trigger without a sandbox
+      // (WORKSPACE-AGENTS.md §5.4). `tools` is an allowlist, so a remote tool
+      // must be named here as well as registered as a `customTools` entry.
+      const customTools = req.tools.map(tool => remoteTool(tool, runId, req.grant));
+      // `show_ui` is named here for when a workspace agent registers it
+      // (AGENT-RESPONSES.md phase 4, not yet built): harmless to allow now,
+      // since nothing yet answers to that name.
+      const allowedTools = req.palette === 'none'
+        ? ['show_ui', ...req.tools.map(tool => tool.name)]
+        : [...TOOLS];
+
       const { session } = await createAgentSession({
         model,
         modelRuntime: runtime,
@@ -135,8 +201,9 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
         agentDir,
         resourceLoader,
         sessionManager: SessionManager.inMemory(cwd),
-        tools: [...TOOLS],
-        ...(req.thinkingLevel !== undefined ? { thinkingLevel: req.thinkingLevel } : {}),
+        tools: allowedTools,
+        customTools,
+        thinkingLevel: PI_THINKING_LEVEL[req.thinkingLevel ?? 'none'],
       });
 
       abortLoop = () => { void session.abort(); };
@@ -147,6 +214,7 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
       const unsubscribe = session.subscribe(event => {
         switch (event.type) {
           case 'message_update': {
+            armStall();   // the model is generating — sign of life
             const inner = event.assistantMessageEvent as { type?: string; delta?: string };
             if (inner?.type === 'text_delta' && inner.delta) sink.delta(inner.delta);
             else if (inner?.type === 'thinking_delta' && inner.delta) sink.reasoning(inner.delta);
@@ -166,10 +234,12 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
             break;
           }
           case 'tool_execution_start':
+            pauseStall();   // no model activity is expected while a tool runs
             startedTools.set(event.toolCallId, { name: event.toolName, at: Date.now() });
             sink.toolStart(event.toolName, event.toolCallId);
             break;
           case 'tool_execution_end': {
+            armStall();   // waiting on the model again
             const started = startedTools.get(event.toolCallId);
             startedTools.delete(event.toolCallId);
             const call = {
@@ -184,6 +254,7 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
           }
           case 'turn_end':
             turns += 1;
+            armStall();
             // A loop that cannot make progress will otherwise spend the whole
             // wall-clock budget discovering that.
             if (turns >= env.maxTurns) abort('failed', `turn cap reached (${env.maxTurns})`);
@@ -193,6 +264,7 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
         }
       });
 
+      armStall();
       try {
         await session.prompt(req.prompt, { expandPromptTemplates: false });
       } finally {
@@ -207,7 +279,17 @@ export function startRun(runId: string, req: RunRequest, sink: RunSink): RunHand
       }
     } finally {
       clearTimeout(timer);
+      pauseStall();
       await rm(cwd, { recursive: true, force: true }).catch(() => {});
+    }
+
+    // A turn that produced no text, no tool calls and no error is not success
+    // — it is something that errored without throwing (Claw lessons). Left
+    // alone this reports `completed` with an empty reply, indistinguishable
+    // from an agent that genuinely had nothing to say.
+    if (outcome === undefined && text.trim().length === 0 && toolCalls.length === 0) {
+      outcome = 'failed';
+      failure = 'the run produced no output';
     }
 
     const status: RunStatus = outcome ?? 'completed';

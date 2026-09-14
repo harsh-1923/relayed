@@ -99,6 +99,13 @@ export interface MessageCreated {
    * them (AGENT-RESPONSES.md §3). A client that predates parts renders `body`.
    */
   parts?: MessagePart[];
+  /**
+   * Present only for an agent's reply (WORKSPACE-AGENTS.md §5.7): whose
+   * authority it spent, and the run that spent it. `author_id` is always the
+   * acting actor — the agent, never the invoker.
+   */
+  on_behalf_of_actor_id?: string;
+  delegation_id?: string;
 }
 
 /**
