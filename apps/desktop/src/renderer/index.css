@@ -98,6 +98,8 @@
   --window-canvas: transparent;
   --window-glass: color-mix(in srgb, var(--sidebar) 70%, transparent);
   --window-solid: var(--background);
+  --sidebar-item-background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  --sidebar-item-foreground: color-mix(in oklch, var(--foreground) 85%, transparent);
   --message-outgoing: oklch(0.2143 0.0039 286.07);
   --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
 
@@ -146,6 +148,8 @@
   --window-canvas: transparent;
   --window-glass: color-mix(in srgb, var(--sidebar) 70%, transparent);
   --window-solid: var(--background);
+  --sidebar-item-background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  --sidebar-item-foreground: color-mix(in oklch, var(--foreground) 85%, transparent);
   --message-outgoing: oklch(0.2143 0.0039 286.07);
   --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
   --success: oklch(0.72 0.15 150);

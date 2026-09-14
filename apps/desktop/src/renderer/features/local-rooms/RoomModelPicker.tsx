@@ -41,6 +41,8 @@ export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
   const models = status?.state === 'ready' ? status.models : [];
   const chosen = room.model ?? DEFAULT_ROOM_MODEL;
   const current = find(models, chosen);
+  const modelLabel = current?.displayName ?? chosen;
+  const effortLabel = room.effort ? EFFORT_LABELS[room.effort] : 'Default';
 
   const save = (model: string | null, effort: EffortLevel | null) => {
     setError(null);
@@ -57,12 +59,12 @@ export function RoomModelPicker({ spaceId, className, open, onOpenChange }: {
   return (
     <DropdownMenu {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange: (next: boolean) => onOpenChange(next) } : {})}>
       <DropdownMenuTrigger
-        aria-label={`Model: ${current?.displayName ?? chosen}`}
+        aria-label={`Model: ${modelLabel}; effort: ${effortLabel}`}
         title={error ?? current?.description ?? chosen}
         className={cn(className, error && 'text-destructive')}
       >
-        <span className="composer-model-name">{current?.displayName ?? chosen}</span>
-        {room.effort && <span className="composer-model-tone">{EFFORT_LABELS[room.effort]}</span>}
+        <span className="composer-model-name">{modelLabel}</span>
+        <span className="composer-model-tone">{effortLabel}</span>
         <ChevronDown />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" sideOffset={8} className="w-60 rounded-3xl! bg-card! p-1.5 shadow-lg">

@@ -1,13 +1,9 @@
 import './index.css';
-// DialKit is temporarily disabled. Keep the integration in place so the design
-// controls can be restored without reconstructing their configuration.
-// import 'dialkit/styles.css';
 // Before anything that reaches @openuidev/react-lang (the message renderer).
 // See the module for the two things it switches off.
 import '@/app/openui-setup';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-// import { DialRoot } from 'dialkit';
 import { HashRouter } from 'react-router';
 import { AppStateProvider } from '@/app/state';
 import { Router } from '@/app/router';
@@ -75,6 +71,5 @@ createRoot(document.getElementById('root')!).render(
         </Commands>
       </AppStateProvider>
     </HashRouter>
-    {/* <DialRoot /> */}
   </StrictMode>,
 );
