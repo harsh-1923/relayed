@@ -58,30 +58,47 @@ function isEditableTarget(event) {
 
 // command id -> { hotkeys, inputPolicy, repeat }
 let catalogue = {};
-let index = new Map();
+let logicalIndex = new Map();
+let physicalIndex = new Map();
 const invocations = [];
 const skips = [];
 
 function rebuildIndex() {
-  index = new Map();
+  logicalIndex = new Map();
+  physicalIndex = new Map();
   for (const [id, definition] of Object.entries(catalogue)) {
+    const index = definition.keyMatch === 'physical' ? physicalIndex : logicalIndex;
     for (const hotkey of definition.hotkeys) index.set(normalizeHotkey(hotkey, PLATFORM), id);
   }
+}
+
+function physicalLetterChord(event) {
+  const match = /^Key([A-Z])$/.exec(event.code);
+  if (!match) return null;
+  return normalizeHotkeyFromEvent({
+    key: match[1],
+    ctrlKey: event.ctrlKey,
+    altKey: event.altKey,
+    shiftKey: event.shiftKey,
+    metaKey: event.metaKey,
+  }, PLATFORM);
 }
 
 function dispatch(event) {
   if (event.defaultPrevented) return skips.push('defaultPrevented');
   if (event.isComposing || event.keyCode === 229) return skips.push('composing');
-  if (event.getModifierState('AltGraph')) return skips.push('altgraph');
   const chord = normalizeHotkeyFromEvent(event, PLATFORM);
-  const id = index.get(chord);
+  const physicalChord = physicalLetterChord(event);
+  const physicalId = physicalChord ? physicalIndex.get(physicalChord) : undefined;
+  if (event.getModifierState('AltGraph') && !physicalId) return skips.push('altgraph');
+  const id = logicalIndex.get(chord) ?? physicalId;
   if (!id) return skips.push(`unbound:${chord}`);
   const definition = catalogue[id];
   if (event.repeat && definition.repeat !== 'allow') return skips.push('repeat');
   if (definition.inputPolicy === 'deny-editable' && isEditableTarget(event))
     return skips.push('editable');
   event.preventDefault();
-  invocations.push({ id, chord, prevented: event.defaultPrevented });
+  invocations.push({ id, chord: physicalId ? physicalChord : chord, prevented: event.defaultPrevented });
 }
 
 function Dispatcher() {

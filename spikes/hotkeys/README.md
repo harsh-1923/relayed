@@ -29,7 +29,7 @@ are named `constructed:`.
 
 ## Result — 2026-09-14
 
-Electron 44.2.0, Chromium 152, macOS. **43 passed, 0 failed.**
+Electron 44.2.0, Chromium 152, macOS. **44 passed, 0 failed.**
 
 **Decision: admit `@tanstack/hotkeys@0.8.0` (core only, exact pin) as the
 parser, normalizer, display formatter and recorder. Do not use its matcher, its

@@ -36,6 +36,7 @@ test('command IDs are a reviewed snapshot', () => {
   assert.deepEqual(COMMAND_IDS, [
     'app.search.open',
     'shell.sidebar.toggle',
+    'room.panels.toggle',
     'navigation.back',
     'navigation.forward',
     'app.settings.open',
@@ -73,11 +74,11 @@ test('no default combines Shift with punctuation, which reports the shifted char
   }
 });
 
-test('no macOS default combines Alt with a letter, which Option turns into another character', () => {
+test('a macOS default combining Alt with a letter explicitly follows the physical key', () => {
   for (const id of COMMAND_IDS) {
     for (const hotkey of defaultHotkeys(id, 'mac')) {
       const parsed = parseChord(hotkey, 'mac');
-      assert.ok(!(parsed.alt && /^[A-Z]$/.test(parsed.key)), `${id} ${hotkey}`);
+      if (parsed.alt && /^[A-Z]$/.test(parsed.key)) assert.equal(COMMANDS[id].keyMatch, 'physical', `${id} ${hotkey}`);
     }
   }
 });

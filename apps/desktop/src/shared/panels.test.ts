@@ -1,7 +1,9 @@
 // `?p=`, parsed and resolved (docs/PANELS.md §8).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activePanelId, closePanelTab, formatPanelParam, parsePanelParam, resolveOpenPanels } from './panels.ts';
+import {
+  activePanelId, closePanelTab, formatPanelParam, panelContainerToggle, parsePanelParam, resolveOpenPanels,
+} from './panels.ts';
 
 const panels = [
   { id: 'pnl_chat', chatId: 'cht_side' },
@@ -35,4 +37,10 @@ test('closing a tab: a background tab leaves the shown one; the shown one hands 
   assert.deepEqual(closePanelTab(['a', 'b', 'c'], 'c', 'c'), { ids: ['a', 'b'], active: 'b' });
   assert.deepEqual(closePanelTab(['a'], 'a', 'a'), { ids: [], active: null });
   assert.deepEqual(closePanelTab(['a', 'b'], 'a', 'zzz'), { ids: ['a', 'b'], active: 'a' });
+});
+
+test('toggling the container closes an open view, reopens the newest panel, or opens the empty chooser', () => {
+  assert.deepEqual(panelContainerToggle(true, panels), { kind: 'close' });
+  assert.deepEqual(panelContainerToggle(false, panels), { kind: 'open', panelId: 'pnl_web' });
+  assert.deepEqual(panelContainerToggle(false, []), { kind: 'open', panelId: null });
 });

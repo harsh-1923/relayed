@@ -73,3 +73,12 @@ export function closePanelTab(ids: readonly string[], active: string | null, clo
   if (active !== closing) return { ids: next, active };
   return { ids: next, active: next[index] ?? next[index - 1] ?? null };
 }
+
+/** What Toggle room panels does from the current view and configured rows. */
+export function panelContainerToggle(
+  containerOpen: boolean,
+  panels: readonly Pick<Panel, 'id'>[],
+): { kind: 'close' } | { kind: 'open'; panelId: string | null } {
+  if (containerOpen) return { kind: 'close' };
+  return { kind: 'open', panelId: panels.at(-1)?.id ?? null };
+}

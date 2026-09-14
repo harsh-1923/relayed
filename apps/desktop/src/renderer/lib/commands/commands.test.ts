@@ -87,7 +87,7 @@ test('subscribers hear availability changes, not closure swaps', () => {
 
 const macIndex = buildIndex(resolveBindings(new Map(), 'mac'));
 const press = (key: string, facts: Partial<KeydownFacts> = {}): KeydownFacts => ({
-  key, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+  key, code: '', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
   repeat: false, isComposing: false, keyCode: 0, defaultPrevented: false, altGraph: false, editable: false,
   ...facts,
 });
@@ -124,6 +124,16 @@ test('each guard skips, in the documented order', () => {
 
 test('allow-editable still runs from a text field', () => {
   assert.equal(decide(press('k', { metaKey: true, editable: true }), 'mac', macIndex, withSearchAndSidebar()).kind, 'run');
+});
+
+test('the room-panel shortcut follows the labelled B key when Option changes the produced character', () => {
+  const registry = registryOf();
+  registry.register('room.panels.toggle', handler({ layer: 'route' }));
+  const decision = decide(press('∫', {
+    code: 'KeyB', metaKey: true, altKey: true, altGraph: true, editable: true,
+  }), 'mac', macIndex, registry);
+  assert.equal(decision.kind, 'run');
+  assert.equal(decision.id, 'room.panels.toggle');
 });
 
 test('a bound chord with no winner is left for the browser', () => {

@@ -37,6 +37,7 @@ async function run(win) {
     `spike.setCatalogue(${JSON.stringify({
       'app.search.open': { hotkeys: ['Mod+K'], inputPolicy: 'allow-editable' },
       'shell.sidebar.toggle': { hotkeys: ['Mod+B'], inputPolicy: 'deny-editable' },
+      'room.panels.toggle': { hotkeys: ['Mod+Alt+B'], inputPolicy: 'allow-editable', keyMatch: 'physical' },
       'navigation.back': { hotkeys: ['Mod+['], inputPolicy: 'deny-editable' },
       'navigation.forward': { hotkeys: ['Mod+]'], inputPolicy: 'deny-editable' },
       'app.settings.open': { hotkeys: ['Mod+,'], inputPolicy: 'allow-editable' },
@@ -172,6 +173,15 @@ async function run(win) {
       (await read()).invocations.map(hit => hit.id),
       ['app.search.open'],
     );
+  });
+
+  await check('Cmd+Option+B follows the labelled physical B key', async () => {
+    await fresh();
+    await page(`spike.focus('#textarea')`);
+    await press('B', ['meta', 'alt']);
+    const { invocations, observed } = await read();
+    assert.deepEqual(invocations.map(hit => hit.id), ['room.panels.toggle'], JSON.stringify(observed));
+    assert.equal(invocations[0].chord, 'Mod+Alt+B');
   });
 
   // ── One listener, dynamic bindings ────────────────────────────────────────

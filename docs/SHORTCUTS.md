@@ -192,19 +192,24 @@ Relayed therefore:
 
 ### 4.5 Layout, IME, and AltGraph are not edge cases
 
-Bindings use logical `KeyboardEvent.key` semantics in the first release. This
-makes the character the person typed the default meaning. TanStack's
+Bindings use logical `KeyboardEvent.key` semantics by default. This makes the
+character the person typed the default meaning. TanStack's
 `matchesKeyboardEvent` falls back to `event.code` for punctuation, digits,
 dead keys and Alt-modified letters, and the admission spike showed that
 fallback breaks this contract with no option to disable it. Relayed therefore
 matches by looking up `normalizeHotkeyFromEvent(event)` in its own index, which
-reads only `event.key` and the modifier flags. The
-recorder normalizes the current platform's primary modifier to `Mod`. A future
-physical-key mode can use `KeyboardEvent.code`, but it must be an explicit
-binding kind rather than a silent fallback exposed as user data.
+reads only `event.key` and the modifier flags. The one explicit exception is
+**Toggle room panels**: macOS Option changes B into
+`∫`, so that command declares `keyMatch='physical'` and the dispatcher reads
+`event.code` `KeyB`. It is fixed rather than user-configurable until recorder
+and preference data have an explicit physical binding kind; no recorded chord
+silently changes semantics. The recorder normalizes the current platform's
+primary modifier to `Mod`.
 
 Composition events never dispatch commands. AltGraph is treated as text entry,
-not as Control+Alt. Manual verification includes a non-US layout and an IME.
+not as Control+Alt, except when the same macOS event matches an explicitly
+physical Option-letter command. Manual verification includes a non-US layout
+and an IME.
 
 ---
 
@@ -383,6 +388,7 @@ interface CommandDefinition {
   readonly configurable: boolean;
   readonly inputPolicy: 'allow-editable' | 'deny-editable' | 'focused-editor';
   readonly repeat: 'ignore' | 'allow';
+  readonly keyMatch: 'logical' | 'physical';
   readonly nativeMenu: false | { readonly menu: 'app' | 'view' | 'window' };
 }
 
@@ -484,15 +490,18 @@ For every keydown the renderer adapter performs these checks in order:
 
 1. Return if another owner already called `defaultPrevented`.
 2. Return during IME composition (`isComposing` or composition key state).
-3. Return when AltGraph is active unless the binding explicitly supports it;
-   no first-release binding does.
-4. Return on repeat unless the command definition opts in.
-5. Normalize the event and look it up in the effective binding index.
-6. Apply the binding's editable-focus policy. Classification uses the composed
+3. Derive the logical chord and, for explicitly physical commands, the labelled
+   letter chord from `KeyboardEvent.code`.
+4. Return when AltGraph is active unless the event matches an explicitly
+   physical command. This permits macOS Option-letter commands while leaving
+   Windows and Linux Control+Alt text entry alone.
+5. Return on repeat unless the command definition opts in.
+6. Normalize the event and look it up in the effective binding index.
+7. Apply the binding's editable-focus policy. Classification uses the composed
    event path and active element, including text-like inputs, textarea, select,
    contenteditable, and textbox roles; button-like inputs are not editable.
-7. Ask the command bus for the highest eligible handler.
-8. Only after a winner exists, prevent the browser default and execute it.
+8. Ask the command bus for the highest eligible handler.
+9. Only after a winner exists, prevent the browser default and execute it.
 
 The adapter does not stop propagation by default. Overlay or editor owners may
 do so when their component contract requires it. TanStack's registration
@@ -620,6 +629,7 @@ This is the first useful set, not a claim that every action deserves a key.
 |---|---|---|---|---|
 | Open search — `app.search.open` | `Mod+K` | `Mod+K` | Allowed in editable focus; application layer | Yes |
 | Toggle sidebar — `shell.sidebar.toggle` | `Mod+B` | `Mod+B` | Denied in editable focus; shell layer | No |
+| Toggle room panels — `room.panels.toggle` | `Mod+Alt+B` | — | Allowed in editable focus while a room route is mounted; physical-key match | No |
 | Navigate back — `navigation.back` | `Mod+[` | `Alt+ArrowLeft` | Denied in editable focus; route layer | No |
 | Navigate forward — `navigation.forward` | `Mod+]` | `Alt+ArrowRight` | Denied in editable focus; route layer | No |
 | Open settings — `app.settings.open` | `Mod+,` | `Mod+,` | Allowed in editable focus; application layer | Yes |
@@ -644,6 +654,15 @@ deny-editable policy covers editable controls that do not. The binding policy be
 keyboard dispatch; clicking the sidebar button still works while an editor has
 focus.
 
+The room-panel command is deliberately macOS-only and fixed for its first
+slice. Option changes the logical character produced by B, so it is the one
+catalogue command that explicitly matches the labelled physical key. Windows
+and Linux get no default until the supported-platform shortcut matrix has been
+exercised with an AltGraph layout; settings show the command but do not offer a
+recorder that would misrepresent its physical semantics. Its route handler
+lives in `routes/Space.tsx` and is enabled only for a room whose panels are
+available locally.
+
 Composer send is one command with two defaults, and they are not symmetric:
 `Mod+Enter` sends from every block, while plain `Enter` sends only outside a code
 block, and `Shift+Enter` inserts a line break. The rule generalizes to any
@@ -667,7 +686,7 @@ owners never coexist.
 
 **Admitted by the spike: `@tanstack/hotkeys@0.8.0`, core only, exact pin.**
 The evidence and every case are in [`spikes/hotkeys/`](../spikes/hotkeys/README.md)
-(43 assertions against trusted Chromium key events in Electron 44.2.0).
+(44 assertions against trusted Chromium key events in Electron 44.2.0).
 
 The spike narrowed what the library is used for. Its pure functions are sound;
 its event matching is not compatible with Relayed's logical-key contract, and
@@ -685,13 +704,14 @@ its React bindings add nothing the command bus needs.
 | Electron accelerator syntax | **Not provided.** | `shared/shortcuts` derives it from the parsed hotkey. |
 | Sequences | Possible future driver | Product decision and persisted migration gate. |
 
-Two catalogue rules fall out of the logical-key contract and are enforced by the
+Two catalogue rules fall out of the key-matching contract and are enforced by the
 catalogue test rather than remembered:
 
 - **No default combines Shift with a punctuation key.** Trusted `Cmd+Shift+/`
   reports `?`, so `Mod+Shift+/` would never match. Recorded bindings round-trip
   because the recorder normalizes the same way.
-- **No macOS default combines Alt with a letter.** Option+K produces `˚`.
+- **A macOS default combining Alt with a letter must explicitly match the
+  physical key.** Option changes the character reported by `event.key`.
 
 The project is officially alpha and its API is subject to change. Therefore:
 
@@ -948,8 +968,8 @@ cleanup, and user-visible enablement.
 - Command IDs and preference keys are unique and stable snapshots are reviewed.
 - Every default parses and normalizes on every supported platform.
 - Default hard conflicts fail the catalogue test.
-- No default combines Shift with a punctuation key, and no macOS default
-  combines Alt with a letter.
+- No default combines Shift with a punctuation key, and every macOS default
+  combining Alt with a letter explicitly opts into physical-key matching.
 - Alias spellings normalize to one index key.
 - Missing, custom, disabled, malformed, and newer unknown overrides resolve as
   specified.
@@ -1142,6 +1162,10 @@ These are the current official references this proposal was checked against:
 - [Electron keyboard shortcuts](https://www.electronjs.org/docs/latest/tutorial/keyboard-shortcuts)
   and [Electron menus](https://www.electronjs.org/docs/latest/tutorial/menus)
   — focused-app accelerators, system-wide shortcuts, and native menus.
+- [MDN `KeyboardEvent.key`](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key)
+  and [MDN `KeyboardEvent.code`](https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/code)
+  — the produced character versus the labelled physical key, including the
+  layout trade-off of physical matching.
 - [Apple keyboard guidance](https://developer.apple.com/design/human-interface-guidelines/keyboards)
   — standard shortcuts, modifier conventions, and restraint.
 - [Windows keyboard accelerators](https://learn.microsoft.com/en-us/windows/apps/develop/input/keyboard-accelerators)

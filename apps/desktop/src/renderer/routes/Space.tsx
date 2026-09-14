@@ -16,8 +16,9 @@ import { PanelContainer } from '@/features/panels/PanelContainer';
 import { PanelMenu } from '@/features/panels/PanelMenu';
 import { useOpenPanels } from '@/features/panels/useOpenPanels';
 import { call } from '@/lib/ipc';
+import { useCommandHandler } from '@/lib/commands/CommandProvider';
 import { mainChat, type SpaceScope } from '../../shared/spaces.ts';
-import { resolveOpenPanels } from '../../shared/panels.ts';
+import { panelContainerToggle, resolveOpenPanels } from '../../shared/panels.ts';
 
 /** The one-space read, by storage scope. Both return the same `Space` rows. */
 const SPACE_READ = { workspace: 'space.get', local: 'local.space.get' } as const;
@@ -35,6 +36,20 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   const { rows: panels, status: panelsStatus } = useQuery('local.panels.list', { spaceId: hasPanels ? spaceId : '' });
   const openPanels = useOpenPanels();
   const open = resolveOpenPanels(openPanels.ids, panels ?? []);
+
+  useCommandHandler('room.panels.toggle', {
+    layer: 'route',
+    enabled: hasPanels && panelsStatus !== 'loading',
+    run: () => {
+      const action = panelContainerToggle(openPanels.containerOpen, panels ?? []);
+      if (action.kind === 'close') {
+        openPanels.closeContainer();
+        return;
+      }
+      if (action.panelId) openPanels.open(action.panelId);
+      else openPanels.openContainer();
+    },
+  });
 
   // Canonicalise the URL once the room's panels are known: a chat id becomes
   // its panel's id, and an id that matches nothing leaves (§8).
@@ -80,7 +95,7 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
           <ChatView key={chat.id} spaceId={spaceId} chatId={chat.id} scope={scope} />
         </div>
       </ResizablePanel>
-      {open.length > 0 && (
+      {openPanels.containerOpen && (
         <>
           <ResizableHandle />
           <ResizablePanel id="panels" defaultSize="42%" minSize={320} className="min-h-0 min-w-0">

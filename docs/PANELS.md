@@ -26,7 +26,7 @@
 | **Local panel** | A panel that exists only on this device. Nobody else knows it exists, including the server. |
 | **Shared panel** | A panel synced to the room. Everyone entitled to it receives it. |
 | **Share** | Turning a local panel into a shared one. One-way. |
-| **Open / closed** | Whether a panel is one of *your* tabs right now. View state, carried in the URL, never stored. |
+| **Open / closed** | Whether the container is visible and whether a panel is one of *your* tabs right now. View state, carried in the URL, never stored. |
 | **Removed** | Whether a panel still exists in the room. Shared state, stored. |
 
 ---
@@ -45,7 +45,7 @@
 | Do chat panels sync? | **Always.** The chat does, so its panel does. Private chat panels included. | 4 |
 | Which stream carries panel events? | Chat panels → **the chat's stream**. Shared content panels → **the space stream**. No new stream kind. | 7 |
 | Can a shared panel be un-shared? | **No.** Once seen, seen (`DESIGN.md` §7.4). It can be removed. | 5.4 |
-| How many panels show at once? | **One.** Open panels are tabs in one container on the right; opening another adds a tab rather than splitting again. With no tab open, the space takes the whole pane. | 10 |
+| How many panels show at once? | **One.** Open panels are tabs in one container on the right; opening another adds a tab rather than splitting again. The container may also be open with no tabs so it can offer the first panel choices. | 10 |
 | What does the URL carry? | **The space in the path, panels in the query**: `?p=` the open tabs as panel ids, `?pa=` the one shown. A bare chat id still resolves to that chat's panel. | 8 |
 | What happens when an agent opens a URL? | It writes a **panel part** into its message. Clients turn it into a local panel for the person the agent acted for; everyone else sees a link. | 9 |
 | How is a web page rendered? | A **`<webview>` in the panel's DOM**, kept mounted while its tab is open, every attach checked by main. Not `WebContentsView`, which `LOCAL-ROOMS.md` §10.1 first chose: it draws over menus and dialogs. | 10.3 |
@@ -480,6 +480,7 @@ the spaces and chats it already carries — subject to the same size ceiling
 /w/:wsId/s/:spaceId                    a space: its sole or default chat in the main pane
 /local/s/:spaceId                      the same, for a local room
 ?p=pnl_A,pnl_B                         the open tabs, in the order they were opened
+?p=                                    the panel container open with no tabs
 ?pa=pnl_A                              the tab shown; omitted when it is the last one
 ?t=:messageId  ?a=  ?ta=               unchanged, and about the main pane
 ```
@@ -490,6 +491,10 @@ the spaces and chats it already carries — subject to the same size ceiling
 - **`?p=` carries panel ids**, not `c:`/`w:` segments. The typed segments
   `LOCAL-ROOMS.md` first proposed existed because the URL had to say which table an id was in;
   with one table (and ids that already say `pnl_`), the row says its type.
+- **An empty `?p=` keeps the container open with no tabs.** This is the first-use
+  state reached by **Toggle room panels** (`Command+Option+B` on macOS): it
+  offers a side chat and a local web page without creating either one merely
+  because the container was opened. Omitting `?p` closes the container.
 - **A bare chat id** (`?p=cht_P3`) resolves to that chat's panel, and the URL is
   rewritten to the panel id once the room's panels are read. Links written
   before panels keep working.
@@ -553,16 +558,20 @@ still written so the transcript shows *why* a panel appeared.
 ```
   ResizablePanelGroup (horizontal)
   ├── "space"   SpaceHeader · ChatView (main chat and composer)
-  └── "panels"  only while a tab is open: 42% to start, 320px at least
+  └── "panels"  while the container is open: 42% to start, 320px at least
                 PanelContainer
-                ├── tab row: a tab per open panel · Share · Remove
-                └── the shown panel's body
+                ├── tabs exist: tab row · Share · Remove · shown panel body
+                └── no tabs: side-chat and web-page choices
 ```
 
-- **With no tab open, the space takes the whole pane**, header included. With
-  any open, the pane splits: the space keeps its header on the left, and the
-  container's tab row sits in the same line on the right. Both rows are the same
-  height, so they read as one bar.
+- **With the container closed, the space takes the whole pane**, header
+  included. With the container open, the pane splits: the space keeps its
+  header on the left, and the container's header sits in the same line on the
+  right. Both rows are the same height, so they read as one bar.
+- **An open container with no tabs is useful, not blank.** It offers two
+  full-width choices: create a public or private side chat, or open a web page
+  locally. Both use the same dialogs as the Panels menu. Opening the container
+  alone never writes a panel row.
 - **One panel is shown at a time.** Opening a panel adds a tab and shows it;
   it never adds a second split.
 - **A tab** shows the type's icon (a chat, a private chat, a page) and the
@@ -581,6 +590,11 @@ still written so the transcript shows *why* a panel appeared.
   it. It also makes a side chat (named, public or private) and opens a web page
   (a bare address is taken as `http` for localhost, `https` otherwise). It
   appears only in a local room: a synced space has no panels to read yet.
+- **Toggle room panels** is a route command. `Command+Option+B` opens the most
+  recently created configured panel, or the empty chooser when the room has
+  none; invoking it while the container is open closes the whole container.
+  The command is active in editable controls because its complete modifier
+  chord does not take text from the composer.
 
 As built: `routes/Space.tsx`, `features/panels/PanelContainer.tsx`,
 `PanelMenu.tsx` and `useOpenPanels.ts`. The chat view both panes use is
@@ -725,7 +739,9 @@ one:
   `Space` shape (`shared/spaces.ts`), so the room view is one view.
 - **Step 3, done** for local rooms, as §8 and §10.1 describe: tabs in one
   container rather than a strip of side-by-side panels. `?p=` parsing,
-  resolution and tab closing are tested in `shared/panels.test.ts`.
+  resolution and tab closing are tested in `shared/panels.test.ts`. The
+  container also has a no-tabs chooser, and the route command toggles it with
+  `Command+Option+B` on macOS.
 - **Step 4, done** for local rooms. Local web panels are stored, opened from the
   Panels menu, shared into a local room, removed and swept, and **drawn** as a
   `<webview>` with back, forward and reload (§10.3). The attach check is proven

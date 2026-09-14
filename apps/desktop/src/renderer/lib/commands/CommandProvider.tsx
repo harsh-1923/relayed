@@ -74,6 +74,7 @@ export function CommandProvider({
     const onKeydown = (event: KeyboardEvent) => {
       const decision = decide({
         key: event.key,
+        code: event.code,
         ctrlKey: event.ctrlKey,
         altKey: event.altKey,
         shiftKey: event.shiftKey,

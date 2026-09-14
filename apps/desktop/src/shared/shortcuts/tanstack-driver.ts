@@ -26,6 +26,7 @@ export type Platform = 'mac' | 'windows' | 'linux';
 /** The fields of a KeyboardEvent a chord is read from. Structural, so this file needs no DOM types. */
 export interface KeydownLike {
   readonly key: string;
+  readonly code?: string;
   readonly ctrlKey: boolean;
   readonly altKey: boolean;
   readonly shiftKey: boolean;
@@ -71,6 +72,20 @@ export function normalizeChord(hotkey: string, platform: Platform): string | nul
 /** The chord a keydown spells, in the same canonical form `normalizeChord` produces. */
 export function chordFromKeydown(event: KeydownLike, platform: Platform): string {
   return normalizeHotkeyFromEvent(event as unknown as Parameters<typeof normalizeHotkeyFromEvent>[0], platform);
+}
+
+/**
+ * A chord ending in the labelled physical letter key. This is opt-in per
+ * command: Option changes `event.key` on macOS, while `event.code` keeps KeyB.
+ */
+export function physicalChordFromKeydown(event: KeydownLike, platform: Platform): string | null {
+  const match = /^Key([A-Z])$/.exec(event.code ?? '');
+  const physicalLetter = match?.[1];
+  if (!physicalLetter) return null;
+  return normalizeHotkeyFromEvent(
+    { ...event, key: physicalLetter } as unknown as Parameters<typeof normalizeHotkeyFromEvent>[0],
+    platform,
+  );
 }
 
 /** The key and resolved modifiers of a chord on a platform (`Mod` becomes Meta or Control). */

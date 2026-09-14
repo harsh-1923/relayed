@@ -79,7 +79,7 @@ function InspectorRow({
       setError(failure instanceof Error ? failure.message : String(failure));
     }
   };
-  const configurable = isConfigurableCommandId(binding.id);
+  const configurableId = isConfigurableCommandId(binding.id) ? binding.id : null;
 
   return (
     <div className="space-y-2 px-3 py-2.5">
@@ -108,18 +108,18 @@ function InspectorRow({
           className="h-7 font-mono text-xs"
         />
         <Button type="submit" size="sm" variant="secondary" className="h-7 px-2 text-xs">Try</Button>
-        {configurable ? (
+        {configurableId ? (
           <>
             <Button
               type="button" size="sm" variant="secondary" className="h-7 px-2 text-xs"
-              onClick={() => void persist(() => call(api => api.query('prefs.set', { key: keybindingKey(binding.id), value: parsed() })))}
+              onClick={() => void persist(() => call(api => api.query('prefs.set', { key: keybindingKey(configurableId), value: parsed() })))}
             >
               Save
             </Button>
             <Button
               type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs"
               title="Remove the session remap and the saved binding"
-              onClick={() => void persist(() => call(api => api.query('prefs.clear', { key: keybindingKey(binding.id) })))}
+              onClick={() => void persist(() => call(api => api.query('prefs.clear', { key: keybindingKey(configurableId) })))}
             >
               Reset
             </Button>

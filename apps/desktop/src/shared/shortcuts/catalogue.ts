@@ -40,6 +40,8 @@ export interface CommandDefinition {
   readonly configurable: boolean;
   readonly inputPolicy: InputPolicy;
   readonly repeat: 'ignore' | 'allow';
+  /** Whether matching follows the produced character or the labelled physical key. */
+  readonly keyMatch: 'logical' | 'physical';
   readonly nativeMenu: false | { readonly menu: 'app' | 'view' | 'window' };
 }
 
@@ -56,6 +58,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'allow-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: { menu: 'view' },
   },
   'shell.sidebar.toggle': {
@@ -68,6 +71,22 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'deny-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
+    nativeMenu: false,
+  },
+  'room.panels.toggle': {
+    title: 'Toggle room panels',
+    description: 'Show or hide the panel container in a room.',
+    category: 'View',
+    layer: 'route',
+    // Option changes KeyboardEvent.key on macOS, so this command deliberately
+    // follows the labelled physical B key. It is not offered elsewhere until
+    // the supported-platform shortcut matrix has been exercised by hand.
+    defaultBindings: { mac: ['Mod+Alt+B'], windows: [], linux: [] },
+    configurable: false,
+    inputPolicy: 'allow-editable',
+    repeat: 'ignore',
+    keyMatch: 'physical',
     nativeMenu: false,
   },
   'navigation.back': {
@@ -79,6 +98,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'deny-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: false,
   },
   'navigation.forward': {
@@ -90,6 +110,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'deny-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: false,
   },
   'app.settings.open': {
@@ -101,6 +122,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'allow-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: { menu: 'app' },
   },
   'app.shortcuts.open': {
@@ -112,6 +134,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'allow-editable',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: { menu: 'view' },
   },
   'composer.message.send': {
@@ -125,6 +148,7 @@ export const COMMANDS = {
     configurable: true,
     inputPolicy: 'focused-editor',
     repeat: 'ignore',
+    keyMatch: 'logical',
     nativeMenu: false,
   },
 } as const satisfies Record<string, CommandDefinition>;

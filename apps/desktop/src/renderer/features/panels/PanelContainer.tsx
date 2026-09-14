@@ -5,8 +5,8 @@
 // A type this build does not know is kept and drawn as a placeholder, never
 // dropped: a newer version wrote it (§3.3). A body that throws is caught here,
 // so one broken panel does not take the container or the chat with it.
-import { Component, type ComponentType, type ReactNode } from 'react';
-import { ChatDefault, Globe, LockClose, MultipleCrossCancelDefault, UploadUp } from '@relayed/icons';
+import { Component, useState, type ComponentType, type ReactNode } from 'react';
+import { ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, UploadUp } from '@relayed/icons';
 import type { Panel, Space, SpaceScope } from '../../../preload/api';
 import { Button } from '@/components/ui/button';
 import { ChatView } from '@/features/chat/ChatView';
@@ -14,6 +14,7 @@ import { call } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
 import { WebPanel } from './WebPanel';
+import { PanelCreationDialog, type PanelCreationKind } from './PanelCreationDialog';
 
 interface PanelBodyProps { panel: Panel; space: Space; scope: SpaceScope }
 
@@ -25,8 +26,48 @@ const PANEL_BODIES: Partial<Record<string, ComponentType<PanelBodyProps>>> = {
 export function PanelContainer({ tabs, space, scope, openPanels }: {
   tabs: readonly Panel[]; space: Space; scope: SpaceScope; openPanels: OpenPanels;
 }) {
+  const [adding, setAdding] = useState<PanelCreationKind>(null);
   const shown = tabs.find(panel => panel.id === openPanels.active) ?? tabs.at(-1);
-  if (!shown) return null;
+  if (!shown) {
+    return (
+      <section className="flex h-full min-h-0 min-w-0 flex-col" aria-label="Panels">
+        <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-3">
+          <span className="text-sm font-medium">Panels</span>
+          <Button variant="ghost" size="icon-xs" aria-label="Close panels" onClick={openPanels.closeContainer}>
+            <MultipleCrossCancelDefault />
+          </Button>
+        </div>
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="w-full max-w-sm">
+            <div className="mb-5 text-center">
+              <h2 className="text-base font-medium">Open a panel</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Work beside the room without leaving the conversation.</p>
+            </div>
+            <div className="space-y-2">
+              <EmptyPanelChoice
+                icon={<ChatPlus />}
+                title="Side chat"
+                description="Start a public or private conversation."
+                onClick={() => setAdding('chat')}
+              />
+              <EmptyPanelChoice
+                icon={<Globe />}
+                title="Web page"
+                description="Open a site on this device."
+                onClick={() => setAdding('web')}
+              />
+            </div>
+          </div>
+        </div>
+        <PanelCreationDialog
+          kind={adding}
+          space={space}
+          onKindChange={setAdding}
+          onCreated={id => { setAdding(null); if (id) openPanels.open(id); }}
+        />
+      </section>
+    );
+  }
   const Body = PANEL_BODIES[shown.type] ?? UnknownPanelBody;
 
   const share = () => { void call(api => api.query('local.panels.share', { panelId: shown.id })); };
@@ -74,6 +115,26 @@ export function PanelContainer({ tabs, space, scope, openPanels }: {
         ))}
       </div>
     </section>
+  );
+}
+
+function EmptyPanelChoice({ icon, title, description, onClick }: {
+  icon: ReactNode; title: string; description: string; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-full items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-3 text-left transition-colors hover:border-border hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground group-hover:text-foreground [&_svg]:size-4">
+        {icon}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{title}</span>
+        <span className="block truncate text-xs text-muted-foreground">{description}</span>
+      </span>
+    </button>
   );
 }
 

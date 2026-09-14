@@ -5,7 +5,9 @@
 // facts — editable focus, AltGraph — and passes them in.
 import { definitionOf, type CommandId } from '../../../shared/shortcuts/catalogue.ts';
 import type { EffectiveBinding } from '../../../shared/shortcuts/resolve.ts';
-import { chordFromKeydown, type KeydownLike, type Platform } from '../../../shared/shortcuts/tanstack-driver.ts';
+import {
+  chordFromKeydown, physicalChordFromKeydown, type KeydownLike, type Platform,
+} from '../../../shared/shortcuts/tanstack-driver.ts';
 import type { CommandRegistry, HandlerRegistration } from './registry.ts';
 
 export interface KeydownFacts extends KeydownLike {
@@ -19,15 +21,20 @@ export interface KeydownFacts extends KeydownLike {
   readonly editable: boolean;
 }
 
-export type BindingIndex = ReadonlyMap<string, CommandId>;
+export interface BindingIndex {
+  readonly logical: ReadonlyMap<string, CommandId>;
+  readonly physical: ReadonlyMap<string, CommandId>;
+}
 
 export function buildIndex(effective: readonly EffectiveBinding[]): BindingIndex {
-  const index = new Map<string, CommandId>();
+  const logical = new Map<string, CommandId>();
+  const physical = new Map<string, CommandId>();
   for (const binding of effective) {
     // Only ambient and overlay commands are the document adapter's to
     // dispatch. A `focused-editor` command belongs to its editor's own keymap
     // (§12.3) — the composer's capture-phase send path, today.
     if (definitionOf(binding.id).inputPolicy === 'focused-editor') continue;
+    const index = definitionOf(binding.id).keyMatch === 'physical' ? physical : logical;
     for (const hotkey of binding.hotkeys) {
       // The catalogue test forbids a default hard conflict and the sync engine
       // will refuse a stored one, so a collision here is a shadow between
@@ -36,7 +43,7 @@ export function buildIndex(effective: readonly EffectiveBinding[]): BindingIndex
       if (!index.has(hotkey)) index.set(hotkey, binding.id);
     }
   }
-  return index;
+  return { logical, physical };
 }
 
 export type Decision =
@@ -65,9 +72,13 @@ export function decide(
   if (event.defaultPrevented) return { kind: 'skip', reason: 'default-prevented' };
   // 229 is what Chromium reports for a keydown that an IME is consuming.
   if (event.isComposing || event.keyCode === 229) return { kind: 'skip', reason: 'composing' };
-  // No first-release binding supports AltGraph: it is text entry, not Control+Alt.
-  if (event.altGraph) return { kind: 'skip', reason: 'altgraph' };
-  const id = index.get(chordFromKeydown(event, platform));
+  const logicalId = index.logical.get(chordFromKeydown(event, platform));
+  const physicalChord = physicalChordFromKeydown(event, platform);
+  const physicalId = physicalChord ? index.physical.get(physicalChord) : undefined;
+  const id = logicalId ?? physicalId;
+  // macOS Option may report as AltGraph. Only an explicitly physical binding
+  // may claim that chord; Control+Alt text entry elsewhere remains untouched.
+  if (event.altGraph && physicalId === undefined) return { kind: 'skip', reason: 'altgraph' };
   if (id === undefined) return { kind: 'skip', reason: 'unbound' };
   const definition = definitionOf(id);
   if (event.repeat && definition.repeat !== 'allow') return { kind: 'skip', reason: 'repeat', id };
