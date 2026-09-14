@@ -138,14 +138,14 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
           id: spaceId, kind: 'channel', name: input.name,
           slug: input.slug ?? null, visibility,
           membership_policy: membershipPolicy, lifecycle: 'active',
-        }));
+        }, { kind: 'stream' }));
 
       events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
         'chat.created',
-        { id: chatId, space_id: spaceId, kind: 'sole', name: null }));
+        { id: chatId, space_id: spaceId, kind: 'sole', name: null }, { kind: 'stream' }));
 
       events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-        'space.member_added', { actor_id: input.createdBy, role: 'admin' }));
+        'space.member_added', { actor_id: input.createdBy, role: 'admin' }, { kind: 'stream' }));
     });
   } catch (err) {
     if (isConstraint(err, 'space_slug')) throw new SlugTakenError(input.slug ?? '');
@@ -296,7 +296,7 @@ async function addMember(
     .execute();
 
   return appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-    'space.member_added', { actor_id: actorId, role });
+    'space.member_added', { actor_id: actorId, role }, { kind: 'stream' });
 }
 
 /**
@@ -327,7 +327,7 @@ async function removeMember(
   // learn of it the next time they reconnect and the space is absent from
   // `welcome`; until then their local copy simply freezes.
   return appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-    'space.member_removed', { actor_id: actorId });
+    'space.member_removed', { actor_id: actorId }, { kind: 'stream' });
 }
 
 /** Load grants and placement once, then ask can() a single question. */

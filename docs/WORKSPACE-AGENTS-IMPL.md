@@ -62,8 +62,8 @@
 | [Whose OAuth app (§6.11)](WORKSPACE-AGENTS.md#611-auth-configs-whose-oauth-app) | [The Composio setup (§4.3)](#43-composio-setup-per-environment) |
 | [The Composio facts (§6.12)](WORKSPACE-AGENTS.md#612-the-composio-facts-this-rests-on) | Re-checked by [the Composio spikes (§4.1)](#41-spikes) before step 4 |
 | [The connector store (§7.1–§7.3)](WORKSPACE-AGENTS.md#7-the-connector-store) | [Step 4](#8-step-4--connections-and-the-connector-store) |
-| [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | [Step 5](#9-step-5--the-broker) |
-| [Messages only some people can see (§8.1–§8.9)](WORKSPACE-AGENTS.md#8-messages-only-some-people-can-see) | [Step 1](#5-step-1--restricted-messages-with-no-agent), after [step 0](#44-step-0--the-gap-path-the-version-rule-complete-rows-repair-at-reconnect) fixes the gap path it runs on |
+| [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | [Step 5](#9-step-5--the-broker); its event, `message.updated`, in [step 1](#5-step-1--restricted-messages-with-no-agent) |
+| [Messages only some people can see (§8.1–§8.9)](WORKSPACE-AGENTS.md#8-messages-only-some-people-can-see) | [Step 1](#5-step-1--restricted-messages-with-no-agent), after [step 0](#44-step-0--the-gap-path-the-version-rule-complete-rows-repair-at-reconnect) fixes the gap path it runs on. **Dormant**: nothing in v1 writes one (D15) |
 | [Security (§9)](WORKSPACE-AGENTS.md#9-security-in-one-table) | Each row's control is built in the step for its section. The tests are in [§12](#12-test-matrix) |
 | [Failure modes (§10)](WORKSPACE-AGENTS.md#10-failure-modes) | Steps [3](#7-step-3--runs-with-no-tools), [4](#8-step-4--connections-and-the-connector-store), [5](#9-step-5--the-broker) |
 | [Observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed) | Per step, once agreed ([§11.3](#113-telemetry-by-step)) |
@@ -83,7 +83,7 @@ Each row is folded into the proposal in the commit that builds it.
 
 | # | Decision or correction | Why | Proposal part to edit | Step |
 |---|---|---|---|---|
-| D1 | **A client op that carries an audience has the field dropped, not refused.** The op schema never declares `audience`, and a boundary rule forbids declaring one on any client op payload type | The proposal says such a send "is refused". But incoming frames are parsed permissively and unknown fields are dropped — an unknown field is never an error (invariant 66, `DESIGN.md` §9.10). Refusing one would be the only `.strict()` parse in the protocol. The boundary rule is what actually stops a client asking for one | [Who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) | 1 |
+| D1 | ✅ *Folded.* **A client op that carries an audience has the field dropped, not refused.** The op schema never declares one, a protocol test asserts an op carrying `visible_to` or `audience` parses with them dropped, and the boundary rule `sync/no-client-audience` keeps `writeMessage` out of `socket.ts` | The proposal said such a send "is refused". But incoming frames are parsed permissively and unknown fields are dropped — an unknown field is never an error (invariant 66, `DESIGN.md` §9.10). Refusing one would be the only `.strict()` parse in the protocol. *Built differently from first planned:* a line-based rule over `frames.ts` could not tell the op schema from the row schemas, which do carry `visible_to` | [Who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) | 1 |
 | D2 | **Invoking by DM waits for DMs to exist.** v1 invokes on mentions in channels | The server creates channels only. `spaces.ts` names `createDm` and `createRoom` as Phase 5 siblings | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
 | D3 | **Creating, editing and deactivating agents are HTTPS commands, not outbox ops** | They need a live handle check, happen rarely, and nobody creates an agent offline. The same shape invitations use (`apps/server/src/auth/invitations.ts`) | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
 | D4 | **The grant is an HS256 JWT signed with `AGENT_GRANT_SECRET`,** audience `relayed-agent-tools`, through `jose` | Only the server signs and verifies it, so a shared secret suffices. `jose` is already the session-token library (`apps/server/src/auth/tokens.ts`). A separate secret and audience keep a session token and a grant from standing in for each other, as the proposal requires | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 3 |
@@ -96,7 +96,9 @@ Each row is folded into the proposal in the commit that builds it.
 | D11 | **Step 2's editor ships without its Tools section**, which arrives in step 4 | The picker lists the catalogue, which step 4 creates. An agent with no tools is valid, and it is exactly what step 3 runs | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 4 |
 | D12 | **Agent summaries get their own replica table** (`agent_summaries`), not columns on `actors` | Keeps the actor row identical for people and agents on the client, as it is on the server (`DESIGN.md`, the actor model §6.3) | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
 | D13 | **`agent_activity` reaches the renderer through the bridge's push channel**, as `agent:stream` already does (`apps/desktop/src/renderer/lib/agent-stream.ts`) | It is ephemeral. Writing it to the replica would make every client store and invalidate a value that is stale within a minute | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | 3 |
-| D14 | **Every existing `appendEvent` call gains an explicit `{ kind: 'stream' }`** — eight today: `ops.ts` (`message.created`, `message.deleted`), `directory.ts` (`recordActor`), and five in `spaces.ts` (`space.created`, `chat.created` and the founder's `space.member_added` when a channel is created; `space.member_added` and `space.member_removed` afterwards) | The proposal makes the audience a required argument. That is only a guard if every call is edited on purpose, not defaulted | [What happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone) | 1 |
+| D14 | ✅ *Folded.* **Every existing `appendEvent` call gains an explicit `{ kind: 'stream' }`** — eight today: `ops.ts` (`message.created`, `message.deleted`), `directory.ts` (`recordActor`), and five in `spaces.ts` (`space.created`, `chat.created` and the founder's `space.member_added` when a channel is created; `space.member_added` and `space.member_removed` afterwards) | The proposal makes the audience a required argument. That is only a guard if every call is edited on purpose, not defaulted | [What happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone) | 1 |
+| D15 | ✅ *Folded.* **Access cards are public; only their actor acts on them.** Each client draws the card for its own person from `actor_id`; the card's coarse `state` lives on the message; the server refuses anyone but the request's actor. Restricted messages stay built as a **dormant capability** | Hidden from the room, a card leaves everyone else seeing a mention answered by nothing — the room has to see that the agent is waiting, and on whom. Raised by the dev after step 1 was built | [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), [§8.1](WORKSPACE-AGENTS.md#81-why-this-exists-and-why-nothing-in-v1-uses-it), invariant 88 | 1, 5 |
+| D16 | ✅ *Folded.* **`message.updated`, a new chat event: the server replacing a message's complete content**, not marked edited. `message.edited` stays reserved for a person's own edit | A card changing state must reach everyone, and nobody else holds the actor's connections to derive it from. A person's edit is a client op with LWW and an "edited" mark, which a card changing state is not | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | 1 |
 
 ---
 
@@ -106,7 +108,7 @@ Each row is folded into the proposal in the commit that builds it.
 
 | Needs | For | Where it is designed | Blocks |
 |---|---|---|---|
-| **Message parts in the server schema, the replica and `@relayed/protocol`** | The agent's reply parts, and the `access_request` card | `AGENT-RESPONSES.md`, implementation phases §9, phase 3 | Steps 3 and 5 |
+| **Message parts in the server schema, the replica and `@relayed/protocol`** | The agent's reply parts, the `access_request` card, and `parts` in the `message.updated` payload | `AGENT-RESPONSES.md`, implementation phases §9, phase 3 | Steps 3 and 5 |
 | **`show_ui` registered in the service runtime** | Rich replies. Not required: a reply of Markdown alone is valid | `AGENT-RESPONSES.md`, phase 4 | Nothing |
 | **DMs** (`createDm`) | Invoking by DM (D2) | `DESIGN.md`, build order §15, Phase 5 | Only the DM trigger |
 
@@ -122,8 +124,8 @@ Each row is folded into the proposal in the commit that builds it.
 ```
    spikes (§4.1) ──► step 0  the gap path (§4.4)
       │                        │
-      ├── step 1  restricted messages ◄────────────────────────────┐ (needs step 0)
-      │                                                            │
+      ├── step 1  restricted messages (dormant) + message.updated ─┐ (needs step 0)
+      │                                                            │ message.updated only
       │                                                            │
       ├── step 2  creating agents ──► step 3  runs with no tools ──┤
       │                                   ▲                        │
@@ -133,7 +135,8 @@ Each row is folded into the proposal in the commit that builds it.
 ```
 
 Step 0 first; then steps 1, 2 and 4 can proceed in parallel. Step 5 is the
-milestone and needs all of them.
+milestone and needs steps 3 and 4, and from step 1 only `message.updated` —
+cards are public, so the restricted-message path is not on it (D15).
 
 ---
 
@@ -411,69 +414,110 @@ It is the first of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usab
 
 **First:** the withheld-events spike (§4.1) — **done, passed** (§4.1.1); and **step 0** (§4.4), whose gap-path fixes this step's by-hand check runs into.
 
+**Status: built, and dormant** — server, protocol, client, tests and docs, as
+below. **Not yet done by hand** with three dev clients. After it was built the
+cards it was for became public (D15), so **nothing in v1 writes a restricted
+message**; it is kept as a tested capability for a later use. The step also
+carries **`message.updated`** (D16), which the public card needs — below, after
+the restricted-message tables.
+
+**Changed while building: an array, not a tuple table.** The plan followed the
+proposal's `messages.audience` discriminator plus a `message_audience` table.
+Reviewed mid-build, its arguments did not hold (the proposal's §8.5 now says
+why), and it cost a correlated subquery on every read path. Built instead:
+`visible_to TEXT[]` on `messages` and on `sync_events`, NULL for the whole chat,
+an empty list refused. The dev database had the tuple draft applied by the
+running `pnpm dev` watcher; it held no restricted rows and was reverted by hand
+before the array migration ran.
+
 ### Schema
 
-**New** `apps/server/src/db/migrations/009_restricted_messages.sql` — exactly the
-SQL in [§8.5](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone):
+**New** `apps/server/src/db/migrations/009_restricted_messages.sql`:
 
-- `messages.audience`: added with a default so existing rows backfill to `chat`,
-  then **the default dropped**.
-- `message_audience`.
-- `sync_events.audience`: added, backfilled to `stream`, default dropped.
-- `sync_events.listed_actor_ids`.
-- The `sync_event_audience` CHECK, with its `IS NOT NULL`.
+- `messages.visible_to TEXT[]` with `message_visible_to`:
+  `visible_to IS NULL OR cardinality(visible_to) >= 1`.
+- `sync_events.visible_to TEXT[]` with `sync_event_visible_to`, the same shape.
+- No default and no discriminator: NULL is a meaning here, and the guard
+  against a writer forgetting is `writeMessage` (below).
 
-**Changes** `apps/server/src/db/schema.ts` — the new columns and table.
+**Changes** `apps/server/src/db/schema.ts` — the two columns.
 
 ### Server
 
 | File | Change | Implements |
 |---|---|---|
-| **Changes** `sync/events.ts` | `appendEvent(trx, allocated, type, payload, audience)`, with `audience: { kind: 'stream' } \| { kind: 'listed'; actors: string[] }`. No default, so a missing argument does not compile. Writes both columns; `AppendedEvent` carries the audience | §8.5, last paragraph |
-| **Changes** `sync/ops.ts`, `sync/directory.ts`, `sync/spaces.ts` | Every call passes `{ kind: 'stream' }` (D14). `send` writes `audience: 'chat'` explicitly | §8.5 |
-| **Changes** `sync/ops.ts` | The body of `sendInner`'s transaction becomes `writeMessage(trx, { …, audience, parts?, onBehalfOf?, delegationId? })`. Client `send` calls it with `chat`; step 3's reply writer and the dev route call it directly. A `listed` message **does not bump `spaces.last_activity_at`** | §8.7, room activity row |
-| **New** `sync/visibility.ts` | The one place visibility is decided: `visibleMessages(eb, actorId)` (the SQL clause in §8.7) and `redactEvent(row, actorId)` for log rows. **Every read path imports these; none writes the clause itself** | §8.5, §8.7 |
-| **Changes** `sync/fanout.ts` | `deliver` narrows readers to the entitled and the withheld, in the order §8.6 gives, and writes the `withheld` frame to the latter | §8.6 |
-| **Changes** `sync/feed.ts` | `eventsSince`, `catchup`, `snapshotOf` and `backfill` take the requesting actor. Redaction in `eventsSince`; the visibility clause in `snapshotOf`, `backfill`, `counters` and `welcomeChats` — **in the query, before `LIMIT`** | §8.7, invariant 79 |
-| **Changes** `sync/socket.ts` | Passes the connection's actor into catch-up, gap and backfill. `complete: rows.length < limit` stays, and is correct only because of the line above | §8.7, backfill row |
-| **New** `web/dev.ts` | `POST /dev/restricted-message { chatId, authorId, listed[], body }`, registered only when `RELAYED_DEV_ROUTES` is set. Checks every listed actor passes `can(actor, 'read', chat)` | §8.8, second rule; §12.2 step 1 |
+| **New** `sync/visibility.ts` | The one place visibility is decided: `Audience` (`{ kind: 'stream' } \| { kind: 'listed'; actors }`), `toColumn` (sorted, no repeats, **throws on empty**), `fromColumn`, `visibleTo(alias, reader)` — the SQL clause — `receives(audience, reader)`, `redactEvent(row, reader)` and `withheld(rev)`. **Every read path imports these; none writes the clause itself** | §8.5, §8.7 |
+| **Changes** `sync/events.ts` | `appendEvent(trx, allocated, type, payload, audience)`, required. Its type is derived from the event's stream, so only a chat event may be `listed`. Writes `visible_to`; `AppendedEvent` carries the audience. `MessageCreated` gains an optional `visible_to` | §8.5, last paragraph |
+| **Changes** `sync/directory.ts`, `sync/spaces.ts` | The six calls pass `{ kind: 'stream' }` explicitly (D14) | §8.5 |
+| **Changes** `sync/ops.ts` | **New** `writeMessage(trx, { chatId, messageId, authorId, body, parentId, audience })` — the only message insert. Checks every listed actor can `read` the chat (`AudienceError`), refuses a reply to a restricted parent (not found if hidden from the author, forbidden otherwise), and **does not bump `last_activity_at`** for a list. `send` calls it with `stream`. `deleteMessage` reads `visible_to`: a message hidden from the deleter is not found, checked before authorship, and its delete is addressed to its own list. Parts, `onBehalfOf` and `delegationId` join the input in step 3 | §8.7, §8.8 |
+| **Changes** `sync/fanout.ts` | `deliver` sends the `ev` frame to readers on the list and `withheld` to every other reader, after `audienceFor` — so a listed actor who left the room gets nothing. `FanoutResult` gains `withheld` | §8.6 |
+| **Changes** `sync/feed.ts` | `eventsSince`, `catchup`, `backfill`, `repair` and `threadReplies` take the reader. Redaction in `eventsSince`; `messageRows` — the one SELECT every row path starts from — adds the clause as a WHERE and narrows `reply_count` with it, and selects `visible_to`; the clause in `counters` and `welcomeChats`. **All in the query, before `LIMIT`** | §8.7, invariant 79 |
+| **Changes** `sync/socket.ts` | Passes the connection's actor into catch-up, gap, backfill, repair and thread. `complete: rows.length < limit` stays, correct only because of the line above. `rowOnWire` adds `visible_to` | §8.7, backfill row |
+| **New** `web/dev.ts`, registered in `index.ts` when `RELAYED_DEV_ROUTES=1` (`env.devRoutes`) | `POST /dev/restricted-message { chatId, authorId, listed[], body, parentId? }`. Checks the author can `post`, writes through `writeMessage` and delivers through the socket after the commit. 400 for a bad body, an empty list or a listed actor who cannot read; 403 for an author who cannot post | §8.8, second rule; §12.2 step 1 |
 
 ### Protocol
 
 **Changes** `packages/protocol/src/frames.ts`:
 - `WITHHELD_EVENT = 'withheld'`, documented beside `Ev`.
-- Message payloads on `ev`, the `catchup_ok` events, `gap.recent` and
-  `backfill_ok.rows` gain optional `audience` and `visible_to`. `visible_to` is
-  sent only to the actors on it.
-- Nothing is made strict.
-- The client op frame declares no audience (D1).
+- `MessageRowFrame` gains optional `visible_to` (null or a list). A live
+  `message.created` payload carries it only for a listed message, and only ever
+  reaches the listed.
+- Nothing is made strict. The op frame declares no audience, so one sent is
+  dropped (D1).
 
 ### Client
 
 | File | Change |
 |---|---|
-| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 10: `messages.visible_to TEXT` (JSON array). `NULL` means the whole chat |
-| **Changes** `apps/desktop/src/sync/effects.ts` | `withheld` becomes a known effect returning no topics, so it stops counting as unknown. `messageCreated` stores `visible_to` |
-| **Changes** `apps/desktop/src/sync/catchup.ts` | Gap-tail and backfill inserts store `visible_to` |
-| **Changes** `apps/server/src/sync/feed.ts` | The per-reader `reply_count` (step 0) now counts under the visibility clause |
-| **Changes** `apps/desktop/src/renderer/features/chat/ChatBubble.tsx` | "Only visible to you", or "to you and 2 others", under a restricted message |
+| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 10 `restricted-messages`: `messages.visible_to TEXT` (a JSON array). `NULL` means the whole chat |
+| **Changes** `apps/desktop/src/sync/effects.ts` | `withheld` is a known effect returning no topics, so it stops counting as unknown. `messageCreated` stores `visible_to` |
+| **Changes** `apps/desktop/src/sync/catchup.ts` | `storeRow` stores `visible_to` on insert and update |
+| **Changes** `apps/desktop/src/sync/storage.ts`, `preload/api.d.ts`, `sync/local/store.ts` | `ReplicaMessage.visibleTo`, read leniently (anything but a string array reads as null — the column decides nothing). Local rooms always null |
+| **Changes** `apps/desktop/src/renderer/features/chat/ChatBubble.tsx` | "Only visible to you", or "Only visible to you and 2 others", in the footer — shown mid-stack too, not only on hover |
 
 ### Tests
 
 | Test | File |
 |---|---|
-| Each branch of `message_audience_kind` and `sync_event_audience`, against Postgres. Includes `('listed', NULL)`, `('listed', '{}')`, `('stream', '{a}')` | **new** `apps/server/src/db/restricted-schema.test.ts`, in the per-constraint style of `sync-schema.test.ts` |
-| A listed reader receives the event; an unlisted reader receives `withheld`; a listed actor who left the space receives nothing | `apps/server/src/sync/fanout.test.ts` |
-| Catch-up across a restricted message: the listed replica gets the payload, the unlisted one gets `withheld`, and both frontiers reach the head | `apps/server/src/sync/feed.test.ts` |
-| **Backfill with ordinal 1 hidden:** the unlisted page is short only because rows ran out, `complete` is true, and the client clears `has_gap` | `feed.test.ts`, `apps/desktop/src/sync/catchup.test.ts` |
-| **Badge:** a restricted message as the newest in a chat leaves an unlisted member's `chat_unread` and `mention_count` at zero, in `counters` and in `welcome` | `feed.test.ts` |
-| A `listed` send does not change `last_activity_at` | **new** `apps/server/src/sync/ops.test.ts` |
-| `withheld` advances the frontier as a known type; an unknown type still does too | `apps/desktop/src/sync/apply.test.ts` |
-| Boundary rule `protocol/no-client-audience`: no client op payload type declares `audience` | `tools/check-boundaries.mjs` |
+| Each branch of `message_visible_to` and `sync_event_visible_to`: NULL and a one-actor list insert, `'{}'` is refused; and `array_length('{}', 1)` is still NULL on this engine | **new** `apps/server/src/db/restricted-schema.test.ts` |
+| A listed reader receives the event; an unlisted reader receives `withheld` at the same rev with `{}` and not even the id; a non-reader nothing; a listed actor who left the space receives nothing; its delete is withheld like its creation | `apps/server/src/sync/fanout.test.ts` |
+| Catch-up across a restricted message: the listed replica gets the payload with `visible_to`, the unlisted one `withheld`, both `to_rev` at the head; the delete withheld too | `apps/server/src/sync/feed.test.ts` |
+| Gap tail filtered per reader, with `visible_to` for the listed; **backfill filters before the limit** (a hidden row does not shorten a page); **ordinal 1 hidden**: the page is short only when history ran out; **badge** zero for the unlisted in `counters` and `welcome`, one for the listed; reply counts and the thread page per reader; repair filtered | `feed.test.ts` |
+| **Ordinal 1 hidden, client side:** the floor stops at 2 and `complete` alone clears `has_gap`; a fetched row keeps its list | `apps/desktop/src/sync/catchup.test.ts` |
+| A restricted message does not move `last_activity_at`, a chat message does; a listed actor who cannot read is refused and nothing is allocated; an empty list is refused; the list is sorted and deduplicated; replying to one is not-found / forbidden; one is a valid reply; deleting a hidden one is not found even for an admin, and a listed non-author non-admin is forbidden; a delete is addressed to its list; a client send is always for the whole chat | **new** `apps/server/src/sync/ops.test.ts` |
+| The dev route writes and delivers; refuses an unreadable listed actor, an empty list, an author who cannot post and a malformed body | **new** `apps/server/src/web/dev.test.ts` |
+| `withheld` advances the frontier as a known type and moves nothing; a restricted message this client is on keeps its list | `apps/desktop/src/sync/apply.test.ts` |
+| An op frame carrying `visible_to` or `audience`, top-level or in `m`, parses with them dropped | `packages/protocol/src/frames.test.ts` |
+| Boundary rules `sync/messages-written-by-one-writer` (only `ops.ts` inserts a message, tests exempt) and `sync/no-client-audience` (`writeMessage` never appears in `socket.ts`), each probed to fire | `tools/check-boundaries.mjs` |
+
+**Mutation-checked** by hand: 14 planted bugs — each filter removed in turn
+(tail/backfill/repair/thread, reply count, counters, welcome, catch-up
+redaction), fanout sending content or nothing instead of `withheld`, a restricted
+message bumping activity, the listed-access check, an empty list read as the chat, a
+reply to a restricted message allowed, a hidden delete not hidden, a delete addressed to the
+chat, and the clause reading NULL as nobody. All 14 are caught.
+
+### `message.updated` (D16)
+
+The event step 5's card changes state through. Built here because it is sync
+engine, and because the version rule and repair (step 0) are what make it safe.
+
+| File | Change |
+|---|---|
+| **Changes** `apps/server/src/sync/events.ts` | `message.updated { id, body }` in the catalogue; the version rule declares it touches the message alone. `parts` joins the payload with message parts on the server |
+| **Changes** `apps/server/src/sync/ops.ts` | **New** `updateMessage(trx, { chatId, messageId, body })` for server writers: allocates a revision and no ordinal **before** reading, so a delete cannot land between the check and the write; refuses a tombstone or a message from another chat as not found; addresses the event to the message's own audience |
+| **Changes** `apps/desktop/src/sync/effects.ts` | Applies the body **only if the held version is not newer** — a repair page can store a newer row while an older update is still on its way — and never sets `edited_at`. A tombstone or a message not held is untouched, and the revision still counts |
+
+| Test | File |
+|---|---|
+| A revision and no ordinal; the version moves and nothing is marked edited; catch-up carries the event; repair returns the updated row to a client that gapped from before it | `apps/server/src/sync/ops.test.ts` |
+| A tombstone or a message in another chat is not found, and the refused allocation rolls back; an update of a restricted message is withheld from the unlisted | `ops.test.ts` |
+| The body is replaced and not marked edited; an older update does not overwrite a newer fetched row; a tombstone or a message never held is untouched and the frontier still passes | `apps/desktop/src/sync/apply.test.ts` |
 
 ### By hand
 
-Three dev clients, as `MULTI-CLIENT-DEV.md` describes, all in one channel:
+Three dev clients, as `MULTI-CLIENT-DEV.md` describes, all in one channel, with
+the server started with `RELAYED_DEV_ROUTES=1`:
 1. Write a restricted message listing client A through the dev route. A shows it
    labelled; B and C show nothing.
 2. On B and C, send and receive normally.
@@ -484,24 +528,28 @@ Three dev clients, as `MULTI-CLIENT-DEV.md` describes, all in one channel:
 ### Observability
 
 `sync.withheld{path}` for `live` and `catchup`
-([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)). Proposed
-to the dev before it is added to `packages/telemetry/src/metrics.ts`.
+([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)) is **not
+added**: it is proposed to the dev before it goes into
+`packages/telemetry/src/metrics.ts`. Until then the fanout span carries
+`withheld` as an attribute beside `delivered`.
 
 ### Docs, in the same commit
 
-- `SYNC-FLOWS.md`: how the socket decides what to send (§7), the frame
-  vocabulary (§8), catch-up, gap and backfill (§12–§14), read state and counters
-  (§15), the case table (§20).
+- `SYNC-FLOWS.md`: how the socket decides what to send (§7, new §7.1), the frame
+  vocabulary (§8), events that touch no row (§11.2), catch-up, gap and backfill
+  (§12–§14), read state and counters (§15), the case table (§20).
 - `DESIGN.md`: membership and access (§7.3) gains the message predicate; the
   client schema (§8.3) gains `visible_to`.
 - Invariants 78, 79 and 80 go into `DESIGN.md` §14.
-- D1 and D14 are folded into the proposal.
+- `AUTHZ.md` records the audience as an exception to invariant 53.
+- D1 and D14 are folded into the proposal, with §8.5 rewritten for the array and
+  §8.9 gaining the parent-version disclosure.
 
 ### Done when
 
 - The proposal's step 1 "what it proves" holds by hand.
-- `pnpm spike:sync`, `pnpm test` and `pnpm typecheck` are green.
-- The new boundary rule runs.
+- `pnpm spike:sync`, `pnpm test` and `pnpm typecheck` are green. ✅
+- The new boundary rules run. ✅
 
 ---
 
@@ -852,12 +900,11 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 - enforcement of [permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection)
 - [executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session)
 - [errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do)
-- [the card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat)
-- the `access_request` part and table in [who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain)
+- [the card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), including its `access_request` part and table
 - the milestone, step 5 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
 
 **First:**
-- steps 1, 3 and 4;
+- steps 3 and 4, and `message.updated` from step 1;
 - the Composio sessions and tool-definition spikes (§4.1).
 
 ### Schema
@@ -867,7 +914,7 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 | Table | From |
 |---|---|
 | `agent_tool_calls`, with outcome `pending` | [§5.5](WORKSPACE-AGENTS.md#55-a-tool-call) |
-| `access_requests` | [§8.8](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) |
+| `access_requests`, with `resolved_at` and `expired_at` | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) |
 | `composio_sessions (agent_actor_id, invoker_actor_id, config_rev, session_id, created_at, PRIMARY KEY (agent_actor_id, invoker_actor_id, config_rev))` | [§6.7](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) |
 
 ### Server
@@ -878,8 +925,9 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 | **New** `apps/server/src/agents/sessions.ts` | Get or create the session per (agent, invoker, `config_rev`) with the config in §6.7; the session's raw tools with meta tools removed; the 30-tool cap enforced | §6.7 |
 | **Changes** `apps/server/src/agents/dispatcher.ts` | Prepare fetches the run's tool definitions from its session, replacing step 3's empty list | §5.3, §6.7 |
 | **New** `apps/server/src/agents/tool-errors.ts` | The mapping in [§6.8](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do), **rewritten from the sessions spike's observed values**. `[Session Restriction]` raises an alert as well as `refused` | §6.8 |
-| **New** `apps/server/src/agents/access.ts`, routes | Writes the card: a restricted message listing the invoker, in the trigger's thread, carrying the `access_request` part, one per toolkit per run. `POST /access-requests/:id/allow` (session actor must equal the request's actor, then grants as in step 4). `POST /agent-runs/:id/retry` (invoker only, finished runs only, `attempt + 1`) | §7.4, §8.8 |
-| **Changes** `packages/protocol/src/parts.ts` | `access_request` in `MessagePart`, and a `SERVER_ONLY` set that `forbiddenPartKind` refuses for **every** author on the ordinary write path. The broker writes the part through `writeMessage` directly | §8.8 |
+| **New** `apps/server/src/agents/access.ts`, routes | Writes the card: a **public** message (`{ kind: 'stream' }`) by the agent on the invoker's behalf, in the trigger's thread, carrying the `access_request` part with `actor_id` and `state: 'pending'` and the public body — one per toolkit per run. `POST /access-requests/:id/allow` (session actor must equal the request's actor, then grants as in step 4). **Resolving** — the allow, a connect that ends allowed, or a grant from the connector store covering an open request — sets `resolved_at` and calls `updateMessage` with `state: 'resolved'` in the same transaction. Expiry on leaving the room or deactivation does the same with `expired`. `POST /agent-runs/:id/retry` (invoker only, finished runs only, `attempt + 1`) | §7.4, invariant 88 |
+| **Changes** `packages/protocol/src/parts.ts` | `access_request` in `MessagePart`, with `actor_id` and `state`, and a `SERVER_ONLY` set that `forbiddenPartKind` refuses for **every** author on the ordinary write path. The broker writes the part through `writeMessage` and changes it through `updateMessage` | §7.4 |
+| **Changes** `apps/server/src/sync/events.ts`, `ops.ts` | `parts` in the `message.updated` payload and in `updateMessage`, once parts exist on the server | §7.4 |
 
 ### Runtime (`apps/agent`)
 
@@ -891,8 +939,8 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 
 | File | Change |
 |---|---|
-| **New** `apps/desktop/src/renderer/features/agents/AccessCard.tsx` | The four states of [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), read from the local `connections` and `agent_permissions` projections, never from the message |
-| **Changes** `apps/desktop/src/renderer/features/chat/MessageParts.tsx` | Draws `access_request` as the card for the listed actor. Anyone else never holds the message |
+| **New** `apps/desktop/src/renderer/features/agents/AccessCard.tsx` | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat): for **the actor**, the action from the local `connections` and `agent_permissions` projections while `pending`, and Run again once `resolved`; for **everyone else**, the public sentence for the part's `state`. Which view is chosen by comparing `actor_id` with the signed-in actor — presentation only |
+| **Changes** `apps/desktop/src/renderer/features/chat/MessageParts.tsx`, `effects.ts` | Draws `access_request` through `AccessCard`; `message.updated` also replaces `parts` |
 | **Changes** `apps/desktop/src/renderer/features/connectors/ToolkitPage.tsx`, `features/agents/AgentProfile.tsx` | "Agents you allowed" with Revoke; the agent's toolkits, each with your status |
 
 ### Tests
@@ -904,19 +952,23 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 | **A call id executes once:** the same `tool_call_id` twice reaches Composio once | `broker.test.ts` |
 | A tool call after Stop is refused `run_not_running` | `broker.test.ts` |
 | A session that refuses a tool our snapshot allows raises the alert | `broker.test.ts` |
-| Only the listed actor can allow a request; retry is invoker-only and needs a finished run | **new** `apps/server/src/agents/access.test.ts` |
+| **Only the actor acts:** an allow sent with anyone else's session is refused, though they hold the card; retry is invoker-only and needs a finished run | **new** `apps/server/src/agents/access.test.ts` |
+| **Everyone sees it resolve:** an allow resolves the request and appends one `message.updated` with `state: 'resolved'`; a grant from the connector store resolves an open card too; leaving the room expires it | `access.test.ts` |
 | `forbiddenPartKind` refuses `access_request` for a person and for an agent on the ordinary write path | `packages/protocol/src/parts.test.ts` |
 
 ### By hand — the milestone
 
 The proposal's step 5, word for word:
 1. Bob asks `@triage` to file a bug with nothing connected.
-2. One card appears, and only Bob sees it.
-3. Bob connects and allows from that card, then presses Run again.
+2. One card appears in the thread, on every client. Bob's shows Connect; Alice's
+   and Carol's say `@triage` is waiting for Bob.
+3. Bob connects and allows from that card. On every client the card turns to
+   "Bob gave @triage access to Linear"; Bob's shows Run again, and he presses it.
 4. The issue appears in **Bob's** Linear, as Bob.
 
 Then Alice asks `@triage` in the same thread and gets her own card: Bob's
-permission is not hers.
+permission is not hers. Clicking Allow on Bob's earlier card from Alice's client
+— with the button forced on in devtools — is refused.
 
 ### Observability
 
@@ -994,7 +1046,7 @@ apps/server/src/agents/
 
 | Number | Name | Step |
 |---|---|---|
-| 009 | `restricted_messages` | 1 |
+| 009 | `restricted_messages` (dormant) | 1 |
 | 010 | `agents` | 2 |
 | 011 | `agent_runs` | 3 |
 | 012 | `connections` | 4 |
@@ -1011,7 +1063,7 @@ version 9 (step 0), 10 (step 1), 11 (step 2), 12 (step 4).
 
 | Step | Markers | Catalogue |
 |---|---|---|
-| 1 | `sync.withheld{path}` | `packages/telemetry/src/metrics.ts` |
+| 1 | `sync.withheld{path}` — not until something writes restricted messages | `packages/telemetry/src/metrics.ts` |
 | 3 | `agent.run{outcome}`, `agent.run.refused{refusal}`, `agent.run.deferred{reason}`, `agent.run.queue_wait`; the runtime's markers from `AGENT-RUNTIME.md` §8 | `metrics.ts` |
 | 4 | `connection.flow{scheme, stage, outcome}`, `composio.request{op, outcome}` + duration | `metrics.ts` |
 | 5 | `agent.tool{effect, outcome}` | `metrics.ts` |
@@ -1026,8 +1078,10 @@ are enforced by the catalogue's types:
 In order, because old clients and old runtimes persist (`DESIGN.md`, forward
 compatibility §9.10):
 
-1. **Server with step 1.** Old clients receive `withheld` as an unknown type and
-   advance their cursor. No client release is needed before the server.
+1. **Server with step 1.** Old clients receive `withheld` and `message.updated`
+   as unknown types and advance their cursor. No client release is needed before
+   the server; an old client shows a card's old state until the row is fetched
+   again.
 2. **Runtime before dispatcher.** Deploy `apps/agent` with the new body schema
    before a server whose dispatcher is configured (D5).
 3. **Composio production project** (§4.3) before step 4 reaches production,
@@ -1101,10 +1155,11 @@ From [invariants to add](WORKSPACE-AGENTS.md#invariants-to-add).
 | 77 | A workspace agent's palette holds no local tools | 3 | `RunRequest.palette`; runtime test |
 | 78 | A restricted message's revision reaches every reader; its content only the listed | 1 | `fanout.ts`, `visibility.ts`; contiguity tests |
 | 79 | Visibility filters run in SQL, before `LIMIT` | 1 | `visibility.ts` used by every read path; hidden-ordinal-1 test |
-| 80 | `listed` with no rows is nobody | 1 | The CHECK and the predicate; schema tests |
+| 80 | A list is never empty, and only `writeMessage` inserts a message | 1 | `toColumn`, the `cardinality` CHECKs, boundary rule `sync/messages-written-by-one-writer`; schema and ops tests |
 | 81 | A card carries no URL; the redirect goes only to the named actor | 4, 5 | `connections.ts`, the `access_request` part shape; connection tests |
 | 82 | An agent reaches a connection only through a permission naming it | 5 | `broker.ts` step 7; per-agent permission test |
 | 83 | Nothing learned for one invoker is given to a run for another | 5 (recorded) | `transcript.ts` builds per invoker. No sessions or memory exist to violate it |
+| 88 | An access card is public, only its actor acts on it, and its state changes for everyone through `message.updated` | 1, 5 | `updateMessage` and the version rule (1); `access.ts` actor check, resolution in one transaction (5); actor-only and resolve tests |
 
 ---
 
@@ -1143,4 +1198,5 @@ plus what this plan raised.
 | Group DMs with an agent | Nothing until DMs exist | With DMs (D2) |
 | Catalogue refresh frequency; deprecated pinned tools | Step 4's refresh | Before step 4 ships |
 | **Retention of `agent_runs.config`, `agent_tool_calls.arguments` and `access_requests`** — raised here | Nothing in v1; an audit trail with no retention grows for ever | Alongside `DESIGN.md`'s retention (§13.6) |
-| **Whether the dev-only restricted-message route survives after step 3** — raised here | Nothing | After step 3: remove it if nothing uses it |
+| **Whether the dev-only restricted-message route survives after step 3** — raised here | Nothing | Kept while restricted messages are dormant: it is their only writer, and what the by-hand check uses |
+| **Whether an untouched access card expires with time**, and after how long — raised by D15 | Nothing in v1 | With step 5 |

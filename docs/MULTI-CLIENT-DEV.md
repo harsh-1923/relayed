@@ -375,6 +375,18 @@ skip: it is where `device_id` stops being a column and starts being load-bearing
 Then the four flows from [`SYNC-FLOWS.md`](SYNC-FLOWS.md) §2 step 14 — a message
 crossing, a killed server, offline composition on both, and a slept laptop.
 
+**Messages only some people can see** need a writer no client has. Start the
+server with `RELAYED_DEV_ROUTES=1` and write one by hand:
+
+```bash
+curl -X POST localhost:8787/dev/restricted-message -H 'content-type: application/json' \
+  -d '{"chatId":"cht_…","authorId":"act_…","listed":["act_…"],"body":"a private notice"}'
+```
+
+The listed client shows it with "Only visible to you"; the others show nothing
+and keep receiving the chat. The full check is `WORKSPACE-AGENTS-IMPL.md` §5,
+by hand.
+
 ---
 
 ## 11. Status, and what is actually verified

@@ -25,7 +25,9 @@ interface ChatBubbleProps {
 
 export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = false }: ChatBubbleProps) {
   const align = mine ? 'end' : 'start';
-  const showFooter = message.state !== 'acked' || endsGroup;
+  // A restricted message always shows who it is for, mid-stack or not: that is
+  // not detail to reveal on hover.
+  const showFooter = message.state !== 'acked' || endsGroup || message.visibleTo !== null;
   // An agent's reply with parts is laid out as a page, not a speech bubble:
   // cards and tool calls inside a tinted bubble capped at 70% are cramped and
   // read as quoted. Everyone else's message keeps its bubble.
@@ -131,6 +133,11 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 </span>
               )}
               {message.state === 'acked' && formatTime(message.createdAt)}
+              {message.visibleTo && (
+                // Said, not implied: somebody replying out loud to a message
+                // nobody else can see would otherwise be talking to themselves.
+                <span className="flex items-center gap-1">· {visibleToLabel(message.visibleTo)}</span>
+              )}
               {!mine && !message.deleted && !streaming && message.body && (
                 // As its Markdown source. An agent's body is derived from its
                 // parts: tool lines come along as one-line summaries, cards not at all.
@@ -150,3 +157,13 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
 
 const formatTime = (createdAt: number): string =>
   new Date(createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/**
+ * "Only visible to you", or "… and 2 others". A replica only ever holds a
+ * restricted message its owner is listed on, so "you" is always true.
+ */
+const visibleToLabel = (visibleTo: string[]): string => {
+  const others = visibleTo.length - 1;
+  if (others <= 0) return 'Only visible to you';
+  return `Only visible to you and ${others} ${others === 1 ? 'other' : 'others'}`;
+};

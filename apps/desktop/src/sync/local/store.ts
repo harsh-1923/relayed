@@ -513,6 +513,8 @@ export class LocalStore {
       createdAt: Number(row['created_at']),
       deleted: Number(row['deleted']) === 1,
       state: String(row['state']),
+      // A local room is one person and their Claude: nothing in it is restricted.
+      visibleTo: null,
     }));
   }
 

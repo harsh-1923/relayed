@@ -439,6 +439,24 @@ export const Ev = z.object({
 export type Ev = z.infer<typeof Ev>;
 
 /**
+ * The event type an unlisted reader receives in place of any event about a
+ * message it may not see — its creation, its deletion, and edits once they
+ * exist (WORKSPACE-AGENTS.md §8.4). The payload is `{}`.
+ *
+ * The REVISION WITHOUT THE CONTENT, and the revision is the part that matters:
+ * a reader simply not sent the event would find a hole at that revision, ask
+ * catch-up for it, and could never be given it — its frontier would stop there
+ * and every later message in the chat would be staged and never shown.
+ *
+ * No id, no original type, no author, no ordinal: the id would let a recipient
+ * match a later delete to the same hidden message, and the type would say
+ * whether it was a creation or an edit. A client built before this type existed
+ * handles it correctly without knowing it — an unknown type still advances the
+ * cursor (invariant 32).
+ */
+export const WITHHELD_EVENT = 'withheld';
+
+/**
  * Sent immediately before closing a connection whose client is too old.
  *
  * Built now, a year before anything can trigger it, because the moment it is
@@ -500,11 +518,15 @@ export type Gap = z.infer<typeof Gap>;
  * replies it has. That is what makes "account for the revision, skip the
  * effect" safe for an edit below the window — when the row finally arrives it
  * already carries the edited body — and what makes overwriting a held row with
- * a fetched one safe at all (invariant 83).
+ * a fetched one safe at all (invariant 85).
  *
- * The three newest fields are optional on the wire because a server that
- * predates them omits them, and a client must read such a row as "not deleted,
- * never edited, no replies known" rather than refuse it.
+ * The newer fields are optional on the wire because a server that predates
+ * them omits them, and a client must read such a row as "not deleted, never
+ * edited, no replies known, visible to the chat" rather than refuse it.
+ *
+ * `visible_to` is the list for a message only some people can see, and a
+ * reader is only ever sent a row it is on (WORKSPACE-AGENTS.md §8.7) — so it is
+ * for DRAWING "only visible to you", never for deciding who may read.
  */
 const MessageRowFrame = z.object({
   id: z.string(),
@@ -516,6 +538,7 @@ const MessageRowFrame = z.object({
   deleted: z.boolean().optional(),
   edited_at: z.string().nullable().optional(),
   reply_count: z.number().int().nonnegative().optional(),
+  visible_to: z.array(z.string()).nullable().optional(),
 });
 export type MessageRowFrame = z.infer<typeof MessageRowFrame>;
 

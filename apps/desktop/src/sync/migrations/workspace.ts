@@ -534,4 +534,18 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE chat_state ADD COLUMN repair_after_id  TEXT;
     `,
   },
+  {
+    version: 10,
+    name: 'restricted-messages',
+    up: `
+      -- Messages only some people can see (WORKSPACE-AGENTS.md §8). A JSON
+      -- array of actor ids, or NULL for the whole chat.
+      --
+      -- For DRAWING "only visible to you", and for nothing else. This replica
+      -- only ever holds a restricted message its owner is listed on — the
+      -- server sends everyone else the revision alone — so nothing here decides
+      -- who may read anything, and a NULL cannot leak what never arrived.
+      ALTER TABLE messages ADD COLUMN visible_to TEXT;
+    `,
+  },
 ];

@@ -620,6 +620,33 @@ test('the gap ALSO closes on reaching ordinal 1, not only on being told', () => 
   db.close();
 });
 
+test('WITH ORDINAL 1 HIDDEN from this reader, the gap closes on complete alone', () => {
+  // WORKSPACE-AGENTS.md §8.7, the client's has_gap rule. A restricted message at ordinal 1
+  // is never sent here, so the floor stops at 2 and can never reach 1 — only
+  // the server's `complete` can clear the gap, and it may only because the
+  // server filtered it out before its LIMIT.
+  const db = replica();
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 60, recent: tail(11, 60) });
+  applyBackfill(db, CHAT.id, tail(2, 10), true);
+
+  const floor = backfillFloor(db, CHAT.id);
+  assert.equal(floor.oldestLocalOrd, 2, 'the floor stops above the hidden ordinal');
+  assert.equal(floor.hasGap, false, 'and the gap closed anyway, on the server\'s word');
+  db.close();
+});
+
+test('a fetched row carries its list into the replica, and a live one keeps it', () => {
+  const db = replica();
+  const notice: MessageRow = { ...(tail(5, 5)[0] as MessageRow), visible_to: ['act_me', 'act_bob'] };
+  applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 5, recent: [...tail(3, 4), notice] });
+  const rows = db.prepare('SELECT ord, visible_to FROM messages ORDER BY ord').all();
+  assert.deepEqual(rows.map(r => ({ ...r })), [
+    { ord: 3, visible_to: null }, { ord: 4, visible_to: null },
+    { ord: 5, visible_to: '["act_me","act_bob"]' },
+  ]);
+  db.close();
+});
+
 test('paging terminates without duplicates or holes', () => {
   // Keyset on `ord`, never OFFSET: offset paging degrades linearly and, worse,
   // skips or repeats rows when anything is inserted mid-scroll.

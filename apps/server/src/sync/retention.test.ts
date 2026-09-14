@@ -122,7 +122,7 @@ test('A CURSOR BELOW THE FLOOR GETS A GAP, not an empty replay', opts, async () 
   await sweepEvents(db);
 
   // Well inside the gap threshold, so distance alone would have said "replay".
-  const result = await catchup(db, chatStream(chatId), 5);
+  const result = await catchup(db, me, chatStream(chatId), 5);
   assert.equal(result.kind, 'gap',
     'unreplayable is not only about distance — the events are gone');
   if (result.kind !== 'gap') return;
@@ -144,7 +144,7 @@ test('a cursor ABOVE the floor still replays normally', opts, async () => {
   await db.updateTable('chats').set({ next_rev: 15 }).where('id', '=', chatId).execute();
   await sweepEvents(db);
 
-  const result = await catchup(db, chatStream(chatId), 10);
+  const result = await catchup(db, me, chatStream(chatId), 10);
   assert.equal(result.kind, 'replay', 'its next event is still retained');
   if (result.kind !== 'replay') return;
   assert.equal(result.events.length, 5);
@@ -158,7 +158,7 @@ test('a caught-up client is not pushed into a gap by retention', opts, async () 
   await backdated(chatId, 8, RETENTION_MS * 2);
   await sweepEvents(db);
 
-  const result = await catchup(db, chatStream(chatId), 8);
+  const result = await catchup(db, me, chatStream(chatId), 8);
   assert.equal(result.kind, 'replay');
   if (result.kind !== 'replay') return;
   assert.deepEqual(result.events, []);
@@ -171,7 +171,7 @@ test('a stream swept to nothing gives a gap rather than silence', opts, async ()
   await sweepEvents(db);
   assert.equal(await retainedFrom(db, chatStream(chatId)), null, 'nothing left');
 
-  const result = await catchup(db, chatStream(chatId), 0);
+  const result = await catchup(db, me, chatStream(chatId), 0);
   assert.equal(result.kind, 'gap');
 });
 

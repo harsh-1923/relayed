@@ -516,6 +516,16 @@ To fold into `DESIGN.md` §14. Numbering continues from 47.
 | 53 | A permission is a row in `memberships`, never a column on the object | The model stops being tuples and stops porting to a relationship engine |
 | 54 | A teardown **settles** every promise it abandons | An abandoned sign-in has no exit; callers wait for ever on a listener that is already gone. Not an authorization rule, but discovered building this and recorded where the others are |
 
+**One recorded exception to 53: a message's audience.** `messages.visible_to`
+is a list of actor ids on the row (`WORKSPACE-AGENTS.md` §8.5). It is not a grant
+anyone administers — it is fixed when the message is written, never changes,
+and only narrows a chat the reader already has access to, which stays the
+leading conjunct. That is the shape of `chats.kind`, not of a membership. A
+tuple table was built first and dropped: it cost a correlated subquery on every
+read path for none of the properties 53 protects. **The exception ends the day
+an audience can be edited after the fact** ("share with the chat", "add Bob");
+that is a grant, and it belongs in tuples.
+
 ---
 
 ## 14. Open questions

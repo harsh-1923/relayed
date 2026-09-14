@@ -67,5 +67,5 @@ export async function recordActor(
     state: actor.state,
   };
   const allocated = await allocateStream(trx, workspaceStream(actor.workspaceId));
-  await appendEvent(trx, allocated, change, payload);
+  await appendEvent(trx, allocated, change, payload, { kind: 'stream' });
 }

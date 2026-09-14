@@ -194,6 +194,32 @@ const RULES = [
     // does — and it is the product write paths this rule exists to hold.
     allow: [/\.test\.ts$/],
   },
+  {
+    id: 'sync/messages-written-by-one-writer',
+    doc: 'WORKSPACE-AGENTS.md §8.5 — a message\u2019s audience is a required argument',
+    why: 'messages.visible_to is NULL for the whole chat, and NULL is also what a '
+       + 'forgotten column is. What makes that safe is that writeMessage is the '
+       + 'only insert, and its audience argument does not compile when absent — '
+       + 'a second insert elsewhere writes a message for everyone because its '
+       + 'author did not think about who it was for, and nothing reports it.',
+    pattern: /\.insertInto\(\s*['"]messages['"]\s*\)/,
+    where: [/apps\/server\/src\//],
+    // Fixtures build rows to test constraints and allocation; they do not
+    // perform the product write.
+    allow: [/apps\/server\/src\/sync\/ops\.ts$/, /\.test\.ts$/],
+  },
+  {
+    id: 'sync/no-client-audience',
+    doc: 'WORKSPACE-AGENTS.md §8.8 — only the server writes a restricted message',
+    why: 'The socket is where client ops arrive. A path from a frame to '
+       + 'writeMessage is a path by which a client chooses who may read what it '
+       + 'sends, which v1 does not permit and whose threat model nobody has '
+       + 'written (§8.9). A client send goes through send(), which always writes '
+       + 'for the whole chat.',
+    pattern: /\bwriteMessage\b/,
+    where: [/apps\/server\/src\/sync\/socket\.ts$/],
+    allow: [],
+  },
 ];
 
 function walk(dir) {

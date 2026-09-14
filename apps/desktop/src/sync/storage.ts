@@ -108,6 +108,11 @@ export interface ReplicaMessage {
   createdAt: number;
   deleted: boolean;
   state: string;
+  /**
+   * The actors a restricted message is for — this person among them — or null
+   * for the whole chat. For saying so under the message; nothing decides on it.
+   */
+  visibleTo: string[] | null;
 }
 
 /**
@@ -782,7 +787,7 @@ export class Storage {
   messages(chatId: string, limit = 200): ReplicaMessage[] {
     const rows = this.workspace.prepare(`
       SELECT m.id, m.chat_id, m.parent_id, m.ord, m.author_id, m.body,
-             m.created_at, m.deleted, m.state,
+             m.created_at, m.deleted, m.state, m.visible_to,
              a.display_name, a.handle, a.avatar_blob, a.type
         FROM messages m
         LEFT JOIN actors a ON a.id = m.author_id
@@ -810,6 +815,7 @@ export class Storage {
       createdAt: Number(row['created_at'] ?? 0),
       deleted: Number(row['deleted'] ?? 0) === 1,
       state: String(row['state']),
+      visibleTo: readVisibleTo(row['visible_to']),
     }));
   }
 
@@ -1118,6 +1124,24 @@ function bumpEpoch(root: string, current: number): number {
   const next = current + 1;
   writeFileSync(p.epochFile(root), String(next) + '\n', { mode: 0o600 });
   return next;
+}
+
+/**
+ * A stored `visible_to`: a JSON array of actor ids, or NULL for the whole chat.
+ *
+ * Anything that is not an array of strings reads as null. That is safe only
+ * because this column decides nothing — the server never sends this replica a
+ * message it may not see — and a label that goes missing is a smaller fault
+ * than a chat that throws while rendering.
+ */
+function readVisibleTo(raw: unknown): string[] | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every(id => typeof id === 'string') ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Per install, telemetry and crash reports only. NEVER enters a token (§8). */

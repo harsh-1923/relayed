@@ -9,13 +9,16 @@
 // settled in step D and mapped there — keeping the two apart means the ledger
 // stores a result the transport can reshape, rather than pinning the protocol
 // to whatever this file happened to return first.
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { can, chat as chatTarget } from '@relayed/authz';
 import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { chatPlacement } from './placement.ts';
 import { allocateChat, applyOnce } from './allocate.ts';
 import { appendEvent, type AppendedEvent } from './events.ts';
+import {
+  AudienceError, toColumn, fromColumn, receives, type Audience,
+} from './visibility.ts';
 import { startSpan, annotate, mark } from '@relayed/telemetry';
 
 /** The message named by an op does not exist. */
@@ -98,39 +101,17 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
   const applied = await applyOnce(db, {
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'send',
   }, async (trx) => {
-    const allocated = await allocateChat(trx, input.chatId, true);
-    const row = await trx.insertInto('messages').values({
-      id: input.messageId, chat_id: input.chatId, parent_id: input.parentId ?? null,
-      ord: allocated.ord as number, rev: allocated.rev,
-      author_id: input.actorId, body: input.body,
-    }).returning('created_at').executeTakeFirstOrThrow();
-
-    // The space's activity clock, which drives auto-dormancy. Bumped here and
-    // not in the allocator, because a delete is activity for the sync cursor
-    // but not a reason to keep a space out of the "inactive" list.
-    await trx.updateTable('spaces')
-      .set({ last_activity_at: sql`now()` })
-      .where('id', 'in', eb => eb.selectFrom('chats').select('space_id')
-        .where('id', '=', input.chatId))
-      .execute();
-
-    const ack = ackOf(input.messageId, input.chatId,
-                      allocated.ord, allocated.rev, row.created_at);
-
-    // The event carries the ack's OWN timestamp, not a second reading of the
-    // clock. The sender applies the ack and every other device applies the
-    // event; if the two disagreed, one message would render at two different
-    // times depending on which device you looked at.
-    event = await appendEvent(trx, allocated, 'message.created', {
-      id: ack.messageId,
-      ord: allocated.ord as number,
-      parent_id: input.parentId ?? null,
-      author_id: input.actorId,
-      body: input.body,
-      created_at: ack.createdAt,
+    // A client's message is for the whole chat, always. There is no field on
+    // the op a client could put an audience in (the op schema declares none, so
+    // parsing drops one), and this is the only place a client send reaches
+    // the writer (WORKSPACE-AGENTS.md §8.8).
+    const written = await writeMessage(trx, {
+      chatId: input.chatId, messageId: input.messageId, authorId: input.actorId,
+      body: input.body, parentId: input.parentId ?? null,
+      audience: { kind: 'stream' },
     });
-
-    return ack;
+    event = written.event;
+    return written.ack;
   });
 
   // Narrowed rather than cast: `event` is always set when the work ran, but the
@@ -146,6 +127,108 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
              rev: applied.result.rev });
   if (applied.replayed || !event) return { ack: applied.result };
   return { ack: applied.result, event };
+}
+
+export interface MessageWrite {
+  chatId: string;
+  messageId: string;
+  authorId: string;
+  body: string;
+  parentId: string | null;
+  /** Required, with no default: a writer that forgets must not compile (§8.5). */
+  audience: Audience;
+}
+
+/**
+ * Write one message and its event, inside a transaction the caller owns.
+ *
+ * THE ONLY FUNCTION THAT INSERTS A MESSAGE (a boundary rule holds it), which is
+ * what makes the column's NULL safe to mean "the whole chat": the audience is a
+ * required argument here, so no writer reaches the table without stating one.
+ * A client's send calls this with `stream`; the server's own writers — the dev
+ * route — the only writer of one while restricted messages are dormant — calls
+ * it with a list, and an agent run's public cards with `stream`.
+ *
+ * Authorising the AUTHOR is the caller's job, because the callers differ: a
+ * client send checks `post` against the sender's grants before its op is
+ * ledgered, and an agent's reply is authorised by its run. What is checked here
+ * is what no caller may skip — the audience itself.
+ */
+export async function writeMessage(
+  trx: Transaction<DB>, input: MessageWrite,
+): Promise<{ ack: Ack; event: AppendedEvent }> {
+  const visibleTo = toColumn(input.audience);
+
+  // EVERY LISTED ACTOR MUST BE ABLE TO READ THE CHAT when it is written
+  // (§8.8). A message addressed to somebody outside the room would sit in the log
+  // naming them, delivered to nobody and implying a relationship that does not
+  // exist. One placement, a grant load per listed actor — a list is a handful.
+  if (visibleTo !== null) {
+    const placement = await chatPlacement(trx, input.chatId);
+    for (const actorId of visibleTo) {
+      const grants = await loadGrants(trx, actorId);
+      if (!can(grants, 'read', chatTarget(input.chatId), placement)) {
+        throw new AudienceError('cannot_read', actorId);
+      }
+    }
+  }
+
+  // NOTHING REPLIES TO A RESTRICTED MESSAGE in v1 (§8.8): a thread under one
+  // would need every reply restricted too, and nothing needs it. Read only for
+  // a reply, so a top-level send costs no statement. Refused as NOT FOUND to an
+  // author who cannot see the parent — the answer they would get for an id that
+  // does not exist — and as forbidden to one who can.
+  if (input.parentId !== null) {
+    const parent = await trx.selectFrom('messages').select('visible_to')
+      .where('id', '=', input.parentId).where('chat_id', '=', input.chatId)
+      .executeTakeFirst();
+    if (parent && parent.visible_to !== null) {
+      if (!parent.visible_to.includes(input.authorId)) {
+        throw new MessageNotFoundError(input.parentId);
+      }
+      throw new Forbidden('reply', chatTarget(input.chatId));
+    }
+  }
+
+  const allocated = await allocateChat(trx, input.chatId, true);
+  const row = await trx.insertInto('messages').values({
+    id: input.messageId, chat_id: input.chatId, parent_id: input.parentId,
+    ord: allocated.ord as number, rev: allocated.rev,
+    author_id: input.authorId, body: input.body, visible_to: visibleTo,
+  }).returning('created_at').executeTakeFirstOrThrow();
+
+  // The space's activity clock, which drives auto-dormancy and sidebar order.
+  // Bumped here and not in the allocator, because a delete is activity for the
+  // sync cursor but not a reason to keep a space out of the "inactive" list.
+  //
+  // NOT for a restricted message: the room would jump to the top of an unlisted
+  // member's sidebar with nothing new in it they can see (§8.7).
+  if (visibleTo === null) {
+    await trx.updateTable('spaces')
+      .set({ last_activity_at: sql`now()` })
+      .where('id', 'in', eb => eb.selectFrom('chats').select('space_id')
+        .where('id', '=', input.chatId))
+      .execute();
+  }
+
+  const ack = ackOf(input.messageId, input.chatId,
+                    allocated.ord, allocated.rev, row.created_at);
+
+  // The event carries the ack's OWN timestamp, not a second reading of the
+  // clock. The sender applies the ack and every other device applies the
+  // event; if the two disagreed, one message would render at two different
+  // times depending on which device you looked at.
+  const event = await appendEvent(trx, allocated, 'message.created', {
+    id: ack.messageId,
+    ord: allocated.ord as number,
+    parent_id: input.parentId,
+    author_id: input.authorId,
+    body: input.body,
+    created_at: ack.createdAt,
+    ...(visibleTo !== null ? { visible_to: visibleTo } : {}),
+  }, fromColumn(visibleTo));
+
+  return { ack, event };
 }
 
 export interface DeleteInput {
@@ -186,10 +269,14 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
   authorize('read');
 
   const message = await db.selectFrom('messages')
-    .select(['id', 'chat_id', 'author_id', 'parent_id'])
+    .select(['id', 'chat_id', 'author_id', 'parent_id', 'visible_to'])
     .where('id', '=', input.messageId)
     .executeTakeFirst();
-  if (!message || message.chat_id !== input.chatId) {
+  // A message the actor may not see does not exist, as far as they are told —
+  // checked before the author is compared, for the same reason chat access is:
+  // `forbidden` would confirm there is something there.
+  const audience = fromColumn(message?.visible_to ?? null);
+  if (!message || message.chat_id !== input.chatId || !receives(audience, input.actorId)) {
     throw new MessageNotFoundError(input.messageId);
   }
 
@@ -219,8 +306,13 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
     // that forces the frontier to be tracked explicitly rather than derived
     // from rows, and the reason `delete` is in this phase at all
     // (PHASE-2-SYNC.md §1).
+    //
+    // The delete of a restricted message is restricted to the same people:
+    // everyone else receives its revision as `withheld`, exactly as they did
+    // its creation, so nothing about it — not even that the hidden message was
+    // deleted — reaches them (§8.4).
     event = await appendEvent(trx, allocated, 'message.deleted',
-      { id: input.messageId, parent_id: message.parent_id });
+      { id: input.messageId, parent_id: message.parent_id }, audience);
 
     return ackOf(input.messageId, input.chatId, null, allocated.rev, row.created_at);
   });
@@ -231,6 +323,52 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
   // place a genuine bug could hide behind an assertion.
   if (applied.replayed || !event) return { ack: applied.result };
   return { ack: applied.result, event };
+}
+
+export interface MessageUpdate {
+  chatId: string;
+  messageId: string;
+  body: string;
+}
+
+/**
+ * Replace a message's content, as the server — `message.updated`.
+ *
+ * For server writers only, inside a transaction the caller owns: an access
+ * card's state changing is the first (WORKSPACE-AGENTS.md §7.4). NOT a person's
+ * edit, which is a client op with its own rules and its own event
+ * (`message.edited`), and so this marks nothing edited. Authorising the change
+ * is the caller's job, as it is for `writeMessage`.
+ *
+ * ALLOCATES FIRST, then reads. The allocation locks the chat's row, so a delete
+ * of the same message — which allocates on the same row — either committed
+ * before this read or waits until after this transaction; a message cannot be
+ * deleted between the check and the update. A refusal after allocating costs
+ * nothing, because it throws inside the caller's transaction and rolls the
+ * revision back with it.
+ *
+ * The event goes to the message's own audience, so a restricted message's
+ * update is withheld from everyone its creation was (§8.4).
+ */
+export async function updateMessage(
+  trx: Transaction<DB>, input: MessageUpdate,
+): Promise<AppendedEvent> {
+  const allocated = await allocateChat(trx, input.chatId, false);
+  const message = await trx.selectFrom('messages').select('visible_to')
+    .where('id', '=', input.messageId).where('chat_id', '=', input.chatId)
+    .where('deleted', '=', false)
+    .executeTakeFirst();
+  // A tombstone is not updated back to life, and an id from another chat is not
+  // this chat's message: both are simply not found.
+  if (!message) throw new MessageNotFoundError(input.messageId);
+
+  // `rev` is not set here: the version rule bumps it (events.ts).
+  await trx.updateTable('messages').set({ body: input.body })
+    .where('id', '=', input.messageId).where('chat_id', '=', input.chatId)
+    .execute();
+
+  return appendEvent(trx, allocated, 'message.updated',
+    { id: input.messageId, body: input.body }, fromColumn(message.visible_to));
 }
 
 /**

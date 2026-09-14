@@ -40,8 +40,8 @@
 | **Connection** | A person's account at a toolkit, linked through Composio. `Alice ↔ Alice's Linear`. |
 | **Permission** | A person allowing one agent to use one of their connections. `Alice lets @triage use her Linear`. |
 | **Connector store** | The screen where people browse toolkits, connect, disconnect, and see which agents they allowed (§7). |
-| **Access card** | What a run posts when its invoker has not connected a toolkit or not allowed the agent to use it. Only the invoker sees it or can act on it (§7.4). |
-| **Restricted message** | A message only the actors listed on it can see, inside a chat others can read (§8). |
+| **Access card** | What a run posts in the thread when its invoker has not connected a toolkit or not allowed the agent to use it. **Everyone in the thread sees it; only the invoker can act on it** — each client draws it for its own person, and the server refuses anyone else (§7.4). |
+| **Restricted message** | A message only the actors listed on it can see, inside a chat others can read. Built as a **dormant capability**: nothing in v1 writes one (§8). |
 | **Withheld event** | What a chat member who is not listed receives instead of a restricted message's event: the revision, with nothing in it (§8.4). |
 | **Checkpoint** | One of six named functions every run passes through — `invocationsFor`, `admitRun`, `beforeToolCall`, `afterToolCall`, `deliverReply`, `onRunEnd` — where later features are added (§5.9). |
 
@@ -72,15 +72,16 @@
 | Must I sign in again for each agent? | **No.** You connect Linear once; each further agent only needs **Allow**. The connection is yours, and the permission is our own record of which agents may use it. | 6.4 |
 | How do API-key toolkits connect? | **Through the same hosted Connect Link as OAuth.** Composio's page asks for the key and any field like a subdomain, so a person's key never touches our server. | 6.5 |
 | How do we know the right person finished connecting? | Composio's **callback identity verification**, switched on, completed by the desktop app over loopback with the session's actor — the sign-in flow's shape. | 6.5 |
-| How is "connect Linear" shown to Alice only? | A **restricted message** listing Alice, holding a system-written access card with no URL in it. The server issues the redirect only to Alice's signed-in request. | 8, 7.4 |
+| How is "connect Linear" shown so that only Alice can act? | A **public** access card naming Alice as the one who may act. Her client draws Connect or Allow; everyone else's draws "@triage is waiting for Alice to give it access to Linear". It holds no URL, the server issues the redirect only to Alice's signed-in request, and its state changes for everyone through `message.updated`. | 7.4 |
+| Why not hide the card from everyone but Alice? | **The room has to see why the agent went quiet.** Hidden, Alice's mention looks answered by nothing. Hiding was the first design and was dropped; the machinery it needed is kept dormant. | 7.4, 8.1 |
 | Direct execution or Composio sessions? | **A session per (agent, invoker, config revision).** Composio then refuses tools outside the agent's list even if our broker had a bug. | 6.7 |
 | How does our record stay true? | Composio's `expired` webhook for speed, a 15-minute reconciliation for correctness, and execution errors in between. | 6.9 |
 | What does disconnect do? | **Revoke upstream, then delete.** Deleting alone leaves the provider's tokens valid. | 6.10 |
 | Whose OAuth apps? | Composio's in development; **ours for every enabled OAuth toolkit before launch**, because switching later forces every person to reconnect. | 6.11 |
 | Is a per-message `visible_to` safe for `ord` and `rev`? | **Only if the other members still receive the revision.** Dropping it stalls their cursor for good. They receive a withheld event instead. | 8.3 |
-| Stored as an array where empty means everyone? | **No.** A discriminator plus tuples: `messages.audience` and `message_audience` rows. Empty-means-everyone fails open. | 8.5 |
+| Stored as an array where empty means everyone? | **An array, but empty is refused.** `messages.visible_to TEXT[]`: NULL is the whole chat, a list is only those actors, and `{}` fails a CHECK. A tuple table was tried and dropped. | 8.5 |
 | Who may write a restricted message? | **Only the server**, on an agent's behalf. No client op sets an audience in v1. | 8.8 |
-| Is the agent's reply restricted? | **No, in v1.** The cards are. Invoker-only replies reuse the same machinery later (§13). | 8.1 |
+| Is the agent's reply restricted? | **No, and nor are its cards** (§7.4). Restricted messages exist as a dormant capability for a later use that needs a private message stored in a chat's history (§8.1). | 8.1 |
 
 ---
 
@@ -114,7 +115,7 @@
                                                   grant valid? run running? Bob active?
                                                   tool in snapshot? Bob allowed @triage on Linear?
                                                   Bob has an active Linear connection?
-                                                     ├─ no  → restricted access card for Bob;
+                                                     ├─ no  → access card in the thread, Bob may act;
                                                      │        "connection_required" to the model
                                                      └─ yes → Composio session (@triage × Bob).execute
                                                               record agent_tool_calls; result back
@@ -139,7 +140,7 @@ Read these before changing anything below.
 | Replies carry `author_id` = agent and `on_behalf_of_actor_id` = the person | `DESIGN.md`, agents (§13.8); columns in `005_sync.sql` | Already in the schema, unwritten |
 | The runtime holds no credential it would mind losing, and `bash` must leave the palette before an end user's text reaches it | `AGENT-RUNTIME.md`, the bash problem (§5) | §5.4 removes it for workspace agents |
 | Per-user credentials are "the one that is not merely deferred" | `AGENT-RUNTIME.md`, deliberately not built (§9) | This doc is that trigger |
-| A reply is `body` plus parts; only the system writes approval-like UI | `AGENT-RESPONSES.md`, the message contract (§3) and rules for rooms (§7) | The access card is a system part (§8.8) |
+| A reply is `body` plus parts; only the system writes approval-like UI | `AGENT-RESPONSES.md`, the message contract (§3) and rules for rooms (§7) | The access card is a system part (§7.4) |
 | An event computes its audience at send time; a connection holds no grant | `SYNC-FLOWS.md`, how the socket decides what to send (§7) | §8.6 extends the audience, it does not add a subscription |
 | A stream a recipient may only partly read can never become contiguous | `SYNC-FLOWS.md`, `sync_events` (§5); `directory.ts` header | The root of §8.3 |
 | A permission is a row, never a column on the object | `AUTHZ.md`, invariant 53 | Why §8.5 uses tuples and §4.4 uses a membership |
@@ -616,8 +617,9 @@ Relayed's own resources:
 
 - the thread, when the trigger is a thread reply; otherwise the chat's last 40
   top-level messages, capped at 24 KB of text;
-- a restricted message only when the invoker is listed on it (§8), so Alice's
-  access card never appears in a run Bob started;
+- a restricted message only when the invoker is listed on it (§8) — nothing
+  writes one in v1, and the rule is here so the first writer inherits it;
+- an access card as its one-line `body`, which is public by design (§7.4);
 - each line labelled with the author's name, handle and whether they are a
   person or an agent; tool parts collapsed to their one-line summary;
 - **the agent's own earlier replies labelled as its own** ("you, @triage"), and
@@ -884,7 +886,7 @@ A tuple — *Alice allows `@triage`, on Linear, up to write* — as `AUTHZ.md` a
 
 So, for Alice:
 
-| Alice has | `@triage` asks for Linear | The card says |
+| Alice has | `@triage` asks for Linear | The card says, to Alice |
 |---|---|---|
 | Nothing | — | **Connect Linear and allow @triage** — sign in, then allow, in one flow |
 | Linear connected; allowed `@digest`, not `@triage` | — | **Allow @triage to use your Linear** — one click, **no sign-in** |
@@ -1263,43 +1265,176 @@ connection, not per run.
 
 ### 7.4 The card in a chat
 
-One card kind covers everything a run can be missing. It is written as a
-restricted reply in the thread the agent's answer goes to (§5.7), listing only
-the invoker:
+One card kind covers everything a run can be missing. It is an ordinary
+**public** message in the thread the agent's answer goes to (§5.7), written by
+the agent on the invoker's behalf. Everyone in the thread sees it; one person can
+act on it.
 
-| Bob's local state | The card says | Clicking |
+**Why public.** Hidden from everyone but the invoker — the first design, with a
+restricted message (§8) — Alice's `@triage` mention would look, to the rest of
+the room, answered by nothing. The card is how the room knows the agent is
+waiting and on whom. What must stay with Alice is the ability to act, and that
+was never a question of who can see the card: it is the server refusing anyone
+else (below).
+
+**A card, as a row.** Parts on server messages are a dependency
+(`AGENT-RESPONSES.md`, phase 3); with them:
+
+```json
+{
+  "id": "msg_01M3CARD…",
+  "chat_id": "cht_eng",
+  "parent_id": "msg_01M3ALICE…",
+  "ord": 5523,
+  "rev": 8142,
+  "author_id": "act_triage",
+  "on_behalf_of_actor_id": "act_alice",
+  "body": "@triage is waiting for [Alice](actor:act_alice) to give it access to Linear.",
+  "parts": [{
+    "kind": "access_request",
+    "request_id": "arq_01M3…",
+    "run_id": "run_01M3…",
+    "actor_id": "act_alice",
+    "agent_id": "act_triage",
+    "toolkit": "linear",
+    "effect": "write",
+    "state": "pending"
+  }],
+  "visible_to": null,
+  "deleted": false,
+  "edited_at": null,
+  "reply_count": 0
+}
+```
+
+- **`actor_id`** is the one person who may act. A client compares it with its own
+  actor to choose what to draw.
+- **`state`** is public and coarse — `pending`, `resolved`, `expired` — and lives
+  on the message, because nobody but Alice holds Alice's connections.
+- **`body`** is the public fallback: what an older client, search and a
+  notification show. It never carries a URL. It links Alice as a mention, so the
+  card raises **her** mention badge and nobody else's.
+
+**What each person sees:**
+
+| `state` | The actor (Alice) | Everyone else |
 |---|---|---|
-| Not connected | **Connect Linear to let @triage file this** | Connect (§6.5), then allow, in one go |
-| Connected, not allowed for this agent, or not at this effect | **Allow @triage to create issues in your Linear** — no sign-in, because the connection already exists (§6.4) | `POST /access-requests/:id/allow` |
-| Both done | **Linear is ready** · **Run again** | `POST /agent-runs/:runId/retry` — a new attempt of the same trigger (`attempt + 1`), for the invoker only, once the first attempt has finished |
-| Connection needs reauth | **Reconnect Linear** | §6.5 |
+| `pending` | From her own `connections` and `agent_permissions`: **Connect Linear and allow @triage**, **Allow @triage to create issues in your Linear**, or **Reconnect Linear** (§6.4, §6.9) | "@triage is waiting for Alice to give it access to Linear" |
+| `resolved` | "Linear is ready" · **Run again** | "Alice gave @triage access to Linear" |
+| `expired` | "This request expired" | "@triage didn't get access to Linear" |
 
-The card's state is read from Bob's `connections` and `agent_permissions`
-projection, so it changes on every device the moment the push arrives, without an
-edit to the message (§8.8). Everyone else in the chat receives only a withheld
-event (§8.4); the reply they *can* see says, in words, that `@triage` needs Bob to
-connect Linear.
+The public wording says **access**, never "connect" or "allow": it must not
+disclose whether Alice already has Linear connected, and it stays true between
+her connecting and her allowing.
 
-`POST /access-requests/:id/allow` refuses unless the session's actor is the
-request's actor — the check proposed for this flow. **The guarantee underneath it
-is stronger than the check:** a grant and a connection are always written for the
-session's own actor, so there is no request anyone could send that attaches or
-allows something for somebody else.
+| Alice clicks | Calls |
+|---|---|
+| Connect | The connect flow (§6.5), then allow, in one go |
+| Allow | `POST /access-requests/:id/allow` |
+| Run again | `POST /agent-runs/:runId/retry` — a new attempt of the same trigger (`attempt + 1`), for the invoker only, once the first attempt has finished |
+| Reconnect | §6.5 |
+
+**Only the actor acts, and the server is what says so.** Which buttons a client
+draws is presentation. `POST /access-requests/:id/allow` refuses unless the
+session's actor is the request's actor, and the connect flow's card origin
+checks the same. **The guarantee underneath is stronger than the check:** a grant
+and a connection are always written for the session's own actor, so no request
+anyone could send attaches or allows something for somebody else (invariant 88).
+
+**How the state changes, for everyone.** When a request resolves — Alice's allow,
+or a connect that ends allowed — the same transaction sets
+`access_requests.resolved_at` and replaces the card's content with
+`updateMessage`, which appends **`message.updated`** on the chat stream:
+
+```json
+{ "t": "ev", "stream": { "kind": "chat", "id": "cht_eng" }, "rev": 8150,
+  "type": "message.updated",
+  "payload": { "id": "msg_01M3CARD…",
+               "body": "Alice gave @triage access to Linear.",
+               "parts": [{ "kind": "access_request", "…": "…", "state": "resolved" }] } }
+```
+
+A permission granted from the connector store instead of the card resolves every
+open card for that actor, agent and toolkit the same way. A request becomes
+`expired` when it can no longer be completed — its actor left the room or was
+deactivated; whether an untouched card also expires with time is open (§15).
+
+`message.updated` replaces a message's **complete** content, never a diff, and
+is not an edit: it marks nothing edited. `message.edited` stays reserved for a
+person editing their own message, a client op with rules of its own.
+
+**Why this does not bend the sync engine.** The card is a normal message: it
+takes the next `ord` and `rev` like any other, and has no audience. The update is
+a normal chat event: a revision and **no ordinal**, so it raises no unread badge.
+The event catalogue declares that `message.updated` touches the card, so the
+card's version moves (the version rule, `SYNC-FLOWS.md` §13a): a client that was
+past the gap threshold when it resolved gets the new state from repair, and the
+gap tail and backfill return current parts anyway. A client that predates the
+event advances its cursor over it (invariant 32) and shows the old state until
+the row is fetched again — the accepted cost of any new event type.
+
+**The part and the request.** A system part the model cannot write — the rule
+that already keeps approvals out of `ui` parts (`AGENT-RESPONSES.md`, rules for
+rooms §7):
+
+```ts
+| { kind: 'access_request'; request_id: string; run_id: string;
+    actor_id: string; agent_id: string;
+    toolkit: string; effect: 'read' | 'write' | 'destructive';
+    state: 'pending' | 'resolved' | 'expired' }
+```
+
+One kind covers a missing connection, a missing permission and a connection
+that needs reauthorising: which applies is read from the actor's own state when
+their client draws it. The request is a row the server checks a click against:
+
+```sql
+CREATE TABLE access_requests (
+  id              TEXT PRIMARY KEY,                    -- arq_…
+  run_id          TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  actor_id        TEXT NOT NULL REFERENCES actors(id)  ON DELETE CASCADE,
+  agent_actor_id  TEXT NOT NULL REFERENCES actors(id),
+  toolkit         TEXT NOT NULL,
+  effect          TEXT NOT NULL,
+  message_id      TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at     TIMESTAMPTZ,
+  expired_at      TIMESTAMPTZ,
+  UNIQUE (run_id, toolkit)                            -- one card per toolkit per run
+);
+```
+
+`forbiddenPartKind` refuses `access_request` for every author on the ordinary
+write path; the broker writes it through `writeMessage` and updates it through
+`updateMessage`. **A card carries no URL.** The redirect is issued later, to the
+actor's own signed-in request (§6.5), so a copy of the card — on a screen, in a
+log, in every member's replica — opens nothing (invariant 81).
 
 ---
 
 ## 8. Messages only some people can see
 
-### 8.1 Why this exists
+### 8.1 Why this exists, and why nothing in v1 uses it
 
-The first cards an agent run produces are addressed to one person: **connect
-Linear**, **allow @triage to use your Linear**. Later there will be more —
-approvals, an error that names Alice's Linear workspace, eventually a whole
-reply only Alice sees until she shares it (`DESIGN.md` §6.6 already describes
-that last one).
+This section was written for the access cards: **connect Linear**, **allow
+@triage**, addressed to the invoker alone. Building it showed that was the wrong
+use. A card hidden from the room leaves the room seeing a mention answered by
+nothing, so cards became public messages only their actor can act on (§7.4).
 
-In v1 only the cards are restricted. The agent's reply stays visible to the
-chat.
+What is here was still built — schema, delivery, every read path, the client,
+tests — and is kept as a **dormant capability**: a message stored in a chat's
+history, following one person across devices, that nobody else in the chat can
+see. Nothing in v1 writes one; a dev-only route exercises it
+(`WORKSPACE-AGENTS-IMPL.md` §5). Its first real use re-decides §8.9 for that use.
+
+Not every "only for Alice" is this. A prompt that exists only in the moment —
+"Bob is not in this space; add him?" after Alice mentions him — is drawn by
+Alice's own client from the member list it already holds, and her choice produces
+an ordinary public event ("Alice added Bob"). That needs no sync at all. This
+machinery is for a private message that has to **persist** in the chat.
+
+The examples below still use a notice for Alice, because the revision problem
+is the same whatever the message says.
 
 ### 8.2 The proposal as first stated
 
@@ -1321,19 +1456,19 @@ client's frontier only advances across an unbroken run
 chat C.  Bob's frontier: 41.
 
 rev 42   message.created  "Alice: @triage file this"         → Bob applies. frontier 42
-rev 43   message.created  card for Alice, visible_to=[alice] → NOT SENT TO BOB
+rev 43   message.created  notice for Alice, visible_to=[alice] → NOT SENT TO BOB
 rev 44   message.created  "@triage: Filed LIN-812"            → Bob: 44 > 42+1 → a HOLE
                                                                 stage 44, schedule catch-up
 catchup(from_rev=42) → the server must answer rev 43. Two choices, both wrong:
 
-   send rev 43                     → the card reaches Bob. The leak we set out to prevent.
+   send rev 43                     → the notice reaches Bob. The leak we set out to prevent.
    skip rev 43, return 44          → Bob stages it again. 43 never arrives.
                                       Bob's frontier stays at 42 FOR EVER.
                                       Every later message in C is staged and never shown.
                                       sync.cursor.stalled fires; nothing repairs it.
 ```
 
-**The chat silently stops updating for everyone the card was hidden from.** This
+**The chat silently stops updating for everyone the notice was hidden from.** This
 is the failure `SYNC-FLOWS.md` already rejected one level up: a workspace-wide
 sequence "would produce permanent holes for every actor not authorised to see
 most of it — a cursor that can never become contiguous" (§5).
@@ -1342,15 +1477,15 @@ There are two ways out:
 
 | | A stream of its own | **Send the revision, withhold the content** |
 |---|---|---|
-| Shape | A per-actor stream (`stream_kind='actor'`) carrying Alice's cards, positioned into the chat by an anchor | The card stays in the chat stream. Everyone not listed receives rev 43 as a **withheld event**: the revision and nothing else |
+| Shape | A per-actor stream (`stream_kind='actor'`) carrying Alice's notices, positioned into the chat by an anchor | The notice stays in the chat stream. Everyone not listed receives rev 43 as a **withheld event**: the revision and nothing else |
 | Contiguity | Separate cursor per actor | Bob's frontier advances 42 → 43 → 44 as today |
 | What Bob learns | Nothing | That *something* happened in C at that moment (§8.9) |
 | Cost | A new stream kind: its counter, fanout, catch-up, gap, retention and `welcome` entry — the work `PANELS.md` §5.3 declined for the same reason | A filter on every path that reads messages (§8.7) and one new event type |
 | More than one person listed | One copy per listed actor's stream | Natural |
-| Order in Alice's view | An anchor into the chat, since the card has no `ord` of its own | Its own `ord`, like any message |
+| Order in Alice's view | An anchor into the chat, since the notice has no `ord` of its own | Its own `ord`, like any message |
 
 **Chosen: withhold the content.** Revisions keep flowing, the frontier rule is
-untouched, and the card sits in the chat's order for the people who see it.
+untouched, and the notice sits in the chat's order for the people who see it.
 
 ### 8.4 The withheld event
 
@@ -1382,80 +1517,77 @@ while being absent from the main list (`DESIGN.md`, threads §8.2). Nothing on
 Bob's side needs ordinals to be contiguous. Two things *counted* over them do
 notice a hidden one — unread badges and the backfill floor — and §8.7 fixes both.
 
-**The representation.** Postgres could hold `visible_to TEXT[]`, with empty
-meaning everyone. Three reasons not to:
-
-1. **It fails open.** Any code that narrows a list — "keep the listed actors who
-   are still in the room" — produces `[]` when none are left, and `[]` means
-   everyone. So does a mapper that forgets the field. A confidentiality flag
-   whose accidental value is "public" is the wrong default.
-2. **It is a permission stored as a column on the object**, which `AUTHZ.md`
-   invariant 53 forbids so that the model stays a set of tuples and keeps porting
-   to a relationship engine.
-3. **Its CHECK is a trap.** `CHECK (array_length(visible_to, 1) >= 1)` looks like
-   it rejects an empty array. `array_length('{}', 1)` is `NULL`, a CHECK rejects
-   only `FALSE`, and so it **permits** the row it forbids — the same shape as the
-   `FALSE OR NULL` trap `AGENTS.md` records. (`cardinality('{}')` is `0`.)
-   *Verified* against the dev stack's Postgres 18 in a rolled-back transaction,
-   2026-09-14: the insert of `'{}'` succeeded.
-
-**Chosen: a discriminator on the message, and tuples beside it** — the shape a
-private chat already has, where `chats.kind = 'private'` with no chat membership
-rows means *nobody*, not everybody:
+**The representation: one nullable array on the row.**
 
 ```sql
-ALTER TABLE messages ADD COLUMN audience TEXT NOT NULL DEFAULT 'chat';
-ALTER TABLE messages ALTER COLUMN audience DROP DEFAULT;   -- every insert must say which
-ALTER TABLE messages ADD CONSTRAINT message_audience_kind CHECK (audience IN ('chat','listed'));
-
-CREATE TABLE message_audience (
-  message_id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  actor_id    TEXT NOT NULL REFERENCES actors(id)   ON DELETE CASCADE,
-  PRIMARY KEY (message_id, actor_id)
-);
+ALTER TABLE messages ADD COLUMN visible_to TEXT[];            -- NULL: the whole chat
+ALTER TABLE messages ADD CONSTRAINT message_visible_to
+  CHECK (visible_to IS NULL OR cardinality(visible_to) >= 1);  -- a list is never empty
 ```
 
 ```
 read(actor, message) ⟺ access(actor, message.chat_id)                    ← leading conjunct, unchanged
-                      ∧ ( message.audience = 'chat'
-                        ∨ ∃ message_audience(message.id, actor) )
+                      ∧ ( message.visible_to IS NULL
+                        ∨ actor = ANY(message.visible_to) )
 ```
 
-`listed` with no rows is visible to **no one**. Removing a listed person from the
-room hides the card from them by the leading conjunct, without touching a tuple
-(`AUTHZ.md`, invariant 50).
+- **An empty list is refused, never read as anyone.** Code that narrows a list —
+  "keep the listed actors who are still in the room" — produces `{}` when none
+  are left. Whether `{}` meant everyone or nobody, one of them is a bug nobody
+  sees; refused, it is an error somebody does. The writer throws before the
+  database would.
+- **The CHECK uses `cardinality`, not `array_length`.** `array_length('{}', 1)`
+  is `NULL`, a CHECK rejects only `FALSE`, and so
+  `CHECK (array_length(visible_to, 1) >= 1)` **permits** the very row it looks
+  like it forbids — the same shape as the `FALSE OR NULL` trap `AGENTS.md`
+  records. *Verified* on the dev stack's Postgres 18, and asserted per branch in
+  `restricted-schema.test.ts`, with a test that the trap itself still holds.
+- **NULL means the whole chat, and a forgotten column is also NULL.** What makes
+  that safe is that exactly one function inserts a message (`writeMessage`, held
+  by the boundary rule `sync/messages-written-by-one-writer`), and its audience
+  argument is required by its type.
+- **Removing a listed person from the room hides the message from them** by the
+  leading conjunct, without editing the list (`AUTHZ.md`, invariant 50).
+
+*A table of `(message_id, actor_id)` tuples beside a discriminator was proposed
+first and built for an afternoon, then dropped.* Its three arguments did not hold
+up. "An empty array fails open" is an argument against empty meaning everyone,
+not against an array. "A permission is a row, never a column" (`AUTHZ.md`
+invariant 53) names `memberships`, which the tuple table was not either — and a
+message's audience is not a grant anyone administers: it is fixed when the
+message is written and never changes, like `chats.kind`. "The CHECK is a trap"
+is answered by writing the CHECK correctly. Against that, the table cost a
+correlated subquery on every read path, an insert per listed actor, a read on
+delete, and the same list stored two ways (tuples on the message, an array on the
+log). **If an audience ever becomes editable after the fact** ("share this with
+the chat", "add Bob"), that is the moment to revisit — and a GIN index on
+`visible_to` answers "which messages list Alice" before then if something needs
+it. The exception is recorded against invariant 53 in `AUTHZ.md`.
 
 **The log needs the list too**, because catch-up reads `sync_events`, not
 `messages`, and must redact per requester (§8.7):
 
 ```sql
-ALTER TABLE sync_events ADD COLUMN audience TEXT NOT NULL DEFAULT 'stream';
-ALTER TABLE sync_events ALTER COLUMN audience DROP DEFAULT;
-ALTER TABLE sync_events ADD COLUMN listed_actor_ids TEXT[];
-ALTER TABLE sync_events ADD CONSTRAINT sync_event_audience CHECK (
-     (audience = 'stream' AND listed_actor_ids IS NULL)
-  OR (audience = 'listed' AND listed_actor_ids IS NOT NULL
-                          AND cardinality(listed_actor_ids) >= 1));
+ALTER TABLE sync_events ADD COLUMN visible_to TEXT[];
+ALTER TABLE sync_events ADD CONSTRAINT sync_event_visible_to
+  CHECK (visible_to IS NULL OR cardinality(visible_to) >= 1);
 ```
-
-The `IS NOT NULL` is load-bearing: without it, `audience='listed'` with a `NULL`
-list evaluates the second branch to `NULL`, and the CHECK passes. *Verified* on
-the same Postgres 18: the constraint as written refuses `('listed', NULL)`,
-`('listed', '{}')` and `('stream', '{act_a}')` and admits the two valid rows; the
-same constraint without `IS NOT NULL` admits `('listed', NULL)`. **Each branch
-still gets its own test in the migration suite** (`AGENTS.md` rule 2) — a check
-run once by hand is evidence for this doc, not a regression guard.
 
 This copy is **not** a second permission store. A log row records what each
 recipient was entitled to receive when it was written, and never changes. The
 audience of a message is immutable in v1, so the copy cannot drift; if widening
-is ever added ("share this with the chat") it is a new event carrying the
-message, and the old row correctly stays withheld for the history it describes.
+is ever added it is a new event carrying the message, and the old row correctly
+stays withheld for the history it describes. With the message holding an array
+too, the list now has **one** representation in both places.
 
 **`appendEvent` takes the audience as a required argument** — `{ kind: 'stream' }`
 or `{ kind: 'listed', actors }`, no default — so every call site states it and
-forgetting is a compile error. This is the guard `events.ts` already uses to make
-announcing a private chat on the space stream a compile error rather than a leak.
+forgetting is a compile error. **Only a chat event may be listed**: the type of
+the argument is derived from the event's stream, so narrowing a space or
+directory event does not compile either. Every existing call was edited to pass
+`{ kind: 'stream' }` on purpose rather than defaulted (the plan's D14). This is
+the guard `events.ts` already uses to make announcing a private chat on the space
+stream a compile error rather than a leak.
 
 ### 8.6 Delivery
 
@@ -1464,8 +1596,8 @@ narrows it:
 
 ```
 readers  = audienceFor(event)                         ← the access predicate, space first
-if event.audience = 'listed':
-    entitled = readers ∩ event.listed_actor_ids        ← intersection, in THIS order:
+if event.visible_to is not null:
+    entitled = readers ∩ event.visible_to              ← intersection, in THIS order:
     withheld = readers − entitled                        a listed actor who has left the
 else:                                                    room is not in `readers`
     entitled = readers;  withheld = ∅
@@ -1489,20 +1621,23 @@ stands:
 | **Catch-up** | `feed.ts`, `eventsSince` returns log rows verbatim | Leak; `eventsSince` gains the requesting actor and maps unlisted rows to `withheld` |
 | **Gap tail** | `feed.ts`, `snapshotOf` selects the newest 50 messages | Leak |
 | **Backfill** | `feed.ts`, `backfill`; `socket.ts` sends `complete: rows.length < limit` | Leak. **And if filtered in JavaScript after the `LIMIT`**, a page with one hidden row returns 49 rows, `complete` becomes true, the client clears `has_gap`, and the history below is never fetched — a silent permanent hole. **The filter goes in the SQL, before the limit** |
-| **Unread and mentions** | `feed.ts`, `counters` and `welcomeChats` count messages by `ord > last_read_ord` | Bob gets a badge for a card he can never open. If it is the newest message, reading the chat marks read up to the highest ord *he holds*, which is below it — **the badge never clears** |
+| **Unread and mentions** | `feed.ts`, `counters` and `welcomeChats` count messages by `ord > last_read_ord` | Bob gets a badge for a message he can never open. If it is the newest message, reading the chat marks read up to the highest ord *he holds*, which is below it — **the badge never clears** |
 | **Room activity** | `ops.ts` bumps `spaces.last_activity_at` on every send | The room jumps to the top of Bob's sidebar with nothing new in it. A restricted message does not bump it |
 | **A gap with nothing visible in its tail** | `catchup.ts` sets the floor from the tail; `link.ts` asks for no backfill below a null floor | A reader who can see none of the recent history gets an empty tail, a null floor, and a `has_gap` that never clears. Fixed by the gap-path step the plan puts before this one (`WORKSPACE-AGENTS-IMPL.md` §4.4). *Found by the spike* |
-| **Reply counts** | not built | A count must be **per reader**: a restricted reply — an access card is one — is not counted for someone who cannot see it (`WORKSPACE-AGENTS-IMPL.md` §4.4) |
-| **Agent context** | §5.6 | Alice's card appears in a run Bob started |
+| **Reply counts** | not built | A count must be **per reader**: a restricted reply is not counted for someone who cannot see it (`WORKSPACE-AGENTS-IMPL.md` §4.4) |
+| **Agent context** | §5.6 | Alice's restricted message appears in a run Bob started |
 | **Thread reply counts** | not built | Count only what the reader may see, when they are built |
 
 In SQL, the predicate is one clause, added to each query before any `LIMIT`:
 
 ```sql
-AND (messages.audience = 'chat'
-     OR EXISTS (SELECT 1 FROM message_audience a
-                WHERE a.message_id = messages.id AND a.actor_id = $actor))
+AND (messages.visible_to IS NULL OR $actor = ANY(messages.visible_to))
 ```
+
+It is written once, in `apps/server/src/sync/visibility.ts`, and every path
+above imports it. The row-returning paths share one SELECT (`messageRows` in
+`feed.ts`), so the clause and the per-reader reply count cannot differ between
+the tail, backfill, the thread page and repair.
 
 **The client's own `has_gap` rule has one more edge.** `catchup.ts` clears the gap
 when the floor reaches ordinal 1 *or* the server says the page was complete. If
@@ -1512,57 +1647,27 @@ test in §12.3 covers exactly that chat.
 
 ### 8.8 Who may write one, and what it may contain
 
-- **Only the server.** No client op accepts an audience in v1; a `send` carrying
-  one is refused. Restricted messages are written by the broker and dispatcher
-  as the agent. Person-to-person whispers are a different product question with
-  a different threat model (§8.9), and nothing here should be read as having
-  answered it.
+- **Only the server.** No client op accepts an audience in v1. The op schema
+  declares none, so a `send` carrying one has the field **dropped by the parse**,
+  like any unknown field (invariant 66) — refusing it would be the only
+  `.strict()` parse in the protocol, for no protection the drop does not already
+  give. The boundary rule `sync/no-client-audience` keeps `writeMessage` out of
+  the socket, and a client send always writes for the whole chat. Restricted
+  messages have no writer in v1; the dev route exercises the path.
+  Person-to-person whispers are a different product question with a different
+  threat model (§8.9), and nothing here should be read as having answered it.
 - **Every listed actor must pass `access(actor, chat)` when it is written.** A
-  card cannot be addressed to someone outside the room.
+  message cannot be addressed to someone outside the room.
 - **Nothing replies to it or reacts to it in v1.** A restricted message may itself
-  be a thread reply — a card is — but a thread under a restricted message would
+  be a thread reply, but a thread under a restricted message would
   need every reply restricted too, and a reaction is an event about a message the
-  reactor's neighbours cannot see. A card needs neither.
-- **Cards are system parts, never model output.** A new part kind the model
-  cannot write — the rule that already keeps approvals out of `ui` parts
-  (`AGENT-RESPONSES.md`, rules for rooms §7):
-
-```ts
-| { kind: 'access_request'; requestId: string; runId: string;
-    actorId: string; agentId: string;
-    toolkit: string; effect: 'read' | 'write' | 'destructive' }
-```
-
-One kind covers a missing connection, a missing permission and a connection
-that needs reauthorising: which of them applies is read from the person's own
-state when the card is drawn (§7.4). The request itself is a row the
-server checks the click against:
-
-```sql
-CREATE TABLE access_requests (
-  id              TEXT PRIMARY KEY,                    -- arq_…
-  run_id          TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-  actor_id        TEXT NOT NULL REFERENCES actors(id)  ON DELETE CASCADE,
-  agent_actor_id  TEXT NOT NULL REFERENCES actors(id),
-  toolkit         TEXT NOT NULL,
-  effect          TEXT NOT NULL,
-  message_id      TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-  resolved_at     TIMESTAMPTZ,
-  UNIQUE (run_id, toolkit)                            -- one card per toolkit per run
-);
-```
-
-`forbiddenPartKind` refuses `access_request` for every author on the ordinary
-write path; the broker writes it through its own function. **A card carries no
-URL.** The redirect is issued later, to the listed person's signed-in request
-(§6.5), so a copy of the card — on a screen, in a log, in a replica — opens
-nothing.
-
-A card's state (connected, allowed) is **not** written back into the message.
-The client renders it from its own `connections` and `agent_permissions`
-projection (§6.3), so it updates the moment the connection completes, with no
-edit event — which is fortunate, because edits do not exist yet.
+  reactor's neighbours cannot see. `writeMessage` refuses a
+  reply to one: **not found** to an author it is hidden from (the answer an id
+  that does not exist gets), forbidden to one it is not.
+- **Deleting one you cannot see reads as not found**, even for an admin, checked
+  before the author is compared. Its delete — and a `message.updated` of it —
+  is addressed to its own list and withheld from everyone else, like its
+  creation.
 
 ### 8.9 What Bob can still learn
 
@@ -1573,15 +1678,16 @@ Named so it is accepted on purpose:
 | A revision happened in the chat at a given time (a withheld frame) | The content, author, audience, or whether it was a creation, edit or delete |
 | An `ord` hole — indistinguishable from a delete or a thread reply | That it was addressed to Alice |
 | The chat's head `ord` and `rev` in `welcome` | |
+| **Which message a hidden reply hangs off.** A reply bumps its parent's version (the version rule), so a parent row Bob later fetches carries the withheld revision as its `rev` | Anything about the reply beyond its existence and its parent |
 
-**Acceptable for agent cards**, because Bob already saw the reason for them: the
-mention of `@triage` in the chat, which is visible to him. That a private
-follow-up exists is implied by a message he can read.
-
-**Not automatically acceptable for anything else.** A person whispering to a
-person in a shared room would reveal timing that nothing visible explains. Any
-use of restricted messages beyond agent runs re-decides this table, and the
-per-actor stream in §8.3 is the answer if it cannot be accepted.
+**Acceptable only where something Bob can read already explains it.** The
+case this was written for — an agent's private follow-up to a mention Bob saw —
+qualified, and is no longer a use (§7.4). A person whispering to a person in a
+shared room would reveal timing that nothing visible explains. **The first real
+use re-decides this table**, and the per-actor stream in §8.3 is the answer if
+it cannot be accepted. The parent-version row could be removed by not bumping a
+parent for a restricted reply, but only by leaving every listed reader who
+gapped across the reply with a stale reply count.
 
 ---
 
@@ -1600,7 +1706,8 @@ per-actor stream in §8.3 is the answer if it cannot be accepted.
 | Arbitrary authenticated HTTP to a provider | Proxy execute is off on our Composio key (§6.2) |
 | Customers' third-party data retained at Composio | Payload storage switched off in production (§6.2) |
 | Tokens left valid after Disconnect | Revoke before delete; say so when a toolkit cannot revoke (§6.10) |
-| Bob sees Alice's card | Restricted message: withheld on every path (§8) |
+| Bob acts on Alice's card | He can see it — it is public — and his client draws no action on it. The server refuses an allow or a connect from anyone but the request's actor, and grants are only ever written for the session's own actor (§7.4, invariant 88) |
+| The card tells the room what Alice has connected | Its public wording says "access", never "connect" or "allow", so it does not disclose whether a connection exists (§7.4) |
 | A malicious agent uses its invokers' accounts | Instructions are readable; each invoker grants each agent each toolkit, at an effect level, after seeing what it asks for (§6.4) |
 | An agent gains a destructive tool silently | No wildcards; tools are listed one by one, and a higher effect re-asks every invoker (§4.3, §6.4) |
 | A deactivated person's runs continue | Checked at claim and at every tool call (§5.3, §5.5) |
@@ -1650,7 +1757,7 @@ A proposal to agree, per `OBSERVABILITY.md`, not a list to add. Service identity
 | `agent.tool{effect, outcome}` | Which effects agents actually use, and whether failures are ours (`refused`, `permission_required`) or theirs (`failed`, `needs_reauth`) |
 | `composio.request{op, outcome}` + duration | A Composio outage against a bug in the broker. Without it both read as "tools fail" |
 | `connection.flow{scheme, stage, outcome}` | Where people abandon connecting: before the provider, at it, or on the way back. `scheme` is a closed set (§6.5) |
-| `sync.withheld{path}` | `live` / `catchup`. Restricted messages are rare and their audience small, so withheld frames should track cards written, times the chat's other readers. A path at zero while cards are being written is a path that stopped redacting. Backfill and the gap tail omit rows in SQL and have nothing to count — their guard is the tests in §12.3 |
+| `sync.withheld{path}` | **Only once something writes restricted messages — nothing does in v1.** `live` / `catchup`. Withheld frames should track restricted messages written, times the chat's other readers. A path at zero while cards are being written is a path that stopped redacting. Backfill and the gap tail omit rows in SQL and have nothing to count — their guard is the tests in §12.3 |
 
 **Not labels, ever:** run ids, actor ids, agent ids, tool slugs, Composio account
 ids — all unbounded. A `toolkit` label is allowed only through an allowlist of
@@ -1678,11 +1785,11 @@ A step that only ever ran under `node --test` has not been used.
 
 | # | Step | What it proves | Depends on |
 |---|---|---|---|
-| 1 | **Restricted messages, no agent.** Schema and constraints; `appendEvent`'s required audience; fanout, catch-up, gap tail, backfill, counters and activity filtered; `withheld` in the client; a dev-only op that writes one | With three dev clients (`MULTI-CLIENT-DEV.md`): the listed one sees the card, the others never do, and all three keep receiving the chat — after reconnects, a gap and a backfill to ordinal 1 | — |
+| 1 | **Restricted messages, no agent — built as a dormant capability**; cards do not use it (§7.4, §8.1). Schema and constraints; `appendEvent`'s required audience; fanout, catch-up, gap tail, backfill, counters and activity filtered; `withheld` in the client; a dev-only route that writes one. Also **`message.updated`**, which step 5 needs | With three dev clients (`MULTI-CLIENT-DEV.md`): the listed one sees the message, the others never do, and all three keep receiving the chat — after reconnects, a gap and a backfill to ordinal 1 | — |
 | 2 | **Creating agents.** Tables, the `agent` membership scope and actions, the directory summary, Settings → Agents, the editor and profile | An agent appears in autocomplete on every client, and a maintainer can edit it while another member cannot | — |
 | 3 | **Runs with no tools.** `agent_runs` in `applyOnce`; the dispatcher and the six checkpoints (§5.9) with their v1 bodies; the new `/run` fields with `palette: 'none'`; the reply as the agent with `on_behalf_of` and `delegation_id`; the notices, the working indicator and Stop; the runtime's model-call stall timeout | Mention `@triage` in a channel and in a DM: the answer arrives in the trigger's thread. Two people mention it in one thread: two answers. Stop one mid-run: "Stopped", no answer. Kill the server mid-run: `interrupted`, with a notice | Step 2; parts in the schema (`AGENT-RESPONSES.md` phase 3) |
 | 4 | **Connections and the connector store.** Catalogue sync, `connections`, OAuth connect and disconnect, then API-key toolkits; the `welcome` projection and push | Connect Linear from Settings, see it on a second device offline, disconnect it | Composio spike |
-| 5 | **The broker.** `/agent/tools`, permissions and their card, connection card, `agent_tool_calls` | Bob asks `@triage` to file a bug with nothing connected: one card only Bob sees, Connect and Allow from it, Run again, and the issue appears in **Bob's** Linear as Bob | Steps 1, 3, 4 |
+| 5 | **The broker.** `/agent/tools`, permissions and their card, connection card, `agent_tool_calls` | Bob asks `@triage` to file a bug with nothing connected: one card in the thread — Bob sees Connect and Allow, everyone else sees `@triage` waiting for Bob. Bob allows, every client shows the card resolved, Run again, and the issue appears in **Bob's** Linear as Bob | Steps 3, 4; `message.updated` (built with step 1) |
 | 6 | **Reconnect.** `needs_reauth` from execution errors and Composio's own status | Revoke the app in Linear's settings; the next run asks Bob to reconnect instead of failing vaguely | Step 5 |
 
 **Step 5 is the milestone.** It is the sentence the whole feature was asked for:
@@ -1697,8 +1804,8 @@ Alice's request acts in Alice's Notion, Bob's in Bob's Linear.
   and only because `complete` was computed from a filtered query.
 - **Badge:** a restricted message as the newest in a chat leaves an unlisted
   member's unread count at zero.
-- **Each CHECK branch** of `message_audience_kind` and `sync_event_audience`,
-  against Postgres.
+- **Each CHECK branch** of `message_visible_to` and `sync_event_visible_to`,
+  against Postgres — the empty list above all.
 - **The broker ignores a forged invoker:** a tool call whose body names another
   actor executes as the run's invoker.
 - **No mention is lost:** a send that commits has a run; one that rolls back has
@@ -1716,10 +1823,15 @@ Alice's request acts in Alice's Notion, Bob's in Bob's Linear.
   answer; a tool call arriving after Stop is refused.
 - **Nothing is silent:** every refusal code and every non-answer outcome posts
   exactly one notice.
+- **Only the actor acts on a card:** an allow for Alice's request sent with
+  Bob's session is refused, though Bob holds the card.
+- **Everyone sees a card resolve:** resolving a request updates the card through
+  `message.updated` on every client, and a client past the gap threshold for it
+  gets the resolved state from repair.
 - **Boundary rules**, added to `tools/check-boundaries.mjs`, each naming the
   sentence it holds: only `apps/server/src/agents/composio.ts` imports
-  `@composio/core`; nothing in `apps/agent` reads a `COMPOSIO_*` variable; no
-  client op payload type carries an audience.
+  `@composio/core`; nothing in `apps/agent` reads a `COMPOSIO_*` variable;
+  `writeMessage` never appears in the socket.
 
 ---
 
@@ -1747,7 +1859,7 @@ purpose rather than rediscovered.
 | **Scheduled or event-triggered agents** (Composio triggers) | There is no invoker in the room, so there is no one whose authority a run can spend without a standing grant — a separate design |
 | **Agents invoking agents** | Never chained (`DESIGN.md` §6.4) |
 | **External agents calling our API** | A customer brings their own. That is where WorkOS M2M or Agent Registration decides (`DESIGN.md` §16) |
-| **Person-to-person restricted messages** | Re-decide §8.9 first |
+| **Any use of restricted messages** — person-to-person or otherwise | Built and dormant (§8.1). Re-decide §8.9 for that use first |
 | **A tool-search meta-tool** | An agent needs more tools than the cap in §6.7 allows |
 
 ---
@@ -1760,8 +1872,8 @@ purpose rather than rediscovered.
 | `DESIGN.md`, delegation (§6.4) | Boundary A: Composio in place of WorkOS Pipes and Relay, and why (availability, catalogue). The grant is the run row plus a signed token (§5.3, §5.5) |
 | `DESIGN.md`, accepted exposures (§6.6) | Item 2's "one flag on the message" corrected to §8's cost |
 | `DESIGN.md`, membership and access (§7.3) | The message read predicate |
-| `DESIGN.md`, client schema (§8.3) and sync protocol (§9) | `messages.audience`, `connections`, `agent_permissions`, the agent summary; `withheld`, `agent_activity`, `connections`, `agent_definition` frames |
-| `DESIGN.md`, invariants (§14) | The ten below |
+| `DESIGN.md`, client schema (§8.3) and sync protocol (§9) | `messages.visible_to` (done with step 1), `connections`, `agent_permissions`, the agent summary; `withheld` and `message.updated` (done with step 1), `agent_activity`, `connections`, `agent_definition` frames |
+| `DESIGN.md`, invariants (§14) | The eleven below — 78 to 80 and 84 to 87 are already there, from steps 0 and 1 |
 | `DESIGN.md`, build order (§15) | Phase 6 items rewritten as §12.2; the Pipes item removed |
 | `AUTHZ.md` | The `agent` scope and its actions; `create_agent`; the message predicate; the agent action vocabulary open question (§14, item 2) settled |
 | `AGENT-RUNTIME.md` | The four `/run` fields and `palette`; the per-user credentials section marked designed; the non-default-tool trigger crossed; **a stall timeout on each model call** (no events while the model is generating, paused during tool execution) beside the run's wall clock; **an empty turn that errored without throwing is `failed`**, not `completed`; JSON mode's disconnect detection listening on the request rather than the response (§5.3) checked |
@@ -1773,7 +1885,7 @@ purpose rather than rediscovered.
 
 ### Invariants to add
 
-Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for shortcuts.
+Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for shortcuts, and 84 to 87 went to the gap-path fix (`WORKSPACE-AGENTS-IMPL.md` §4.4), so the card's invariant is 88.
 
 | # | Invariant | What breaks without it |
 |---|---|---|
@@ -1783,10 +1895,11 @@ Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for sho
 | 77 | A workspace agent's palette holds **no local tools** | An end user's text authors shell commands in the runtime |
 | 78 | A restricted message's **revision** reaches every reader of the chat; its **content** reaches only the listed | Either a leak, or every unlisted reader's chat stops updating for good |
 | 79 | Visibility filters run **in SQL, before `LIMIT`** | Backfill reports a short page as complete and history below it is never fetched |
-| 80 | `listed` with no audience rows is **nobody**; an audience is never inferred from absence | A narrowed or dropped list makes a private card public |
+| 80 | A restricted message's list is **never empty** — refused by the writer and by a CHECK using `cardinality` — and only `writeMessage` inserts a message, with a required audience | A narrowed list becomes `{}` and is read as everyone or no one; a second writer that forgets the column writes a card for the whole chat |
 | 81 | A card carries **no URL**; a redirect is issued only to the named actor's own authenticated request | Whoever sees the card completes the flow and attaches their account to someone else |
 | 82 | An agent reaches an invoker's connection **only through a permission naming that agent**, checked on every call | Allowing one agent allows all of them, since Composio resolves the same account whichever agent asks |
 | 83 | Nothing a run learns under one invoker's authority is **given to a run for a different invoker** — no shared session, no shared memory | One person's Gmail or Linear data surfaces in someone else's answer |
+| 88 | An access card is **public**, and **only its actor acts on it** — decided by the server on every click, never by which controls a client draws; its state changes for everyone only through `message.updated` | Hiding a button becomes the security boundary; or the room sees a card that never resolves |
 
 ---
 
@@ -1801,6 +1914,8 @@ Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for sho
    or only mentions?
 5. **The catalogue's refresh** (§6.6) — how often, and what happens to an agent
    whose pinned tool Composio deprecates.
+6. **Whether an untouched access card expires with time** (§7.4), and after how
+   long — a card still "waiting for Alice" a month later is noise.
 
 Settled while this was written, and recorded where they apply: replies go into
 the thread of the invoking message (§5.7); instructions are readable by everyone

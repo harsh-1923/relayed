@@ -9,6 +9,7 @@ import { pool, db } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
 import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 import { startRetention } from './sync/retention.ts';
+import { devRoutes } from './web/dev.ts';
 
 useOtlpIfConfigured('server');
 
@@ -55,6 +56,13 @@ const sync = attachSyncSocket(app.server, {
   onEvent: (name, detail) => { app.log.debug({ ...detail }, name); },
 });
 app.log.info({ path: SYNC_PATH }, 'sync socket attached');
+
+// Development only, and said so in the log: a route that writes messages
+// nobody authenticated is fine on a laptop and nowhere else.
+if (env.devRoutes) {
+  await app.register(devRoutes({ db, deliver: sync.deliver }));
+  app.log.warn('RELAYED_DEV_ROUTES is set: /dev routes are registered');
+}
 
 const applied = await migrate();
 if (applied.length) app.log.info({ applied }, 'migrations applied');

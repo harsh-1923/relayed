@@ -744,6 +744,22 @@ could retain access to a private chat within it, and "who can see this room's
 contents" would stop having a single answer. Same principle as the intersection
 rule in §6.4: one member list, one answer.
 
+**A message can be narrower than its chat** (`WORKSPACE-AGENTS.md` §8) — built
+as a dormant capability; nothing in v1 writes one, and agent runs' access cards
+are public messages only their actor can act on:
+
+```
+read(actor, message) ⟺
+      access(actor, message.chat_id)                 ← leading conjunct, unchanged
+   ∧ (message.visible_to IS NULL  ∨  actor ∈ message.visible_to)
+```
+
+A list is never empty (refused by the writer and a CHECK). Only the server writes
+one, and every reader of the chat still receives the message's **revision** —
+the unlisted as a `withheld` event with no content — or their cursor would never
+become contiguous again (`SYNC-FLOWS.md` §7.1). The list on the row is a recorded
+exception to `AUTHZ.md` invariant 53.
+
 This composes with delegation: an agent acting for Alice in chat C needs
 `access(agent, C) ∧ access(alice, C) ∧ valid_delegation`. **Delegation scope is
 chat-level, not room-level** — "Alice invoked @docs-agent in chat C" granting
@@ -1242,6 +1258,10 @@ CREATE TABLE messages (
   deleted     INTEGER NOT NULL DEFAULT 0,
   state       TEXT NOT NULL,         -- 'pending' | 'acked' | 'failed'
   local_only  INTEGER NOT NULL DEFAULT 0,
+  -- A restricted message's actors as a JSON array, NULL for the whole chat
+  -- (replica v10). Only ever set on a message this client is listed on — the
+  -- server sends everyone else the revision alone — so it labels, never decides.
+  visible_to  TEXT,
 
   -- Delegation attribution (§6.4). author_id is ALWAYS the acting actor — for
   -- an agent reply that is the agent, never the human. on_behalf_of_actor_id
@@ -2707,6 +2727,9 @@ test.
 | 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined — 1,600 members was 69% of the frame and 20× the chats (§9.9) |
 | 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
 | 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
+| 78 | A restricted message's **revision** reaches every reader of the chat; its **content** reaches only the listed — the rest receive `withheld` | Either a leak, or every unlisted reader's chat stops updating for good (`SYNC-FLOWS.md` §7.1) |
+| 79 | Visibility filters run **in SQL, before `LIMIT`**, from one module (`visibility.ts`) every read path imports | Backfill reports a short page as complete and history below it is never fetched; a badge counts a message its reader can never open |
+| 80 | A restricted message's list is **never empty**, and only `writeMessage` inserts a message, with a required audience | A narrowed list becomes `{}` and reads as everyone or no one; a second writer that forgets the column writes a card for the whole chat |
 | 84 | An event that changes how a message renders **bumps that message's `rev`** — declared per type in the event catalogue, applied by `appendEvent`, a reply touching its parent | Repair cannot find what changed while a client was past the gap threshold; a reply's parent shows a stale count for ever (`SYNC-FLOWS.md`, the repair flow) |
 | 85 | Every row a read path returns is **complete current state** — body, tombstone, edited, reply count | A client that held the row keeps yesterday's body, or a deleted message, on every device that was far behind |
 | 86 | After a gap the floor is **the tail's**, never `MIN` with an old one, and backfill is asked for while `has_gap` is set — from a floor of 1, or from `head_ord + 1` when the tail was empty | What a later gap jumped over is never fetched, and `has_gap` sticks or clears over a hole. Found by the sync model: 62 of 100 random worlds lost history |

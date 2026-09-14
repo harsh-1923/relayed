@@ -10,6 +10,7 @@ import type { DB } from '../db/schema.ts';
 import { type Stream } from './events.ts';
 import { spaceMembers } from './spaces.ts';
 import { retainedFrom } from './retention.ts';
+import { visibleTo, redactEvent } from './visibility.ts';
 
 /**
  * How far behind a client may be before catch-up becomes a gap marker.
@@ -88,8 +89,10 @@ export interface MessageRow {
   parentId: string | null;
   deleted: boolean;
   editedAt: string | null;
-  /** Undeleted replies. Per reader once restricted replies exist (WORKSPACE-AGENTS.md §8). */
+  /** Undeleted replies THIS READER may see — a restricted reply is not counted for someone it is hidden from. */
   replyCount: number;
+  /** Null for the whole chat; else the list, which this reader is necessarily on. */
+  visibleTo: string[] | null;
 }
 
 /**
@@ -186,10 +189,10 @@ export async function streamHead(db: Kysely<DB>, stream: Stream): Promise<number
  * gap-versus-replay first, so a replay is already bounded by the threshold.
  */
 export async function eventsSince(
-  db: Kysely<DB>, stream: Stream, fromRev: number, limit = REPLAY_LIMIT,
+  db: Kysely<DB>, readerId: string, stream: Stream, fromRev: number, limit = REPLAY_LIMIT,
 ): Promise<Event[]> {
   const rows = await db.selectFrom('sync_events')
-    .select(['stream_rev', 'event_type', 'payload'])
+    .select(['stream_rev', 'event_type', 'payload', 'visible_to'])
     .where('stream_kind', '=', stream.kind)
     .where('stream_id', '=', stream.id)
     .where('stream_rev', '>', fromRev)
@@ -199,8 +202,11 @@ export async function eventsSince(
     .limit(limit)
     .execute();
 
-  return rows.map((row): Event =>
-    ({ rev: row.stream_rev, type: row.event_type, payload: row.payload }));
+  // REDACTED, NOT FILTERED. A row this reader may not see comes back as its
+  // revision alone, and it has to come back: skipped, the reader's frontier
+  // would find a hole at that revision, ask for it again, and never be given it
+  // — the chat would stop updating for them for good (WORKSPACE-AGENTS.md §8.3).
+  return rows.map((row): Event => redactEvent(row, readerId));
 }
 
 /**
@@ -213,14 +219,18 @@ export async function eventsSince(
  * The gap reply is not an error and not a degraded mode. The client stores the
  * tail, sets `has_gap`, and jumps its cursor to the head; the history below is
  * backfilled lazily when somebody actually opens the chat.
+ *
+ * Asked AS A READER, because what a replay or a tail may contain depends on who
+ * is asking once some messages are for some people (WORKSPACE-AGENTS.md §8.7).
  */
 export async function catchup(
-  db: Kysely<DB>, stream: Stream, fromRev: number, threshold = GAP_THRESHOLD,
+  db: Kysely<DB>, readerId: string, stream: Stream, fromRev: number,
+  threshold = GAP_THRESHOLD,
 ): Promise<Catchup> {
   const headRev = await streamHead(db, stream);
 
   if (headRev - fromRev > threshold) {
-    return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, stream) };
+    return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, readerId, stream) };
   }
 
   // TOO FAR BEHIND IS NOT ONLY ABOUT DISTANCE. A client can be well inside the
@@ -236,11 +246,11 @@ export async function catchup(
   if (headRev > fromRev) {
     const oldest = await retainedFrom(db, stream);
     if (oldest === null || oldest > fromRev + 1) {
-      return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, stream) };
+      return { kind: 'gap', stream, headRev, snapshot: await snapshotOf(db, readerId, stream) };
     }
   }
 
-  const events = await eventsSince(db, stream, fromRev);
+  const events = await eventsSince(db, readerId, stream, fromRev);
 
   // `toRev` is what the client's frontier BECOMES once this batch applies, so
   // it is derived from what was actually delivered — never from the head.
@@ -269,14 +279,14 @@ export async function catchup(
  * missing-and-unknown, it is missing-and-marked — the client records where the
  * floor is and backfill repairs it on demand.
  */
-async function snapshotOf(db: Kysely<DB>, stream: Stream): Promise<Snapshot> {
+async function snapshotOf(db: Kysely<DB>, readerId: string, stream: Stream): Promise<Snapshot> {
   if (stream.kind === 'chat') {
     // Tombstones INCLUDED. Not for the client's own held rows — repair corrects
     // those — but because a deleted root still has a thread: a root created and
     // deleted while the client was away, whose replies survive, is reachable
     // only through its tombstone. (Established by a planted bug in the sync
     // model that nothing caught until that trace was written.)
-    const rows = await messageRows(db)
+    const rows = await messageRows(db, readerId)
       .where('m.chat_id', '=', stream.id)
       .orderBy('m.ord', 'desc')
       .limit(GAP_TAIL)
@@ -333,18 +343,18 @@ async function snapshotOf(db: Kysely<DB>, stream: Stream): Promise<Snapshot> {
  * Keyset on `ord`, never OFFSET: offset paging degrades linearly and, worse,
  * skips or repeats rows when anything is inserted mid-scroll (DESIGN.md §11.3).
  *
- * Tombstones are excluded and thread replies are excluded — the chat view is
- * top-level messages, and the partial index `msg_chat_view` is what stops a
- * thread with 800 replies being scanned to find 50 chat messages.
+ * Thread replies are excluded — the chat view is top-level messages, and the
+ * partial index `msg_chat_view` is what stops a thread with 800 replies being
+ * scanned to find 50 chat messages.
  */
 export async function backfill(
-  db: Kysely<DB>, chatId: string, beforeOrd: number, limit = 50,
+  db: Kysely<DB>, readerId: string, chatId: string, beforeOrd: number, limit = 50,
 ): Promise<MessageRow[]> {
   // Tombstoned roots included, for the reason the gap tail includes them: a
   // deleted root's thread is reachable only through it. Every filter here runs
   // in SQL, before the LIMIT — a row dropped afterwards would make a short page
   // read as the beginning of history (the rule WORKSPACE-AGENTS.md §8.7 names).
-  const rows = await messageRows(db)
+  const rows = await messageRows(db, readerId)
     .where('m.chat_id', '=', chatId)
     .where('m.parent_id', 'is', null)
     .where('m.ord', '<', beforeOrd)
@@ -373,10 +383,10 @@ export async function backfill(
  * over a stale row gets the row corrected (SYNC-FLOWS.md, the repair flow).
  */
 export async function repair(
-  db: Kysely<DB>, chatId: string, sinceRev: number, maxOrd: number,
+  db: Kysely<DB>, readerId: string, chatId: string, sinceRev: number, maxOrd: number,
   after: { rev: number; id: string } | null, limit = 50,
 ): Promise<MessageRow[]> {
-  const rows = await messageRows(db)
+  const rows = await messageRows(db, readerId)
     .where('m.chat_id', '=', chatId)
     .where('m.rev', '>', sinceRev)
     .where('m.ord', '<=', maxOrd)
@@ -404,9 +414,10 @@ export async function repair(
  * every check in the sync model, which is how this was established.
  */
 export async function threadReplies(
-  db: Kysely<DB>, chatId: string, rootId: string, afterOrd: number, limit = 50,
+  db: Kysely<DB>, readerId: string, chatId: string, rootId: string, afterOrd: number,
+  limit = 50,
 ): Promise<MessageRow[]> {
-  const rows = await messageRows(db)
+  const rows = await messageRows(db, readerId)
     .where('m.chat_id', '=', chatId)
     .where('m.parent_id', '=', rootId)
     .where('m.deleted', '=', false)
@@ -418,19 +429,25 @@ export async function threadReplies(
 }
 
 /**
- * The one SELECT every row-returning path starts from, so the row shape cannot
- * differ between them. The reply count is a correlated count over undeleted
- * replies; restricted messages narrow it per reader (WORKSPACE-AGENTS.md §8.7).
+ * The one SELECT every row-returning path starts from, so neither the row shape
+ * nor WHO MAY SEE A ROW can differ between them.
+ *
+ * The visibility clause is here rather than at each caller, and it is a WHERE
+ * — so it runs before whatever LIMIT the caller adds (invariant 79). The reply
+ * count is narrowed the same way: a restricted reply is a reply its unlisted
+ * readers cannot open, and counting it would promise them one.
  */
-function messageRows(db: Kysely<DB>) {
+function messageRows(db: Kysely<DB>, readerId: string) {
   return db.selectFrom('messages as m')
     .select(['m.id', 'm.ord', 'm.rev', 'm.author_id', 'm.body', 'm.parent_id',
-             'm.deleted', 'm.edited_at'])
+             'm.deleted', 'm.edited_at', 'm.visible_to'])
     .select(eb => eb.selectFrom('messages as r')
       .select(eb2 => eb2.fn.countAll<number>().as('n'))
       .whereRef('r.parent_id', '=', 'm.id')
       .where('r.deleted', '=', false)
-      .as('reply_count'));
+      .where(visibleTo('r', readerId))
+      .as('reply_count'))
+    .where(visibleTo('m', readerId));
 }
 
 /**
@@ -446,9 +463,10 @@ function messageRows(db: Kysely<DB>) {
  * is a change to this function rather than a migration — and the trigger to do
  * it is `welcome` latency, which step E is where it becomes measurable.
  *
- * Both exclusions matter. Your own messages are not unread to you, and a
- * tombstone is not unread to anyone — which is also why the arithmetic fallback
- * `headOrd - lastReadOrd` can only ever be a sanity check: it cannot see either.
+ * All three exclusions matter. Your own messages are not unread to you, a
+ * tombstone is not unread to anyone, and a message you may not see is not
+ * unread to you either — which is also why the arithmetic fallback
+ * `headOrd - lastReadOrd` can only ever be a sanity check: it cannot see any of them.
  */
 export async function counters(
   db: Kysely<DB>, chatId: string, actorId: string,
@@ -469,6 +487,10 @@ export async function counters(
     .where('ord', '>', lastRead)
     .where('deleted', '=', false)
     .where('author_id', '!=', actorId)
+    // A badge for a message the reader can never open is worse than wrong when
+    // it is the newest: reading the chat marks read up to the highest ordinal
+    // they HOLD, which is below it, and the badge never clears (§8.7).
+    .where(visibleTo('messages', actorId))
     .executeTakeFirstOrThrow();
 
   return { chatUnread: row.unread, mentionCount: row.mentions };
@@ -666,6 +688,9 @@ async function welcomeChats(
         .where(sql<boolean>`messages.ord > COALESCE(chat_read_state.last_read_ord, 0)`)
         .where('messages.deleted', '=', false)
         .where('messages.author_id', '!=', actorId)
+        // The same clause `counters` uses, so a badge cannot differ between
+        // arriving in `welcome` and arriving in a later push.
+        .where(visibleTo('messages', actorId))
         .as('counted'),
       join => join.onTrue())
     .select(['chats.id as chat_id', 'chats.space_id', 'chats.kind', 'chats.name',
@@ -691,6 +716,7 @@ const toMessage = (row: {
   id: string; ord: number; rev: number; author_id: string;
   body: string; parent_id: string | null; deleted: boolean;
   edited_at: Date | string | null; reply_count: number | string | null;
+  visible_to: string[] | null;
 }): MessageRow => ({
   id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
   body: row.body, parentId: row.parent_id, deleted: row.deleted,
@@ -698,6 +724,7 @@ const toMessage = (row: {
     : row.edited_at instanceof Date ? row.edited_at.toISOString() : String(row.edited_at),
   // A correlated COUNT comes back as a bigint string from node-postgres.
   replyCount: Number(row.reply_count ?? 0),
+  visibleTo: row.visible_to,
 });
 
 export interface DirectoryRow {

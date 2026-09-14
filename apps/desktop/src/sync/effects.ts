@@ -12,6 +12,7 @@
 // revision. That is invariant 32, and it is why an empty topic list is a
 // success rather than a failure (docs/SYNC-FLOWS.md §11.2).
 import type { DatabaseSync } from 'node:sqlite';
+import { WITHHELD_EVENT } from '@relayed/protocol';
 import { topic } from '../shared/topics.ts';
 import type { Effect, Stream, Envelope } from './apply.ts';
 
@@ -23,6 +24,8 @@ interface ActorChanged {
 interface MessageCreated {
   id: string; ord: number; parent_id: string | null;
   author_id: string; body: string; created_at: string;
+  /** Present only on a message some people cannot see — and this client is on it. */
+  visible_to?: string[];
 }
 
 /**
@@ -37,6 +40,14 @@ export function replicaEffect(onUnknown?: (type: string) => void): Effect {
     switch (event.type) {
       case 'message.created': return messageCreated(db, stream, event);
       case 'message.deleted': return messageDeleted(db, stream, event);
+      case 'message.updated': return messageUpdated(db, stream, event);
+
+      // The revision of something this reader may not see (WORKSPACE-AGENTS.md
+      // §8.4). KNOWN, so it is not counted as unknown — and it does nothing,
+      // which is the entire point: the frontier passes it and no row, badge or
+      // count moves. There is nothing in its payload to act on, by design.
+      case WITHHELD_EVENT:
+        return [];
 
       // Space topology. The rows already arrive in `welcome`; these keep them
       // current between reconnects, which is the whole reason a space is a
@@ -70,13 +81,15 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   // special case for "mine" is worth the conflict clause.
   db.prepare(`
     INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
-                          created_at, state, local_only)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0)
+                          created_at, state, local_only, visible_to)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?)
     ON CONFLICT(id) DO UPDATE SET
       ord = excluded.ord, rev = excluded.rev, body = excluded.body,
-      created_at = excluded.created_at, state = 'acked'
+      created_at = excluded.created_at, state = 'acked',
+      visible_to = excluded.visible_to
   `).run(body.id, stream.id, body.parent_id, body.ord, event.rev,
-         body.author_id, body.body, Date.parse(body.created_at));
+         body.author_id, body.body, Date.parse(body.created_at),
+         body.visible_to ? JSON.stringify(body.visible_to) : null);
 
   // `head_ord` is a MAX for the same reason `last_read_ord` is: events can
   // arrive after a `welcome` that already reported a higher head, and walking
@@ -139,6 +152,28 @@ function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): stri
   if (result.changes === 0 && !parentTouched) return [];
 
   return [topic.messages(stream.id), topic.chatState(stream.id)];
+}
+
+/**
+ * The server replaced a message's content — an access card changing state, say
+ * (WORKSPACE-AGENTS.md §7.4). Not an edit: nothing here marks it edited.
+ *
+ * GUARDED BY VERSION, unlike a creation. A row fetched by repair can already
+ * hold a NEWER version than this event while the event was still on its way —
+ * repair reads current state, not the log — and applying the older content
+ * over it would wind the card back with nothing left to correct it. Equal is
+ * applied: the fetched row and the event describe the same change.
+ *
+ * A message not held, or a tombstone, is untouched and the revision is still
+ * accounted for (§11.2): a later fetch returns the current content anyway.
+ */
+function messageUpdated(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
+  const { id, body } = event.payload as { id: string; body: string };
+  const result = db.prepare(`
+    UPDATE messages SET body = ?, rev = ?
+     WHERE id = ? AND chat_id = ? AND deleted = 0 AND COALESCE(rev, 0) <= ?
+  `).run(body, event.rev, id, stream.id, event.rev);
+  return result.changes > 0 ? [topic.messages(stream.id)] : [];
 }
 
 function actorChanged(db: DatabaseSync, stream: Stream, event: Envelope): string[] {

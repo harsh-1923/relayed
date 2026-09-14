@@ -26,6 +26,7 @@ import type { Delivery, Registry } from './registry.ts';
 import { spaceMembers, chatMembers, workspaceMembers } from './spaces.ts';
 import { startSpan, annotate, mark } from '@relayed/telemetry';
 import { recordAppend, recordFanout, recordSlowConsumer } from './observe.ts';
+import { receives, withheld } from './visibility.ts';
 
 /**
  * How far behind a socket may fall before it is closed.
@@ -47,18 +48,24 @@ export const BACKLOG_LIMIT_BYTES = 1_000_000;
 export interface FanoutResult {
   /** Actors entitled to this event, connected or not. The metric that matters. */
   audience: number;
-  /** Sockets actually written to. */
+  /** Sockets actually written to — the content or, for an unlisted reader, `withheld`. */
   delivered: number;
+  /** Of those, sockets sent the revision without the content (WORKSPACE-AGENTS.md §8.6). */
+  withheld: number;
   /** Sockets closed for falling too far behind. */
   dropped: number;
 }
 
 /**
- * Everyone entitled to see this event.
+ * Everyone entitled to READ THE STREAM this event is on.
  *
  * Entitlement, not presence — this answers "who may", and the registry answers
  * "who is here". Keeping them apart is what makes the audience a property of
  * the event rather than of who happens to be online.
+ *
+ * Unchanged by restricted messages, on purpose: every reader of a chat receives
+ * every revision of it, and what an event's own list narrows is only whether
+ * that revision carries its content (`deliver`, below).
  */
 export async function audienceFor(
   db: Kysely<DB>, event: AppendedEvent,
@@ -141,6 +148,7 @@ async function deliver(
 
   let delivered = 0;
   let dropped = 0;
+  let hidden = 0;
   for (const target of targets) {
     // The tenant check, and it is not redundant with the audience. One actor
     // may hold connections to several workspaces at once, and the audience is
@@ -158,19 +166,36 @@ async function deliver(
       continue;
     }
 
-    target.send('ev', {
-      stream: { kind: event.stream.kind, id: event.stream.id },
-      rev: event.rev,
-      type: event.type,
-      payload: event.payload,
-    });
+    // NARROWED IN THIS ORDER: the stream's readers first, then the event's
+    // list. A listed actor who has left the room is not a reader, so they get
+    // nothing at all — not the content because they are listed, and not a
+    // `withheld` because they are no longer in the chat (§8.6).
+    //
+    // Everyone else who reads the chat gets the revision without the content.
+    // Not sending them anything would leave a hole at this revision that
+    // catch-up could never fill without the content, and their frontier would
+    // stop here for good (§8.3).
+    if (receives(event.audience, target.actorId)) {
+      target.send('ev', {
+        stream: { kind: event.stream.kind, id: event.stream.id },
+        rev: event.rev,
+        type: event.type,
+        payload: event.payload,
+      });
+    } else {
+      target.send('ev', {
+        stream: { kind: event.stream.kind, id: event.stream.id },
+        ...withheld(event.rev),
+      });
+      hidden++;
+    }
     delivered++;
   }
 
   recordFanout(event.stream.kind, audience.length, dropped,
                performance.now() - started);
-  annotate({ audience: audience.length, delivered, dropped });
-  return { audience: audience.length, delivered, dropped };
+  annotate({ audience: audience.length, delivered, dropped, withheld: hidden });
+  return { audience: audience.length, delivered, dropped, withheld: hidden };
 }
 
 /**

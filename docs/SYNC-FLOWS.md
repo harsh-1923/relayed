@@ -1093,7 +1093,9 @@ committed sync_event
   filter conn.workspaceId === event.workspace_id
         │
         ▼
-  write the `ev` frame
+  receives(event.audience, conn.actorId) ?
+        ├─ yes ─▶ write the `ev` frame
+        └─ no  ─▶ write the revision alone: type `withheld`, payload {}   (§7.1)
 ```
 
 ```ts
@@ -1127,6 +1129,42 @@ from a space cannot receive a private chat inside it through a stale chat row.
 subscription to revoke, no generation to rotate, no window in which a stale
 audience is published to. This is the single largest structural difference from
 the AppSync proposal.
+
+### 7.1 An event only some readers may see
+
+A message can be for a list of people rather than the whole chat
+(`WORKSPACE-AGENTS.md` §8). **A dormant capability**: nothing in v1 writes one —
+agent runs' access cards, which it was built for, are public messages only their
+actor can act on (§7.4 there) — and a dev-only route exercises it.
+`audienceFor` is **unchanged**: it still answers "who may read this stream", and
+every one of them receives every revision of it. What the event's own list
+narrows is only whether that revision carries its content:
+
+```
+readers = audienceFor(event)              ← the access predicate, space first
+for each connected reader:
+  event.audience is 'stream', or the reader is on its list → the ev frame
+  otherwise                                                → { t:'ev', stream, rev, type:'withheld', payload:{} }
+```
+
+Not sending the unlisted reader anything is the obvious design and it breaks
+§11: their frontier finds a hole at that revision, catch-up cannot fill it
+without the content, and every later message in the chat is staged and never
+shown. **The revision without the content** keeps the frontier contiguous; the
+payload carries no id, type, author or ordinal, so nothing can be matched to a
+later delete or told apart from an edit. A client older than `withheld` handles
+it anyway — an unknown type advances the cursor (invariant 32).
+
+In this order: readers first, then the list. A listed actor who has left the room
+is not a reader, so they receive nothing — neither the content nor a withheld —
+and nobody edited a list to make that true.
+
+The list is on the log row (`sync_events.visible_to`, copied from
+`messages.visible_to` when written), so catch-up redacts from the log without
+reading `messages`. `appendEvent` takes the audience as a **required argument**,
+and only a chat event may be listed — so forgetting it, or narrowing a space
+event, does not compile. The decisions live in one file,
+`apps/server/src/sync/visibility.ts`, which every read path imports.
 
 ### Cost, and the cache
 
@@ -1254,6 +1292,43 @@ ordinal — ULIDs sort, so the same keyset shape works:
 `ack` and `ev` are **both** delivered to the sender. The ack reconciles the
 outbox row; the event travels the same apply path as on every other device, so
 there is one convergence mechanism rather than a special case for "mine".
+
+**`message.updated`** is the server replacing a message's complete content —
+the first writer is an agent run's access card changing state for everyone in
+the thread (`WORKSPACE-AGENTS.md` §7.4). A revision and no ordinal, so no unread
+badge; the version rule declares it touches the message, so a client that
+missed it gets the new content from repair (§13a). It is **not** an edit and
+marks nothing edited: `message.edited` stays reserved for a person's own edit.
+
+```json
+{ "t": "ev", "stream": { "kind": "chat", "id": "cht_01M244…" }, "rev": 8150,
+  "type": "message.updated",
+  "payload": { "id": "msg_…", "body": "Alice gave @triage access to Linear." } }
+```
+
+`parts` joins that payload when messages carry parts on the server. The client
+applies it **only if the row it holds is not newer** — repair reads current
+state, so a newer row can land before an older update arrives.
+
+A message only some people can see reaches the people on it with its list, and
+everyone else who reads the chat as a withheld revision (§7.1):
+
+```json
+{ "t": "ev", "stream": { "kind": "chat", "id": "cht_01M244…" }, "rev": 8142,
+  "type": "message.created",
+  "payload": { "id": "msg_…", "ord": 5523, "parent_id": "msg_…", "author_id": "act_triage…",
+               "body": "…", "created_at": "…", "visible_to": ["act_alice…"] } }
+
+{ "t": "ev", "stream": { "kind": "chat", "id": "cht_01M244…" }, "rev": 8142,
+  "type": "withheld", "payload": {} }
+```
+
+Message rows (`backfill_ok`, a gap's tail, `repair_ok`, `thread_ok`) carry
+`visible_to` too: null for the whole chat, or the list — and a row is only ever
+sent to a reader on it. It is for drawing "only visible to you", never for
+deciding. No client op declares an audience; one sent anyway is dropped by the
+parse, like any unknown field (invariant 66), and a boundary rule keeps
+`writeMessage` out of the socket.
 
 ---
 
@@ -1630,6 +1705,8 @@ cases, all normal:
 |---|---|---|
 | `message.deleted` | never backfilled, or evicted | account for the rev; no write |
 | `message.edited` | below `oldest_local_ord` | account for the rev; backfill later returns the current body |
+| `withheld` | the event is about a message this reader may not see (§7.1) | account for the rev; **known**, so not counted; no write |
+| `message.updated` | never held, a tombstone, or the held row is already newer (§8) | account for the rev; no write — a later fetch returns the current content |
 | unknown `event_type` | client predates the feature | account for the rev; count it; do not stall |
 
 That last row is invariant 32, and it is why the frontier is tracked explicitly
@@ -1654,9 +1731,12 @@ handleCatchup(conn, frame)
   ├─ requireCan(conn.actorId, 'read', <the stream's object>)
   │     never inferred from the cursor — a modified client can send any id
   │
-  └─ catchup(db, streamId, fromRev)                              feed.ts
+  └─ catchup(db, conn.actorId, stream, fromRev)                  feed.ts
         head(db, chatId) → { headOrd, headRev }
         headRev - fromRev > GAP_THRESHOLD (500)  ? gap : replay
+        replay: every log row, REDACTED for this reader — a row they may not
+                see comes back as { rev, type:'withheld', payload:{} }, never
+                skipped, or their frontier would stop at it (§7.1)
 ```
 
 ```json
@@ -1750,7 +1830,8 @@ When a client is further behind than replay is worth:
 ```
 
 The tail is **materialised rows, not events** — the current state of the newest
-~50 messages, oldest-first so it renders in order.
+~50 messages **this reader may see**, oldest-first so it renders in order. The
+visibility clause is in the query, before its limit, like every path below.
 
 ```
 client:
@@ -1866,12 +1947,24 @@ not to hold. They are different questions and use different keys.
 ```
 
 ```
-backfill(db, chatId, beforeOrd, limit)                          feed.ts, built
+backfill(db, reader, chatId, beforeOrd, limit)                  feed.ts, built
   requireCan(read, chat)
-  SELECT … FROM messages
-   WHERE chat_id = ? AND deleted = false AND parent_id IS NULL AND ord < ?
+  SELECT … FROM messages m
+   WHERE chat_id = ? AND parent_id IS NULL AND ord < ?
+     AND (m.visible_to IS NULL OR $reader = ANY(m.visible_to))   ← BEFORE the limit
    ORDER BY ord DESC LIMIT ?          ← keyset, never OFFSET
+complete = rows.length < limit
 ```
+
+**The visibility clause has to be in the query** (invariant 79). The socket
+derives `complete` from a short page, so a page filtered afterwards — 49 of 50
+because one row was hidden — would read as the beginning of history, the client
+would clear `has_gap`, and everything below would never be fetched. In the query,
+a hidden row simply is not counted against the limit.
+
+The same fact settles a chat whose **ordinal 1 is hidden** from a reader: their
+floor can never reach 1, so only `complete` clears the gap — and it may, because
+a short page is short only when history ran out.
 
 ```json
 { "t": "backfill_ok", "c": "cht_01M244…",
@@ -1930,6 +2023,12 @@ counters        { t:'counters', c, chat_unread, thread_unread, mention_count }
 Counters are computed on read today — `counters(db, chatId, actorId)` in
 `feed.ts` — which measured at 0.15 ms over 400 unread and 7.7 ms over 50,000.
 They are a projection, not a stream: replaced idempotently, never merged.
+
+A message the reader may not see is **not counted**, in `counters` and in
+`welcome` alike (the same clause in both). As the newest message it would be
+worse than a wrong number: reading the chat marks read up to the highest ordinal
+the reader holds, which is below it, and the badge would never clear. Reply
+counts on message rows are narrowed the same way.
 
 ---
 
@@ -2083,6 +2182,10 @@ free, and it is ours to run.
 | Edit for a message below the window | Rev accounted for, effect skipped; backfill later returns the current body |
 | Delete for a message never held | Rev accounted for, no write. The case that forces explicit frontier tracking |
 | Unknown `event_type` | Rev accounted for, counted, skipped. The frontier must not stall on an old client |
+| An agent's access card for Alice resolves | One `message.updated` on the chat stream: a revision, no ordinal, no badge. Every client redraws the card; one that was past the gap threshold gets it from repair; one older than the event advances its cursor and shows the old state until the row is fetched |
+| A message only Alice may see (dormant), Bob in the chat | Alice gets `message.created` with `visible_to`; Bob gets `withheld` at the same rev and his frontier passes it. No badge, no reply count, no tail row, no backfill row, no sidebar bump for Bob |
+| Alice listed on a restricted message, then leaves the room | She is not a reader, so she gets nothing about it at all — neither its delete nor a withheld |
+| Bob backfills a chat whose ordinal 1 is a message only Alice may see | His pages are filtered before the limit; the last one is short, `complete` clears his gap with the floor at 2 |
 | Chat with a gap, user scrolls up | Keyset backfill from `oldest_local_ord`, 50 at a time |
 | Bob removed while connected | Next `audienceFor` excludes him; server denies everywhere; local copy freezes |
 | Bob re-added | Cursor behind → ordinary gap path. No special case |

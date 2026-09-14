@@ -18,7 +18,7 @@ import {
   createChannel, joinSpace, addToSpace, leaveSpace, removeFromSpace,
   spaceMembers, SlugTakenError, UnknownWorkspaceError,
 } from './spaces.ts';
-import { send, deleteMessage, markRead, MessageNotFoundError } from './ops.ts';
+import { send, deleteMessage, markRead, writeMessage, MessageNotFoundError } from './ops.ts';
 import {
   head, catchup, backfill, repair, threadReplies, counters, welcome, eventsSince,
   GAP_THRESHOLD, REPLAY_LIMIT, type MessageRow,
@@ -406,7 +406,7 @@ test('one stream carries messages and deletes, in revision order', opts, async (
                    messageId: ulid('msg'), body: 'two' });
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: first });
 
-  const events = await eventsSince(db, chatStream(chatId), 0);
+  const events = await eventsSince(db, me, chatStream(chatId), 0);
   assert.deepEqual(events.map(e => [e.rev, e.type]),
     [[1, 'message.created'], [2, 'message.created'], [3, 'message.deleted']],
     'every revision is recoverable, including the creation of a message later deleted');
@@ -417,7 +417,7 @@ test('one stream carries messages and deletes, in revision order', opts, async (
 test('SPIKE §9.3: below the threshold the server replays in full', opts, async () => {
   const { chatId } = await channel();
   await fill(chatId, 8);
-  const result = await catchup(db, chatStream(chatId), 0, 10);
+  const result = await catchup(db, me, chatStream(chatId), 0, 10);
   assert.equal(result.kind, 'replay');
   if (result.kind !== 'replay') return;
   assert.equal(result.toRev, 8, 'cursor would reach head');
@@ -431,7 +431,7 @@ test('SPIKE §9.3: above the threshold the server returns a bounded gap', opts, 
   // rather than O(messages).
   const { chatId } = await channel();
   await fill(chatId, 400);
-  const result = await catchup(db, chatStream(chatId), 0, 50);
+  const result = await catchup(db, me, chatStream(chatId), 0, 50);
   assert.equal(result.kind, 'gap', 'a gap, not 400 events');
   if (result.kind !== 'gap') return;
   assert.equal(result.headRev, 400);
@@ -452,7 +452,7 @@ test('SPIKE §9.3: above the threshold the server returns a bounded gap', opts, 
 test('SPIKE §9.4: paging terminates, without duplicates or holes', opts, async () => {
   const { chatId } = await channel();
   await fill(chatId, 237);
-  const gap = await catchup(db, chatStream(chatId), 0, 50);
+  const gap = await catchup(db, me, chatStream(chatId), 0, 50);
   assert.equal(gap.kind, 'gap');
   if (gap.kind !== 'gap') return;
 
@@ -462,7 +462,7 @@ test('SPIKE §9.4: paging terminates, without duplicates or holes', opts, async 
   const seen: number[] = [];
   let pages = 0;
   while (cursor > 1) {
-    const rows = await backfill(db, chatId, cursor, 50);
+    const rows = await backfill(db, me, chatId, cursor, 50);
     if (rows.length === 0) break;
     seen.push(...rows.map(r => r.ord));
     cursor = Math.min(...rows.map(r => r.ord));
@@ -488,7 +488,7 @@ test('backfill INCLUDES tombstones, marked, so a page is complete current state'
     .where('chat_id', '=', chatId).where('ord', '=', 3).executeTakeFirstOrThrow();
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: third.id });
 
-  const rows = await backfill(db, chatId, 99, 50);
+  const rows = await backfill(db, me, chatId, 99, 50);
   assert.deepEqual(rows.map(r => r.ord), [5, 4, 3, 2, 1],
     'ordinal 3 is still there — as a tombstone, never renumbered');
   const tombstone = rows.find(r => r.ord === 3);
@@ -521,7 +521,7 @@ test('THE VERSION RULE: a reply bumps its parent; a delete bumps its target and 
   assert.deepEqual(deleted.event?.payload, { id: reply, parent_id: root },
     'the delete event names the parent, for a client holding it without the reply');
 
-  const [row] = await backfill(db, chatId, 99, 1);
+  const [row] = await backfill(db, me, chatId, 99, 1);
   assert.equal(row?.replyCount, 0, 'the deleted reply is not counted');
 });
 
@@ -541,7 +541,7 @@ test('REPAIR returns what changed among the held, as complete rows, paged by (re
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: await idOf(2) });
   await fill(chatId, 20);
 
-  const page = await repair(db, chatId, sinceRev, 5, null, 50);
+  const page = await repair(db, me, chatId, sinceRev, 5, null, 50);
   assert.deepEqual(page.map(r => r.ord).toSorted((a, b) => a - b), [2, 4],
     'exactly the held messages that changed; never the twenty she never held');
   const [second, fourth] = [page.find(r => r.ord === 2), page.find(r => r.ord === 4)];
@@ -553,7 +553,7 @@ test('REPAIR returns what changed among the held, as complete rows, paged by (re
   const seen: number[] = [];
   let after: { rev: number; id: string } | null = null;
   for (let round = 0; round < 10; round++) {
-    const rows = await repair(db, chatId, sinceRev, 5, after, 1);
+    const rows = await repair(db, me, chatId, sinceRev, 5, after, 1);
     if (rows.length === 0) break;
     seen.push(...rows.map(r => r.ord));
     const last = rows.at(-1) as MessageRow;
@@ -564,7 +564,7 @@ test('REPAIR returns what changed among the held, as complete rows, paged by (re
   // A row that changes AGAIN after the cursor passed it is served again: that
   // is what lets a repair converge under live traffic rather than merely end.
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: await idOf(4) });
-  const again = await repair(db, chatId, sinceRev, 5, after, 50);
+  const again = await repair(db, me, chatId, sinceRev, 5, after, 50);
   assert.deepEqual(again.map(r => r.ord), [4], 'the re-changed row comes back at its new version');
 });
 
@@ -582,15 +582,15 @@ test('the THREAD page returns undeleted replies by ordinal, complete, with a flo
   }
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId: replies[1] as string });
 
-  const first = await threadReplies(db, chatId, root, 0, 2);
+  const first = await threadReplies(db, me, chatId, root, 0, 2);
   assert.deepEqual(first.map(r => r.body), ['r0', 'r2'], 'oldest first, the deleted one skipped');
-  const rest = await threadReplies(db, chatId, root, first.at(-1)?.ord ?? 0, 2);
+  const rest = await threadReplies(db, me, chatId, root, first.at(-1)?.ord ?? 0, 2);
   assert.deepEqual(rest.map(r => r.body), ['r3'], 'and the page after it');
   assert.ok(rest.length < 2, 'a short page is the end');
 
-  const [parent] = await backfill(db, chatId, 2, 1);
+  const [parent] = await backfill(db, me, chatId, 2, 1);
   assert.equal(parent?.replyCount, 3, 'the root counts three undeleted replies');
-  assert.deepEqual(await backfill(db, chatId, 99, 50).then(rows => rows.map(r => r.ord)), [2, 1],
+  assert.deepEqual(await backfill(db, me, chatId, 99, 50).then(rows => rows.map(r => r.ord)), [2, 1],
     'the chat view still excludes replies');
 });
 
@@ -801,4 +801,164 @@ test('the replay limit and the gap threshold cannot drift apart', opts, () => {
   // silent permanent hole, which is why this is asserted rather than trusted.
   assert.equal(REPLAY_LIMIT, GAP_THRESHOLD,
     'a client that may replay N must be able to receive N');
+});
+
+// ── messages only some people can see (WORKSPACE-AGENTS.md §8) ─────────────
+//
+// Each test below is a path that reads messages, and each has its own way of
+// leaking or breaking without the visibility clause (§8.7). `stranger` writes
+// them; `me` is on the list; `bob` is in the room and is not.
+
+/** A channel with `me`, `bob`, and `stranger` as the notice's author. */
+async function room() {
+  const made = await channel();
+  await joinSpace(db, made.spaceId, stranger);
+  return made;
+}
+
+/** A message only `listed` may see, written the way the server's own writers will. */
+async function whisper(
+  chatId: string, listed: string[], body = 'a private notice', parentId: string | null = null,
+): Promise<string> {
+  const messageId = ulid('msg');
+  await db.transaction().execute(trx => writeMessage(trx, {
+    chatId, messageId, authorId: stranger, body, parentId,
+    audience: { kind: 'listed', actors: listed },
+  }));
+  return messageId;
+}
+
+test('CONTIGUITY UNDER WITHHOLDING: catch-up gives the listed reader the notice, '
+   + 'everyone else its revision, and both reach the head', opts, async () => {
+  // §8.3's failure, prevented: skip revision 3 for bob and his frontier stops
+  // at 2 for good, with every later message staged and never shown.
+  const { chatId } = await room();
+  await fill(chatId, 2);
+  const notice = await whisper(chatId, [me]);
+  await fill(chatId, 1);
+  const { headRev } = await head(db, chatId);
+
+  const mine = await catchup(db, me, chatStream(chatId), 0);
+  const bobs = await catchup(db, bob, chatStream(chatId), 0);
+  assert.ok(mine.kind === 'replay' && bobs.kind === 'replay');
+
+  assert.deepEqual(bobs.events.map(e => e.type),
+    ['message.created', 'message.created', 'withheld', 'message.created']);
+  assert.deepEqual(bobs.events[2], { rev: 3, type: 'withheld', payload: {} },
+    'the revision and nothing else: no id, no type, no author, no ordinal');
+  assert.ok(!JSON.stringify(bobs).includes(notice) && !JSON.stringify(bobs).includes('private notice'));
+
+  assert.equal(mine.events[2]?.type, 'message.created');
+  assert.deepEqual((mine.events[2]?.payload as { visible_to?: string[] }).visible_to, [me]);
+  assert.equal(bobs.toRev, headRev, 'bob\'s frontier passes the notice');
+  assert.equal(mine.toRev, headRev);
+});
+
+test('the delete of a notice is withheld from the same people its creation was',
+  opts, async () => {
+  const { chatId } = await room();
+  const notice = await whisper(chatId, [me]);
+  const { headRev: before } = await head(db, chatId);
+  await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId: notice });
+
+  const bobs = await catchup(db, bob, chatStream(chatId), before);
+  const mine = await catchup(db, me, chatStream(chatId), before);
+  assert.ok(bobs.kind === 'replay' && mine.kind === 'replay');
+  assert.deepEqual(bobs.events.map(e => e.type), ['withheld'],
+    'not even that the hidden message was deleted');
+  assert.deepEqual(mine.events.map(e => e.type), ['message.deleted']);
+});
+
+test('the GAP TAIL hides a notice from those it is not for, and says who it is for '
+   + 'to those it is', opts, async () => {
+  const { chatId } = await room();
+  await fill(chatId, 3);
+  await whisper(chatId, [me]);
+
+  const bobs = await catchup(db, bob, chatStream(chatId), 0, 1);
+  const mine = await catchup(db, me, chatStream(chatId), 0, 1);
+  assert.ok(bobs.kind === 'gap' && bobs.snapshot.kind === 'messages');
+  assert.ok(mine.kind === 'gap' && mine.snapshot.kind === 'messages');
+
+  assert.deepEqual(bobs.snapshot.recent.map(r => r.ord), [1, 2, 3]);
+  assert.deepEqual(mine.snapshot.recent.map(r => r.ord), [1, 2, 3, 4]);
+  assert.deepEqual(mine.snapshot.recent.map(r => r.visibleTo), [null, null, null, [me]]);
+  assert.equal(bobs.snapshot.headOrd, 4,
+    'the head ordinal is not hidden — an ordinal hole reads as a delete or a reply (§8.9)');
+});
+
+test('BACKFILL FILTERS BEFORE THE LIMIT: a hidden row does not shorten a page',
+  opts, async () => {
+  // Invariant 79. Filtered afterwards, this page holds three of four rows, the
+  // socket says `complete`, and bob's client clears `has_gap` with ordinals 1
+  // and 2 never fetched — a hole nothing reports.
+  const { chatId } = await room();
+  await fill(chatId, 2);
+  await whisper(chatId, [me]);
+  await fill(chatId, 2);
+
+  const page = await backfill(db, bob, chatId, 99, 4);
+  assert.deepEqual(page.map(r => r.ord), [5, 4, 2, 1], 'four rows, reaching past the hidden one');
+  assert.deepEqual((await backfill(db, me, chatId, 99, 4)).map(r => r.ord), [5, 4, 3, 2]);
+});
+
+test('BACKFILL WITH ORDINAL 1 HIDDEN: the page is short only because history ran out',
+  opts, async () => {
+  // Bob's floor can never reach ordinal 1, so only `complete` can clear his
+  // gap — and it may, because the short page is short for the right reason
+  // (§8.7, the client's own has_gap rule; §12.3).
+  const { chatId } = await room();
+  await whisper(chatId, [me]);
+  await fill(chatId, 3);
+
+  const first = await backfill(db, bob, chatId, 99, 3);
+  assert.deepEqual(first.map(r => r.ord), [4, 3, 2], 'a full page: not complete');
+  const second = await backfill(db, bob, chatId, 2, 3);
+  assert.deepEqual(second, [], 'empty and short — the socket says complete, and it is');
+  assert.deepEqual((await backfill(db, me, chatId, 2, 3)).map(r => r.ord), [1]);
+});
+
+test('BADGE: a notice as the newest message leaves an unlisted member at zero, '
+   + 'in counters and in welcome', opts, async () => {
+  // As the newest, it is worse than a wrong count: reading the chat marks read
+  // up to the highest ordinal bob HOLDS, which is below it, and the badge would
+  // never clear.
+  const { chatId } = await room();
+  await whisper(chatId, [me], `[bob](actor:${bob}) and [me](actor:${me}): a private notice`);
+
+  assert.deepEqual(await counters(db, chatId, bob), { chatUnread: 0, mentionCount: 0 });
+  const bobs = (await welcome(db, wsp, bob)).chats.find(c => c.chatId === chatId);
+  assert.deepEqual({ chatUnread: bobs?.chatUnread, mentionCount: bobs?.mentionCount },
+                   { chatUnread: 0, mentionCount: 0 }, 'and welcome agrees');
+
+  assert.deepEqual(await counters(db, chatId, me), { chatUnread: 1, mentionCount: 1 });
+  const mine = (await welcome(db, wsp, me)).chats.find(c => c.chatId === chatId);
+  assert.deepEqual({ chatUnread: mine?.chatUnread, mentionCount: mine?.mentionCount },
+                   { chatUnread: 1, mentionCount: 1 });
+});
+
+test('REPLY COUNTS are per reader, and so is the thread page', opts, async () => {
+  // A notice is posted in the thread of the message that invoked the agent. Bob
+  // shown "2 replies" and a thread holding one would be a promise nothing keeps.
+  const { chatId } = await room();
+  const root = ulid('msg');
+  await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: root, body: 'root' });
+  await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: ulid('msg'),
+                   body: 'a public reply', parentId: root });
+  await whisper(chatId, [me], 'a private notice', root);
+
+  const [bobsRoot] = await backfill(db, bob, chatId, 99, 1);
+  const [myRoot] = await backfill(db, me, chatId, 99, 1);
+  assert.equal(bobsRoot?.replyCount, 1);
+  assert.equal(myRoot?.replyCount, 2);
+  assert.equal((await threadReplies(db, bob, chatId, root, 0)).length, 1);
+  assert.equal((await threadReplies(db, me, chatId, root, 0)).length, 2);
+});
+
+test('REPAIR hides a notice from those it is not for', opts, async () => {
+  const { chatId } = await room();
+  await fill(chatId, 2);
+  await whisper(chatId, [me]);
+  assert.deepEqual((await repair(db, bob, chatId, 0, 99, null)).map(r => r.ord), [1, 2]);
+  assert.deepEqual((await repair(db, me, chatId, 0, 99, null)).map(r => r.ord), [1, 2, 3]);
 });

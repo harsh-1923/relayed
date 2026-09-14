@@ -22,6 +22,7 @@
 import { sql, type Transaction } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { ulid } from '../db/ulid.ts';
+import { toColumn, type Audience } from './visibility.ts';
 
 // ─── Streams ────────────────────────────────────────────────────────────────
 //
@@ -86,6 +87,12 @@ export interface MessageCreated {
   author_id: string;
   body: string;
   created_at: string;
+  /**
+   * Present only for a message some people cannot see, and then only ever
+   * delivered to the people on it — everyone else receives `withheld` — so it
+   * is for drawing "only visible to you", never for deciding (§8.7).
+   */
+  visible_to?: string[];
 }
 
 /**
@@ -99,6 +106,25 @@ export interface MessageCreated {
  * the count has to move anyway. Without the parent here it could not.
  */
 export interface MessageDeleted { id: string; parent_id: string | null }
+
+/**
+ * A message's content, REPLACED by the server — the whole of it, never a diff.
+ *
+ * The first writer is an agent run's access card changing state: "waiting for
+ * Alice to give @triage access to Linear" becoming "Alice gave @triage access",
+ * which everyone in the thread has to see, not only Alice
+ * (WORKSPACE-AGENTS.md §7.4). Complete rather than a patch because a client
+ * that missed the event is corrected by a fetched row, and a row is complete
+ * current state (invariant 85) — the event and the row must say the same thing.
+ *
+ * NOT `message.edited`, which stays reserved for a person editing their own
+ * message: that is a client op, marks the message edited, and has its own
+ * rules. A card changing state is not an edit, and must not read as one.
+ *
+ * `parts` joins the payload when messages carry parts on the server
+ * (AGENT-RESPONSES.md, phase 3) — a card's state lives in its part.
+ */
+export interface MessageUpdated { id: string; body: string }
 
 export interface SpaceCreated {
   id: string;
@@ -156,6 +182,7 @@ export interface ActorChanged {
 interface EventCatalogue {
   'message.created': { stream: ChatStream; payload: MessageCreated };
   'message.deleted': { stream: ChatStream; payload: MessageDeleted };
+  'message.updated': { stream: ChatStream; payload: MessageUpdated };
 
   'space.created': { stream: SpaceStream; payload: SpaceCreated };
   'space.member_added': { stream: SpaceStream; payload: SpaceMemberAdded };
@@ -169,6 +196,15 @@ interface EventCatalogue {
 export type EventType = keyof EventCatalogue;
 type StreamOf<T extends EventType> = EventCatalogue[T]['stream'];
 type PayloadOf<T extends EventType> = EventCatalogue[T]['payload'];
+
+/**
+ * Who an event of this type may be addressed to. Only a CHAT event can be
+ * narrowed to a list: a space or the workspace directory is something every
+ * reader of the stream is entitled to all of, which is the reason those streams
+ * exist — so `listed` on one does not compile.
+ */
+type AudienceOf<T extends EventType> =
+  StreamOf<T> extends ChatStream ? Audience : { kind: 'stream' };
 
 /**
  * THE VERSION RULE: which messages an event changes the rendering of.
@@ -192,6 +228,9 @@ type PayloadOf<T extends EventType> = EventCatalogue[T]['payload'];
 const TOUCHES: { [T in EventType]: (payload: PayloadOf<T>) => string[] } = {
   'message.created': p => p.parent_id ? [p.id, p.parent_id] : [p.id],
   'message.deleted': p => p.parent_id ? [p.id, p.parent_id] : [p.id],
+  // The message alone: its content changed, and nothing a parent shows — the
+  // reply count — did.
+  'message.updated': p => [p.id],
   'space.created': () => [],
   'space.member_added': () => [],
   'space.member_removed': () => [],
@@ -236,6 +275,8 @@ export interface AppendedEvent {
   rev: number;
   type: EventType;
   payload: unknown;
+  /** Who receives the payload; every other reader of the stream receives `withheld`. */
+  audience: Audience;
 }
 
 /**
@@ -245,12 +286,18 @@ export interface AppendedEvent {
  * An append that commits separately from its effect is a change every client
  * applies and the database does not have — and unlike a lost ordinal, nothing
  * about it looks wrong afterwards.
+ *
+ * THE AUDIENCE IS REQUIRED, with no default, so every call site states it and
+ * forgetting is a compile error rather than an event delivered to everyone
+ * (WORKSPACE-AGENTS.md §8.5). The same guard the catalogue already uses to make
+ * announcing a private chat on a space stream unrepresentable.
  */
 export async function appendEvent<T extends EventType>(
   trx: Transaction<DB>,
   allocated: StreamAllocation & { stream: StreamOf<T> },
   type: T,
   payload: PayloadOf<T>,
+  audience: AudienceOf<T>,
 ): Promise<AppendedEvent> {
   const eventId = ulid('evt');
   await trx.insertInto('sync_events').values({
@@ -263,6 +310,7 @@ export async function appendEvent<T extends EventType>(
     // Serialised here rather than left to the driver: `payload` is jsonb, and
     // node-postgres would otherwise send a JS object as a stringified record.
     payload: sql`${JSON.stringify(payload)}::jsonb`,
+    visible_to: toColumn(audience),
   }).execute();
 
   // The version rule, applied. Scoped to the chat as well as the id: an id is
@@ -280,6 +328,6 @@ export async function appendEvent<T extends EventType>(
 
   return {
     eventId, workspaceId: allocated.workspaceId, stream: allocated.stream,
-    rev: allocated.rev, type, payload,
+    rev: allocated.rev, type, payload, audience,
   };
 }

@@ -157,6 +157,12 @@ export interface MessagesTable {
   /** Whose authority an agent spent (DESIGN.md §6.4). Phase 6 populates it. */
   on_behalf_of_actor_id: string | null;
   delegation_id: string | null;
+  /**
+   * NULL: everyone who can read the chat. A list: only those actors, and never
+   * empty (`message_visible_to`). Written only by `writeMessage`, whose
+   * audience argument is required (WORKSPACE-AGENTS.md §8.5).
+   */
+  visible_to: string[] | null;
 }
 
 /**
@@ -208,6 +214,13 @@ export interface SyncEventsTable {
   event_type: string;
   /** A wire shape, never a row dump. */
   payload: unknown;
+  /**
+   * NULL: every reader of the stream receives the payload. A list: only those
+   * actors do, and every other reader receives the revision as a `withheld`
+   * event. A copy of the message's audience taken when the row was written,
+   * never a live permission.
+   */
+  visible_to: string[] | null;
   created_at: Generated<Timestamp>;
 }
 

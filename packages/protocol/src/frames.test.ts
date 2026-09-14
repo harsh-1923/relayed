@@ -221,3 +221,22 @@ test('A BODY CANNOT SHADOW A RESERVED ENVELOPE KEY', () => {
   assert.equal(out['traceparent'], '00-a-b-01');
   assert.equal(out['op_id'], 'op_1', 'and the rest of the body is untouched');
 });
+
+test('a client op CANNOT CARRY AN AUDIENCE: the field is dropped, not refused', () => {
+  // WORKSPACE-AGENTS.md §8.8 and D1. Only the server writes a message some
+  // people cannot see, so no op frame declares a list — and an unknown field is
+  // dropped rather than refused (invariant 66), so a modified client that sends
+  // one is sending nothing. Refusing it would be the only `.strict()` parse in
+  // the protocol, for no protection the drop does not already give.
+  const read = readFrame(frame('op', {
+    op_id: 'op_1', kind: 'send', c: 'cht_1', target: 'msg_1',
+    visible_to: ['act_me'],
+    m: { body: 'hi', parent_id: null, visible_to: ['act_me'], audience: 'listed' },
+  }), INBOUND);
+  assert.equal(read.kind, 'frame');
+  if (read.kind !== 'frame') return;
+  assert.deepEqual(read.body, {
+    op_id: 'op_1', kind: 'send', c: 'cht_1', target: 'msg_1',
+    m: { body: 'hi', parent_id: null },
+  });
+});

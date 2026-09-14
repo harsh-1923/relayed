@@ -366,7 +366,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
                from_rev: request.from_rev });
 
     const started = performance.now();
-    const result = await catchup(deps.db, stream, request.from_rev);
+    // As THIS actor: a replay redacts, and a tail filters, what they may not see.
+    const result = await catchup(deps.db, claims.actorId, stream, request.from_rev);
     if (result.kind === 'gap') {
       recordCatchupDuration('gap', performance.now() - started);
       annotate({ answer: 'gap', head_rev: result.headRev });
@@ -401,12 +402,16 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     }
 
     const limit = request.limit ?? 50;
-    const rows = await backfill(deps.db, request.c, request.before_ord, limit);
+    const rows = await backfill(deps.db, claims.actorId, request.c, request.before_ord, limit);
     state.send('backfill_ok', {
       c: request.c,
       rows: rows.map(rowOnWire),
       // A short page means the beginning was reached. Derived rather than asked
-      // for, so a client cannot be told to keep paging into nothing.
+      // for, so a client cannot be told to keep paging into nothing — and
+      // correct ONLY because `backfill` hides what this reader may not see in
+      // its query, before the limit. Hidden afterwards, one restricted row on a page
+      // would make it short, this would say `complete`, and the client would
+      // stop asking with history still below it (invariant 79).
       complete: rows.length < limit,
     });
   }
@@ -426,8 +431,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       return;
     }
     const limit = request.limit ?? 50;
-    const rows = await repair(deps.db, request.c, request.since_rev, request.max_ord,
-                              request.after ?? null, limit);
+    const rows = await repair(deps.db, claims.actorId, request.c, request.since_rev,
+                              request.max_ord, request.after ?? null, limit);
     const last = rows.at(-1);
     state.send('repair_ok', {
       c: request.c,
@@ -450,7 +455,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       return;
     }
     const limit = request.limit ?? 50;
-    const rows = await threadReplies(deps.db, request.c, request.root, request.after_ord, limit);
+    const rows = await threadReplies(deps.db, claims.actorId, request.c, request.root,
+                                     request.after_ord, limit);
     state.send('thread_ok', {
       c: request.c,
       root: request.root,
@@ -835,13 +841,14 @@ class ConnectionState implements Delivery {
  */
 /**
  * A message row as it travels — one mapping for the tail, backfill, thread and
- * repair, so the four cannot drift apart (invariant 85).
+ * repair, so the four cannot drift apart (invariant 85). `visible_to` is null
+ * for the whole chat; a list only ever reaches a reader who is on it.
  */
 function rowOnWire(row: MessageRow): Record<string, unknown> {
   return {
     id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
     body: row.body, parent_id: row.parentId, deleted: row.deleted,
-    edited_at: row.editedAt, reply_count: row.replyCount,
+    edited_at: row.editedAt, reply_count: row.replyCount, visible_to: row.visibleTo,
   };
 }
 

@@ -93,6 +93,8 @@ export interface ReplicaMessage {
   createdAt: number;
   deleted: boolean;
   state: string;
+  /** A restricted message's actors, this person among them; null for the whole chat. */
+  visibleTo: string[] | null;
 }
 
 export interface ComposerDraft {

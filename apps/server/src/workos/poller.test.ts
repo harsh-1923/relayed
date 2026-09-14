@@ -138,7 +138,7 @@ test('deactivation tombstones the actor, its membership and its sessions', opts,
   // rendering them as active for ever. There is no error and no reconnect that
   // repairs it: catch-up returns the events that were written, not the rows
   // that were quietly changed without one.
-  const directory = await eventsSince(db, workspaceStream(ids.wsp), 0);
+  const directory = await eventsSince(db, ids.act, workspaceStream(ids.wsp), 0);
   const tombstone = directory.at(-1);
   assert.equal(tombstone?.type, 'actor.updated',
     'an update, not a removal — the row survives so old messages keep an author');

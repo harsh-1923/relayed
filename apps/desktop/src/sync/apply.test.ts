@@ -233,6 +233,92 @@ test('an UNKNOWN event type advances the cursor and a later known event applies'
   db.close();
 });
 
+test('a WITHHELD event advances the cursor as a KNOWN type, and moves nothing', () => {
+  // WORKSPACE-AGENTS.md §8.4. The revision of a message this reader may not
+  // see: the frontier has to pass it — skipped, catch-up could never fill the
+  // hole — and nothing else may change, because nothing about it arrived.
+  const db = replica();
+  const unknown: string[] = [];
+  const deps = { db, effect: replicaEffect(t => unknown.push(t)) };
+
+  applyEvent(deps, CHAT, created(1, 'msg_1', 1));
+  const before = db.prepare('SELECT * FROM messages ORDER BY id').all();
+  const hidden = applyEvent(deps, CHAT, { rev: 2, type: 'withheld', payload: {} });
+
+  assert.equal(hidden.outcome, 'applied');
+  assert.equal(frontierOf(db, CHAT), 2, 'the frontier passed it');
+  assert.deepEqual(hidden.topics, [], 'and woke nothing');
+  assert.deepEqual(unknown, [], 'known, so not counted as a feature this build lacks');
+  assert.deepEqual(db.prepare('SELECT * FROM messages ORDER BY id').all(), before,
+    'no row, no count, no version moved');
+
+  applyEvent(deps, CHAT, created(3, 'msg_3', 3));
+  assert.equal(frontierOf(db, CHAT), 3, 'and the chat keeps updating');
+  db.close();
+});
+
+test('message.updated REPLACES the content, and never winds back a newer fetched row', () => {
+  // WORKSPACE-AGENTS.md §7.4: an access card changing state for everyone in
+  // the thread. The guard is the case that matters: repair can store a row at
+  // a newer version while an older update is still on its way.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, created(1, 'msg_card', 1));
+
+  const updated = applyEvent(deps, CHAT, {
+    rev: 2, type: 'message.updated', payload: { id: 'msg_card', body: 'Alice gave @triage access' },
+  });
+  assert.deepEqual(updated.topics, [`chat:${CHAT.id}:messages`]);
+  const row = () => db.prepare("SELECT body, rev, edited_at FROM messages WHERE id = 'msg_card'").get();
+  assert.deepEqual({ ...row() }, { body: 'Alice gave @triage access', rev: 2, edited_at: null },
+    'replaced, versioned, and NOT marked edited');
+
+  // A repair page landed the card at version 5 before update 3 arrived.
+  db.prepare("UPDATE messages SET body = 'expired', rev = 5 WHERE id = 'msg_card'").run();
+  const stale = applyEvent(deps, CHAT, {
+    rev: 3, type: 'message.updated', payload: { id: 'msg_card', body: 'waiting again' },
+  });
+  assert.equal(frontierOf(db, CHAT), 3, 'the revision is still accounted for');
+  assert.deepEqual(stale.topics, []);
+  assert.deepEqual({ ...row() }, { body: 'expired', rev: 5, edited_at: null }, 'the newer row stands');
+  db.close();
+});
+
+test('message.updated for a tombstone or a message never held writes nothing and still counts', () => {
+  const db = replica();
+  const unknown: string[] = [];
+  const deps = { db, effect: replicaEffect(t => unknown.push(t)) };
+  applyEvent(deps, CHAT, created(1, 'msg_1', 1));
+  applyEvent(deps, CHAT, { rev: 2, type: 'message.deleted', payload: { id: 'msg_1', parent_id: null } });
+  applyEvent(deps, CHAT, { rev: 3, type: 'message.updated', payload: { id: 'msg_1', body: 'back?' } });
+  applyEvent(deps, CHAT, { rev: 4, type: 'message.updated', payload: { id: 'msg_never', body: 'x' } });
+
+  assert.equal(frontierOf(db, CHAT), 4);
+  assert.deepEqual(unknown, [], 'a known type');
+  const row = db.prepare("SELECT body, deleted FROM messages WHERE id = 'msg_1'").get();
+  assert.deepEqual({ ...row }, { body: '', deleted: 1 }, 'a tombstone is not updated back to life');
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n, 1);
+  db.close();
+});
+
+test('a restricted message this reader IS on keeps its list, for the label', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, {
+    rev: 1, type: 'message.created',
+    payload: { id: 'msg_notice', ord: 1, parent_id: null, author_id: 'act_triage',
+               body: 'a private notice', created_at: '2026-09-14T10:00:00.000Z',
+               visible_to: ['act_me'] },
+  });
+  applyEvent(deps, CHAT, created(2, 'msg_2', 2));
+  const rows = db.prepare('SELECT id, visible_to FROM messages ORDER BY id').all();
+  assert.deepEqual(rows.map(r => ({ ...r })), [
+    { id: 'msg_2', visible_to: null },
+    { id: 'msg_notice', visible_to: '["act_me"]' },
+  ]);
+  db.close();
+});
+
 test('a delete for a message never held writes nothing and still counts', () => {
   // The sharpest case, and the reason `delete` was pulled into this phase. It
   // touches no row at all — so a client that inferred its cursor from message

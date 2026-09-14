@@ -16,7 +16,7 @@ import { ulid } from '../db/ulid.ts';
 import {
   createChannel, addToSpace, leaveSpace, removeFromSpace, joinSpace,
 } from './spaces.ts';
-import { send, deleteMessage } from './ops.ts';
+import { send, deleteMessage, writeMessage } from './ops.ts';
 import { audienceFor, fanout, pushToActor, BACKLOG_LIMIT_BYTES } from './fanout.ts';
 import { Registry, type Delivery } from './registry.ts';
 import { recordActor } from './directory.ts';
@@ -233,7 +233,7 @@ test('the directory reaches the whole workspace — the one stream that does',
       trx, await allocateStream(trx, workspaceStream(wsp)),
       'actor.updated',
       { id: bob, type: 'human', handle: 'bob', display_name: 'Bob',
-        avatar_url: null, state: 'active' })));
+        avatar_url: null, state: 'active' }, { kind: 'stream' })));
 
     const audience = await audienceFor(db, event);
     assert.deepEqual(audience.sort(), [alice, bob, carol].sort(),
@@ -255,7 +255,7 @@ test('every device of every audience member receives it', opts, async () => {
   const { chatId } = await channel();
   const result = await fanout(db, registry, await say(chatId, alice, 'hi'));
 
-  assert.deepEqual(result, { audience: 2, delivered: 3, dropped: 0 });
+  assert.deepEqual(result, { audience: 2, delivered: 3, dropped: 0, withheld: 0 });
   assert.equal(laptop.events.length, 1, 'both of alice’s devices');
   assert.equal(desktop.events.length, 1);
   assert.equal(bobs.events.length, 1);
@@ -336,7 +336,72 @@ test('a fanout with nobody connected still reports its audience', opts, async ()
   // says whether an event mattered; delivered says who happened to be there.
   const { chatId } = await channel();
   const result = await fanout(db, new Registry(), await say(chatId, alice, 'alone'));
-  assert.deepEqual(result, { audience: 2, delivered: 0, dropped: 0 });
+  assert.deepEqual(result, { audience: 2, delivered: 0, dropped: 0, withheld: 0 });
+});
+
+// ─── messages only some people can see (WORKSPACE-AGENTS.md §8.6) ──────────
+
+/** A notice for `listed`, written the way the server's own writers will. */
+const notice = (chatId: string, authorId: string, listed: string[]) =>
+  db.transaction().execute(trx => writeMessage(trx, {
+    chatId, messageId: ulid('msg'), authorId, body: 'a private notice', parentId: null,
+    audience: { kind: 'listed', actors: listed },
+  }));
+
+test('a notice reaches the listed with its content and every other reader as its '
+   + 'revision alone', opts, async () => {
+  const registry = new Registry();
+  const alices = new FakeDelivery(alice);
+  const bobs = new FakeDelivery(bob);
+  const carols = new FakeDelivery(carol);
+  for (const target of [alices, bobs, carols]) registry.add(target);
+
+  const { chatId } = await channel();
+  const { event, ack } = await notice(chatId, alice, [alice]);
+  const result = await fanout(db, registry, event);
+
+  assert.deepEqual(result, { audience: 2, delivered: 2, dropped: 0, withheld: 1 });
+  assert.deepEqual(alices.events, [{ type: 'message.created', rev: event.rev }]);
+  assert.deepEqual(bobs.received, [{ t: 'ev', body: {
+    stream: { kind: 'chat', id: chatId }, rev: event.rev, type: 'withheld', payload: {},
+  } }], 'the revision, so his frontier passes it — and nothing else');
+  assert.ok(!JSON.stringify(bobs.received).includes(ack.messageId), 'not even the id');
+  assert.equal(carols.received.length, 0, 'not a reader of the chat, so not even that');
+});
+
+test('a LISTED actor who has left the room receives nothing — neither the content '
+   + 'nor a withheld', opts, async () => {
+  // The order §8.6 insists on: the chat's readers first, then the list. A list
+  // that outlived someone's membership grants nothing, and nobody had to edit it.
+  const registry = new Registry();
+  const alices = new FakeDelivery(alice);
+  const bobs = new FakeDelivery(bob);
+  registry.add(alices);
+  registry.add(bobs);
+
+  const { spaceId, chatId } = await channel();
+  const { ack } = await notice(chatId, alice, [alice, bob]);
+  await leaveSpace(db, spaceId, bob);
+  const { event } = await deleteMessage(db, {
+    opId: ulid('op'), chatId, actorId: alice, messageId: ack.messageId });
+  await fanout(db, registry, event as AppendedEvent);
+
+  assert.deepEqual(alices.events.map(e => e.type), ['message.deleted']);
+  assert.equal(bobs.received.length, 0);
+});
+
+test('the delete of a notice is withheld from the people its creation was', opts, async () => {
+  const registry = new Registry();
+  const bobs = new FakeDelivery(bob);
+  registry.add(bobs);
+
+  const { chatId } = await channel();
+  const { ack } = await notice(chatId, alice, [alice]);
+  const { event } = await deleteMessage(db, {
+    opId: ulid('op'), chatId, actorId: alice, messageId: ack.messageId });
+  await fanout(db, registry, event as AppendedEvent);
+
+  assert.deepEqual(bobs.events.map(e => e.type), ['withheld']);
 });
 
 // ─── the slow consumer ──────────────────────────────────────────────────────
@@ -355,7 +420,7 @@ test('a socket past the backlog limit is dropped, not buffered', opts, async () 
   const { chatId } = await channel();
   const result = await fanout(db, registry, await say(chatId, alice, 'keep up'));
 
-  assert.deepEqual(result, { audience: 2, delivered: 1, dropped: 1 });
+  assert.deepEqual(result, { audience: 2, delivered: 1, dropped: 1, withheld: 0 });
   assert.equal(stuck.droppedWith, CLOSE.slowConsumer);
   assert.equal(stuck.events.length, 0, 'and was not written to as well as dropped');
   assert.equal(healthy.events.length, 1);

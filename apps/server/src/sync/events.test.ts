@@ -72,8 +72,8 @@ async function channel() {
 }
 
 /** Every event on a stream, as `[rev, type]` pairs — the shape assertions read. */
-async function log(stream: Parameters<typeof eventsSince>[1]): Promise<[number, string][]> {
-  const events = await eventsSince(db, stream, 0);
+async function log(stream: Parameters<typeof eventsSince>[2]): Promise<[number, string][]> {
+  const events = await eventsSince(db, me, stream, 0);
   return events.map(event => [event.rev, event.type]);
 }
 
@@ -111,7 +111,7 @@ test('three mutations of ONE message are three recoverable events', opts, async 
   // is the read; `catchup` wraps it with the gap-versus-replay policy, and a
   // replay that quietly dropped an event would be invisible to the assertion
   // above.
-  const replay = await catchup(db, chatStream(chatId), 0);
+  const replay = await catchup(db, me, chatStream(chatId), 0);
   assert.equal(replay.kind, 'replay');
   if (replay.kind !== 'replay') return;
   assert.deepEqual(replay.events.map(event => event.type),
@@ -145,7 +145,7 @@ test('a truncated replay reports the frontier it DELIVERED, not the head',
 
     // Threshold above the distance, so this is a replay rather than a gap —
     // while the read's own limit still caps the batch at 500.
-    const replay = await catchup(db, chatStream(chatId), 0, 1000);
+    const replay = await catchup(db, me, chatStream(chatId), 0, 1000);
     assert.equal(replay.kind, 'replay');
     if (replay.kind !== 'replay') return;
 
@@ -221,7 +221,7 @@ test('the event carries the same created_at the sender was acked with', opts, as
     opId: ulid('op'), chatId, actorId: me, messageId, body: 'timestamped',
   });
 
-  const [event] = await eventsSince(db, chatStream(chatId), 0);
+  const [event] = await eventsSince(db, me, chatStream(chatId), 0);
   const payload = event?.payload as MessageCreated;
   assert.equal(payload.created_at, ack.createdAt);
   assert.equal(payload.ord, ack.ord);
@@ -271,7 +271,7 @@ test('creating a channel is three events on the SPACE stream', opts, async () =>
   assert.deepEqual(await log(spaceStream(spaceId)),
     [[1, 'space.created'], [2, 'chat.created'], [3, 'space.member_added']]);
 
-  const events = await eventsSince(db, spaceStream(spaceId), 0);
+  const events = await eventsSince(db, me, spaceStream(spaceId), 0);
   assert.equal((events[1]?.payload as { id: string }).id, chatId);
   assert.equal((events[2]?.payload as { actor_id: string }).actor_id, me,
     'the founder joins as an ordinary member event, not a special case');
@@ -297,7 +297,7 @@ test('catch-up from a mid-stream cursor returns only what came after',
   opts, async () => {
     const { spaceId } = await channel();
     await addToSpace(db, spaceId, bob, me);
-    const events = await eventsSince(db, spaceStream(spaceId), 2);
+    const events = await eventsSince(db, me, spaceStream(spaceId), 2);
     assert.deepEqual(events.map(event => event.rev), [3, 4],
       'strictly greater than the cursor — a client already holds its own rev');
   });
@@ -320,7 +320,7 @@ test('an actor joining a workspace is one event on the workspace stream',
       });
     });
 
-    const events = await eventsSince(db, workspaceStream(wsp), 0);
+    const events = await eventsSince(db, me, workspaceStream(wsp), 0);
     const arrival = events.find(event =>
       (event.payload as { id: string }).id === newcomer);
     assert.ok(arrival, 'the directory stream carries the new member');
@@ -379,7 +379,7 @@ test('a rolled back transaction leaves neither the effect nor the event',
     await assert.rejects(() => db.transaction().execute(async (trx) => {
       const allocated = await allocateStream(trx, spaceStream(spaceId));
       await appendEvent(trx, allocated, 'space.member_added',
-        { actor_id: bob, role: 'member' });
+        { actor_id: bob, role: 'member' }, { kind: 'stream' });
       throw new Error('the effect failed after the event was written');
     }));
 
