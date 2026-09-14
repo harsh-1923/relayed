@@ -73,6 +73,8 @@ function dispatch(name: string, detail: Record<string, unknown>): void {
       return;
     case 'sync.catchup.denied':
     case 'sync.backfill.denied':
+    case 'sync.repair.denied':
+    case 'sync.thread.denied':
       count('sync.frame.dropped', { frame: 'denied' });
       return;
 

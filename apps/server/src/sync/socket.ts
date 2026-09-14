@@ -17,7 +17,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
-  type Hello, type CatchupRequest, type BackfillRequest, type DirectoryRequest,
+  type Hello, type CatchupRequest, type BackfillRequest, type RepairRequest,
+  type ThreadRequest, type DirectoryRequest,
   type OpFrame, type Ping,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
@@ -29,7 +30,8 @@ import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import { parseStream, type AppendedEvent, type Stream } from './events.ts';
 import {
-  welcome, catchup, backfill, streamHead, directoryPage, type Snapshot,
+  welcome, catchup, backfill, repair, threadReplies, streamHead, directoryPage,
+  type Snapshot, type MessageRow,
 } from './feed.ts';
 import { send, deleteMessage, MessageNotFoundError } from './ops.ts';
 import { Forbidden } from '../authz/can.ts';
@@ -281,6 +283,16 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
                       { parent });
       return;
     }
+    if (read.t === 'repair') {
+      await startSpan('sync.repair', () => onRepair(state, read.body as RepairRequest),
+                      { parent });
+      return;
+    }
+    if (read.t === 'thread') {
+      await startSpan('sync.thread', () => onThread(state, read.body as ThreadRequest),
+                      { parent });
+      return;
+    }
     if (read.t === 'directory') {
       await startSpan('sync.directory', () => onDirectory(state, read.body as DirectoryRequest),
                       { parent });
@@ -392,12 +404,57 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     const rows = await backfill(deps.db, request.c, request.before_ord, limit);
     state.send('backfill_ok', {
       c: request.c,
-      rows: rows.map(row => ({
-        id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
-        body: row.body, parent_id: row.parentId,
-      })),
+      rows: rows.map(rowOnWire),
       // A short page means the beginning was reached. Derived rather than asked
       // for, so a client cannot be told to keep paging into nothing.
+      complete: rows.length < limit,
+    });
+  }
+
+  /**
+   * What changed, among the messages a client already holds, while it was past
+   * the gap threshold — the other half of taking a gap (SYNC-FLOWS.md, the
+   * repair flow). Gated exactly as backfill is: the client names a chat, and
+   * the answer depends on whether it may read that chat, never on the cursor
+   * it sent.
+   */
+  async function onRepair(state: ConnectionState, request: RepairRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    if (!await mayRead(claims, { kind: 'chat', id: request.c })) {
+      note('sync.repair.denied');
+      return;
+    }
+    const limit = request.limit ?? 50;
+    const rows = await repair(deps.db, request.c, request.since_rev, request.max_ord,
+                              request.after ?? null, limit);
+    const last = rows.at(-1);
+    state.send('repair_ok', {
+      c: request.c,
+      rows: rows.map(rowOnWire),
+      complete: rows.length < limit,
+      // Where the next page starts. The LAST ROW's (rev, id), never the head:
+      // a row that changes again after this page moves past this cursor and
+      // is served again, complete, which is what makes a repair converge under
+      // live traffic rather than merely finish.
+      after: last ? { rev: last.rev, id: last.id } : request.after ?? null,
+    });
+  }
+
+  /** One page of a thread (DESIGN.md §8.2). Read-gated on the chat, like everything else. */
+  async function onThread(state: ConnectionState, request: ThreadRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    if (!await mayRead(claims, { kind: 'chat', id: request.c })) {
+      note('sync.thread.denied');
+      return;
+    }
+    const limit = request.limit ?? 50;
+    const rows = await threadReplies(deps.db, request.c, request.root, request.after_ord, limit);
+    state.send('thread_ok', {
+      c: request.c,
+      root: request.root,
+      rows: rows.map(rowOnWire),
       complete: rows.length < limit,
     });
   }
@@ -776,15 +833,24 @@ class ConnectionState implements Delivery {
  * asserted rather than hoped for: two shapes for "a message on the wire" is
  * what produced this in the first place.
  */
+/**
+ * A message row as it travels — one mapping for the tail, backfill, thread and
+ * repair, so the four cannot drift apart (invariant 85).
+ */
+function rowOnWire(row: MessageRow): Record<string, unknown> {
+  return {
+    id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
+    body: row.body, parent_id: row.parentId, deleted: row.deleted,
+    edited_at: row.editedAt, reply_count: row.replyCount,
+  };
+}
+
 function onWire(snapshot: Snapshot): Record<string, unknown> {
   if (snapshot.kind === 'messages') {
     return {
       kind: 'messages',
       head_ord: snapshot.headOrd,
-      recent: snapshot.recent.map(row => ({
-        id: row.id, ord: row.ord, rev: row.rev, author_id: row.authorId,
-        body: row.body, parent_id: row.parentId,
-      })),
+      recent: snapshot.recent.map(rowOnWire),
     };
   }
   if (snapshot.kind === 'space') {

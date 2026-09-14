@@ -186,7 +186,7 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
   authorize('read');
 
   const message = await db.selectFrom('messages')
-    .select(['id', 'chat_id', 'author_id'])
+    .select(['id', 'chat_id', 'author_id', 'parent_id'])
     .where('id', '=', input.messageId)
     .executeTakeFirst();
   if (!message || message.chat_id !== input.chatId) {
@@ -204,17 +204,23 @@ async function deleteInner(db: Kysely<DB>, input: DeleteInput): Promise<Applied>
     opId: input.opId, actorId: input.actorId, chatId: input.chatId, kind: 'delete',
   }, async (trx) => {
     const allocated = await allocateChat(trx, input.chatId, false);
+    // `rev` is NOT set here. The event catalogue bumps the version of every
+    // message an event touches — this one and, for a reply, its parent — so a
+    // change to what a message looks like cannot be made without its version
+    // moving (the version rule, events.ts).
     const row = await trx.updateTable('messages')
-      .set({ deleted: true, body: '', rev: allocated.rev })
+      .set({ deleted: true, body: '' })
       .where('id', '=', input.messageId)
       .returning('created_at')
       .executeTakeFirstOrThrow();
 
-    // The id alone. A recipient that never held this message writes nothing at
-    // all and merely accounts for the revision — which is the case that forces
-    // the frontier to be tracked explicitly rather than derived from rows, and
-    // the reason `delete` is in this phase at all (PHASE-2-SYNC.md §1).
-    event = await appendEvent(trx, allocated, 'message.deleted', { id: input.messageId });
+    // The id and the parent. A recipient that never held this message writes
+    // nothing at all and merely accounts for the revision — which is the case
+    // that forces the frontier to be tracked explicitly rather than derived
+    // from rows, and the reason `delete` is in this phase at all
+    // (PHASE-2-SYNC.md §1).
+    event = await appendEvent(trx, allocated, 'message.deleted',
+      { id: input.messageId, parent_id: message.parent_id });
 
     return ackOf(input.messageId, input.chatId, null, allocated.rev, row.created_at);
   });

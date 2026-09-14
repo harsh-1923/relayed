@@ -158,7 +158,7 @@ incidents, which makes it evidence about where this design is exposed.
 | It removed `bash` from the agent host because a prompt could read the process environment | Confirms `palette: 'none'` (§5.4) |
 | Its incidents include an OAuth `state` that was the raw user id, an approval check skipped when the caller id was missing, and a user-id pin that failed open | Confirms taking every actor from the session or the run row (§5.5, §6.5) |
 | An agent with no tool configuration gets every tool; credentials pinned on an agent are used by every invoker | Confirms explicit tool lists (§4.3) and the invoker's own connections (§6.4) |
-| One saved session per thread is shared by everyone in it, and agent memory is built from every run, including results fetched with a person's own token — so one person's data can surface in another person's run | **Invariant 81**, and why sessions and memory are deferred with that constraint (§13) |
+| One saved session per thread is shared by everyone in it, and agent memory is built from every run, including results fetched with a person's own token — so one person's data can surface in another person's run | **Invariant 83**, and why sessions and memory are deferred with that constraint (§13) |
 | It labels other agents' messages in the transcript as "not you", after agents answered for each other | §5.6 |
 | A lost stream was recorded as a failed run, mislabelling deploys as agent errors; listening for the request's `close` aborted runs; a quiet stream was cut by the HTTP client's default timeout; a shell as PID 1 turned every drain into a kill | §5.3 |
 | A late progress update arriving after the answer left "working" on screen; progress sent every few seconds became thousands of requests | The `seq` and cadence rules of the working indicator (§5.7) |
@@ -735,7 +735,7 @@ somewhere else — the discipline `can()` already holds for authorization
 | `beforeToolCall(run, call)` | Broker steps 4–8 (§5.5) | `execute` \| `stop(code, card?)` | Activity, snapshot, permission, connection | **Approval** for `write` and `destructive` tools (`agent_tools.approval`); a workspace allow-list of toolkits; per-toolkit rate limits |
 | `afterToolCall(run, call, outcome)` | Broker step 10 | nothing | Record the call; `last_used_at`; mark `needs_reauth` | Durable result markers that make a retried run safe |
 | `deliverReply(run, reply)` | On `done` (§5.7) | `post(audience)` \| `suppress` | Post to the thread for the chat; suppress when cancelled (§5.8) | **Invoker-only replies with Share** (`DESIGN.md` §6.6), using `post({ listed: [invoker] })` and §8 as it stands |
-| `onRunEnd(run, outcome)` | After the terminal state commits | nothing | Notice (§5.7), `agent_activity ended` | Waking runs deferred as `thread_busy`; automatic retry; memory, under invariant 81 |
+| `onRunEnd(run, outcome)` | After the terminal state commits | nothing | Notice (§5.7), `agent_activity ended` | Waking runs deferred as `thread_busy`; automatic retry; memory, under invariant 83 |
 
 **Why name them now, while each is a few lines.** The features in the right-hand
 column were all asked about while this design was written, and each is small
@@ -787,7 +787,7 @@ the vendor changes:
   | Triggers, Observability | No access |
 
   With IP allowlisting on the server's egress addresses. It lives in the
-  server's environment and nowhere else (invariant 73).
+  server's environment and nowhere else (invariant 75).
 - **`user_id` is the invoker's actor id** (`act_01M…`). Stable, never an email,
   never `default`, as Composio's own guidance asks. Actors are per workspace, so
   Alice's Linear in one workspace is not her Linear in another — the separation
@@ -896,7 +896,7 @@ to Alice's actor id, not to any agent, and every session for Alice resolves to
 the same account whichever agent created the session (§6.7). That is what saves
 Alice a sign-in per agent — and it is also why nothing at Composio stands
 between an agent Alice never allowed and her Linear. **The broker's permission
-check is the only thing that does** (§5.5, step 7; invariant 80), so it is not
+check is the only thing that does** (§5.5, step 7; invariant 82), so it is not
 an optimisation, a cache or a UI hint, and it runs on every call.
 
 **Covered** means a non-revoked row whose `effect` is at least the tool's.
@@ -1491,6 +1491,8 @@ stands:
 | **Backfill** | `feed.ts`, `backfill`; `socket.ts` sends `complete: rows.length < limit` | Leak. **And if filtered in JavaScript after the `LIMIT`**, a page with one hidden row returns 49 rows, `complete` becomes true, the client clears `has_gap`, and the history below is never fetched — a silent permanent hole. **The filter goes in the SQL, before the limit** |
 | **Unread and mentions** | `feed.ts`, `counters` and `welcomeChats` count messages by `ord > last_read_ord` | Bob gets a badge for a card he can never open. If it is the newest message, reading the chat marks read up to the highest ord *he holds*, which is below it — **the badge never clears** |
 | **Room activity** | `ops.ts` bumps `spaces.last_activity_at` on every send | The room jumps to the top of Bob's sidebar with nothing new in it. A restricted message does not bump it |
+| **A gap with nothing visible in its tail** | `catchup.ts` sets the floor from the tail; `link.ts` asks for no backfill below a null floor | A reader who can see none of the recent history gets an empty tail, a null floor, and a `has_gap` that never clears. Fixed by the gap-path step the plan puts before this one (`WORKSPACE-AGENTS-IMPL.md` §4.4). *Found by the spike* |
+| **Reply counts** | not built | A count must be **per reader**: a restricted reply — an access card is one — is not counted for someone who cannot see it (`WORKSPACE-AGENTS-IMPL.md` §4.4) |
 | **Agent context** | §5.6 | Alice's card appears in a run Bob started |
 | **Thread reply counts** | not built | Count only what the reader may see, when they are built |
 
@@ -1664,7 +1666,7 @@ telemetry** — the no-message-body rule covers all of them.
 
 | Spike | Question | Changes if it fails |
 |---|---|---|
-| **Withheld events in the sync model** | Extend `spikes/sync-model.mjs`: a restricted message between two public ones; live, catch-up, gap and backfill for a listed and an unlisted client; ordinal 1 hidden | §8 — the whole choice between withholding and a per-actor stream |
+| **Withheld events in the sync model** — ✅ **done, passed** | A new model of the engine as built (`spikes/visibility-model.mjs`): 99 checks including 400 random worlds, and 30 planted bugs, all caught. Results in `WORKSPACE-AGENTS-IMPL.md` §4.1.1; it also found and proved the fix for three gap-path bugs that predate this design (§4.4 there) | §8 — withholding holds; the per-actor stream is not needed |
 | **pi with no local tools** | Read from pi 0.85.1's types already: `tools` is an allowlist ("when provided, only the listed tool names are enabled"), so the palette is `['show_ui', ...remote names]` with no built-ins, and each `ToolDefinition.execute(toolCallId, params, signal, …)` receives the call id the broker keys on and an `AbortSignal` to hand to `fetch`. **Still open:** `parameters` is typed as a TypeBox `TSchema` and Composio returns plain JSON Schema — does pi validate arguments in a way that needs wrapping (`Type.Unsafe`), and does cancelling a run actually abort an in-flight broker call? | §5.4: how remote tools are registered |
 | **Composio connect, with verification on** | From a script and a browser: Linear over OAuth and one API-key toolkit through `link()`. Does the hosted page really collect the key and a subdomain? Does the `SameSite=Lax` cookie survive provider → Composio → our verifier? Does `complete_auth` with a *different* actor fail the account as documented? What does `revoke` return for each? | §6.5 — if the cookie does not survive, the attempt has to be carried another way; if the hosted key form is inadequate, our own form and a redacted route |
 | **Composio sessions for our own loop** | Does `getRawToolRouterSessionTools` return exactly the enabled tools plus meta tools, as JSON Schema pi accepts? What does `session.execute` return for no connection, an `EXPIRED` account, a `403` and a provider rejection? | §6.7, §6.8 — the error table is partly inferred from the SDK source and must be replaced with observed values |
@@ -1731,8 +1733,8 @@ purpose rather than rediscovered.
 |---|---|
 | **One run at a time per agent per thread** | Parallel answers in one thread confuse people. `defer('thread_busy')` in `admitRun`, woken by `onRunEnd` (§5.9) |
 | **Steering a running run with a follow-up** | People add "also include the logs" while it works. `invocationsFor` returns *steer* instead of a new run, for the run's own invoker only |
-| **Agent sessions that persist across turns** | Rebuilding context from the thread (§5.6) stops being enough — a follow-up needs the last run's tool results, not only its reply. Under **invariant 81**: a session belongs to one invoker, never to a thread |
-| **Agent memory** | An agent needs to learn across runs. Under **invariant 81**: nothing learned in a run for one invoker — least of all a result fetched with their connection — is recalled in a run for another |
+| **Agent sessions that persist across turns** | Rebuilding context from the thread (§5.6) stops being enough — a follow-up needs the last run's tool results, not only its reply. Under **invariant 83**: a session belongs to one invoker, never to a thread |
+| **Agent memory** | An agent needs to learn across runs. Under **invariant 83**: nothing learned in a run for one invoker — least of all a result fetched with their connection — is recalled in a run for another |
 | **Approval flows for creating or publishing agents** | Decided against for v1: any member creates, usable at once (§4.4) |
 | **Approval before write or destructive tools** | The first run that writes something its invoker did not intend, or the first destructive tool enabled on any agent. The shape is reserved: `agent_tools.approval` and the one-person card from §8.8 |
 | **Invoker-only replies, with a Share action** | Third-party content landing in rooms becomes a problem (`DESIGN.md` §6.6, item 2). §8 is most of the work |
@@ -1771,20 +1773,20 @@ purpose rather than rediscovered.
 
 ### Invariants to add
 
-Numbering continues from 71.
+Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for shortcuts.
 
 | # | Invariant | What breaks without it |
 |---|---|---|
-| 72 | A tool call's invoker is read from the **run row**, never from the runtime's request | Whatever steers the runtime chooses whose account is used |
-| 73 | Only `apps/server` calls Composio | The project key reaches a process that runs model-authored code, and every connected account in the workspace with it |
-| 74 | A mention's run is inserted **in the transaction that commits the message** | A mention committed just before a crash is never answered |
-| 75 | A workspace agent's palette holds **no local tools** | An end user's text authors shell commands in the runtime |
-| 76 | A restricted message's **revision** reaches every reader of the chat; its **content** reaches only the listed | Either a leak, or every unlisted reader's chat stops updating for good |
-| 77 | Visibility filters run **in SQL, before `LIMIT`** | Backfill reports a short page as complete and history below it is never fetched |
-| 78 | `listed` with no audience rows is **nobody**; an audience is never inferred from absence | A narrowed or dropped list makes a private card public |
-| 79 | A card carries **no URL**; a redirect is issued only to the named actor's own authenticated request | Whoever sees the card completes the flow and attaches their account to someone else |
-| 80 | An agent reaches an invoker's connection **only through a permission naming that agent**, checked on every call | Allowing one agent allows all of them, since Composio resolves the same account whichever agent asks |
-| 81 | Nothing a run learns under one invoker's authority is **given to a run for a different invoker** — no shared session, no shared memory | One person's Gmail or Linear data surfaces in someone else's answer |
+| 74 | A tool call's invoker is read from the **run row**, never from the runtime's request | Whatever steers the runtime chooses whose account is used |
+| 75 | Only `apps/server` calls Composio | The project key reaches a process that runs model-authored code, and every connected account in the workspace with it |
+| 76 | A mention's run is inserted **in the transaction that commits the message** | A mention committed just before a crash is never answered |
+| 77 | A workspace agent's palette holds **no local tools** | An end user's text authors shell commands in the runtime |
+| 78 | A restricted message's **revision** reaches every reader of the chat; its **content** reaches only the listed | Either a leak, or every unlisted reader's chat stops updating for good |
+| 79 | Visibility filters run **in SQL, before `LIMIT`** | Backfill reports a short page as complete and history below it is never fetched |
+| 80 | `listed` with no audience rows is **nobody**; an audience is never inferred from absence | A narrowed or dropped list makes a private card public |
+| 81 | A card carries **no URL**; a redirect is issued only to the named actor's own authenticated request | Whoever sees the card completes the flow and attaches their account to someone else |
+| 82 | An agent reaches an invoker's connection **only through a permission naming that agent**, checked on every call | Allowing one agent allows all of them, since Composio resolves the same account whichever agent asks |
+| 83 | Nothing a run learns under one invoker's authority is **given to a run for a different invoker** — no shared session, no shared memory | One person's Gmail or Linear data surfaces in someone else's answer |
 
 ---
 

@@ -23,6 +23,7 @@ import {
 import { replicaEffect } from './effects.ts';
 import {
   CatchupScheduler, applyCatchup, applyGap, applyBackfill, backfillFloor,
+  applyRepair, applyThread, repairOwed, repairsOwed,
   applyDirectoryPage, directorySnapshotComplete, directoryOwed,
   type MessageRow, type DirectoryRow,
 } from './catchup.ts';
@@ -69,6 +70,14 @@ export interface Link {
    * the rules itself.
    */
   backfill(chatId: string): boolean;
+  /**
+   * Fetch a thread's replies, from the start, one page at a time until the
+   * server says the page was the last. Called when a surface opens a thread
+   * whose replies held disagree with the parent's reply count. From the start
+   * rather than from a floor: replies share the chat's ordinal space and can
+   * sit anywhere in it, so there is no floor to page from.
+   */
+  thread(chatId: string, rootId: string): boolean;
   /** Reconnect now — waking from sleep, or a freshly refreshed token. */
   retryNow(): void;
   readonly state: LinkState;
@@ -142,6 +151,10 @@ export function createLink(deps: LinkDeps): Link {
   let scheduler: CatchupScheduler | null = null;
   /** Chats with a backfill request outstanding. One per chat, like catch-up. */
   const backfilling = new Set<string>();
+  /** Chats with a repair page outstanding. One per chat, for the same reason. */
+  const repairing = new Set<string>();
+  /** Threads with a page outstanding, and the ordinal each has paged through. */
+  const threading = new Map<string, number>();
   /**
    * Resolves the directory page currently in flight. One at a time.
    *
@@ -195,6 +208,11 @@ export function createLink(deps: LinkDeps): Link {
     void hydrateDirectory().catch((e: unknown) => {
       failure('directory', { id: deps.workspaceId() ?? 'unknown' }, e);
     });
+    // Repairs owed from before this connection — a gap taken on a socket that
+    // then dropped, or the app quit mid-repair — are persisted precisely so
+    // that they resume here rather than being forgotten with the socket.
+    repairing.clear();
+    for (const chatId of repairsOwed(db)) repair(chatId);
     // BEFORE the drain. An op written to the socket that died is still marked
     // in flight, and nothing else would ever move it back — `ready` only sees
     // `queued`, so it would sit there for ever while its message rendered as
@@ -274,7 +292,37 @@ export function createLink(deps: LinkDeps): Link {
       // The directory's gap is not repaired by the gap frame — it says only
       // that a paged snapshot is owed.
       if (frame.stream.kind === 'workspace') void hydrateDirectory();
+      // A chat's gap owes a repair: the held messages that changed while this
+      // client was too far behind to be told. Asked for now, at reconnect,
+      // because a deleted message that stays on screen is not a cosmetic delay.
+      if (frame.stream.kind === 'chat') repair(frame.stream.id);
       scheduler?.settled(frame.stream);
+      return;
+    }
+
+    if (t === 'repair_ok') {
+      const frame = body as {
+        c: string; rows: MessageRow[]; complete: boolean;
+        after: { rev: number; id: string } | null;
+      };
+      repairing.delete(frame.c);
+      const result = applyRepair(db, frame.c, frame.rows, frame.complete, frame.after);
+      if (result.topics.length > 0) deps.invalidate(result.topics);
+      // Until the server says complete AND nothing on the page was older than
+      // what is held: a rejected row is one a live event changed after the
+      // page was computed, and paging on serves it again at its new version.
+      if (!result.done) repair(frame.c);
+      return;
+    }
+
+    if (t === 'thread_ok') {
+      const frame = body as { c: string; root: string; rows: MessageRow[]; complete: boolean };
+      const key = `${frame.c}:${frame.root}`;
+      deps.invalidate(applyThread(db, frame.c, frame.rows));
+      const last = frame.rows.at(-1);
+      if (frame.complete || !last) { threading.delete(key); return; }
+      threading.set(key, last.ord);
+      send('thread', { c: frame.c, root: frame.root, after_ord: last.ord });
       return;
     }
 
@@ -462,14 +510,46 @@ export function createLink(deps: LinkDeps): Link {
     if (!db || backfilling.has(chatId)) return false;
 
     const floor = backfillFloor(db, chatId);
-    // No gap means everything below the floor is already here. A floor of 1 is
-    // the beginning — ordinals start at 1, so there is nothing under it.
+    // No gap means everything below the floor is already here. WHILE THERE IS
+    // ONE, always ask — from the floor, including a floor of 1, or from just
+    // above the head when the tail held nothing this client may see. It used
+    // to refuse both, and both left `has_gap` set for ever: nothing else
+    // clears it, and only a page marked complete can (invariant 86). An empty
+    // page marked complete is exactly the answer that clears it.
     if (!floor.hasGap) return false;
-    const before = floor.oldestLocalOrd;
-    if (before === null || before <= 1) return false;
+    const before = floor.oldestLocalOrd ?? floor.headOrd + 1;
+    if (before < 1) return false;
 
     if (!connection.send('backfill', { c: chatId, before_ord: before })) return false;
     backfilling.add(chatId);
+    return true;
+  }
+
+  /**
+   * Ask for the next page of the repair a chat owes, if any and if none is out.
+   *
+   * ONE PAGE IN FLIGHT PER CHAT, and the next is asked for when the reply
+   * lands (`repair_ok`), so a repair of any size is a chain of small frames
+   * rather than one large one — and one a quit can interrupt anywhere, since
+   * where it got to is in the replica, not here.
+   */
+  function repair(chatId: string): boolean {
+    const db = deps.db();
+    if (!db || repairing.has(chatId)) return false;
+    const owed = repairOwed(db, chatId);
+    if (!owed) return false;
+    if (!connection.send('repair', {
+      c: chatId, since_rev: owed.sinceRev, max_ord: owed.maxOrd, after: owed.after,
+    })) return false;
+    repairing.add(chatId);
+    return true;
+  }
+
+  function thread(chatId: string, rootId: string): boolean {
+    const key = `${chatId}:${rootId}`;
+    if (!deps.db() || threading.has(key)) return false;
+    if (!connection.send('thread', { c: chatId, root: rootId, after_ord: 0 })) return false;
+    threading.set(key, 0);
     return true;
   }
 
@@ -542,6 +622,7 @@ export function createLink(deps: LinkDeps): Link {
     start: () => { connection.start(); },
     drain,
     backfill,
+    thread,
     stop: () => {
       // The pager may be waiting on a page that will never arrive now. Settling
       // it is the difference between a stopped link and a stopped link holding
@@ -563,6 +644,8 @@ export function createLink(deps: LinkDeps): Link {
       // Cleared rather than left, or a chat with a request outstanding when the
       // link stopped could never ask again on the next connection.
       backfilling.clear();
+      repairing.clear();
+      threading.clear();
       scheduler = null;
       connection.stop();
     },

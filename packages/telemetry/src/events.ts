@@ -44,6 +44,13 @@ export const events = {
     fields: { chat_id: 'id', rows: 'int', duration: 'ms' },
     doc: 'One keyset backfill page fetched (DESIGN §9.4).',
   },
+  'sync.repair.page': {
+    fields: { chat_id: 'id', rows: 'int', applied: 'int', rejected: 'int', done: 'bool' },
+    doc: 'One repair page applied after a gap (SYNC-FLOWS, the repair flow). '
+       + '`rejected` counts rows older than what the client held — a live '
+       + 'change landed mid-repair, and the row is served again; `done` is '
+       + 'true only for a complete page with nothing rejected (invariant 87).',
+  },
 
   'sync.failed': {
     fields: { stage: 'enum', frame: 'enum', id: 'id', rev: 'int' },

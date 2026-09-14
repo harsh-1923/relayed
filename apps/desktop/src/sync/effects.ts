@@ -87,19 +87,48 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
       head_ord = MAX(chat_state.head_ord, excluded.head_ord)
   `).run(stream.id, body.ord);
 
+  // A reply moves its parent's count, and its parent's VERSION — the mirror of
+  // the server's rule that a reply touches its parent (events.ts, the version
+  // rule). The version matters as much as the count: a repair page computed
+  // before this reply landed carries the parent at an older version, and it is
+  // the bumped local version that stops that page winding the count back.
+  if (body.parent_id) {
+    db.prepare(`
+      UPDATE messages SET reply_count = reply_count + 1, rev = ?
+       WHERE id = ? AND chat_id = ?
+    `).run(event.rev, body.parent_id, stream.id);
+  }
+
   return [topic.messages(stream.id), topic.chatState(stream.id)];
 }
 
 function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): string[] {
-  const { id } = event.payload as { id: string };
+  const { id, parent_id: parentId } = event.payload as { id: string; parent_id?: string | null };
 
   // A TOMBSTONE, and the row keeps its ordinal. The gap it leaves in the
   // sequence is normal and permanent — `ord` is never renumbered or reused, or
   // read cursors and scroll positions corrupt on every client that saw the
   // original (invariant 2).
+  //
+  // Read before the write, because the write below erases the one fact the
+  // parent's count depends on: whether this reply was still counted here.
+  const held = db.prepare('SELECT deleted FROM messages WHERE id = ? AND chat_id = ?')
+    .get(id, stream.id) as { deleted: number } | undefined;
   const result = db.prepare(
-    "UPDATE messages SET deleted = 1, body = '' WHERE id = ? AND chat_id = ?",
-  ).run(id, stream.id);
+    "UPDATE messages SET deleted = 1, body = '', rev = ? WHERE id = ? AND chat_id = ?",
+  ).run(event.rev, id, stream.id);
+
+  // The parent's count moves ONCE, whether or not the reply itself is held: a
+  // client can hold the parent without the reply, having learned the count from
+  // a row fetched after a gap. It does not move for a reply already marked
+  // deleted here — that delete was counted when it was applied.
+  let parentTouched = false;
+  if (parentId && (!held || held.deleted === 0)) {
+    parentTouched = db.prepare(`
+      UPDATE messages SET reply_count = MAX(reply_count - 1, 0), rev = ?
+       WHERE id = ? AND chat_id = ?
+    `).run(event.rev, parentId, stream.id).changes > 0;
+  }
 
   // NO ROW IS THE INTERESTING CASE, not the error case. A delete for a message
   // this client never held — never backfilled, or evicted under retention —
@@ -107,7 +136,7 @@ function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): stri
   // client that treated "nothing to update" as a failure would stall its own
   // frontier permanently while looking perfectly healthy. This is the exact
   // case that forced the frontier to be tracked explicitly.
-  if (result.changes === 0) return [];
+  if (result.changes === 0 && !parentTouched) return [];
 
   return [topic.messages(stream.id), topic.chatState(stream.id)];
 }

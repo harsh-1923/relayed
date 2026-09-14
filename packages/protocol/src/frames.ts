@@ -222,6 +222,40 @@ export const BackfillRequest = z.object({
 export type BackfillRequest = z.infer<typeof BackfillRequest>;
 
 /**
+ * "Which of the messages I hold changed while I was past the gap threshold?"
+ *
+ * The other half of taking a gap. A gap replaces the log with a partial
+ * snapshot, and a message the client already held that the snapshot did not
+ * re-send is otherwise never corrected — a delete during the gap leaves the
+ * message on that device for good. `since_rev` is the frontier the gap jumped
+ * FROM, `max_ord` the highest ordinal held before the tail landed; the answer
+ * is every message that changed after the one and sits at or below the other,
+ * as complete rows, paged by (rev, id).
+ */
+export const RepairRequest = z.object({
+  c: z.string(),
+  since_rev: z.number().int().nonnegative(),
+  max_ord: z.number().int().nonnegative(),
+  /** Where the previous page ended. Absent for the first page. */
+  after: z.object({ rev: z.number().int().nonnegative(), id: z.string() }).nullable().optional(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+export type RepairRequest = z.infer<typeof RepairRequest>;
+
+/**
+ * One page of a thread, by ordinal (`DESIGN.md` §8.2). Replies share the chat's
+ * ordinal space and can sit anywhere in it, so they cannot come from backfill's
+ * ordinal range; this is the parent-keyed read that must exist from day one.
+ */
+export const ThreadRequest = z.object({
+  c: z.string(),
+  root: z.string(),
+  after_ord: z.number().int().nonnegative(),
+  limit: z.number().int().positive().max(200).optional(),
+});
+export type ThreadRequest = z.infer<typeof ThreadRequest>;
+
+/**
  * One page of the actor directory.
  *
  * KEYSET ON ACTOR ID, not an offset and not a revision. Actors have no ordinal,
@@ -271,6 +305,7 @@ export type OpFrame = z.infer<typeof OpFrame>;
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
   catchup: CatchupRequest, backfill: BackfillRequest,
+  repair: RepairRequest, thread: ThreadRequest,
   directory: DirectoryRequest, op: OpFrame,
 };
 
@@ -459,27 +494,64 @@ export const Gap = z.object({
 export type Gap = z.infer<typeof Gap>;
 
 /**
- * One page of history, newest first.
+ * A message as every row-returning frame carries it: COMPLETE CURRENT STATE.
  *
- * Rows are COMPLETE CURRENT STATE — the body as it stands now, tombstone
- * status, everything. That is what makes "account for the revision, skip the
- * effect" safe for an edit below the window: when the row finally arrives it
- * already carries the edited body.
+ * The body as it stands now, tombstone status, when it was edited, how many
+ * replies it has. That is what makes "account for the revision, skip the
+ * effect" safe for an edit below the window — when the row finally arrives it
+ * already carries the edited body — and what makes overwriting a held row with
+ * a fetched one safe at all (invariant 83).
+ *
+ * The three newest fields are optional on the wire because a server that
+ * predates them omits them, and a client must read such a row as "not deleted,
+ * never edited, no replies known" rather than refuse it.
  */
+const MessageRowFrame = z.object({
+  id: z.string(),
+  ord: z.number().int().positive(),
+  rev: z.number().int().nonnegative(),
+  author_id: z.string(),
+  body: z.string(),
+  parent_id: z.string().nullable(),
+  deleted: z.boolean().optional(),
+  edited_at: z.string().nullable().optional(),
+  reply_count: z.number().int().nonnegative().optional(),
+});
+export type MessageRowFrame = z.infer<typeof MessageRowFrame>;
+
+/** One page of history, newest first. */
 export const BackfillOk = z.object({
   c: z.string(),
-  rows: z.array(z.object({
-    id: z.string(),
-    ord: z.number().int().positive(),
-    rev: z.number().int().nonnegative(),
-    author_id: z.string(),
-    body: z.string(),
-    parent_id: z.string().nullable(),
-  })),
+  rows: z.array(MessageRowFrame),
   /** True when the beginning of history was reached. */
   complete: z.boolean(),
 });
 export type BackfillOk = z.infer<typeof BackfillOk>;
+
+/**
+ * One page of repair: held messages that changed while the client was away.
+ *
+ * `after` is where the NEXT page starts — the last row's (rev, id), never the
+ * head. A row that changes again after this page was computed moves past that
+ * cursor and is served again, complete, which is how a client that applied a
+ * live change over a stale row is put right (SYNC-FLOWS.md, the repair flow).
+ */
+export const RepairOk = z.object({
+  c: z.string(),
+  rows: z.array(MessageRowFrame),
+  complete: z.boolean(),
+  after: z.object({ rev: z.number().int().nonnegative(), id: z.string() }).nullable(),
+});
+export type RepairOk = z.infer<typeof RepairOk>;
+
+/** One page of a thread, oldest first. */
+export const ThreadOk = z.object({
+  c: z.string(),
+  root: z.string(),
+  rows: z.array(MessageRowFrame),
+  complete: z.boolean(),
+});
+export type ThreadOk = z.infer<typeof ThreadOk>;
 
 /**
  * One page of the directory, plus where the stream was when the page was taken.
@@ -554,6 +626,7 @@ export type NackFrame = z.infer<typeof NackFrame>;
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
+  repair_ok: RepairOk, thread_ok: ThreadOk,
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
 };
 

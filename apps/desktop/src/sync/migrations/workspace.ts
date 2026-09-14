@@ -511,4 +511,27 @@ export const workspaceMigrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 9,
+    name: 'gap-repair',
+    up: `
+      -- The gap path, corrected (SYNC-FLOWS.md, the repair flow; found by
+      -- spikes/visibility-tests.mjs). A message's \`rev\` is its version and a
+      -- fetched row applies only if it is not older than the one held; what a
+      -- gap owes is recorded here so a quit mid-repair resumes rather than
+      -- forgets.
+
+      -- Undeleted replies, as the server counts them for this reader. Kept on
+      -- the row so the chat view needs no join, and moved by live reply events
+      -- between the fetches that reset it.
+      ALTER TABLE messages ADD COLUMN reply_count INTEGER NOT NULL DEFAULT 0;
+
+      -- The repair owed after a gap: changes since this revision, to messages
+      -- at or below this ordinal, paged by (rev, id). All NULL when none is.
+      ALTER TABLE chat_state ADD COLUMN repair_since_rev INTEGER;
+      ALTER TABLE chat_state ADD COLUMN repair_max_ord   INTEGER;
+      ALTER TABLE chat_state ADD COLUMN repair_after_rev INTEGER;
+      ALTER TABLE chat_state ADD COLUMN repair_after_id  TEXT;
+    `,
+  },
 ];

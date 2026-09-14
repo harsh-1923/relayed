@@ -14,6 +14,7 @@ import { replicaEffect } from './effects.ts';
 import { setSink } from '@relayed/telemetry';
 import {
   CatchupScheduler, applyCatchup, applyGap, applyBackfill, backfillFloor,
+  applyRepair, applyThread, repairOwed,
   applyDirectoryPage, directorySnapshotComplete, directoryOwed,
   type MessageRow, type DirectoryRow,
 } from './catchup.ts';
@@ -334,16 +335,224 @@ test('a gap CLEARS staged events, which could never drain', () => {
   db.close();
 });
 
-test('a second gap with a shorter tail does not RAISE the floor', () => {
-  // `oldest_local_ord` only ever goes down. Raising it would hide history the
-  // client already holds, and the UI would offer to backfill what is already
-  // there while pretending the rest is gone.
+test('A SECOND GAP TAKES THE NEW TAIL\'S FLOOR, never the old one', () => {
+  // This test used to assert the opposite — "the floor only ever goes down" —
+  // and the sync model showed what that cost (WORKSPACE-AGENTS-IMPL.md §4.1.1):
+  // a gap jumps over history this client never held, so an old, lower floor
+  // promises that 40,000–40,189 are held when they are not. Kept at 40,000,
+  // backfill only ever fetched below it, the 78 messages the second gap jumped
+  // over never arrived, and `has_gap` cleared over the hole (invariant 86).
   const db = replica();
   applyGap(db, CHAT, 91_204, { kind: 'messages', head_ord: 40_112, recent: tail(40_000, 40_112) });
   assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 40_000);
 
   applyGap(db, CHAT, 91_300, { kind: 'messages', head_ord: 40_200, recent: tail(40_190, 40_200) });
-  assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 40_000, 'the floor held');
+  assert.equal(backfillFloor(db, CHAT.id).oldestLocalOrd, 40_190,
+    'the floor is the second tail\'s: everything between is owed to backfill again');
+  assert.equal(backfillFloor(db, CHAT.id).hasGap, true);
+
+  // The rows held from before are still there — nothing was thrown away, and
+  // backfill below 40,190 will re-send them harmlessly on its way down.
+  assert.equal(messageCount(db), 113 + 11);
+  db.close();
+});
+
+test('a gap after scrolling to the top still owes a backfill, and it can close', () => {
+  // The first finding: floor 1, `has_gap` clear, then a gap. Before, the floor
+  // stayed at 1 and nothing asked again; "more above" for ever.
+  const db = replica();
+  applyGap(db, CHAT, 100, { kind: 'messages', head_ord: 6, recent: tail(5, 6) });
+  applyBackfill(db, CHAT.id, tail(1, 4), true);
+  assert.deepEqual(backfillFloor(db, CHAT.id), { oldestLocalOrd: 1, headOrd: 6, hasGap: false });
+
+  applyGap(db, CHAT, 300, { kind: 'messages', head_ord: 14, recent: tail(13, 14) });
+  assert.deepEqual(backfillFloor(db, CHAT.id), { oldestLocalOrd: 13, headOrd: 14, hasGap: true },
+    'the floor moved up to the new tail and the gap is open');
+  applyBackfill(db, CHAT.id, tail(1, 12), true);
+  assert.equal(backfillFloor(db, CHAT.id).hasGap, false);
+  assert.equal(messageCount(db), 14, 'every message, including the six the gap jumped');
+  db.close();
+});
+
+test('a gap whose tail is EMPTY for this reader has a null floor and still closes', () => {
+  // Reachable once restricted messages exist: a reader who may see none of the
+  // recent history. `link.ts` asks from just above the head and an empty page
+  // marked complete is what clears the gap.
+  const db = replica();
+  applyGap(db, CHAT, 300, { kind: 'messages', head_ord: 14, recent: [] });
+  assert.deepEqual(backfillFloor(db, CHAT.id), { oldestLocalOrd: null, headOrd: 14, hasGap: true });
+  applyBackfill(db, CHAT.id, [], true);
+  assert.equal(backfillFloor(db, CHAT.id).hasGap, false);
+  db.close();
+});
+
+// ─── the version rule, and repair ───────────────────────────────────────────
+
+/** A complete row, as the tail, backfill and repair all send one. */
+const row = (ord: number, rev: number, extra: Partial<MessageRow> = {}): MessageRow => ({
+  id: `msg_${ord}`, ord, rev, author_id: 'act_1', body: `body ${ord}`, parent_id: null,
+  deleted: false, edited_at: null, reply_count: 0, ...extra,
+});
+
+const replyCreated = (rev: number, ord: number, parent: string): Envelope => ({
+  rev, type: 'message.created',
+  payload: {
+    id: `msg_${ord}`, ord, parent_id: parent, author_id: 'act_2',
+    body: `reply ${ord}`, created_at: '2026-09-10T16:04:11.238Z',
+  },
+});
+
+const deletedEvent = (rev: number, id: string, parent: string | null = null): Envelope => ({
+  rev, type: 'message.deleted', payload: { id, parent_id: parent },
+});
+
+const shown = (db: DatabaseSync, id: string) =>
+  db.prepare('SELECT deleted, body, reply_count, rev FROM messages WHERE id = ?').get(id) as
+    { deleted: number; body: string; reply_count: number; rev: number } | undefined;
+
+test('A GAP RECORDS THE REPAIR IT OWES: since the frontier it jumped from, up to the highest held', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  for (let i = 1; i <= 5; i++) applyEvent(deps, CHAT, created(i, i));
+  assert.equal(repairOwed(db, CHAT.id), null, 'nothing owed while caught up');
+
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 60, recent: tail(58, 60) });
+  assert.deepEqual(repairOwed(db, CHAT.id), { sinceRev: 5, maxOrd: 5, after: null },
+    'changes after revision 5, to messages at or below ordinal 5');
+  db.close();
+});
+
+test('CAROL\'S WEEK: what changed while she was away is repaired, and only that', () => {
+  // She held 1–10. Meanwhile 3 was edited, 5 gained two replies, 7 was
+  // deleted, and forty more arrived. The repair page carries exactly 3, 5 and 7
+  // as complete rows; applying it corrects her copies and touches nothing else.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  for (let i = 1; i <= 10; i++) applyEvent(deps, CHAT, created(i, i));
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 50, recent: tail(48, 50) });
+
+  const page = [
+    row(3, 11, { body: 'body 3, corrected', edited_at: '2026-09-11T10:00:00.000Z' }),
+    row(5, 13, { reply_count: 2 }),
+    row(7, 14, { deleted: true, body: '' }),
+  ];
+  const result = applyRepair(db, CHAT.id, page, true, { rev: 14, id: 'msg_7' });
+  assert.deepEqual([result.done, result.rejected], [true, 0]);
+  assert.equal(repairOwed(db, CHAT.id), null, 'a clean, complete page settles the debt');
+
+  assert.equal(shown(db, 'msg_3')?.body, 'body 3, corrected', 'the edit');
+  assert.equal(shown(db, 'msg_5')?.reply_count, 2, 'the replies');
+  assert.deepEqual([shown(db, 'msg_7')?.deleted, shown(db, 'msg_7')?.body], [1, ''], 'the tombstone');
+  assert.equal(shown(db, 'msg_1')?.body, 'body 1', 'the untouched, untouched');
+  assert.equal(messageCount(db), 13, 'repair inserted nothing: history it never held is backfill\'s');
+  db.close();
+});
+
+test('repair corrects only rows HELD: a row the client never had is not inserted', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, created(1, 1));
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 50, recent: tail(50, 50) });
+  applyRepair(db, CHAT.id, [row(30, 20, { deleted: true, body: '' })], true, { rev: 20, id: 'msg_30' });
+  assert.equal(messageCount(db), 2, 'still just the one held row and the tail');
+  db.close();
+});
+
+test('THE VERSION GUARD: a row older than what is held is rejected, and repair stays open', () => {
+  // A live event landed between the server computing the page and this client
+  // applying it. The live event is a delta over a stale row; the page is older
+  // than the live event; neither alone is right. Rejecting the page and paging
+  // on is what makes it right, because the live event bumped the server's row
+  // past the cursor and it will be served again, complete (invariant 87).
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  for (let i = 1; i <= 5; i++) applyEvent(deps, CHAT, created(i, i));
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 50, recent: tail(50, 50) });
+
+  // A live reply to msg_4 lands at revision 901, bumping msg_4 locally.
+  applyEvent(deps, CHAT, replyCreated(901, 51, 'msg_4'));
+  assert.deepEqual([shown(db, 'msg_4')?.reply_count, shown(db, 'msg_4')?.rev], [1, 901]);
+
+  // The repair page was computed before that: msg_4 at revision 700 with no
+  // replies yet, and msg_2 deleted at 600.
+  const page = [row(2, 600, { deleted: true, body: '' }), row(4, 700, { reply_count: 0 })];
+  const result = applyRepair(db, CHAT.id, page, true, { rev: 700, id: 'msg_4' });
+  assert.deepEqual([result.done, result.rejected], [false, 1], 'complete on the wire, but not done');
+  assert.equal(shown(db, 'msg_4')?.reply_count, 1, 'the live reply was NOT wound back');
+  assert.equal(shown(db, 'msg_2')?.deleted, 1, 'while the untouched row applied');
+  assert.deepEqual(repairOwed(db, CHAT.id)?.after, { rev: 700, id: 'msg_4' }, 'paging continues from here');
+
+  // The next page carries msg_4 again, at its new version, with the reply counted.
+  const next = applyRepair(db, CHAT.id, [row(4, 901, { reply_count: 1 })], true, { rev: 901, id: 'msg_4' });
+  assert.deepEqual([next.done, next.rejected], [true, 0]);
+  assert.equal(repairOwed(db, CHAT.id), null);
+  db.close();
+});
+
+test('a repair interrupted mid-way is PERSISTED, and a second gap WIDENS it', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  for (let i = 1; i <= 5; i++) applyEvent(deps, CHAT, created(i, i));
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 50, recent: tail(50, 50) });
+  applyRepair(db, CHAT.id, [row(2, 600, { deleted: true, body: '' })], false, { rev: 600, id: 'msg_2' });
+  assert.deepEqual(repairOwed(db, CHAT.id), { sinceRev: 5, maxOrd: 5, after: { rev: 600, id: 'msg_2' } },
+    'where it got to survives in the replica, so a quit resumes rather than forgets');
+
+  // A second gap, from a frontier of 900 with ordinal 50 now held.
+  applyGap(db, CHAT, 2000, { kind: 'messages', head_ord: 120, recent: tail(120, 120) });
+  assert.deepEqual(repairOwed(db, CHAT.id), { sinceRev: 5, maxOrd: 50, after: null },
+    'since the OLDER frontier, up to the NEWER highest held, paging restarted');
+  db.close();
+});
+
+test('a reply moves its parent\'s count and version; a delete moves it back, held or not', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, created(1, 1));
+  applyEvent(deps, CHAT, replyCreated(2, 2, 'msg_1'));
+  assert.deepEqual([shown(db, 'msg_1')?.reply_count, shown(db, 'msg_1')?.rev], [1, 2]);
+
+  // A reply this client never held — it learned the count from a fetched row —
+  // deleted live: the event names the parent, so the count still moves.
+  applyEvent(deps, CHAT, deletedEvent(3, 'msg_99', 'msg_1'));
+  assert.equal(shown(db, 'msg_1')?.reply_count, 0, 'moved once, without the reply row');
+  assert.equal(shown(db, 'msg_1')?.rev, 3);
+
+  // A held reply deleted: marked, counted down once, and a duplicate delete
+  // — already marked — does not count it down again.
+  applyEvent(deps, CHAT, replyCreated(4, 4, 'msg_1'));
+  applyEvent(deps, CHAT, deletedEvent(5, 'msg_4', 'msg_1'));
+  assert.deepEqual([shown(db, 'msg_4')?.deleted, shown(db, 'msg_1')?.reply_count], [1, 0]);
+  db.prepare("UPDATE stream_state SET synced_through_rev = 4 WHERE stream_id = ?").run(CHAT.id);
+  applyEvent(deps, CHAT, deletedEvent(5, 'msg_4', 'msg_1'));
+  assert.equal(shown(db, 'msg_1')?.reply_count, 0, 'never below what it should be');
+  db.close();
+});
+
+test('tombstones from the tail and backfill mark held rows and are never un-deleted', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  for (let i = 1; i <= 3; i++) applyEvent(deps, CHAT, created(i, i));
+  applyGap(db, CHAT, 900, { kind: 'messages', head_ord: 3, recent: [row(3, 800, { deleted: true, body: '' }), row(2, 2), row(1, 1)] });
+  assert.equal(shown(db, 'msg_3')?.deleted, 1, 'the tail\'s tombstone applied to the held row');
+  // An older copy of msg_3 from some stale page cannot bring it back.
+  applyBackfill(db, CHAT.id, [row(3, 3)], false);
+  assert.equal(shown(db, 'msg_3')?.deleted, 1, 'the version guard held');
+  db.close();
+});
+
+test('a thread page inserts replies this client may see, and refreshes ones it holds', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  applyEvent(deps, CHAT, created(1, 1));
+  applyEvent(deps, CHAT, replyCreated(2, 2, 'msg_1'));
+  const topics = applyThread(db, CHAT.id, [
+    row(2, 2, { parent_id: 'msg_1', body: 'reply 2' }),
+    row(7, 7, { parent_id: 'msg_1', body: 'reply 7' }),
+  ]);
+  assert.deepEqual(topics, [`chat:${CHAT.id}:messages`]);
+  assert.equal((db.prepare('SELECT COUNT(*) n FROM messages WHERE parent_id = ?').get('msg_1') as { n: number }).n, 2);
+  assert.deepEqual(applyThread(db, CHAT.id, []), [], 'an empty page wakes nothing');
   db.close();
 });
 

@@ -1095,8 +1095,13 @@ chat, and unread comes from the server.
 
 **One consequence to plan for:** thread replies may sit *inside* a chat gap,
 so they cannot be fetched by ordinal range. Thread backfill needs its own
-parent-keyed endpoint: `GET /threads/{root_id}/replies?after_ord=N`. This must
-exist from day one; it is not an optimization.
+parent-keyed endpoint. This must exist from day one; it is not an optimization.
+**Built** as the `thread` frame (`SYNC-FLOWS.md`, the frame vocabulary): one
+page of undeleted replies by ordinal, complete rows, a `complete` flag. A
+client opens a thread by paging it from the start whenever the replies it holds
+disagree with the parent's `reply_count` — which every message row carries, and
+which a reply's creation or deletion moves on the parent because the event
+catalogue declares that a reply **touches its parent** (invariant 84).
 
 ### 8.3 Client schema
 
@@ -2702,6 +2707,10 @@ test.
 | 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined — 1,600 members was 69% of the frame and 20× the chats (§9.9) |
 | 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
 | 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
+| 84 | An event that changes how a message renders **bumps that message's `rev`** — declared per type in the event catalogue, applied by `appendEvent`, a reply touching its parent | Repair cannot find what changed while a client was past the gap threshold; a reply's parent shows a stale count for ever (`SYNC-FLOWS.md`, the repair flow) |
+| 85 | Every row a read path returns is **complete current state** — body, tombstone, edited, reply count | A client that held the row keeps yesterday's body, or a deleted message, on every device that was far behind |
+| 86 | After a gap the floor is **the tail's**, never `MIN` with an old one, and backfill is asked for while `has_gap` is set — from a floor of 1, or from `head_ord + 1` when the tail was empty | What a later gap jumped over is never fetched, and `has_gap` sticks or clears over a hole. Found by the sync model: 62 of 100 random worlds lost history |
+| 87 | A fetched row applies **only if it is not older** than the row held, and a repair is complete only on a page with **nothing rejected** | A live change landing mid-repair is undone, or the change before it is lost for good |
 
 ### Scenarios to test explicitly
 

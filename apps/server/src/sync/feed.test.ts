@@ -20,8 +20,8 @@ import {
 } from './spaces.ts';
 import { send, deleteMessage, markRead, MessageNotFoundError } from './ops.ts';
 import {
-  head, catchup, backfill, counters, welcome, eventsSince,
-  GAP_THRESHOLD, REPLAY_LIMIT,
+  head, catchup, backfill, repair, threadReplies, counters, welcome, eventsSince,
+  GAP_THRESHOLD, REPLAY_LIMIT, type MessageRow,
 } from './feed.ts';
 import { chatStream } from './events.ts';
 
@@ -377,12 +377,13 @@ test('a delete authorizes against ONE snapshot, not two reads of it', opts, asyn
   // sending.queries() + 2, from loading grants and placement a second time.
   assert.equal(deleting.queries(), sending.queries(),
     'a delete costs what a send costs — not two authorization reads more');
-  // Was 7 before the event log. Both sides gained exactly one statement — the
-  // append — so the equality above is untouched and this number moved by one.
-  // It is here to make a change like that deliberate rather than invisible: an
-  // op that starts costing two extra statements should fail a test, not show up
-  // as latency later.
-  assert.equal(sending.queries(), 8, 'and neither has quietly grown');
+  // Was 7 before the event log and 8 before the version rule. Each time both
+  // sides gained exactly one statement — the append, then the append's bump of
+  // the messages the event touches — so the equality above is untouched and
+  // this number moved by one. It is here to make a change like that deliberate
+  // rather than invisible: an op that starts costing two extra statements
+  // should fail a test, not show up as latency later.
+  assert.equal(sending.queries(), 9, 'and neither has quietly grown');
 });
 
 // ── the event stream ───────────────────────────────────────────────────────
@@ -475,8 +476,12 @@ test('SPIKE §9.4: paging terminates, without duplicates or holes', opts, async 
   assert.equal(seen.length + gap.snapshot.recent.length, 237, 'full history reassembled');
 });
 
-test('backfill excludes tombstones, so a deleted message is not paged back in',
+test('backfill INCLUDES tombstones, marked, so a page is complete current state',
   opts, async () => {
+  // It used to exclude them, against what SYNC-FLOWS.md §14 promised — and the
+  // sync model showed why the promise matters: a client that held the message
+  // and fell past the gap threshold before the delete never learned of it, and
+  // a deleted root's surviving replies were reachable through nothing at all.
   const { chatId } = await channel();
   await fill(chatId, 5);
   const third = await db.selectFrom('messages').select('id')
@@ -484,8 +489,109 @@ test('backfill excludes tombstones, so a deleted message is not paged back in',
   await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: third.id });
 
   const rows = await backfill(db, chatId, 99, 50);
-  assert.deepEqual(rows.map(r => r.ord), [5, 4, 2, 1],
-    'the gap at 3 is permanent and correct — ord is never renumbered');
+  assert.deepEqual(rows.map(r => r.ord), [5, 4, 3, 2, 1],
+    'ordinal 3 is still there — as a tombstone, never renumbered');
+  const tombstone = rows.find(r => r.ord === 3);
+  assert.deepEqual([tombstone?.deleted, tombstone?.body], [true, ''],
+    'marked deleted, body already gone');
+  assert.deepEqual(rows.filter(r => r.ord !== 3).map(r => r.deleted), [false, false, false, false]);
+});
+
+// ── the version rule, and repair ───────────────────────────────────────────
+
+test('THE VERSION RULE: a reply bumps its parent; a delete bumps its target and parent',
+  opts, async () => {
+  const { chatId } = await channel();
+  const root = ulid('msg');
+  const created = await send(db, { opId: ulid('op'), chatId, actorId: bob, messageId: root, body: 'root' });
+  const version = async (id: string) => (await db.selectFrom('messages').select('rev')
+    .where('id', '=', id).executeTakeFirstOrThrow()).rev;
+  assert.equal(await version(root), created.ack.rev, 'a new message is at the version that created it');
+
+  const reply = ulid('msg');
+  const replied = await send(db, { opId: ulid('op'), chatId, actorId: me, messageId: reply,
+                                   body: 'reply', parentId: root });
+  assert.equal(await version(root), replied.ack.rev,
+    'the parent moved to the reply\'s revision: its reply count changed');
+  assert.equal(replied.event?.type, 'message.created');
+
+  const deleted = await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId: reply });
+  assert.equal(await version(reply), deleted.ack.rev, 'the deleted reply is at the delete\'s revision');
+  assert.equal(await version(root), deleted.ack.rev, 'and so is its parent, whose count changed again');
+  assert.deepEqual(deleted.event?.payload, { id: reply, parent_id: root },
+    'the delete event names the parent, for a client holding it without the reply');
+
+  const [row] = await backfill(db, chatId, 99, 1);
+  assert.equal(row?.replyCount, 0, 'the deleted reply is not counted');
+});
+
+test('REPAIR returns what changed among the held, as complete rows, paged by (rev, id)',
+  opts, async () => {
+  // Carol held 1..5 and left at revision 5. While she was away: 3 was edited
+  // (simulated as a bump, edits being Phase 4), 2 was deleted, 4 gained a
+  // reply, and twenty more messages arrived. Repair since 5, at or below 5,
+  // must return exactly 2, 3 and 4 — and nothing she never held.
+  const { chatId } = await channel();
+  await fill(chatId, 5);
+  const idOf = async (ord: number) => (await db.selectFrom('messages').select('id')
+    .where('chat_id', '=', chatId).where('ord', '=', ord).executeTakeFirstOrThrow()).id;
+  const sinceRev = (await head(db, chatId)).headRev;
+  await send(db, { opId: ulid('op'), chatId, actorId: me, messageId: ulid('msg'),
+                   body: 'a reply', parentId: await idOf(4) });
+  await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: await idOf(2) });
+  await fill(chatId, 20);
+
+  const page = await repair(db, chatId, sinceRev, 5, null, 50);
+  assert.deepEqual(page.map(r => r.ord).toSorted((a, b) => a - b), [2, 4],
+    'exactly the held messages that changed; never the twenty she never held');
+  const [second, fourth] = [page.find(r => r.ord === 2), page.find(r => r.ord === 4)];
+  assert.deepEqual([second?.deleted, second?.body], [true, ''], 'the tombstone, complete');
+  assert.equal(fourth?.replyCount, 1, 'the parent, with its new count');
+  assert.ok(page.every(r => r.rev > sinceRev), 'every row is at a version after she left');
+
+  // Paged by (rev, id), one at a time, and the pages reassemble the same set.
+  const seen: number[] = [];
+  let after: { rev: number; id: string } | null = null;
+  for (let round = 0; round < 10; round++) {
+    const rows = await repair(db, chatId, sinceRev, 5, after, 1);
+    if (rows.length === 0) break;
+    seen.push(...rows.map(r => r.ord));
+    const last = rows.at(-1) as MessageRow;
+    after = { rev: last.rev, id: last.id };
+  }
+  assert.deepEqual(seen.toSorted((a, b) => a - b), [2, 4], 'keyset paging loses and repeats nothing');
+
+  // A row that changes AGAIN after the cursor passed it is served again: that
+  // is what lets a repair converge under live traffic rather than merely end.
+  await deleteMessage(db, { opId: ulid('op'), chatId, actorId: bob, messageId: await idOf(4) });
+  const again = await repair(db, chatId, sinceRev, 5, after, 50);
+  assert.deepEqual(again.map(r => r.ord), [4], 'the re-changed row comes back at its new version');
+});
+
+test('the THREAD page returns undeleted replies by ordinal, complete, with a floor',
+  opts, async () => {
+  const { chatId } = await channel();
+  await fill(chatId, 2);
+  const root = (await db.selectFrom('messages').select('id')
+    .where('chat_id', '=', chatId).where('ord', '=', 1).executeTakeFirstOrThrow()).id;
+  const replies: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const id = ulid('msg');
+    replies.push(id);
+    await send(db, { opId: ulid('op'), chatId, actorId: me, messageId: id, body: `r${i}`, parentId: root });
+  }
+  await deleteMessage(db, { opId: ulid('op'), chatId, actorId: me, messageId: replies[1] as string });
+
+  const first = await threadReplies(db, chatId, root, 0, 2);
+  assert.deepEqual(first.map(r => r.body), ['r0', 'r2'], 'oldest first, the deleted one skipped');
+  const rest = await threadReplies(db, chatId, root, first.at(-1)?.ord ?? 0, 2);
+  assert.deepEqual(rest.map(r => r.body), ['r3'], 'and the page after it');
+  assert.ok(rest.length < 2, 'a short page is the end');
+
+  const [parent] = await backfill(db, chatId, 2, 1);
+  assert.equal(parent?.replyCount, 3, 'the root counts three undeleted replies');
+  assert.deepEqual(await backfill(db, chatId, 99, 50).then(rows => rows.map(r => r.ord)), [2, 1],
+    'the chat view still excludes replies');
 });
 
 // ── §12 unread and mentions, holding nothing ───────────────────────────────

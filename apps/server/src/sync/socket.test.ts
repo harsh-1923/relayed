@@ -712,7 +712,7 @@ test('A GAP TAIL AND A BACKFILL PAGE ARE THE SAME SHAPE ON THE WIRE', opts, asyn
     'the same keys, or one of the two consumers is reading undefined');
   // Named explicitly as well, because a shared typo would satisfy the compare.
   assert.deepEqual(Object.keys(fromGap).toSorted(),
-    ['author_id', 'body', 'id', 'ord', 'parent_id', 'rev']);
+    ['author_id', 'body', 'deleted', 'edited_at', 'id', 'ord', 'parent_id', 'reply_count', 'rev']);
   peer.socket.close();
 });
 

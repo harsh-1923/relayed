@@ -21,7 +21,7 @@ import { migrate } from './migrate.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
 import { createLink } from './link.ts';
 import { enqueue, ready, depth, requeueInflight } from './outbox.ts';
-import { directoryOwed, backfillFloor } from './catchup.ts';
+import { directoryOwed, backfillFloor, repairOwed } from './catchup.ts';
 import { frontierOf } from './apply.ts';
 import type { SocketLike } from './transport/connection.ts';
 
@@ -340,7 +340,7 @@ test('A CLIENT HANDED A GAP CAN CLIMB OUT OF IT', async () => {
   // be acted on.
   const h = await harness();
   gapped(h, 500, 451);
-  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 451, hasGap: true });
+  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 451, headOrd: 500, hasGap: true });
 
   assert.equal(h.link.backfill(CHAT), true, 'a page was asked for');
   const request = h.socket.frameOf('backfill') as { c?: string; before_ord?: number };
@@ -351,7 +351,7 @@ test('A CLIENT HANDED A GAP CAN CLIMB OUT OF IT', async () => {
     c: CHAT, rows: Array.from({ length: 50 }, (_, i) => message(401 + i)),
     complete: false,
   });
-  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 401, hasGap: true },
+  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 401, headOrd: 500, hasGap: true },
     'the floor moved down, and the gap is still open');
   h.stop();
 });
@@ -383,8 +383,128 @@ test('reaching the beginning CLOSES the gap, and paging stops', async () => {
     complete: true,
   });
 
-  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 1, hasGap: false });
+  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 1, headOrd: 500, hasGap: false });
   assert.equal(h.link.backfill(CHAT), false, 'nothing left to ask for');
+  h.stop();
+});
+
+test('a SECOND gap after scrolling to the top is backfilled again, from the new floor', async () => {
+  // The finding the sync model made first: with the floor at 1 the client
+  // never asked again, and everything a later gap jumped over never arrived
+  // (invariant 86).
+  const h = await harness();
+  gapped(h, 6, 5);
+  h.link.backfill(CHAT);
+  h.socket.deliver('backfill_ok', { c: CHAT, rows: [1, 2, 3, 4].map(message), complete: true });
+  assert.deepEqual(backfillFloor(h.db, CHAT), { oldestLocalOrd: 1, headOrd: 6, hasGap: false });
+
+  gapped(h, 14, 13);
+  assert.equal(h.link.backfill(CHAT), true, 'asked again, although the floor was once 1');
+  const asked = h.socket.frames.filter(f => f.t === 'backfill').at(-1) as { before_ord?: number } | undefined;
+  assert.equal(asked?.before_ord, 13, 'from the NEW tail\'s floor');
+  h.socket.deliver('backfill_ok', {
+    c: CHAT, rows: Array.from({ length: 12 }, (_, i) => message(1 + i)), complete: true,
+  });
+  assert.equal(backfillFloor(h.db, CHAT).hasGap, false);
+  assert.equal((h.db.prepare('SELECT COUNT(*) n FROM messages').get() as { n: number }).n, 14,
+    'every message, the six the second gap jumped over included');
+  h.stop();
+});
+
+test('a gap whose tail is EMPTY is backfilled from just above the head, and closes', async () => {
+  const h = await harness();
+  h.socket.deliver('gap', {
+    stream: { kind: 'chat', id: CHAT }, head_rev: 9_014,
+    snapshot: { kind: 'messages', head_ord: 14, recent: [] },
+  });
+  assert.equal(h.link.backfill(CHAT), true);
+  const asked = h.socket.frameOf('backfill') as { before_ord?: number } | undefined;
+  assert.equal(asked?.before_ord, 15, 'head_ord + 1: there is no floor to ask below');
+  h.socket.deliver('backfill_ok', { c: CHAT, rows: [], complete: true });
+  assert.equal(backfillFloor(h.db, CHAT).hasGap, false, 'an empty, complete page is what clears it');
+  h.stop();
+});
+
+// ─── repair, at reconnect ───────────────────────────────────────────────────
+
+const live = (rev: number, ord: number, parent: string | null = null) => ({
+  stream: { kind: 'chat', id: CHAT }, rev, type: 'message.created',
+  payload: { id: `msg_${ord}`, ord, parent_id: parent, author_id: 'act_1',
+             body: `body ${ord}`, created_at: '2026-09-10T16:04:11.238Z' },
+});
+
+const repairFrames = (h: Harness) =>
+  h.socket.frames.filter(f => f.t === 'repair') as unknown as
+    { c: string; since_rev: number; max_ord: number; after: { rev: number; id: string } | null }[];
+
+test('A GAP ASKS FOR REPAIR, and pages until the server says complete', async () => {
+  const h = await harness();
+  for (let i = 1; i <= 3; i++) h.socket.deliver('ev', live(i, i));
+  gapped(h, 500, 451);
+
+  const [first] = repairFrames(h);
+  assert.deepEqual(first, { t: 'repair', c: CHAT, since_rev: 3, max_ord: 3, after: null } as unknown,
+    'changes since the frontier it jumped from, to messages it held');
+
+  h.socket.deliver('repair_ok', {
+    c: CHAT, rows: [{ ...message(2), rev: 100, deleted: true, body: '' }],
+    complete: false, after: { rev: 100, id: 'msg_2' },
+  });
+  assert.equal((h.db.prepare("SELECT deleted FROM messages WHERE id = 'msg_2'").get() as { deleted: number }).deleted, 1,
+    'the tombstone applied to the held row');
+  assert.deepEqual(repairFrames(h)[1]?.after, { rev: 100, id: 'msg_2' }, 'the next page, from where this one ended');
+
+  h.socket.deliver('repair_ok', { c: CHAT, rows: [], complete: true, after: { rev: 100, id: 'msg_2' } });
+  assert.equal(repairFrames(h).length, 2, 'nothing more asked for');
+  assert.equal(repairOwed(h.db, CHAT), null, 'and nothing owed');
+  h.stop();
+});
+
+test('a page older than a live change is rejected, and repair keeps asking until clean', async () => {
+  const h = await harness();
+  for (let i = 1; i <= 3; i++) h.socket.deliver('ev', live(i, i));
+  gapped(h, 500, 451);
+  // A live reply to msg_3 lands after the gap, before the first page arrives.
+  h.socket.deliver('ev', live(9_501, 501, 'msg_3'));
+  const count = () => (h.db.prepare("SELECT reply_count FROM messages WHERE id = 'msg_3'").get() as { reply_count: number }).reply_count;
+  assert.equal(count(), 1);
+
+  // The page was computed before that reply: msg_3 with no replies, complete.
+  h.socket.deliver('repair_ok', {
+    c: CHAT, rows: [{ ...message(3), rev: 200, reply_count: 0 }],
+    complete: true, after: { rev: 200, id: 'msg_3' },
+  });
+  assert.equal(count(), 1, 'the live reply was not wound back');
+  assert.equal(repairFrames(h).length, 2, 'complete on the wire is not done: asked again');
+  assert.deepEqual(repairFrames(h)[1]?.after, { rev: 200, id: 'msg_3' });
+
+  h.socket.deliver('repair_ok', {
+    c: CHAT, rows: [{ ...message(3), rev: 9_501, reply_count: 1 }],
+    complete: true, after: { rev: 9_501, id: 'msg_3' },
+  });
+  assert.equal(repairFrames(h).length, 2);
+  assert.equal(repairOwed(h.db, CHAT), null);
+  h.stop();
+});
+
+test('a thread is paged from the start until the server says the page was the last', async () => {
+  const h = await harness();
+  h.socket.deliver('ev', live(1, 1));
+  assert.equal(h.link.thread(CHAT, 'msg_1'), true);
+  assert.equal(h.link.thread(CHAT, 'msg_1'), false, 'one page in flight per thread');
+  const asked = () => h.socket.frames.filter(f => f.t === 'thread') as unknown as { root: string; after_ord: number }[];
+  assert.deepEqual([asked()[0]?.root, asked()[0]?.after_ord], ['msg_1', 0]);
+
+  h.socket.deliver('thread_ok', {
+    c: CHAT, root: 'msg_1', complete: false,
+    rows: [{ ...message(2), parent_id: 'msg_1' }, { ...message(5), parent_id: 'msg_1' }],
+  });
+  assert.equal(asked().length, 2, 'the next page was asked for');
+  assert.equal(asked()[1]?.after_ord, 5, 'after the last reply held');
+  h.socket.deliver('thread_ok', { c: CHAT, root: 'msg_1', complete: true, rows: [{ ...message(9), parent_id: 'msg_1' }] });
+  assert.equal(asked().length, 2);
+  assert.equal((h.db.prepare("SELECT COUNT(*) n FROM messages WHERE parent_id = 'msg_1'").get() as { n: number }).n, 3);
+  assert.equal(h.link.thread(CHAT, 'msg_1'), true, 'and it can be asked again once done');
   h.stop();
 });
 

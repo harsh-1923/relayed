@@ -1192,9 +1192,17 @@ refused, `4002` no `hello` arrived, `4003` too old (preceded by the frame),
 { "t": "catchup",  "stream": { "kind": "chat", "id": "cht_01M244…" },
                    "from_rev": 8134, "limit": 500 }
 { "t": "backfill", "c": "cht_01M244…", "before_ord": 5100, "limit": 50 }
+{ "t": "repair",   "c": "cht_01M244…", "since_rev": 8134, "max_ord": 5523,
+                   "after": { "rev": 8140, "id": "msg_…" } }
+{ "t": "thread",   "c": "cht_01M244…", "root": "msg_…", "after_ord": 0, "limit": 50 }
 { "t": "read",     "c": "cht_01M244…", "ord": 5523 }
 { "t": "ping" }
 ```
+
+`repair` is the other half of taking a gap (§13a) and `thread` the parent-keyed
+read threads need (`DESIGN.md` §8.2). Both answer with pages of **message rows**
+— the same shape `backfill_ok` and a gap's tail carry: body, `deleted`,
+`edited_at`, `reply_count`, `parent_id` (invariant 85).
 
 The directory pages by actor id rather than by `ord`, because actors have no
 ordinal — ULIDs sort, so the same keyset shape works:
@@ -1746,12 +1754,15 @@ The tail is **materialised rows, not events** — the current state of the newes
 
 ```
 client:
-  INSERT the tail
+  since   = synced_through_rev          ← read BEFORE the jump: what repair covers (§13a)
+  max_ord = MAX(ord) over messages held
+  INSERT the tail (complete rows, tombstoned roots included, subject to the version guard)
   synced_through_rev = head_rev      ← jumps the gap deliberately
   server_head_rev    = head_rev
   head_ord           = head_ord
   has_gap            = 1
-  oldest_local_ord   = <lowest ord in the tail>
+  oldest_local_ord   = <lowest ord in the tail>, or NULL for an empty tail
+  repair owed        = since MIN(since, pending), up to MAX(max_ord, pending), paging restarted
   DELETE FROM staged_events WHERE stream = this one
 ```
 
@@ -1762,6 +1773,86 @@ Jumping the frontier past revisions never seen is safe precisely because the tai
 is current state. Anything below it is not missing-and-unknown, it is
 missing-and-marked — `has_gap` plus `oldest_local_ord` say exactly where the
 floor is, and backfill repairs it on demand.
+
+**The floor is the tail's, never `MIN` with the old one** (invariant 86). It used
+to be, on the reasoning that a shorter later tail must not hide history already
+held — and the sync model (`spikes/visibility-tests.mjs`) showed what that cost.
+The floor promises that everything above it is held, and a gap has just jumped
+over history this client never saw: a client that had once scrolled to the top
+kept a floor of 1, was never asked to backfill again, and the messages every
+later gap jumped over never arrived; a client with an unbackfilled gap kept the
+old floor, backfilled below it, and `has_gap` cleared over the hole. 62 of 100
+random worlds lost history. The rows held from before are not thrown away —
+backfill below the new floor re-sends them harmlessly on its way down.
+
+While `has_gap` is set the client **always asks** for backfill: from the floor,
+a floor of 1 included, or from `head_ord + 1` when the tail held nothing this
+reader may see. Only a page marked `complete` can clear the flag, and an empty
+page marked complete is exactly the answer that does.
+
+### 13a. Flow — repair, the other half of a gap
+
+A gap replaces the log with a partial snapshot, and the snapshot is the newest
+messages. A message the client **already held** that the snapshot does not
+re-send is never corrected by anything above: a delete during the gap left the
+message on that device for good, and edits, reactions and reply counts would
+have gone the same way. The sync model found the delete in its first run
+(`WORKSPACE-AGENTS-IMPL.md` §4.1.1); the fix is the class, not the case.
+
+Three rules, and a fourth that the model insisted on:
+
+**The version rule** (invariant 84). A message's `rev` is its version: the
+revision of the last event that changed how it renders. The event catalogue
+(`events.ts`) declares per type which messages an event touches — a reply
+touches its parent, whose reply count changed; a delete touches the message and
+its parent — and `appendEvent` bumps them in the transaction that appends the
+log row. A type with no declaration does not compile.
+
+**Complete rows** (invariant 85). The tail, backfill, the thread page and repair
+all return one shape: body as it stands, `deleted`, `edited_at`, `reply_count`.
+The tail and backfill include tombstoned roots — a deleted root still has a
+thread, reachable only through it. The thread page returns undeleted replies
+only: a reply has no thread of its own, a held one deleted meanwhile is corrected
+by repair, and no tombstone is owed for a row never held.
+
+**Repair, at reconnect.** After a gap the client owes, and persists in
+`chat_state`, *changes since the frontier the gap jumped from, to any message it
+held before the tail landed*:
+
+```
+{ "t": "repair", "c": …, "since_rev": <old frontier>, "max_ord": <highest held>, "after": null }
+
+server:
+  SELECT <complete row> FROM messages m
+   WHERE m.chat_id = $c AND m.rev > $since_rev AND m.ord <= $max_ord
+     AND (m.rev, m.id) > ($after.rev, $after.id)
+   ORDER BY m.rev, m.id LIMIT $limit               ← keyset, on msg_rev (chat_id, rev)
+
+client, per page:
+  UPDATE only rows already held — history never held is backfill's
+  complete AND nothing rejected → owed = NULL
+  else                          → after = the page's last (rev, id); ask again
+```
+
+Cost is proportional to what changed, never to history or to events. A quit
+mid-repair resumes from the persisted cursor at the next `welcome`; a second gap
+while one is pending **widens** it — `since` the older, `max_ord` the larger,
+paging restarted — rather than replacing it.
+
+**The version guard, and why "complete" is not "done"** (invariant 87). A
+fetched row applies only if its `rev` is not older than the row held. A
+rejection is not a row to forget: it means a live event touched that message
+*after the page was computed*, and a live event is a delta applied over a local
+row that was still stale — the local row is now wrong in a way nothing else will
+fix. Paging by `(rev, id)` is the remedy: the live event bumped the server's row
+past the page's cursor, so paging on serves it again, complete, at its new
+version. A repair is therefore complete only on a page that applied with nothing
+rejected. Without this, a reaction landing mid-repair lost the reaction before
+it, permanently — the model's finding, not a hypothetical.
+
+A `message.deleted` event carries `parent_id` for the same family of reasons: a
+client can hold a parent without the reply, having learned the count from a
+fetched row, and the count has to move anyway.
 
 ---
 
@@ -1785,18 +1876,27 @@ backfill(db, chatId, beforeOrd, limit)                          feed.ts, built
 ```json
 { "t": "backfill_ok", "c": "cht_01M244…",
   "rows": [ { "id":"msg_…", "ord":40062, "rev":91149, "author_id":"act_…",
-              "body":"…", "created_at":"…" } ],
+              "body":"…", "parent_id":null, "deleted":false, "edited_at":null,
+              "reply_count":2 } ],
   "complete": false }
+
+{ "t": "repair_ok", "c": "cht_01M244…", "rows": [ … ], "complete": true,
+  "after": { "rev": 91149, "id": "msg_…" } }
+{ "t": "thread_ok", "c": "cht_01M244…", "root": "msg_…", "rows": [ … ], "complete": true }
 ```
 
 A backfilled row must be **complete current state** — body as it stands now,
-tombstone status, reactions, attachment metadata. That is what makes §11.2's
+tombstone status, edited, reply count (invariant 85). That is what makes §11.2's
 (events that touch no local row)
 "account for the rev, skip the effect" correct: an edit for a message below the
 window is safely ignored, because when the row eventually arrives it already
-carries the edited body.
+carries the edited body. **Tombstoned roots are included** — the code used to
+filter them out, against this paragraph, and a deleted root's surviving replies
+were reachable through nothing.
 
-Client: insert rows, lower `oldest_local_ord`, clear `has_gap` when it reaches 1.
+Client: insert rows subject to the version guard (§13a), lower
+`oldest_local_ord`, clear `has_gap` when the server says the page was the last
+or the floor reaches 1.
 
 ---
 

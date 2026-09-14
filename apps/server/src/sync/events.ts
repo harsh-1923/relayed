@@ -89,12 +89,16 @@ export interface MessageCreated {
 }
 
 /**
- * A tombstone. The id alone, because that is all a recipient can act on: the
- * row keeps its ordinal, the body is already gone, and a client that never held
- * the message writes nothing at all — the case that forces the frontier to be
+ * A tombstone. The id, because that is what a recipient acts on: the row keeps
+ * its ordinal, the body is already gone, and a client that never held the
+ * message writes nothing at all — the case that forces the frontier to be
  * tracked explicitly rather than derived from message rows (DESIGN.md §8.1).
+ *
+ * Plus the parent for a reply. A client can hold the parent without the reply
+ * — it learned the parent's reply count from a fetched row after a gap — and
+ * the count has to move anyway. Without the parent here it could not.
  */
-export interface MessageDeleted { id: string }
+export interface MessageDeleted { id: string; parent_id: string | null }
 
 export interface SpaceCreated {
   id: string;
@@ -166,6 +170,41 @@ export type EventType = keyof EventCatalogue;
 type StreamOf<T extends EventType> = EventCatalogue[T]['stream'];
 type PayloadOf<T extends EventType> = EventCatalogue[T]['payload'];
 
+/**
+ * THE VERSION RULE: which messages an event changes the rendering of.
+ *
+ * A message's `rev` is its version — the revision of the last change to how
+ * it renders — and `appendEvent` bumps every message an event touches to the
+ * event's revision, in the same transaction as the log row. That is what lets
+ * a client that took a gap ask "which of the messages I hold changed while I
+ * was away" and get the answer from one range scan on `msg_rev`, in a cost
+ * proportional to what changed rather than to history (the repair flow,
+ * SYNC-FLOWS.md).
+ *
+ * Declared HERE, once per type, rather than set at each call site. A reply
+ * touches its PARENT as well as itself, because the parent's reply count
+ * changed; deleting a reply touches both for the same reason. A call site that
+ * forgot the parent would leave every device that gapped across the reply
+ * showing a stale count for ever, and nothing would report it. The mapped type
+ * is over every catalogue entry, so an event type added without saying what it
+ * touches does not compile.
+ */
+const TOUCHES: { [T in EventType]: (payload: PayloadOf<T>) => string[] } = {
+  'message.created': p => p.parent_id ? [p.id, p.parent_id] : [p.id],
+  'message.deleted': p => p.parent_id ? [p.id, p.parent_id] : [p.id],
+  'space.created': () => [],
+  'space.member_added': () => [],
+  'space.member_removed': () => [],
+  'chat.created': () => [],
+  'actor.created': () => [],
+  'actor.updated': () => [],
+};
+
+/** The messages this event touches, for a test to assert the rule with. */
+export function touchedMessages<T extends EventType>(type: T, payload: PayloadOf<T>): string[] {
+  return TOUCHES[type](payload);
+}
+
 // ─── Allocation results, which are also where an event may be written ───────
 
 /**
@@ -225,6 +264,19 @@ export async function appendEvent<T extends EventType>(
     // node-postgres would otherwise send a JS object as a stringified record.
     payload: sql`${JSON.stringify(payload)}::jsonb`,
   }).execute();
+
+  // The version rule, applied. Scoped to the chat as well as the id: an id is
+  // client-generated, and a payload naming a message from another chat must
+  // not be able to move its version. A message this event created carries the
+  // revision already and is re-set to the same value, which is harmless.
+  const touched = TOUCHES[type](payload);
+  if (touched.length > 0 && allocated.stream.kind === 'chat') {
+    await trx.updateTable('messages')
+      .set({ rev: allocated.rev })
+      .where('chat_id', '=', allocated.stream.id)
+      .where('id', 'in', touched)
+      .execute();
+  }
 
   return {
     eventId, workspaceId: allocated.workspaceId, stream: allocated.stream,

@@ -1,0 +1,1146 @@
+# Workspace agents — implementation
+
+> **Status: plan. Nothing here is built.** This is how
+> [`WORKSPACE-AGENTS.md`](WORKSPACE-AGENTS.md) (the proposal) gets built: in what
+> order, in which files, proven by which tests and by what someone does by hand.
+>
+> **The proposal is the design; this is the build.** Every part below links to
+> the proposal section it implements. Where this plan has to decide something
+> the proposal left open, or finds that the proposal does not match the code,
+> §2 lists it. Each item there is folded back into the proposal **in the commit
+> that builds it**, so the two never disagree for longer than one change
+> (`AGENTS.md`, keep the docs true, rule 3).
+
+**Last updated:** 2026-09-14
+
+---
+
+## 0. How to read this
+
+- **Steps are in build order**, and each ends in something a person can use by
+  hand. A step that only ever passed `node --test` has not been used
+  (`AGENTS.md`, verify by execution, rule 2).
+- **Every step has the same parts:** what it implements, what must exist first,
+  schema, server, protocol, runtime, client, tests, by hand, observability, docs,
+  done when.
+- **Proposal references are links** to the section by name, like
+  [the dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher). **Code
+  references are repository paths** in backticks. They describe the code as of
+  commit `0f8a003`.
+- **"New"** means a file this plan creates. **"Changes"** means an existing file.
+
+---
+
+## 1. The map: every part of the proposal, and where it is built
+
+| Proposal part | Built in |
+|---|---|
+| [Words used here (§0)](WORKSPACE-AGENTS.md#0-words-used-here) | The names used in code: `agent_runs`, `access_request`, `withheld`, the six checkpoint functions |
+| [What this doc decides (§1)](WORKSPACE-AGENTS.md#1-what-this-doc-decides) | Every row is built in the step for its section |
+| [The whole flow, in one picture (§2)](WORKSPACE-AGENTS.md#2-the-whole-flow-in-one-picture) | Complete only after [step 5](#9-step-5--the-broker) |
+| [Background (§3)](WORKSPACE-AGENTS.md#3-background-what-already-exists) and [what a production agent platform taught](WORKSPACE-AGENTS.md#what-a-production-agent-platform-taught) | Constraints on every step. The lessons land in [step 3](#7-step-3--runs-with-no-tools) |
+| [Creating an agent (§4.1–§4.5)](WORKSPACE-AGENTS.md#4-creating-an-agent) | [Step 2](#6-step-2--creating-agents). The editor's tool picker waits for [step 4](#8-step-4--connections-and-the-connector-store) |
+| [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | [Step 3](#7-step-3--runs-with-no-tools), mentions in channels. Invoking by DM waits for DMs to exist (§3.2) |
+| [The handoff is part of the write (§5.2)](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write) | [Step 3](#7-step-3--runs-with-no-tools) |
+| [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | [Step 3](#7-step-3--runs-with-no-tools) |
+| [What the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent) | [Step 3](#7-step-3--runs-with-no-tools) for every field. [Step 5](#9-step-5--the-broker) fills `tools` |
+| [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | [Step 5](#9-step-5--the-broker) |
+| [What the agent reads (§5.6)](WORKSPACE-AGENTS.md#56-what-the-agent-reads) | [Step 3](#7-step-3--runs-with-no-tools) |
+| [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | [Step 3](#7-step-3--runs-with-no-tools) |
+| [Stopping a run (§5.8)](WORKSPACE-AGENTS.md#58-stopping-a-run) | [Step 3](#7-step-3--runs-with-no-tools). The broker's refusal after Stop lands in [step 5](#9-step-5--the-broker) |
+| [Checkpoints (§5.9)](WORKSPACE-AGENTS.md#59-checkpoints-where-later-features-plug-in) | [Step 3](#7-step-3--runs-with-no-tools) creates all six with v1 bodies. [Step 5](#9-step-5--the-broker) fills `beforeToolCall` and `afterToolCall` |
+| [Why Composio (§6.1)](WORKSPACE-AGENTS.md#61-why-composio) | [Step 4](#8-step-4--connections-and-the-connector-store): the `DESIGN.md` edit |
+| [Project, keys and `user_id` (§6.2)](WORKSPACE-AGENTS.md#62-project-keys-and-user_id) | [The Composio setup (§4.3)](#43-composio-setup-per-environment), before step 4 |
+| [Our record of connections (§6.3)](WORKSPACE-AGENTS.md#63-our-record-of-connections) | [Step 4](#8-step-4--connections-and-the-connector-store) |
+| [Permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection) | Table and routes in [step 4](#8-step-4--connections-and-the-connector-store); enforced in [step 5](#9-step-5--the-broker) |
+| [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) | [Step 4](#8-step-4--connections-and-the-connector-store) |
+| [The catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) | [Step 4](#8-step-4--connections-and-the-connector-store) |
+| [Executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) | [Step 5](#9-step-5--the-broker) |
+| [Errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do) | [Step 5](#9-step-5--the-broker); `needs_reauth` finished in [step 6](#10-step-6--reconnecting) |
+| [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | [Step 4](#8-step-4--connections-and-the-connector-store) (webhook, reconciliation, sweep); [step 6](#10-step-6--reconnecting) (scope changes) |
+| [Disconnecting (§6.10)](WORKSPACE-AGENTS.md#610-disconnecting) | [Step 4](#8-step-4--connections-and-the-connector-store) |
+| [Whose OAuth app (§6.11)](WORKSPACE-AGENTS.md#611-auth-configs-whose-oauth-app) | [The Composio setup (§4.3)](#43-composio-setup-per-environment) |
+| [The Composio facts (§6.12)](WORKSPACE-AGENTS.md#612-the-composio-facts-this-rests-on) | Re-checked by [the Composio spikes (§4.1)](#41-spikes) before step 4 |
+| [The connector store (§7.1–§7.3)](WORKSPACE-AGENTS.md#7-the-connector-store) | [Step 4](#8-step-4--connections-and-the-connector-store) |
+| [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | [Step 5](#9-step-5--the-broker) |
+| [Messages only some people can see (§8.1–§8.9)](WORKSPACE-AGENTS.md#8-messages-only-some-people-can-see) | [Step 1](#5-step-1--restricted-messages-with-no-agent), after [step 0](#44-step-0--the-gap-path-the-version-rule-complete-rows-repair-at-reconnect) fixes the gap path it runs on |
+| [Security (§9)](WORKSPACE-AGENTS.md#9-security-in-one-table) | Each row's control is built in the step for its section. The tests are in [§12](#12-test-matrix) |
+| [Failure modes (§10)](WORKSPACE-AGENTS.md#10-failure-modes) | Steps [3](#7-step-3--runs-with-no-tools), [4](#8-step-4--connections-and-the-connector-store), [5](#9-step-5--the-broker) |
+| [Observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed) | Per step, once agreed ([§11.3](#113-telemetry-by-step)) |
+| [Spikes (§12.1)](WORKSPACE-AGENTS.md#121-spikes-first--each-can-change-the-design-above) | [§4.1](#41-spikes) |
+| [Steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand) | Steps 1–6 below, one for one |
+| [Tests that must exist (§12.3)](WORKSPACE-AGENTS.md#123-tests-that-must-exist) | [§12](#12-test-matrix) |
+| [Deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built) | Not in this plan. [§15](#15-not-in-this-plan) says which checkpoint each would change |
+| [Docs to change (§14)](WORKSPACE-AGENTS.md#14-docs-to-change-when-this-is-accepted) | [§13](#13-docs-matrix) |
+| [Invariants to add](WORKSPACE-AGENTS.md#invariants-to-add) | [§14](#14-invariants-by-step) |
+| [Open questions (§15)](WORKSPACE-AGENTS.md#15-open-questions) | [§16](#16-open-questions-carried) |
+
+---
+
+## 2. What this plan decides, and what it corrects in the proposal
+
+Each row is folded into the proposal in the commit that builds it.
+
+| # | Decision or correction | Why | Proposal part to edit | Step |
+|---|---|---|---|---|
+| D1 | **A client op that carries an audience has the field dropped, not refused.** The op schema never declares `audience`, and a boundary rule forbids declaring one on any client op payload type | The proposal says such a send "is refused". But incoming frames are parsed permissively and unknown fields are dropped — an unknown field is never an error (invariant 66, `DESIGN.md` §9.10). Refusing one would be the only `.strict()` parse in the protocol. The boundary rule is what actually stops a client asking for one | [Who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) | 1 |
+| D2 | **Invoking by DM waits for DMs to exist.** v1 invokes on mentions in channels | The server creates channels only. `spaces.ts` names `createDm` and `createRoom` as Phase 5 siblings | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
+| D3 | **Creating, editing and deactivating agents are HTTPS commands, not outbox ops** | They need a live handle check, happen rarely, and nobody creates an agent offline. The same shape invitations use (`apps/server/src/auth/invitations.ts`) | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
+| D4 | **The grant is an HS256 JWT signed with `AGENT_GRANT_SECRET`,** audience `relayed-agent-tools`, through `jose` | Only the server signs and verifies it, so a shared secret suffices. `jose` is already the session-token library (`apps/server/src/auth/tokens.ts`). A separate secret and audience keep a session token and a grant from standing in for each other, as the proposal requires | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 3 |
+| D5 | **The dispatcher starts only when the runtime is configured** (`AGENT_RUNTIME_URL`, `AGENT_S2S_KEY`, `AGENT_GRANT_SECRET`), and logs one line naming what is missing | The same behaviour `pnpm dev` already has for `apps/agent` (`AGENT-RUNTIME.md`, local development §11). A server without a runtime must still boot | [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | 3 |
+| D6 | **The mention parser moves to `apps/server/src/sync/mentions.ts`**, used by both the counters and `invocationsFor` | The proposal requires "one parser, the one the counters use". Today it is a private helper (`mentionPattern`) inside `feed.ts` | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
+| D7 | **The Composio webhook route parses its own raw body** | The server's JSON content parser (`apps/server/src/index.ts`) turns the body into an object, losing the exact bytes the HMAC signature covers. The route registers a scoped content parser that keeps the raw string | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | 4 |
+| D8 | **Webhook delivery ids are deduplicated in a table** (`composio_webhook_deliveries`, swept after 24 h) | The proposal says "dedupes on `webhook-id`" without saying where. There is no Redis on the write path, and a table keeps the dedupe durable across a restart | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | 4 |
+| D9 | **The sign-in loopback listener is generalised** to take a path and parameter names | `listenForCallback` (`apps/desktop/src/sync/auth/loopback.ts`) is built for `/auth/callback?code&state`. The connect flow returns `/connected?session_uri&state`. One listener with one set of tests beats a copy | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) | 4 |
+| D10 | **Toolkits are enabled by a script, not a screen** (`apps/server/scripts/enable-toolkit.ts`) | The proposal makes enabling "our decision". Nothing in v1 needs an admin UI for it, and a script leaves a reviewable record | [The catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) | 4 |
+| D11 | **Step 2's editor ships without its Tools section**, which arrives in step 4 | The picker lists the catalogue, which step 4 creates. An agent with no tools is valid, and it is exactly what step 3 runs | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 4 |
+| D12 | **Agent summaries get their own replica table** (`agent_summaries`), not columns on `actors` | Keeps the actor row identical for people and agents on the client, as it is on the server (`DESIGN.md`, the actor model §6.3) | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
+| D13 | **`agent_activity` reaches the renderer through the bridge's push channel**, as `agent:stream` already does (`apps/desktop/src/renderer/lib/agent-stream.ts`) | It is ephemeral. Writing it to the replica would make every client store and invalidate a value that is stale within a minute | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | 3 |
+| D14 | **Every existing `appendEvent` call gains an explicit `{ kind: 'stream' }`** — eight today: `ops.ts` (`message.created`, `message.deleted`), `directory.ts` (`recordActor`), and five in `spaces.ts` (`space.created`, `chat.created` and the founder's `space.member_added` when a channel is created; `space.member_added` and `space.member_removed` afterwards) | The proposal makes the audience a required argument. That is only a guard if every call is edited on purpose, not defaulted | [What happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone) | 1 |
+
+---
+
+## 3. Before any step
+
+### 3.1 Dependencies outside this plan
+
+| Needs | For | Where it is designed | Blocks |
+|---|---|---|---|
+| **Message parts in the server schema, the replica and `@relayed/protocol`** | The agent's reply parts, and the `access_request` card | `AGENT-RESPONSES.md`, implementation phases §9, phase 3 | Steps 3 and 5 |
+| **`show_ui` registered in the service runtime** | Rich replies. Not required: a reply of Markdown alone is valid | `AGENT-RESPONSES.md`, phase 4 | Nothing |
+| **DMs** (`createDm`) | Invoking by DM (D2) | `DESIGN.md`, build order §15, Phase 5 | Only the DM trigger |
+
+### 3.2 Not blocking, but known
+
+- **The runtime's JSON mode probably cancels every run at once.** It listens for
+  the request's `close`, which fires when the body has been read
+  (`apps/agent/src/routes.ts`). The dispatcher uses stream mode, which listens on
+  the response and is unaffected. It is tracked as its own task.
+
+### 3.3 Order
+
+```
+   spikes (§4.1) ──► step 0  the gap path (§4.4)
+      │                        │
+      ├── step 1  restricted messages ◄────────────────────────────┐ (needs step 0)
+      │                                                            │
+      │                                                            │
+      ├── step 2  creating agents ──► step 3  runs with no tools ──┤
+      │                                   ▲                        │
+      │                   message parts ──┘                        │
+      │                                                            ▼
+      └── Composio setup ──► step 4  connections ─────────► step 5  the broker ──► step 6  reconnecting
+```
+
+Step 0 first; then steps 1, 2 and 4 can proceed in parallel. Step 5 is the
+milestone and needs all of them.
+
+---
+
+## 4. Spikes and setup
+
+### 4.1 Spikes
+
+The proposal's [spikes (§12.1)](WORKSPACE-AGENTS.md#121-spikes-first--each-can-change-the-design-above),
+each a script under `spikes/` — not app code — with what it produces and what it
+gates.
+
+| Spike | Where | Produces | Gates | If it fails |
+|---|---|---|---|---|
+| **Withheld events in the sync model, and gap repair** — ✅ **done, passed** (§4.1.1) | `spikes/visibility-model.mjs`, `spikes/visibility-tests.mjs`, `spikes/visibility-mutants.mjs` | 99 checks: named scenarios for every rule in §8.3–§8.8 and in §4.4, and a property test over 400 random worlds comparing rendered state to ground truth. All 30 planted bugs are caught. `pnpm spike:sync` runs it; `pnpm spike:sync:mutants` runs the mutants | Steps 0 and 1 — **gate passed** | Would have re-opened the choice in [what happens to `rev` (§8.3)](WORKSPACE-AGENTS.md#83-what-happens-to-rev-if-bob-simply-is-not-sent-the-event) for the per-actor stream |
+| **pi with no local tools** | `spikes/agent-tools/` | A pi 0.85.1 session with `tools: ['remote_echo']` and one `customTools` entry whose `execute` awaits `fetch` to a local server. It answers three questions: are the arguments validated when `parameters` is plain JSON Schema, or does it need `Type.Unsafe`; does `session.abort()` abort the in-flight `fetch`; does an empty palette start at all | Steps 3 and 5 | How remote tools are registered ([what the runtime is sent, §5.4](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent)) |
+| **Composio connect, verification on** | `spikes/composio/connect.mjs` and a browser | Linear over OAuth and one API-key toolkit through `link()`. It answers: does the hosted page collect a key and a subdomain; does the `SameSite=Lax` cookie survive provider → Composio → verifier; does `complete_auth` with a different `user_id` fail the account; what does `revoke` return per toolkit | Step 4 | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) — another carrier for the attempt, or our own key form |
+| **Composio sessions and errors** | `spikes/composio/sessions.mjs` | The raw session tool list, and the observed result of `session.execute` for: no connection, an `EXPIRED` account, a `403`, a provider rejection, a restricted tool. Written to `spikes/composio/results/` | Step 5 | Replaces the partly inferred [error table (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do) |
+| **Tool definitions, measured** | `spikes/composio/tokens.mjs` | Input tokens for the full GitHub and Gmail schemas and for a curated ten | Step 5 | The 30-tool cap in [executing (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) |
+
+### 4.1.1 The visibility spike — what it did and what it found
+
+**Why a new model rather than an extension of `sync-model.mjs`.** That model
+derives catch-up from message rows — the pre-log design `SYNC-FLOWS.md` §12.1
+calls unsound — so it cannot express what each recipient is *sent* per revision.
+`visibility-model.mjs` models the engine as built: a `sync_events` log carrying an
+audience, fanout that narrows it, catch-up that redacts per requester, a client
+that stages whole envelopes above its frontier (`apps/desktop/src/sync/apply.ts`),
+the gap and backfill paths of `catchup.ts`, and `complete: rows.length < limit`
+(`socket.ts`).
+
+**How it tests, and why each part is there:**
+
+| Part | What it does | Why |
+|---|---|---|
+| Named scenarios | One small trace per rule: live delivery, out-of-order holes, paged catch-up, a gap and backfill with ordinal 1 hidden and a page containing a hidden row, badges and mentions, edits and deletes, a listed actor who leaves, write validation and idempotency, the `sync_events` CHECK in SQLite, a client that has never heard of `withheld` — and, for step 0, each rule of gap repair (§4.4) | Each rule in §8 and §4.4 pinned to a readable failure |
+| The naive design, executed | Runs the drop-the-revision design and shows the unlisted chat stall for good | §8.3's argument, demonstrated rather than asserted |
+| Property test | 400 seeded worlds × 80 steps: public and restricted sends, replies (a third of them restricted, as an access card is), reactions, edits, deletes, frames delivered **out of order**, duplicated, lost with the socket, reconnects, gaps, repairs interrupted by a quit and widened by a second gap, live traffic landing mid-repair, membership churn, an old client in a third of worlds, and small thresholds so every path is hot. After settling, it checks each client's frontier, staged events, gap flag, every revision accounted for, and **every held message's rendered state** — body, deleted, edited, reactions, reply count, every thread's replies — against **ground truth computed without the model's own SQL**; unread against ground truth; and that reading everything clears the badge | Finds what a scenario author did not think of |
+| Send-time leak audit | Every frame the server sends is judged **when it is sent**, from membership and audience rows, never from the predicate under test | A leak judged later misreads frames legitimately sent before someone left |
+| Coverage gate | The property test fails if any path was never reached. Last run: 2,116 gaps, 12,215 backfill pages, 5,492 repair pages (86 resumed after a quit, 75 widened by a second gap, 1,886 live frames landing mid-repair), 8,455 thread pages, 4,889 live and 1,521 catch-up withheld frames, 11,814 staged events, 180 chats with ordinal 1 hidden, 223 unknown events on old clients | An agreement over paths nobody took is not agreement (`AUTHZ.md` §12.1) |
+| Mutants | 30 plausible ways to build §8 and §4.4 wrongly, each switched on at the line it would be made. **All 30 caught**, each by the check that names its mistake; 26 of them by the property test alone. The four it cannot see (write validation, the activity clock, the tail's tombstoned roots) are caught by scenarios. One planted bug — leaving deleted replies out of the thread page — **survived every check and was removed as a mutant**: it is not a bug, and the thread page is specified accordingly (§4.4) | A check that cannot detect the bug it names is not a check |
+| Scenario isolation | A scenario that throws is a named failure, and the rest still run | A mutant that crashes one trace must not hide what the others find |
+
+**Findings — behaviour of today's gap path, not of visibility.** The model is the
+first thing to put gaps under random traffic. Each is reproduced by a named trace
+in `visibility-tests.mjs` and run as a controlled comparison: the same seeds pass
+with the corrected rule and fail with the gap path as built, **with and without
+restricted messages** (62 of 100 worlds lose history either way), so none of them is
+caused by this design.
+
+| Finding | Production code | Consequence | Where it is fixed |
+|---|---|---|---|
+| **A later gap keeps an old floor.** After a gap the floor becomes `MIN(existing floor, tail)`, and `link.ts` never asks for backfill below a floor that is null or at 1 | `apps/desktop/src/sync/catchup.ts` (`applyGap`), `apps/desktop/src/sync/link.ts` (`backfill`) | A client that has ever scrolled to the top, or taken a gap it has not backfilled, never fetches what a later gap jumped over. `has_gap` never clears or clears over a hole | **Step 0** (§4.4) |
+| **A gap whose tail reaches ordinal 1 never clears `has_gap`** | Same | The chat shows "more above" for ever | Step 0 |
+| **A gap with nothing visible in its tail** — reachable once restricted messages exist: a reader who can see none of the recent history gets an empty tail and a null floor | Same | `has_gap` sticks | Step 0 |
+| **A held message changed during a gap stays as it was.** A gap replaces the log with a partial snapshot, and a message the client already holds that the snapshot does not re-send is never corrected. Today that is deletes — the tail and backfill filter `deleted = false`, against what `SYNC-FLOWS.md` §14 promises; when edits, reactions and threads land it is edits, reactions and reply counts too | `apps/server/src/sync/feed.ts` (`snapshotOf`, `backfill`); nothing on the client asks | A deleted message — a pasted password, say — stays on every device that was far behind when it was deleted, for good | Step 0 |
+
+The decision, taken with the dev: **fix the class, not the delete**, and fix it at
+reconnect. Its design is §4.4, and the same model proves it.
+
+### 4.2 Environment variables
+
+| Variable | Process | Step | Notes |
+|---|---|---|---|
+| `RELAYED_DEV_ROUTES` | server | 1 | Enables the dev-only restricted-message route. **The server refuses to boot with it set in production** |
+| `AGENT_RUNTIME_URL` | server | 3 | Internal address of `apps/agent` |
+| `AGENT_S2S_KEY` | server, agent | 3 | Already the runtime's `x-agent-key`; the server now holds it too |
+| `AGENT_GRANT_SECRET` | server | 3 | D4. Never in `apps/agent` |
+| `AGENT_BROKER_URL` | agent | 3 | Where remote tools call back. Configuration, never a request field ([what the runtime is sent, §5.4](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent)) |
+| `AGENT_MODEL_STALL_MS` | agent | 3 | Default 120000 |
+| `COMPOSIO_API_KEY` | server | 4 | The scoped key. **Boundary rule: never read in `apps/agent`** |
+| `COMPOSIO_WEBHOOK_SECRET` | server | 4 | |
+| `RELAYED_PUBLIC_URL` | server | 4 | Base for `start_url` and the verifier URL |
+| `CONNECT_COOKIE_SECRET` | server | 4 | Signs the `relayed_connect` cookie |
+
+Each is added to `.env.example` with its annotation, in the step that first
+reads it.
+
+### 4.3 Composio setup, per environment
+
+From [project, keys and `user_id` (§6.2)](WORKSPACE-AGENTS.md#62-project-keys-and-user_id)
+and [whose OAuth app (§6.11)](WORKSPACE-AGENTS.md#611-auth-configs-whose-oauth-app).
+A checklist, done once per environment, and recorded in `docs/STACK.md` beside
+the other services:
+
+- [ ] One project each for development, staging and production.
+- [ ] A scoped project key with exactly the permissions in §6.2's table.
+      **Proxy execute: no access.** Keys cannot be edited after creation, so a
+      mistake means a new key.
+- [ ] IP allowlist on the server's egress addresses (staging, production).
+- [ ] Settings → General → Log storage → **Don't store data** (staging,
+      production).
+- [ ] Callback identity verification **on**, verifier URL
+      `${RELAYED_PUBLIC_URL}/connections/verify`.
+- [ ] Webhook subscription, version V3, event `composio.connected_account.expired`,
+      to `${RELAYED_PUBLIC_URL}/composio/webhook`. Store the secret; it is shown
+      once.
+- [ ] Production only, before the first real connection: our own OAuth app at
+      each enabled provider, and a custom auth config per toolkit.
+
+---
+
+### 4.4 Step 0 — The gap path: the version rule, complete rows, repair at reconnect
+
+**Implements:** the fixes for §4.1.1's findings. Not part of the proposal — it is
+a sync-engine change that step 1's by-hand check would otherwise run into, and
+that edits, reactions and threads (Phase 4) would otherwise each rediscover.
+
+**First:** nothing. **Gated by:** the model (`spikes/visibility-model.mjs`,
+`visibility-tests.mjs`, `visibility-mutants.mjs`) — **done, passed**: every rule
+below has a named scenario, the 400 random worlds converge to ground truth on
+rendered state, and all 30 planted bugs are caught.
+
+**Status: built** — server, protocol, client and their tests, per the tables
+below; `SYNC-FLOWS.md` §13, §13a and §14 and `DESIGN.md` invariants 84–87
+updated with it. **Not yet done by hand** with two dev clients (below).
+
+#### The rule, in four parts
+
+**A. A message's `rev` is its version.** Any event that changes how a message
+renders bumps that message's `rev` to the event's revision, in the transaction
+that appends the event. Which messages an event touches is **declared once, in
+the event catalogue** (`apps/server/src/sync/events.ts`), and `appendEvent` does
+the bumping; a type with no declaration does not compile. Today: `message.created`
+touches the message and, for a reply, **its parent** (the parent's reply count
+changed); `message.deleted` touches the message and its parent. Later:
+`message.edited` and `message.reacted` touch the message. The `message.deleted`
+payload gains `parent_id`, so a client holding the parent but not the reply can
+still move the count.
+
+**B. Every row a path returns is complete current state.** The gap tail,
+backfill, the thread page and repair all return one shape: body as it stands,
+`deleted`, `edited_at`, the reader's `reply_count`, reactions once they exist,
+and `visible_to`. Two inclusion rules follow from what the model could and could
+not detect:
+- **The tail and backfill include tombstoned roots.** Not for the client's own
+  held rows — repair corrects those — but because a deleted root still has a
+  thread: a root created and deleted while the client was away, whose replies
+  survive, is reachable only through its tombstone.
+- **The thread page returns undeleted replies only.** A reply has no thread of
+  its own, a held reply deleted meanwhile is corrected by repair, and no
+  tombstone is owed for a row never held. A planted bug that dropped them
+  survived every check.
+- **`reply_count` is per reader**, counted with the visibility clause: a
+  restricted reply (an access card) is not counted for someone who cannot see
+  it.
+
+**C. Repair, at reconnect.** When a client takes a gap it records what it owes:
+*changes since the frontier the gap jumped from, to any message it held before
+the tail landed* — `repair_since_rev` and `repair_max_ord` on `chat_state`,
+**persisted**, so a quit mid-repair resumes. After catch-up it pages
+
+```
+repair { c, since_rev, max_ord, after: { rev, id } | null, limit }
+  → repair_ok { rows, complete, after }
+     SELECT <complete row> FROM messages m
+      WHERE m.chat_id = $c AND m.rev > $since_rev AND m.ord <= $max_ord
+        AND (m.rev, m.id) > ($after.rev, $after.id) AND <visibility clause>
+      ORDER BY m.rev, m.id LIMIT $limit             -- keyset, on the (chat_id, rev) index
+```
+
+and applies each row **to rows it already holds only** — history it never held
+is backfill's. Cost is proportional to what changed, never to history or to
+events. A second gap while a repair is pending **widens** it (`since` the older,
+`max_ord` the larger, paging restarted) rather than replacing it.
+
+**D. The client's version guard, and why repair may only finish clean.** A fetched
+row applies only if its `rev` is not older than the row held. A rejection is not
+a row to forget: it means a live event touched that message *after the page was
+computed*, and a live event is a delta applied over a local row that was still
+stale — the local row is now wrong in a way nothing else will fix. The version
+rule makes the remedy fall out of the paging: the live event bumped the server's
+row past the page's cursor, so paging on by `(rev, id)` serves it again,
+complete, at its new version. **Repair is complete only on a page that applied
+with nothing rejected.** The model found this: without it, a reaction landing
+mid-repair lost the reaction before it, permanently.
+
+**E. The floor and the backfill request.** After a gap the floor is the tail's
+oldest ordinal (or null for an empty tail), never `MIN` with an old floor — a
+gap breaks the promise that everything above the floor is held. While `has_gap`
+is set the client asks for backfill from the floor, **including a floor of 1**,
+or from `head_ord + 1` when the floor is null; an empty page marked `complete`
+clears the gap.
+
+**F. Threads.** The parent-keyed page `DESIGN.md` §8.2 requires from day one:
+`thread { c, root, after_ord, limit } → thread_ok { rows, complete }`. v1 opens
+a thread by paging it from the start whenever the undeleted replies held
+disagree with the parent's `reply_count`; replies share the chat's ordinal space
+and can sit anywhere in it, so there is no floor to page from. A per-thread
+floor is a later optimisation.
+
+#### Schema
+
+Nothing on the server: `messages.rev` and the `msg_rev (chat_id, rev)` index exist.
+**Replica migration 9** (`workspace.ts`): `messages.reply_count`,
+`messages.deleted` already exists; `chat_state.repair_since_rev`,
+`repair_max_ord`, `repair_after_rev`, `repair_after_id`. Step 1's migration
+becomes 10, step 2's 11, step 4's 12 (§11.2).
+
+#### Server
+
+| File | Change |
+|---|---|
+| **Changes** `sync/events.ts` | `touches(payload)` per catalogue entry; `appendEvent` bumps every touched row's `rev` in the transaction. `MessageDeleted` gains `parent_id` |
+| **Changes** `sync/ops.ts` | `send` and `deleteMessage` stop setting `rev` by hand; the catalogue does it |
+| **Changes** `sync/feed.ts` | `MessageRow` gains `deleted`, `edited_at`, `reply_count`; `snapshotOf` and `backfill` include tombstoned roots and compute the reader's count with a lateral subquery under the visibility clause (step 1 adds the clause; step 0 counts undeleted replies); `repair` and `thread` queries |
+| **Changes** `sync/socket.ts` | `repair` and `thread` frames, both through `requireCan(read)` |
+
+#### Protocol
+
+**Changes** `packages/protocol/src/frames.ts`: `repair`/`repair_ok`,
+`thread`/`thread_ok`; the row shape gains `deleted`, `edited_at`, `reply_count`;
+`message.deleted` payload gains optional `parent_id`. All permissive.
+
+#### Client
+
+| File | Change |
+|---|---|
+| **Changes** `sync/migrations/workspace.ts` | Version 9, above |
+| **Changes** `sync/effects.ts` | A reply's `message.created` bumps the held parent's `reply_count` and `rev`; `message.deleted` marks the row and, via `parent_id`, decrements a held parent once |
+| **Changes** `sync/catchup.ts` | `applyGap`: the floor rule (E); records the repair owed, widening a pending one. `applyBackfill`, `applyGap`, new `applyThread`, new `applyRepair`: one `applyRow` with the version guard (D); `applyRepair` updates held rows only and clears the cursor only on a clean, complete page |
+| **Changes** `sync/link.ts` | The backfill request rule (E); after catch-up on every connect, page any pending repair; `thread(chatId, rootId)` for the renderer |
+| **Changes** `sync/index.ts` | A `thread` read for the (future) thread surface |
+
+#### Tests
+
+| Test | File |
+|---|---|
+| Every scenario of `visibility-tests.mjs`'s *version rule* section, against the real server and replica: Carol's week (edit, delete, replies, reaction during a gap, repaired at reconnect); a reply bumps its parent; a live delete of a reply never held; the version guard and re-serve; resume after a quit; widening on a second gap; per-reader reply counts; a deleted root keeps its replies; the deleted root created while away | `apps/server/src/sync/feed.test.ts`, `apps/server/src/sync/events.test.ts`, `apps/desktop/src/sync/catchup.test.ts`, `apps/desktop/src/sync/effects.test.ts` |
+| The four floor findings: a second gap after scrolling to the top; a second gap before backfilling; a tail reaching ordinal 1; an empty tail | `catchup.test.ts`, a link test for the request rule |
+| A catalogue entry without `touches` fails `pnpm typecheck` | The type itself |
+
+#### By hand
+
+Two dev clients (`MULTI-CLIENT-DEV.md`). On A: scroll a chat to the top. Take A
+offline; on B delete one message A holds and send enough to force a gap; bring
+A back. The deleted message is gone from A, every message is present, and "more
+above" clears. Repeat without scrolling to the top first.
+
+#### Docs, in the same commit
+
+- `SYNC-FLOWS.md`: the gap (§13) and backfill (§14) rewritten for the floor
+  rule and complete rows; a new *repair* flow beside them; the frame vocabulary
+  (§8).
+- `DESIGN.md`: threads (§8.2) — the thread endpoint exists; the two-counter
+  model (§8.1) — `rev` on a message is its version; invariants (§14).
+
+#### Invariants to add
+
+| # | Invariant | What breaks without it |
+|---|---|---|
+| 84 | An event that changes how a message renders **bumps that message's `rev`**, declared in the catalogue, applied by `appendEvent` | Repair cannot find what changed; a reply's parent shows a stale count for ever |
+| 85 | Every row a read path returns is **complete current state** | A client that held the row keeps yesterday's body, or a deleted message |
+| 86 | After a gap, the floor is **the tail's**, and backfill is asked for while `has_gap` is set | What a later gap jumped over is never fetched, and `has_gap` sticks or clears over a hole |
+| 87 | A client **applies a fetched row only if it is not older** than what it holds, and a repair is complete only on a page with **nothing rejected** | A live change landing mid-repair is undone, or the change before it is lost |
+
+#### Done when
+
+- The by-hand check above holds, both ways.
+- `pnpm spike:sync`, `pnpm spike:sync:mutants`, `pnpm test`, `pnpm typecheck` green.
+
+---
+
+## 5. Step 1 — Restricted messages, with no agent
+
+**Implements:** [messages only some people can see (§8)](WORKSPACE-AGENTS.md#8-messages-only-some-people-can-see),
+all of it:
+- [what happens to `rev` (§8.3)](WORKSPACE-AGENTS.md#83-what-happens-to-rev-if-bob-simply-is-not-sent-the-event)
+- [the withheld event (§8.4)](WORKSPACE-AGENTS.md#84-the-withheld-event)
+- [what happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone)
+- [delivery (§8.6)](WORKSPACE-AGENTS.md#86-delivery)
+- [every read path (§8.7)](WORKSPACE-AGENTS.md#87-every-read-path-and-the-bug-each-one-has-without-the-filter)
+- [who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain)
+
+It is the first of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand).
+
+**First:** the withheld-events spike (§4.1) — **done, passed** (§4.1.1); and **step 0** (§4.4), whose gap-path fixes this step's by-hand check runs into.
+
+### Schema
+
+**New** `apps/server/src/db/migrations/009_restricted_messages.sql` — exactly the
+SQL in [§8.5](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone):
+
+- `messages.audience`: added with a default so existing rows backfill to `chat`,
+  then **the default dropped**.
+- `message_audience`.
+- `sync_events.audience`: added, backfilled to `stream`, default dropped.
+- `sync_events.listed_actor_ids`.
+- The `sync_event_audience` CHECK, with its `IS NOT NULL`.
+
+**Changes** `apps/server/src/db/schema.ts` — the new columns and table.
+
+### Server
+
+| File | Change | Implements |
+|---|---|---|
+| **Changes** `sync/events.ts` | `appendEvent(trx, allocated, type, payload, audience)`, with `audience: { kind: 'stream' } \| { kind: 'listed'; actors: string[] }`. No default, so a missing argument does not compile. Writes both columns; `AppendedEvent` carries the audience | §8.5, last paragraph |
+| **Changes** `sync/ops.ts`, `sync/directory.ts`, `sync/spaces.ts` | Every call passes `{ kind: 'stream' }` (D14). `send` writes `audience: 'chat'` explicitly | §8.5 |
+| **Changes** `sync/ops.ts` | The body of `sendInner`'s transaction becomes `writeMessage(trx, { …, audience, parts?, onBehalfOf?, delegationId? })`. Client `send` calls it with `chat`; step 3's reply writer and the dev route call it directly. A `listed` message **does not bump `spaces.last_activity_at`** | §8.7, room activity row |
+| **New** `sync/visibility.ts` | The one place visibility is decided: `visibleMessages(eb, actorId)` (the SQL clause in §8.7) and `redactEvent(row, actorId)` for log rows. **Every read path imports these; none writes the clause itself** | §8.5, §8.7 |
+| **Changes** `sync/fanout.ts` | `deliver` narrows readers to the entitled and the withheld, in the order §8.6 gives, and writes the `withheld` frame to the latter | §8.6 |
+| **Changes** `sync/feed.ts` | `eventsSince`, `catchup`, `snapshotOf` and `backfill` take the requesting actor. Redaction in `eventsSince`; the visibility clause in `snapshotOf`, `backfill`, `counters` and `welcomeChats` — **in the query, before `LIMIT`** | §8.7, invariant 79 |
+| **Changes** `sync/socket.ts` | Passes the connection's actor into catch-up, gap and backfill. `complete: rows.length < limit` stays, and is correct only because of the line above | §8.7, backfill row |
+| **New** `web/dev.ts` | `POST /dev/restricted-message { chatId, authorId, listed[], body }`, registered only when `RELAYED_DEV_ROUTES` is set. Checks every listed actor passes `can(actor, 'read', chat)` | §8.8, second rule; §12.2 step 1 |
+
+### Protocol
+
+**Changes** `packages/protocol/src/frames.ts`:
+- `WITHHELD_EVENT = 'withheld'`, documented beside `Ev`.
+- Message payloads on `ev`, the `catchup_ok` events, `gap.recent` and
+  `backfill_ok.rows` gain optional `audience` and `visible_to`. `visible_to` is
+  sent only to the actors on it.
+- Nothing is made strict.
+- The client op frame declares no audience (D1).
+
+### Client
+
+| File | Change |
+|---|---|
+| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 10: `messages.visible_to TEXT` (JSON array). `NULL` means the whole chat |
+| **Changes** `apps/desktop/src/sync/effects.ts` | `withheld` becomes a known effect returning no topics, so it stops counting as unknown. `messageCreated` stores `visible_to` |
+| **Changes** `apps/desktop/src/sync/catchup.ts` | Gap-tail and backfill inserts store `visible_to` |
+| **Changes** `apps/server/src/sync/feed.ts` | The per-reader `reply_count` (step 0) now counts under the visibility clause |
+| **Changes** `apps/desktop/src/renderer/features/chat/ChatBubble.tsx` | "Only visible to you", or "to you and 2 others", under a restricted message |
+
+### Tests
+
+| Test | File |
+|---|---|
+| Each branch of `message_audience_kind` and `sync_event_audience`, against Postgres. Includes `('listed', NULL)`, `('listed', '{}')`, `('stream', '{a}')` | **new** `apps/server/src/db/restricted-schema.test.ts`, in the per-constraint style of `sync-schema.test.ts` |
+| A listed reader receives the event; an unlisted reader receives `withheld`; a listed actor who left the space receives nothing | `apps/server/src/sync/fanout.test.ts` |
+| Catch-up across a restricted message: the listed replica gets the payload, the unlisted one gets `withheld`, and both frontiers reach the head | `apps/server/src/sync/feed.test.ts` |
+| **Backfill with ordinal 1 hidden:** the unlisted page is short only because rows ran out, `complete` is true, and the client clears `has_gap` | `feed.test.ts`, `apps/desktop/src/sync/catchup.test.ts` |
+| **Badge:** a restricted message as the newest in a chat leaves an unlisted member's `chat_unread` and `mention_count` at zero, in `counters` and in `welcome` | `feed.test.ts` |
+| A `listed` send does not change `last_activity_at` | **new** `apps/server/src/sync/ops.test.ts` |
+| `withheld` advances the frontier as a known type; an unknown type still does too | `apps/desktop/src/sync/apply.test.ts` |
+| Boundary rule `protocol/no-client-audience`: no client op payload type declares `audience` | `tools/check-boundaries.mjs` |
+
+### By hand
+
+Three dev clients, as `MULTI-CLIENT-DEV.md` describes, all in one channel:
+1. Write a restricted message listing client A through the dev route. A shows it
+   labelled; B and C show nothing.
+2. On B and C, send and receive normally.
+3. Take C offline, write two more restricted messages and five public ones, then
+   bring C back. C catches up with no stall.
+4. Force a gap on B, then scroll to the top: the history is complete.
+
+### Observability
+
+`sync.withheld{path}` for `live` and `catchup`
+([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)). Proposed
+to the dev before it is added to `packages/telemetry/src/metrics.ts`.
+
+### Docs, in the same commit
+
+- `SYNC-FLOWS.md`: how the socket decides what to send (§7), the frame
+  vocabulary (§8), catch-up, gap and backfill (§12–§14), read state and counters
+  (§15), the case table (§20).
+- `DESIGN.md`: membership and access (§7.3) gains the message predicate; the
+  client schema (§8.3) gains `visible_to`.
+- Invariants 78, 79 and 80 go into `DESIGN.md` §14.
+- D1 and D14 are folded into the proposal.
+
+### Done when
+
+- The proposal's step 1 "what it proves" holds by hand.
+- `pnpm spike:sync`, `pnpm test` and `pnpm typecheck` are green.
+- The new boundary rule runs.
+
+---
+
+## 6. Step 2 — Creating agents
+
+**Implements:**
+- [the product (§4.1)](WORKSPACE-AGENTS.md#41-the-product), without the tool picker (D11)
+- [the actor row (§4.2)](WORKSPACE-AGENTS.md#42-the-actor-row)
+- [the definition (§4.3)](WORKSPACE-AGENTS.md#43-the-definition)
+- [who may do what (§4.4)](WORKSPACE-AGENTS.md#44-who-may-do-what-to-an-agent)
+- [how clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents)
+- step 2 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
+
+**First:** nothing. This step can run in parallel with step 1.
+
+### Schema
+
+**New** `apps/server/src/db/migrations/010_agents.sql`:
+- `agents` and `agent_tools`, exactly as in [§4.3](WORKSPACE-AGENTS.md#43-the-definition).
+- `membership_scope` dropped and re-added to admit `'agent'`, deliberately and
+  in this migration ([§4.4](WORKSPACE-AGENTS.md#44-who-may-do-what-to-an-agent)).
+- `membership_owner_scope` is unchanged: `owner` stays workspace-only.
+
+### Authorization
+
+| File | Change |
+|---|---|
+| **Changes** `packages/authz/src/model.ts` | `SCOPES` gains `agent`. `ACTIONS.workspace` gains `create_agent`. `ACTIONS.agent = ['edit', 'manage_maintainers', 'deactivate', 'read_definition']`. `REQUIRES`: `create_agent` and `read_definition` need membership only; the other three need `admin` at the agent |
+| **Changes** `packages/authz/src/can.ts` | An agent target's containment is its workspace, which leads. **A workspace admin also passes `edit`, `manage_maintainers` and `deactivate`.** That is the deliberate opposite of spaces, where a workspace admin inherits nothing (`AUTHZ.md` invariant 51). It is named in `can()` with the reason: an agent spends other people's authority, so someone accountable for the workspace must be able to switch it off |
+| **Changes** `spikes/authz-model.mjs`, `spikes/authz-tests.mjs` | The agent scope in both evaluators and the equivalence fixture, including a negative control where a member of another workspace holds an agent row. `pnpm spike:authz` green |
+| — | `invoke` is **not** added. It is derived, never stored (§4.4) |
+
+### Server
+
+| File | Change | Implements |
+|---|---|---|
+| **New** `apps/server/src/agents/definitions.ts` | `createAgent`, `updateAgent` (bumps `config_rev`), `deactivateAgent`, `setMaintainers`. `createAgent` writes the five things in [§4.3](WORKSPACE-AGENTS.md#43-the-definition) in **one transaction**, with `recordActor` | §4.2, §4.3 |
+| **Changes** `apps/server/src/provisioning/handle.ts` | Its validation is exported for reuse. An agent's handle goes through the same policy and the same unique index as a person's | §4.1 |
+| **New** `apps/server/src/auth/caller.ts` | The bearer-to-actor helper, moved out of `auth/invitations.ts` so agent routes share it | D3 |
+| **New** `apps/server/src/agents/routes.ts` | `POST /agents`, `PATCH /agents/:id`, `POST /agents/:id/deactivate`, `PUT /agents/:id/maintainers`. Each is authorised through `can()` | §4.4, D3 |
+| **Changes** `apps/server/src/sync/directory.ts`, `sync/events.ts` | `DirectoryActor` and `ActorChanged` gain the optional `agent` summary. `recordActor` fills it for agents | §4.5 |
+| **Changes** `apps/server/src/sync/feed.ts` | `directoryPage` joins `agents` and a per-toolkit `agent_tools` aggregate | §4.5 |
+| **Changes** `apps/server/src/sync/socket.ts` | An `agent_definition` request frame returns the instructions after `can(actor, 'read_definition', agent)`. Online-only | §4.5 |
+| **Changes** `apps/server/src/sync/spaces.ts` | `addToSpace` accepts an agent actor. A test proves nothing assumes a person | §4.1, Spaces field |
+| **Changes** `apps/server/src/index.ts` | Registers `agentRoutes` | |
+
+### Protocol
+
+**Changes** `packages/protocol/src/frames.ts`:
+- `DirectoryOk.rows[]` and the actor event payload gain optional `agent`.
+- `INBOUND` gains `agent_definition`; `OUTBOUND` gains `agent_definition_ok`.
+
+### Client
+
+| File | Change |
+|---|---|
+| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 11: `agent_summaries (actor_id PRIMARY KEY, description, config_rev, toolkits)` (D12) |
+| **Changes** `apps/desktop/src/sync/effects.ts` | `actor.created` and `actor.updated` upsert the summary |
+| **Changes** `apps/desktop/src/sync/index.ts`, `sync/auth/relayed.ts` | `agents.create`, `agents.update`, `agents.deactivate`, `agents.setMaintainers` commands over HTTPS; `agents.definition` over the socket |
+| **Changes** `apps/desktop/src/shared/topics.ts`, `renderer/lib/query/` | An `agents` read and its topic, in the one shared vocabulary (invariant 68) |
+| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/settings/agents`, `…/agents/new`, `…/agents/:agentId` |
+| **New** `apps/desktop/src/renderer/routes/SettingsAgents.tsx`, `SettingsAgentEditor.tsx`, `features/agents/AgentProfile.tsx` | The list, the editor without Tools (D11), and the profile with readable instructions |
+| **Changes** `apps/desktop/src/renderer/features/chat/composer/relayed-mention.ts`, `composer-suggestions.ts` | Agents appear in mention suggestions, with their description |
+
+### Tests
+
+| Test | File |
+|---|---|
+| Every new CHECK, one test each; `membership_scope` admits `agent` and nothing else new | **new** `apps/server/src/db/agents-schema.test.ts` |
+| The `agent` scope over the full actor × role × action matrix, including workspace admin against agent admin | `packages/authz/src/can.test.ts` |
+| A failure after the actor insert leaves no actor, no `agents` row and no directory event | **new** `apps/server/src/agents/definitions.test.ts` |
+| An agent cannot take a handle a person holds, nor the reverse | `definitions.test.ts` |
+| A directory page carries the summary; `agent_definition` is refused from another workspace | `feed.test.ts`, `socket.test.ts` |
+
+### By hand
+
+The proposal's step 2: an agent appears in autocomplete on every client, and a
+maintainer can edit it while another member cannot. Add: a workspace admin can
+deactivate someone else's agent.
+
+### Observability
+
+None proposed. Creating an agent is rare, and nothing about it is a silent
+failure (`AGENTS.md`, rule 8 allows saying so).
+
+### Docs, in the same commit
+
+- `AUTHZ.md`: scopes (§5), roles and actions (§6), derivation (§7) with the
+  workspace-admin exception, and the agent-vocabulary open question (§14,
+  item 2) settled.
+- `DESIGN.md`: the actor model (§6.3), with `identity_kind='system'`.
+- D3, D11 and D12 are folded into the proposal.
+
+### Done when
+
+- The proposal's step 2 holds by hand.
+- `pnpm spike:authz` and `pnpm test` are green.
+
+---
+
+## 7. Step 3 — Runs with no tools
+
+**Implements:**
+- [what starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run), channels only (D2)
+- [the handoff (§5.2)](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write)
+- [the dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher)
+- [what the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent)
+- [what the agent reads (§5.6)](WORKSPACE-AGENTS.md#56-what-the-agent-reads)
+- [the reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply)
+- [stopping a run (§5.8)](WORKSPACE-AGENTS.md#58-stopping-a-run)
+- [the checkpoints (§5.9)](WORKSPACE-AGENTS.md#59-checkpoints-where-later-features-plug-in)
+- the claw lessons in [what a production agent platform taught](WORKSPACE-AGENTS.md#what-a-production-agent-platform-taught)
+- step 3 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
+
+**First:**
+- step 2;
+- message parts (§3.1);
+- the pi-with-no-local-tools spike (§4.1).
+
+### Schema
+
+**New** `apps/server/src/db/migrations/011_agent_runs.sql`: `agent_runs` exactly as
+in [§5.2](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write), including:
+- `not_before`, `defer_reason` and `stopped_by`;
+- the `interrupted` state;
+- the `run_queue` index.
+
+### Server
+
+| File | Change | Implements |
+|---|---|---|
+| **New** `apps/server/src/sync/mentions.ts` | `mentionedActorIds(body)` and the SQL `LIKE` pattern, moved from `feed.ts` (D6) | §5.1 |
+| **New** `apps/server/src/agents/checkpoints.ts` | The six functions and their closed result types, with the v1 bodies from [§5.9](WORKSPACE-AGENTS.md#59-checkpoints-where-later-features-plug-in). `beforeToolCall` and `afterToolCall` exist and return `stop('tool_not_allowed')` until step 5. **Adding a result variant is the only sanctioned way to add a feature here**, which the file's header says | §5.9 |
+| **Changes** `apps/server/src/sync/ops.ts` | Inside `writeMessage`'s transaction, for a person's `chat` message: `invocationsFor(trx, message)`, one `agent_runs` insert per agent. The created run ids leave through the closure, never the ledger, so a replay wakes nothing | §5.1, §5.2, invariant 76 |
+| **Changes** `apps/server/src/sync/socket.ts` | After `fanout` for a send that created runs, `dispatcher.wake()` | §5.3 |
+| **New** `apps/server/src/agents/dispatcher.ts` | Starts only when configured (D5). Wake plus a 5 s poll; the claim query from §5.3; `admitRun`; prepare (config snapshot, transcript, grant, `reply_message_id`); call; finish. A lease sweep marks expired `running` rows `interrupted`, with a notice. On `SIGTERM` it stops claiming; leases cover what is left | §5.3 |
+| **New** `apps/server/src/agents/transcript.ts` | The builder in [§5.6](WORKSPACE-AGENTS.md#56-what-the-agent-reads): what both the agent and the invoker may read (using `sync/visibility.ts`); the thread or the last 40 top-level messages; 24 KB; labels for the agent's own replies and for other agents; only this agent's mention stripped | §5.6 |
+| **New** `apps/server/src/agents/grant.ts` | `signGrant` and `verifyGrant` (D4). Claims `{ sub, act: { sub }, run, chat, exp }` | §5.5 |
+| **New** `apps/server/src/agents/runtime-client.ts` | `POST /run` in stream mode through `undici.request`, with `bodyTimeout` set above the runtime's 25 s keepalive. SSE parsing validated against the protocol schemas. A stream that ends without `done` returns `interrupted` | §5.3, stream traps |
+| **New** `apps/server/src/agents/reply.ts` | `deliverReply`: in one transaction, re-read the run; if `cancelled`, post nothing; else `writeMessage` as the agent. Sets `on_behalf_of_actor_id`, `delegation_id = run id`, `parent_id` = the trigger's thread ([§5.7](WORKSPACE-AGENTS.md#57-the-reply)), parts, op id `op_<runId>`. Then the terminal state, guarded by `WHERE state = 'running'` | §5.7, §5.8 |
+| **New** `apps/server/src/agents/notices.ts` | One notice per refusal code and non-answer outcome — the closed sets in §5.7 | §5.7 |
+| **New** `apps/server/src/agents/activity.ts` | `agent_activity` to the chat's audience through `pushToActor`: `seq` per run, `ended` final, sent on change plus at most one refresh a minute | §5.7 |
+| **Changes** `apps/server/src/agents/routes.ts` | `POST /agent-runs/:id/stop` — invoker only; row first, then the runtime's cancel | §5.8 |
+| **Changes** `apps/server/src/index.ts`, `env.ts` | Starts the dispatcher; adds §4.2's step-3 variables | D5 |
+
+### Protocol
+
+| File | Change |
+|---|---|
+| **New** `packages/protocol/src/agent-run.ts` | Zod schemas for the `/run` body and every SSE frame. The body now passes its third field, the trigger `AGENT-RUNTIME.md` names for a schema. The server and the runtime both import it |
+| **Changes** `packages/protocol/src/frames.ts` | `OUTBOUND.agent_activity` |
+
+### Runtime (`apps/agent`)
+
+| File | Change | Implements |
+|---|---|---|
+| **Changes** `src/routes.ts` | Parses the body with `RunRequest`. `runId` comes from the request | §5.4 |
+| **Changes** `src/agent.ts` | `palette: 'none'` gives pi the allowlist `['show_ui', ...tools.map(name)]` with no built-ins; `TOOLS` is used only for `palette: 'default'`. Each remote tool is a `customTools` entry whose `execute` calls `AGENT_BROKER_URL` with the grant and pi's abort signal. The list is empty until step 5 | §5.4 |
+| **Changes** `src/agent.ts` | **A model-call stall timeout** (`AGENT_MODEL_STALL_MS`): no stream events while the model is generating ends the turn `failed`; paused during tool execution. **An empty turn that errored without throwing is `failed`**, not `completed` | Claw lessons; `AGENT-RUNTIME.md` bounds |
+| **Changes** `src/runs.ts` | `activeRuns` keyed by the server's run id | §5.4 |
+
+### Client
+
+| File | Change |
+|---|---|
+| **Changes** `apps/desktop/src/sync/link.ts`, `sync/index.ts` | `agent_activity` goes to the renderer over the bridge (D13), dropping anything with a lower `seq` or arriving after `ended` |
+| **New** `apps/desktop/src/renderer/lib/agent-activity.ts` | Subscribes per thread, like `agent-stream.ts` |
+| **New** `apps/desktop/src/renderer/features/agents/RunIndicator.tsx` | "Triage is working · Searching Linear", "busy — starting shortly", and **Stop** for the invoker only |
+| **Changes** `apps/desktop/src/renderer/features/chat/` thread view | Shows the indicator under the trigger's thread. Notices are ordinary messages and need nothing new |
+
+### Tests
+
+| Test | File |
+|---|---|
+| **No mention is lost:** a committed send has its run; a rolled-back one has none; a replayed op creates no second run | `apps/server/src/sync/ops.test.ts` |
+| An agent's own message, and a message mentioning an agent not in the space, create no run | `ops.test.ts` |
+| Two dispatchers never claim one run (`SKIP LOCKED`); a deferred run is not reclaimed before `not_before` | **new** `apps/server/src/agents/dispatcher.test.ts` |
+| Each refusal code posts exactly one notice; `invoker_busy` defers | `dispatcher.test.ts` |
+| An expired lease becomes `interrupted` with a notice, and is never retried | `dispatcher.test.ts` |
+| **Stop wins:** stopping between `done` and the reply transaction posts no answer and keeps `cancelled` | **new** `apps/server/src/agents/reply.test.ts` |
+| Two people mention one agent in one thread: two runs, two answers in that thread | `dispatcher.test.ts` |
+| The transcript excludes what either the agent or the invoker cannot read, labels the agent's own replies, and strips only its mention | **new** `apps/server/src/agents/transcript.test.ts` |
+| A grant with the wrong audience, an expired one, and one signed with the session key are all rejected | **new** `apps/server/src/agents/grant.test.ts` |
+| A stream that goes quiet for longer than a keepalive is not cut; one that ends without `done` is `interrupted` | **new** `apps/server/src/agents/runtime-client.test.ts` |
+| The stall timeout fires only while the model is generating; an empty errored turn is `failed`; `palette: 'none'` exposes no built-in tool | **new** `apps/agent/src/agent.test.ts` — the runtime's first test file — against the stub provider `AGENT-RUNTIME.md` §11 already uses |
+
+### By hand
+
+The proposal's step 3:
+1. Mention `@triage` in a channel: the answer arrives in the trigger's thread.
+2. Two people mention it in one thread: two answers.
+3. Stop one mid-run: "Stopped by …", and no answer.
+4. Kill the server mid-run: `interrupted`, with a notice.
+
+### Observability
+
+`agent.run{outcome}`, `agent.run.refused{refusal}`, `agent.run.deferred{reason}`
+and `agent.run.queue_wait` ([observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed)).
+The runtime-side markers `AGENT-RUNTIME.md` §8 already designed land here too,
+since this is its first real traffic.
+
+### Docs, in the same commit
+
+- `AGENT-RUNTIME.md`:
+  - the entry point (§3): the four fields and the Zod schema;
+  - the bash problem (§5): answered for workspace agents by `palette: 'none'`;
+  - bounds (§6): the stall timeout;
+  - deliberately not built (§9): per-user credentials marked designed.
+- `DESIGN.md`: agents at the transport layer (§6.5) and agents (§13.8) — threaded
+  replies, the dispatcher, streaming still undecided.
+- `SYNC-FLOWS.md`: the frame vocabulary (§8) gains `agent_activity`.
+- Invariants 76 and 77.
+- D2, D4, D5, D6 and D13 are folded into the proposal.
+
+### Done when
+
+- The proposal's step 3 holds by hand against a real provider, not a stub.
+- `pnpm test` is green.
+
+---
+
+## 8. Step 4 — Connections and the connector store
+
+**Implements:**
+- [why Composio (§6.1)](WORKSPACE-AGENTS.md#61-why-composio)
+- [project, keys and `user_id` (§6.2)](WORKSPACE-AGENTS.md#62-project-keys-and-user_id)
+- [our record of connections (§6.3)](WORKSPACE-AGENTS.md#63-our-record-of-connections)
+- [permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection): the table and routes; enforcement is step 5
+- [connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting)
+- [the catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write)
+- [keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true)
+- [disconnecting (§6.10)](WORKSPACE-AGENTS.md#610-disconnecting)
+- [the connector store (§7.1–§7.3)](WORKSPACE-AGENTS.md#7-the-connector-store)
+- the editor's Tools section from [the product (§4.1)](WORKSPACE-AGENTS.md#41-the-product)
+- step 4 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
+
+**First:**
+- the Composio connect spike (§4.1);
+- the development project from the setup checklist (§4.3).
+
+This step can run in parallel with steps 1–3.
+
+### Schema
+
+**New** `apps/server/src/db/migrations/012_connections.sql`:
+
+| Table | From |
+|---|---|
+| `toolkits`, `toolkit_tools` | [§6.6](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) |
+| `connections`, with the `connection_live` partial unique index | [§6.3](WORKSPACE-AGENTS.md#63-our-record-of-connections) |
+| `connection_attempts (id, connection_id, actor_id, start_token_hash, port, state, access_request_id, expires_at, consumed_at)` | The flow in [§6.5](WORKSPACE-AGENTS.md#65-connecting). The start token is stored hashed, like refresh tokens |
+| `agent_permissions` | [§6.4](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection) |
+| `composio_webhook_deliveries (webhook_id PRIMARY KEY, received_at)` | D8 |
+
+### Server
+
+| File | Change | Implements |
+|---|---|---|
+| **New** `apps/server/src/agents/composio.ts` | **The only file that imports `@composio/core`.** Wraps `link` (REST, for `connection_data`), `completeAuth`, `getAccount`, `listAccounts`, `revoke` (REST), `deleteAccount`, the toolkit and tool lists (REST, cursors), and — for step 5 — session create, reuse, tool list and execute. Every call is timed, for `composio.request` | §6.2, invariant 75 |
+| **New** `apps/server/src/agents/catalogue.ts` | The daily refresh of `toolkits` and `toolkit_tools`; `effect_derived` from the hints, exactly as [§6.6](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) orders them; deprecation flags | §6.6 |
+| **New** `apps/server/scripts/enable-toolkit.ts` | Sets `enabled`, `auth_config_id`, `auth_scheme` and `auth_managed_by` for a slug (D10) | §6.6, §6.11 |
+| **New** `apps/server/src/agents/connections.ts`, routes in `agents/routes.ts` | The flow in [§6.5](WORKSPACE-AGENTS.md#65-connecting): `POST /connections`, `GET /connections/start`, `GET /connections/verify`, `POST /connections/:id/complete`, `DELETE /connections/:id`. **The actor always comes from the session token.** A card origin checks `access_requests.actor_id`. Also `GET /toolkits` and `GET /toolkits/:slug` for browsing (online-only) | §6.5, §6.10, invariant 81 |
+| **New** `apps/server/src/agents/permissions.ts`, routes | `PUT /agent-permissions/:agentId/:toolkit` grants at the agent's highest effect in that toolkit; `DELETE` revokes. Both are for the session's own actor only | §6.4 |
+| **New** `apps/server/src/agents/webhook.ts` | `POST /composio/webhook` with a route-scoped raw-body parser (D7). Checks the HMAC over `id.timestamp.body` with a 300 s tolerance, dedupes through `composio_webhook_deliveries`, marks `needs_reauth`, pushes | §6.9 |
+| **New** `apps/server/src/agents/reconcile.ts` | Every 15 minutes, reconcile accounts in `EXPIRED`, `FAILED`, `INACTIVE` or `REVOKED`; mark `connecting` rows older than 10 minutes `failed`; sweep old webhook ids | §6.9 |
+| **New** `apps/server/src/agents/label.ts` | After `complete_auth`, the account label from one read tool per toolkit, where a toolkit has one | §7.3 |
+| **Changes** `apps/server/src/web/landing.ts` | The "connected — you can close this tab" page the loopback redirect ends on | §6.5 |
+| **Changes** `apps/server/src/sync/feed.ts`, `sync/socket.ts` | `welcome` gains `connections` and `agentPermissions` for the caller. Changes push `connections` and `agent_permissions` frames through `pushToActor` | §6.3 |
+| **Changes** `apps/server/src/index.ts`, `env.ts` | The routes, the catalogue refresh and the reconciliation timers; §4.2's step-4 variables | |
+
+### Protocol
+
+**Changes** `packages/protocol/src/frames.ts`:
+- `Welcome` gains optional `connections` and `agentPermissions`.
+- `OUTBOUND` gains `connections` and `agent_permissions`.
+- Both are replaced whole on receipt, never merged.
+
+### Client
+
+| File | Change |
+|---|---|
+| **Changes** `apps/desktop/src/sync/auth/loopback.ts` | `listenForCallback` takes a path and parameter names (D9). Sign-in keeps its defaults |
+| **New** `apps/desktop/src/sync/connect.ts` | `connections.connect(toolkit, accessRequestId?)`: listen, `POST /connections`, open `start_url` in the system browser, receive the loopback redirect, check `state`, `POST …/complete`. Never a `BrowserWindow` (`PHASE-1-IDENTITY.md`, the desktop auth flow §6) |
+| **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 12: `connections` and `agent_permissions` projections |
+| **Changes** `apps/desktop/src/sync/storage.ts`, `sync/link.ts` | Apply both from `welcome` and from their push frames; invalidate their topics |
+| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/settings/connectors` and `…/connectors/:toolkit` |
+| **New** `apps/desktop/src/renderer/routes/SettingsConnectors.tsx`, `features/connectors/ToolkitPage.tsx` | Yours and Browse ([§7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([§7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
+| **Changes** `apps/desktop/src/renderer/routes/SettingsAgentEditor.tsx` | The Tools section: toolkits, then tools grouped by effect; read tools preselected; destructive off; the 30-tool cap with its reason (D11) |
+
+### Boundary rules
+
+Added to `tools/check-boundaries.mjs`, each naming its sentence:
+- `agents/composio-only-here`: only `apps/server/src/agents/composio.ts`
+  imports `@composio/core`.
+- `agent/no-composio-env`: no `COMPOSIO_` identifier anywhere under
+  `apps/agent/`.
+
+### Tests
+
+| Test | File |
+|---|---|
+| **Nobody else finishes a connection:** `complete` with another actor's session is refused before Composio is called; a start token works once; `verify` without the cookie completes nothing; a loopback redirect with another attempt's `state` is refused | **new** `apps/server/src/agents/connections.test.ts`, `apps/desktop/src/sync/auth/loopback.test.ts` |
+| A connected-account id that differs from the one stored at `link()` is refused | `connections.test.ts` |
+| A webhook with a bad signature, a stale timestamp or a repeated id changes nothing | **new** `apps/server/src/agents/webhook.test.ts` |
+| Reconciliation corrects an `active` row whose account expired, and fails a stale `connecting` row | **new** `apps/server/src/agents/reconcile.test.ts` |
+| Disconnect revokes before deleting; a `400` or `409` from revoke still deletes, and the response says revoking did not happen | `connections.test.ts` |
+| Effect derivation: destructive hint, read-only hint, no hint gives `write`, override wins | **new** `apps/server/src/agents/catalogue.test.ts` |
+| `welcome` carries only the caller's own connections and permissions | `feed.test.ts` |
+
+`composio.ts` is replaced by an in-memory fake in every test above. The spikes
+are what prove the real service behaves as the fake assumes.
+
+### By hand
+
+The proposal's step 4:
+1. Connect Linear from Settings.
+2. See it on a second device while offline.
+3. Disconnect it, and see Linear's authorised apps list drop Relayed.
+
+Add: connect one API-key toolkit through the hosted form.
+
+### Observability
+
+`connection.flow{scheme, stage, outcome}` and `composio.request{op, outcome}` with
+its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
+
+### Docs, in the same commit
+
+- `DESIGN.md`: what WorkOS owns (§6.2), the third-party access row; delegation
+  (§6.4), Boundary A replaced with Composio.
+- `STACK.md`: `@composio/core` pinned exact, its documentation entry, and the
+  setup checklist (§4.3).
+- Invariants 75 and 81.
+- D7, D8, D9 and D10 are folded into the proposal.
+
+### Done when
+
+- The proposal's step 4 holds by hand in the development project.
+- Both boundary rules run.
+- `pnpm test` is green.
+
+---
+
+## 9. Step 5 — The broker
+
+**Implements:**
+- [a tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call)
+- enforcement of [permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection)
+- [executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session)
+- [errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do)
+- [the card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat)
+- the `access_request` part and table in [who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain)
+- the milestone, step 5 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
+
+**First:**
+- steps 1, 3 and 4;
+- the Composio sessions and tool-definition spikes (§4.1).
+
+### Schema
+
+**New** `apps/server/src/db/migrations/013_broker.sql`:
+
+| Table | From |
+|---|---|
+| `agent_tool_calls`, with outcome `pending` | [§5.5](WORKSPACE-AGENTS.md#55-a-tool-call) |
+| `access_requests` | [§8.8](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) |
+| `composio_sessions (agent_actor_id, invoker_actor_id, config_rev, session_id, created_at, PRIMARY KEY (agent_actor_id, invoker_actor_id, config_rev))` | [§6.7](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) |
+
+### Server
+
+| File | Change | Implements |
+|---|---|---|
+| **New** `apps/server/src/agents/broker.ts` | `POST /agent/tools`, steps 1–10 of [§5.5](WORKSPACE-AGENTS.md#55-a-tool-call) in that order. Steps 4–8 **are** `beforeToolCall` and step 10 **is** `afterToolCall`, filled in `checkpoints.ts`. **Step 3 reads the invoker only from the run row** | §5.5, invariants 74, 82 |
+| **New** `apps/server/src/agents/sessions.ts` | Get or create the session per (agent, invoker, `config_rev`) with the config in §6.7; the session's raw tools with meta tools removed; the 30-tool cap enforced | §6.7 |
+| **Changes** `apps/server/src/agents/dispatcher.ts` | Prepare fetches the run's tool definitions from its session, replacing step 3's empty list | §5.3, §6.7 |
+| **New** `apps/server/src/agents/tool-errors.ts` | The mapping in [§6.8](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do), **rewritten from the sessions spike's observed values**. `[Session Restriction]` raises an alert as well as `refused` | §6.8 |
+| **New** `apps/server/src/agents/access.ts`, routes | Writes the card: a restricted message listing the invoker, in the trigger's thread, carrying the `access_request` part, one per toolkit per run. `POST /access-requests/:id/allow` (session actor must equal the request's actor, then grants as in step 4). `POST /agent-runs/:id/retry` (invoker only, finished runs only, `attempt + 1`) | §7.4, §8.8 |
+| **Changes** `packages/protocol/src/parts.ts` | `access_request` in `MessagePart`, and a `SERVER_ONLY` set that `forbiddenPartKind` refuses for **every** author on the ordinary write path. The broker writes the part through `writeMessage` directly | §8.8 |
+
+### Runtime (`apps/agent`)
+
+**Changes** `src/agent.ts`:
+- Remote tools post `{ runId, toolCallId, tool, arguments }` with `Authorization: Bearer <grant>`, forwarding pi's abort signal.
+- A `duplicate_call` or `run_not_running` result is returned to the model as an ordinary tool error.
+
+### Client
+
+| File | Change |
+|---|---|
+| **New** `apps/desktop/src/renderer/features/agents/AccessCard.tsx` | The four states of [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), read from the local `connections` and `agent_permissions` projections, never from the message |
+| **Changes** `apps/desktop/src/renderer/features/chat/MessageParts.tsx` | Draws `access_request` as the card for the listed actor. Anyone else never holds the message |
+| **Changes** `apps/desktop/src/renderer/features/connectors/ToolkitPage.tsx`, `features/agents/AgentProfile.tsx` | "Agents you allowed" with Revoke; the agent's toolkits, each with your status |
+
+### Tests
+
+| Test | File |
+|---|---|
+| **The broker ignores a forged invoker:** a call whose body or grant claims another actor executes as the run's invoker, or not at all | **new** `apps/server/src/agents/broker.test.ts` |
+| **Permission is per agent:** with Linear connected and `@digest` allowed, a Linear call from `@triage` returns `permission_required` and never reaches Composio; allowing it needs no connection flow | `broker.test.ts` |
+| **A call id executes once:** the same `tool_call_id` twice reaches Composio once | `broker.test.ts` |
+| A tool call after Stop is refused `run_not_running` | `broker.test.ts` |
+| A session that refuses a tool our snapshot allows raises the alert | `broker.test.ts` |
+| Only the listed actor can allow a request; retry is invoker-only and needs a finished run | **new** `apps/server/src/agents/access.test.ts` |
+| `forbiddenPartKind` refuses `access_request` for a person and for an agent on the ordinary write path | `packages/protocol/src/parts.test.ts` |
+
+### By hand — the milestone
+
+The proposal's step 5, word for word:
+1. Bob asks `@triage` to file a bug with nothing connected.
+2. One card appears, and only Bob sees it.
+3. Bob connects and allows from that card, then presses Run again.
+4. The issue appears in **Bob's** Linear, as Bob.
+
+Then Alice asks `@triage` in the same thread and gets her own card: Bob's
+permission is not hers.
+
+### Observability
+
+`agent.tool{effect, outcome}` ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
+
+### Docs, in the same commit
+
+- `AGENT-RESPONSES.md`, the message contract (§3.1): the `access_request` kind,
+  and `tool` parts for remote calls.
+- `DESIGN.md`, delegation (§6.4): the grant is the run row plus a signed token.
+- Invariants 74, 82 and 83. Invariant 83 is a constraint on later work, recorded
+  now.
+
+### Done when
+
+- The milestone holds by hand against the development Composio project and a
+  real Linear workspace.
+- Every security test in [§12](#12-test-matrix) is green.
+
+---
+
+## 10. Step 6 — Reconnecting
+
+**Implements:**
+- the `needs_reauth` rows of [errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do)
+- scope changes in [keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true)
+- the reconnecting paragraph of [connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting)
+- the Reconnect row of [the card (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat)
+- step 6 of the [steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand)
+
+**First:** step 5.
+
+| File | Change |
+|---|---|
+| **Changes** `apps/server/src/agents/checkpoints.ts` (`afterToolCall`) | A `needs_reauth` result reads the account's status before marking the connection, so a transient provider error is not mistaken for an expired account |
+| **Changes** `apps/server/src/agents/connections.ts` | Reconnect: `link()` once the old account is `EXPIRED` or `REVOKED`; the new `ca_` id replaces the old on the **same** `connections` row; the old account is deleted |
+| **Changes** `apps/server/src/agents/catalogue.ts` | Compare each account's `requested_scopes` with its auth config; mark older accounts `needs_reauth` with reason `scopes_changed` |
+| **Changes** renderer store and card | The Reconnect state and its banner |
+
+**Tests:**
+- An `expired` webhook moves a connection to `needs_reauth` and pushes it.
+- A `422` at execution does the same, and raises the card.
+- Reconnecting keeps `connections.id`, so `agent_tool_calls.connection_id` still
+  resolves.
+
+**By hand:** the proposal's step 6. Revoke Relayed in Linear's settings; the
+next run asks Bob to reconnect rather than failing vaguely.
+
+**Done when:** the above holds by hand, and the reconciliation catches a revoke
+even with the webhook subscription disabled.
+
+---
+
+## 11. Cross-cutting
+
+### 11.1 Module layout
+
+```
+apps/server/src/agents/
+  checkpoints.ts        the six functions (§5.9)                       step 3, filled in 5
+  definitions.ts        create / edit / deactivate                     step 2
+  routes.ts             every agents HTTP route                        steps 2–5
+  dispatcher.ts         claim, admit, prepare, call, finish            step 3
+  transcript.ts         what the agent reads                           step 3
+  grant.ts              sign and verify                                step 3
+  runtime-client.ts     the /run stream                                step 3
+  reply.ts  notices.ts  activity.ts                                    step 3
+  composio.ts           the only @composio/core import                 step 4
+  catalogue.ts  connections.ts  permissions.ts  webhook.ts
+  reconcile.ts  label.ts                                               step 4
+  broker.ts  sessions.ts  tool-errors.ts  access.ts                    step 5
+```
+
+### 11.2 Migrations
+
+| Number | Name | Step |
+|---|---|---|
+| 009 | `restricted_messages` | 1 |
+| 010 | `agents` | 2 |
+| 011 | `agent_runs` | 3 |
+| 012 | `connections` | 4 |
+| 013 | `broker` | 5 |
+
+Steps that run in parallel must renumber on merge rather than share a number.
+Every CHECK added gets one test per constraint, against Postgres
+(`AGENTS.md`, rule 2).
+
+Replica migrations in `apps/desktop/src/sync/migrations/workspace.ts`:
+version 9 (step 0), 10 (step 1), 11 (step 2), 12 (step 4).
+
+### 11.3 Telemetry by step
+
+| Step | Markers | Catalogue |
+|---|---|---|
+| 1 | `sync.withheld{path}` | `packages/telemetry/src/metrics.ts` |
+| 3 | `agent.run{outcome}`, `agent.run.refused{refusal}`, `agent.run.deferred{reason}`, `agent.run.queue_wait`; the runtime's markers from `AGENT-RUNTIME.md` §8 | `metrics.ts` |
+| 4 | `connection.flow{scheme, stage, outcome}`, `composio.request{op, outcome}` + duration | `metrics.ts` |
+| 5 | `agent.tool{effect, outcome}` | `metrics.ts` |
+
+Each is proposed to the dev before it is added (`AGENTS.md`, rule 8). Two limits
+are enforced by the catalogue's types:
+- **No id as a label**, and a `toolkit` label only through an allowlist.
+- **No tool arguments, results, instructions or card text** in any event.
+
+### 11.4 Rolling out
+
+In order, because old clients and old runtimes persist (`DESIGN.md`, forward
+compatibility §9.10):
+
+1. **Server with step 1.** Old clients receive `withheld` as an unknown type and
+   advance their cursor. No client release is needed before the server.
+2. **Runtime before dispatcher.** Deploy `apps/agent` with the new body schema
+   before a server whose dispatcher is configured (D5).
+3. **Composio production project** (§4.3) before step 4 reaches production,
+   including our own OAuth apps.
+4. **Clients** with the agent screens and the connector store.
+
+### 11.5 Data kept, and for how long
+
+Neither the proposal nor this plan settles retention for
+`agent_runs.config`, `agent_tool_calls.arguments` or `access_requests`. They are
+product data, not telemetry. See §16.
+
+---
+
+## 12. Test matrix
+
+The proposal's [tests that must exist (§12.3)](WORKSPACE-AGENTS.md#123-tests-that-must-exist),
+each with its step and file.
+
+| Proposal test | Step | File |
+|---|---|---|
+| Contiguity under withholding | 1 | `spikes/sync-tests.mjs`, `apps/server/src/sync/feed.test.ts`, `apps/desktop/src/sync/apply.test.ts` |
+| Backfill with a hidden ordinal 1 | 1 | `feed.test.ts`, `apps/desktop/src/sync/catchup.test.ts` |
+| Badge | 1 | `feed.test.ts` |
+| Each CHECK branch | 1, 2 | `apps/server/src/db/restricted-schema.test.ts`, `agents-schema.test.ts` |
+| The broker ignores a forged invoker | 5 | `apps/server/src/agents/broker.test.ts` |
+| No mention is lost | 3 | `apps/server/src/sync/ops.test.ts` |
+| Nobody else finishes a connection | 4 | `apps/server/src/agents/connections.test.ts`, `apps/desktop/src/sync/auth/loopback.test.ts` |
+| A call id executes once | 5 | `broker.test.ts` |
+| Permission is per agent | 5 | `broker.test.ts` |
+| Stop wins | 3, 5 | `apps/server/src/agents/reply.test.ts`, `broker.test.ts` |
+| Nothing is silent | 3 | `apps/server/src/agents/dispatcher.test.ts` |
+| Boundary rules | 1, 4 | `tools/check-boundaries.mjs`: `protocol/no-client-audience`, `agents/composio-only-here`, `agent/no-composio-env` |
+
+---
+
+## 13. Docs matrix
+
+The proposal's [docs to change (§14)](WORKSPACE-AGENTS.md#14-docs-to-change-when-this-is-accepted),
+each landing in the step that makes it true — never before.
+
+| Doc and section | Step |
+|---|---|
+| `DESIGN.md`, the actor model (§6.3) | 2 |
+| `DESIGN.md`, what WorkOS owns (§6.2) and delegation (§6.4), Boundary A | 4 |
+| `DESIGN.md`, delegation (§6.4), the grant | 5 |
+| `DESIGN.md`, accepted exposures (§6.6), item 2 | 1 |
+| `DESIGN.md`, membership and access (§7.3) | 1 |
+| `DESIGN.md`, client schema (§8.3) and sync protocol (§9) | 1, 2, 3, 4 — each its own additions |
+| `DESIGN.md`, invariants (§14) | By [§14](#14-invariants-by-step) |
+| `DESIGN.md`, build order (§15) | 1: Phase 6 rewritten to point at this plan |
+| `AUTHZ.md` | 2 |
+| `AGENT-RUNTIME.md` | 3 |
+| `SYNC-FLOWS.md` | 1 (visibility), 3 (`agent_activity`) |
+| `AGENT-RESPONSES.md` | 5 |
+| `STACK.md` | 4 |
+| `OBSERVABILITY.md` | Each step whose markers are agreed |
+| `AGENTS.md` | Done: the proposal is listed. This plan is added beside it |
+
+---
+
+## 14. Invariants by step
+
+From [invariants to add](WORKSPACE-AGENTS.md#invariants-to-add).
+
+| # | Invariant | Step | Enforced by |
+|---|---|---|---|
+| 74 | A tool call's invoker is read from the run row | 5 | `broker.ts` step 3; forged-invoker test |
+| 75 | Only `apps/server` calls Composio | 4 | Boundary rules `agents/composio-only-here`, `agent/no-composio-env` |
+| 76 | A mention's run is inserted in the message's transaction | 3 | `writeMessage`; no-mention-lost test |
+| 77 | A workspace agent's palette holds no local tools | 3 | `RunRequest.palette`; runtime test |
+| 78 | A restricted message's revision reaches every reader; its content only the listed | 1 | `fanout.ts`, `visibility.ts`; contiguity tests |
+| 79 | Visibility filters run in SQL, before `LIMIT` | 1 | `visibility.ts` used by every read path; hidden-ordinal-1 test |
+| 80 | `listed` with no rows is nobody | 1 | The CHECK and the predicate; schema tests |
+| 81 | A card carries no URL; the redirect goes only to the named actor | 4, 5 | `connections.ts`, the `access_request` part shape; connection tests |
+| 82 | An agent reaches a connection only through a permission naming it | 5 | `broker.ts` step 7; per-agent permission test |
+| 83 | Nothing learned for one invoker is given to a run for another | 5 (recorded) | `transcript.ts` builds per invoker. No sessions or memory exist to violate it |
+
+---
+
+## 15. Not in this plan
+
+The proposal's [deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built),
+with the checkpoint each would change, so that building one later starts from
+the right file.
+
+| Deferred | Where it lands |
+|---|---|
+| One run at a time per agent per thread | `admitRun`: `defer('thread_busy')`; `onRunEnd` wakes the next |
+| Steering a running run with a follow-up | `invocationsFor`: return *steer* |
+| Agent sessions across turns; agent memory | `onRunEnd` and `transcript.ts`, under invariant 83 |
+| Approval before write or destructive tools | `beforeToolCall`: honour `agent_tools.approval` |
+| Invoker-only replies with Share | `deliverReply`: `post({ listed: [invoker] })` |
+| Pausing a run while someone connects | `beforeToolCall` and the runtime's out-of-band results |
+| Retrying runs | `onRunEnd`, once `agent_tool_calls` becomes a result marker |
+| Several accounts per toolkit | `connections` unique index; the card's picker |
+| A workspace allow-list of toolkits | `beforeToolCall` |
+| Disconnecting on deactivation | `apps/server/src/workos/poller.ts`, beside its `recordActor` |
+| Scheduled or triggered agents; agents invoking agents; external agents; person-to-person restricted messages; a tool-search meta-tool | Separate designs |
+
+---
+
+## 16. Open questions carried
+
+From the proposal's [open questions (§15)](WORKSPACE-AGENTS.md#15-open-questions),
+plus what this plan raised.
+
+| Question | Blocks | Decide by |
+|---|---|---|
+| Per-toolkit or per-tool permissions | Step 4's table shape | Before migration 012 |
+| The tool cap | Step 5's editor limit | The tool-definitions spike |
+| Cost visibility and ceilings | Nothing in v1 | Before production traffic |
+| Group DMs with an agent | Nothing until DMs exist | With DMs (D2) |
+| Catalogue refresh frequency; deprecated pinned tools | Step 4's refresh | Before step 4 ships |
+| **Retention of `agent_runs.config`, `agent_tool_calls.arguments` and `access_requests`** — raised here | Nothing in v1; an audit trail with no retention grows for ever | Alongside `DESIGN.md`'s retention (§13.6) |
+| **Whether the dev-only restricted-message route survives after step 3** — raised here | Nothing | After step 3: remove it if nothing uses it |

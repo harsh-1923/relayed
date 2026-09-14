@@ -68,13 +68,28 @@ export interface Counters {
   mentionCount: number;
 }
 
+/**
+ * A message as every row-returning path sends it: COMPLETE CURRENT STATE.
+ *
+ * The body as it stands, whether it is a tombstone, when it was edited, and
+ * how many replies it has — one shape for the gap tail, backfill, the thread
+ * page and repair. A client that already holds the row overwrites what it has
+ * with this, which is only safe because nothing is missing from it: a path
+ * that sent the body but not the tombstone flag would un-delete a message on
+ * every device that was far behind when it was deleted (invariant 85).
+ */
 export interface MessageRow {
   id: string;
   ord: number;
+  /** The message's VERSION: the revision of its last visible change (events.ts, the version rule). */
   rev: number;
   authorId: string;
   body: string;
   parentId: string | null;
+  deleted: boolean;
+  editedAt: string | null;
+  /** Undeleted replies. Per reader once restricted replies exist (WORKSPACE-AGENTS.md §8). */
+  replyCount: number;
 }
 
 /**
@@ -256,11 +271,14 @@ export async function catchup(
  */
 async function snapshotOf(db: Kysely<DB>, stream: Stream): Promise<Snapshot> {
   if (stream.kind === 'chat') {
-    const rows = await db.selectFrom('messages')
-      .select(['id', 'ord', 'rev', 'author_id', 'body', 'parent_id'])
-      .where('chat_id', '=', stream.id)
-      .where('deleted', '=', false)
-      .orderBy('ord', 'desc')
+    // Tombstones INCLUDED. Not for the client's own held rows — repair corrects
+    // those — but because a deleted root still has a thread: a root created and
+    // deleted while the client was away, whose replies survive, is reachable
+    // only through its tombstone. (Established by a planted bug in the sync
+    // model that nothing caught until that trace was written.)
+    const rows = await messageRows(db)
+      .where('m.chat_id', '=', stream.id)
+      .orderBy('m.ord', 'desc')
       .limit(GAP_TAIL)
       .execute();
     const { headOrd } = await head(db, stream.id);
@@ -322,16 +340,97 @@ async function snapshotOf(db: Kysely<DB>, stream: Stream): Promise<Snapshot> {
 export async function backfill(
   db: Kysely<DB>, chatId: string, beforeOrd: number, limit = 50,
 ): Promise<MessageRow[]> {
-  const rows = await db.selectFrom('messages')
-    .select(['id', 'ord', 'rev', 'author_id', 'body', 'parent_id'])
-    .where('chat_id', '=', chatId)
-    .where('deleted', '=', false)
-    .where('parent_id', 'is', null)
-    .where('ord', '<', beforeOrd)
-    .orderBy('ord', 'desc')
+  // Tombstoned roots included, for the reason the gap tail includes them: a
+  // deleted root's thread is reachable only through it. Every filter here runs
+  // in SQL, before the LIMIT — a row dropped afterwards would make a short page
+  // read as the beginning of history (the rule WORKSPACE-AGENTS.md §8.7 names).
+  const rows = await messageRows(db)
+    .where('m.chat_id', '=', chatId)
+    .where('m.parent_id', 'is', null)
+    .where('m.ord', '<', beforeOrd)
+    .orderBy('m.ord', 'desc')
     .limit(limit)
     .execute();
   return rows.map(toMessage);
+}
+
+/**
+ * REPAIR: everything that changed after `sinceRev` among the messages a client
+ * could already hold, as complete rows, keyset-paged by (rev, id).
+ *
+ * The question a client asks after a gap. A gap replaced the log with a partial
+ * snapshot — the newest messages — and a message the client held that the
+ * snapshot did not re-send is otherwise never corrected: a delete during the
+ * gap leaves the message on that device for good (the finding that led here,
+ * WORKSPACE-AGENTS-IMPL.md §4.1.1). This is what the version rule exists to
+ * answer: `rev > sinceRev` is "changed while I was away", `ord <= maxOrd` is
+ * "and old enough that I might hold it", and `msg_rev (chat_id, rev)` makes the
+ * scan proportional to what changed rather than to history.
+ *
+ * Paged by (rev, id) rather than by ord, and that is load-bearing: a row that
+ * changes AGAIN after a page was computed moves past the cursor and is served
+ * again at its new version — which is how a client that applied a live change
+ * over a stale row gets the row corrected (SYNC-FLOWS.md, the repair flow).
+ */
+export async function repair(
+  db: Kysely<DB>, chatId: string, sinceRev: number, maxOrd: number,
+  after: { rev: number; id: string } | null, limit = 50,
+): Promise<MessageRow[]> {
+  const rows = await messageRows(db)
+    .where('m.chat_id', '=', chatId)
+    .where('m.rev', '>', sinceRev)
+    .where('m.ord', '<=', maxOrd)
+    .$if(after !== null, qb => qb.where(eb => eb.or([
+      eb('m.rev', '>', (after as { rev: number }).rev),
+      eb.and([eb('m.rev', '=', (after as { rev: number }).rev),
+              eb('m.id', '>', (after as { id: string }).id)]),
+    ])))
+    .orderBy('m.rev')
+    .orderBy('m.id')
+    .limit(limit)
+    .execute();
+  return rows.map(toMessage);
+}
+
+/**
+ * One page of a thread, by ordinal — the parent-keyed read DESIGN.md §8.2 says
+ * must exist from day one, because replies share the chat's ordinal space and
+ * so cannot be fetched by the chat's ordinal range.
+ *
+ * Undeleted replies only. A tombstone is owed only for a row the client holds,
+ * a held reply deleted meanwhile is corrected by repair, and a reply has no
+ * thread of its own — so nothing hangs off a deleted reply that the client
+ * would need the row to reach. A planted bug that dropped them here survived
+ * every check in the sync model, which is how this was established.
+ */
+export async function threadReplies(
+  db: Kysely<DB>, chatId: string, rootId: string, afterOrd: number, limit = 50,
+): Promise<MessageRow[]> {
+  const rows = await messageRows(db)
+    .where('m.chat_id', '=', chatId)
+    .where('m.parent_id', '=', rootId)
+    .where('m.deleted', '=', false)
+    .where('m.ord', '>', afterOrd)
+    .orderBy('m.ord')
+    .limit(limit)
+    .execute();
+  return rows.map(toMessage);
+}
+
+/**
+ * The one SELECT every row-returning path starts from, so the row shape cannot
+ * differ between them. The reply count is a correlated count over undeleted
+ * replies; restricted messages narrow it per reader (WORKSPACE-AGENTS.md §8.7).
+ */
+function messageRows(db: Kysely<DB>) {
+  return db.selectFrom('messages as m')
+    .select(['m.id', 'm.ord', 'm.rev', 'm.author_id', 'm.body', 'm.parent_id',
+             'm.deleted', 'm.edited_at'])
+    .select(eb => eb.selectFrom('messages as r')
+      .select(eb2 => eb2.fn.countAll<number>().as('n'))
+      .whereRef('r.parent_id', '=', 'm.id')
+      .where('r.deleted', '=', false)
+      .as('reply_count'));
 }
 
 /**
@@ -590,10 +689,15 @@ async function welcomeChats(
 
 const toMessage = (row: {
   id: string; ord: number; rev: number; author_id: string;
-  body: string; parent_id: string | null;
+  body: string; parent_id: string | null; deleted: boolean;
+  edited_at: Date | string | null; reply_count: number | string | null;
 }): MessageRow => ({
   id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
-  body: row.body, parentId: row.parent_id,
+  body: row.body, parentId: row.parent_id, deleted: row.deleted,
+  editedAt: row.edited_at === null ? null
+    : row.edited_at instanceof Date ? row.edited_at.toISOString() : String(row.edited_at),
+  // A correlated COUNT comes back as a bigint string from node-postgres.
+  replyCount: Number(row.reply_count ?? 0),
 });
 
 export interface DirectoryRow {

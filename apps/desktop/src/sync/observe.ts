@@ -112,6 +112,16 @@ function dispatch(name: string, detail: Record<string, unknown>): void {
       });
       count('sync.backfill.page');
       return;
+    case 'sync.repair.page':
+      // Rejections are the number to watch: they say live traffic is racing
+      // the repair, which is expected in small numbers and a stuck loop in
+      // large ones.
+      emit('sync.repair.page', {
+        chat_id: str(detail, 'chat_id'), rows: int(detail, 'rows'),
+        applied: int(detail, 'applied'), rejected: int(detail, 'rejected'),
+        done: detail['done'] === true,
+      });
+      return;
 
     // ── the directory ───────────────────────────────────────────────────────
     case 'sync.directory.page':

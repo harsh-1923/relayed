@@ -66,6 +66,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/PANELS.md`](docs/PANELS.md) | **Proposal, partly built.** A room's side chats and web pages as typed panels, opened as tabs beside the space: local until shared, the tables, sync, addressing (`?p=`, `?pa=`), web pages as `<webview>`, and the implementation plan with what is built. Evidence in [`spikes/web-panels/`](spikes/web-panels/README.md) (`pnpm verify:web-panels`). |
 | [`docs/LOCAL-ROOMS.md`](docs/LOCAL-ROOMS.md) | **Proposal.** Rooms driven by the person's own Claude Code on their laptop, and how one is published into a shared room. Not yet the design of record — its header says which `DESIGN.md` sections it contradicts. |
 | [`docs/WORKSPACE-AGENTS.md`](docs/WORKSPACE-AGENTS.md) | **Proposal.** Creating agents as actors, a mention becoming a run in `apps/agent`, tool calls brokered by the server through Composio as the invoker, connections and the connector store, and restricted messages with what they do to `ord` and `rev`. Its header lists the `DESIGN.md` decisions it replaces. |
+| [`docs/WORKSPACE-AGENTS-IMPL.md`](docs/WORKSPACE-AGENTS-IMPL.md) | **Plan.** How the workspace agents proposal is built: six steps in order, each linked to the proposal sections it implements, with files, migrations, tests, what to check by hand, and the decisions and corrections it feeds back into the proposal. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |
@@ -112,7 +113,10 @@ Each was found by running something, not by reading it.
 - **`pnpm spike:sync` must pass.** 66 assertions over ord/rev separation, cursor
   contiguity, gap markers, catch-up, backfill paging, idempotency, unread math,
   outbox coalescing and read-state convergence. The suite is mutation-tested —
-  treat a failure as a real regression, never as flakiness.
+  treat a failure as a real regression, never as flakiness. It also runs the
+  visibility suite (`spikes/visibility-tests.mjs`): 99 checks over restricted
+  messages and gap repair, 400 random worlds included. `pnpm spike:sync:mutants`
+  must still catch all 30 of its planted bugs after any change to it.
 - **Schema changes get executed against a real engine**, not eyeballed.
   Constraints need a test *per constraint*, each asserted against an expected
   outcome.
