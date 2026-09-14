@@ -1,9 +1,12 @@
 # Panels
 
-> **Status: a proposal, not yet the design of record.** Nothing in this document
-> is built. It replaces the *page* object in [`LOCAL-ROOMS.md`](LOCAL-ROOMS.md)
-> §10 and extends the room model in [`DESIGN.md`](DESIGN.md) §7. §13 lists the
-> edits those documents need; until they land, they win.
+> **Status: a proposal, partly built.** Panels in **local rooms** are built: the
+> tables, side chats, local web panels, sharing into the room, and the panel
+> container with tabs, and web pages drawn inside them as `<webview>` (§12.2
+> says exactly what). Nothing synced is built — the server writes no rooms yet. It
+> replaces the *page* object in [`LOCAL-ROOMS.md`](LOCAL-ROOMS.md) §10 and extends
+> the room model in [`DESIGN.md`](DESIGN.md) §7. §13 lists the edits the other
+> documents need; where one has not landed, that document wins.
 
 **Last updated:** 2026-09-14
 
@@ -14,14 +17,16 @@
 | Word | Meaning here |
 |---|---|
 | **Room** | A space with `kind='room'`: one default chat plus any number of public and private chats (`DESIGN.md` §7.1–§7.2). |
-| **Main pane** | What the route addresses. In a room, the default chat — or a side chat when someone is working *in* it (`/c/:chatId`). |
-| **Panel** | A surface open beside the main pane, inside a room. It has a **type**: `chat`, `web`, `diff`, `file`, `attachment`, and more later. |
+| **Main pane** | What the route addresses: the space's `sole` or `default` chat. The route never names any other chat. |
+| **Panel** | A surface in a room that opens beside the main pane. It has a **type**: `chat`, `web`, `diff`, `file`, `attachment`, and more later. |
+| **Panel container** | The right-hand side of a split room: a row of tabs, and the one panel shown beneath them. |
+| **Tab** | A panel that is open in the container. Several may be open; one is shown. |
 | **Chat panel** | A panel whose content is one of the room's non-default chats. |
 | **Content panel** | Every panel that is not a chat panel: a web page, a diff, a file, an attachment. |
 | **Local panel** | A panel that exists only on this device. Nobody else knows it exists, including the server. |
 | **Shared panel** | A panel synced to the room. Everyone entitled to it receives it. |
 | **Share** | Turning a local panel into a shared one. One-way. |
-| **Open / closed** | Whether a panel is on *your* screen right now. View state, carried in the URL, never stored. |
+| **Open / closed** | Whether a panel is one of *your* tabs right now. View state, carried in the URL, never stored. |
 | **Removed** | Whether a panel still exists in the room. Shared state, stored. |
 
 ---
@@ -40,25 +45,29 @@
 | Do chat panels sync? | **Always.** The chat does, so its panel does. Private chat panels included. | 4 |
 | Which stream carries panel events? | Chat panels → **the chat's stream**. Shared content panels → **the space stream**. No new stream kind. | 7 |
 | Can a shared panel be un-shared? | **No.** Once seen, seen (`DESIGN.md` §7.4). It can be removed. | 5.4 |
-| What does the URL carry? | **Panel ids**: `?p=pnl_A,pnl_B`. A bare chat id still resolves to that chat's panel. | 8 |
+| How many panels show at once? | **One.** Open panels are tabs in one container on the right; opening another adds a tab rather than splitting again. With no tab open, the space takes the whole pane. | 10 |
+| What does the URL carry? | **The space in the path, panels in the query**: `?p=` the open tabs as panel ids, `?pa=` the one shown. A bare chat id still resolves to that chat's panel. | 8 |
 | What happens when an agent opens a URL? | It writes a **panel part** into its message. Clients turn it into a local panel for the person the agent acted for; everyone else sees a link. | 9 |
-| How is a web page rendered? | `WebContentsView`, exactly as `LOCAL-ROOMS.md` §10.4 already specifies. Unchanged. | 10 |
+| How is a web page rendered? | A **`<webview>` in the panel's DOM**, kept mounted while its tab is open, every attach checked by main. Not `WebContentsView`, which `LOCAL-ROOMS.md` §10.1 first chose: it draws over menus and dialogs. | 10.3 |
 
 ---
 
 ## 2. The idea in one picture
 
 ```
-  room: "checkout-bug"
-  ┌──────────────────────────────┬───────────────────────┬───────────────────────┐
-  │ main pane                    │ panel                 │ panel                 │
-  │                              │                       │                       │
-  │ default chat                 │ chat: "try fix B"     │ web: localhost:5173   │
-  │ (never a panel)              │ private chat → only   │ LOCAL → only on this  │
-  │                              │ its members see it    │ laptop, nobody else   │
-  │                              │ SYNCED                │ knows it exists       │
-  │                              │                       │   [ Share to room ]   │
-  └──────────────────────────────┴───────────────────────┴───────────────────────┘
+  no tabs open                          tabs open: the pane splits, and is resizable
+  ┌──────────────────────────────────┐  ┌──────────────────────┬─────────────────────────────┐
+  │ space header                     │  │ space header         │ [try fix B] [localhost]     │
+  ├──────────────────────────────────┤  ├──────────────────────┼─────────────────────────────┤
+  │                                  │  │                      │                             │
+  │ default chat                     │  │ default chat         │ the shown tab               │
+  │ (never a panel)                  │  │                      │                             │
+  │                                  │  │                      │ chat "try fix B": private,  │
+  │                                  │  │                      │ SYNCED, only its members    │
+  │ composer                         │  │ composer             │ see it                      │
+  └──────────────────────────────────┘  └──────────────────────┴─────────────────────────────┘
+                                         the other tab, localhost:5173, is LOCAL: only on this
+                                         laptop, nobody else knows it exists, until it is shared
 
                           where does it live?
                      this device        synced
@@ -294,7 +303,8 @@ Opening a URL, a diff, a file or an attachment creates a **local panel**:
   database);
 - no outbox op, no network, no event;
 - visible only on this device, in the room it was opened in;
-- listed in the room's panel strip with a *local* marker and a **Share** button.
+- shown as a tab whose title is set in italics, with a **Share** button in the
+  tab row while it is the tab shown.
 
 This is the default for every content panel, whoever opens it (§9).
 
@@ -356,7 +366,7 @@ until someone asks; §11 records the trigger.
 |---|---|---|
 | **Close** | Removed from your `?p=`. Nothing is written. | Anyone, always |
 | **Remove** a local panel | Row deleted. | You |
-| **Remove** a shared content panel | `panel.remove` op → `removed_at` set → `panel.removed` on the space stream. It leaves everyone's strip. | Its creator, or a room admin |
+| **Remove** a shared content panel | `panel.remove` op → `removed_at` set → `panel.removed` on the space stream. It leaves everyone's tabs. | Its creator, or a room admin |
 | **Remove** a chat panel | Not a panel action. Deleting the chat removes it (cascade). | Per chat rules |
 | **Un-share** | Not offered. | — |
 
@@ -368,7 +378,8 @@ render — the link degrades rather than misfires (`FRONTEND.md` §4.7's test).
 - Swept when **not opened for 14 days** (`last_opened_at`), or when their space
   no longer exists in either store.
 - Never swept while open in any window.
-- Sweeping runs with the existing replica maintenance tick; no new timer.
+- Sweeping runs when `local-rooms.db` opens, before anything is on screen; no
+  timer. A panel shown in a tab has its `last_opened_at` touched.
 
 The number is a starting point, not a measurement. It is a preference in
 `PREFERENCES.md` terms only if someone asks.
@@ -427,12 +438,12 @@ stream's audience through the chat's access rule, private membership included.
 Putting a private chat's panel on the space stream would tell every room member
 the private chat exists — the exact leak `DESIGN.md` §7.2 forbids.
 
-> **Found while writing this, and not about panels.** `events.ts` today catalogues
+> **Found while writing this, and not about panels.** `events.ts` catalogues
 > `chat.created` on the **space** stream. That is correct for the only chats the
-> server creates now (`sole`, channels only), and it is the same leak for a
-> private room chat. Whatever ships private chats must move `chat.created` for
-> `kind='private'` to the chat stream. Panels depend on it; it is listed as step 1
-> so it is not discovered later.
+> server creates now (`sole`, channels only), and it would be the same leak for a
+> private room chat. **Guarded:** `ChatCreated.kind` no longer admits `private`,
+> so writing one to the space stream is a compile error. Whatever ships private
+> chats announces them on the chat stream.
 
 ### 7.2 Ops
 
@@ -466,27 +477,36 @@ the spaces and chats it already carries — subject to the same size ceiling
 `FRONTEND.md` §4.7 holds: **path = identity, query = view state.**
 
 ```
-/w/:wsId/s/:spaceId                    room, default chat in the main pane
-/w/:wsId/s/:spaceId/c/:chatId          working IN a side chat
-?p=pnl_A,pnl_B                         panels open beside the main pane, in order
-?t=:messageId  ?a=  ?ta=               unchanged
+/w/:wsId/s/:spaceId                    a space: its sole or default chat in the main pane
+/local/s/:spaceId                      the same, for a local room
+?p=pnl_A,pnl_B                         the open tabs, in the order they were opened
+?pa=pnl_A                              the tab shown; omitted when it is the last one
+?t=:messageId  ?a=  ?ta=               unchanged, and about the main pane
 ```
 
-- **`?p=` carries panel ids**, not `c:`/`w:` segments. `LOCAL-ROOMS.md` §10.2's
-  typed segments existed because the URL had to say which table an id was in;
+- **No route names a chat.** An earlier draft kept `/s/:spaceId/c/:chatId` for
+  working *in* a side chat. A side chat is always a panel, so that is a tab, not
+  a place; a chat in the path would be a second answer to "where am I".
+- **`?p=` carries panel ids**, not `c:`/`w:` segments. The typed segments
+  `LOCAL-ROOMS.md` first proposed existed because the URL had to say which table an id was in;
   with one table (and ids that already say `pnl_`), the row says its type.
-- **A bare chat id** (`?p=cht_P3`) resolves through `panel_chat` to that chat's
-  panel. Links written before panels keep working.
-- **A local panel id** in a link someone else opens resolves to nothing and is
-  dropped from the URL. Expected: the panel is not theirs.
+- **A bare chat id** (`?p=cht_P3`) resolves to that chat's panel, and the URL is
+  rewritten to the panel id once the room's panels are read. Links written
+  before panels keep working.
+- **An id that matches nothing** — a removed panel, or a local panel id in a
+  link someone else opens — is dropped from the URL, without a history entry.
+- **History.** Opening a panel pushes an entry, so Back undoes it. Switching
+  tabs replaces the entry: it is not navigating. Closing the shown tab shows its
+  right-hand neighbour, or its left when it was last, as a browser does
+  (`closePanelTab` in `shared/panels.ts`).
 - **Order, width, and which are open** live in the URL and the resizable layout;
-  never stored. Two people in the same room can have entirely different panels
-  open.
+  never stored. Two people in the same room can have entirely different tabs.
 - **Navigation inside a web panel** is device-local and never written
-  (`LOCAL-ROOMS.md` §10.3). Changing a *shared* panel's URL is out of scope for
+  (`LOCAL-ROOMS.md` §10). Changing a *shared* panel's URL is out of scope for
   v1; share a new panel instead.
-
-Local rooms keep their scheme: `#/local/s/:spaceId?p=pnl_…`.
+- **Not settled: a thread inside a chat panel.** `?t=` is the main pane's. A
+  thread opened in a panel would be scoped to it in the query (`pt=pnl_A:msg_…`);
+  nothing opens one yet.
 
 ---
 
@@ -528,28 +548,120 @@ still written so the transcript shows *why* a panel appeared.
 
 ## 10. Rendering
 
-A registry in the renderer maps `type` → component:
+### 10.1 Layout: one container, tabs, one panel shown
 
-```ts
-const PANEL_RENDERERS = {
-  chat: ChatPanel,          // the existing Chat view, scoped to chat_id
-  web:  WebPanel,           // WebContentsView host (LOCAL-ROOMS.md §10.4)
-  // diff, file, attachment: added with their steps
-} satisfies Partial<Record<PanelType, PanelRenderer>>;
+```
+  ResizablePanelGroup (horizontal)
+  ├── "space"   SpaceHeader · ChatView (main chat and composer)
+  └── "panels"  only while a tab is open: 42% to start, 320px at least
+                PanelContainer
+                ├── tab row: a tab per open panel · Share · Remove
+                └── the shown panel's body
 ```
 
-An unknown type renders `UnknownPanel` (§3.3). A renderer that throws is caught
-per panel; its siblings keep rendering.
+- **With no tab open, the space takes the whole pane**, header included. With
+  any open, the pane splits: the space keeps its header on the left, and the
+  container's tab row sits in the same line on the right. Both rows are the same
+  height, so they read as one bar.
+- **One panel is shown at a time.** Opening a panel adds a tab and shows it;
+  it never adds a second split.
+- **A tab** shows the type's icon (a chat, a private chat, a page) and the
+  panel's title — the chat's name, its own title, or the page's host. A local
+  panel's title is italic. Close with its ✕ (always shown on the selected tab,
+  on hover otherwise) or a middle click.
+- **The tab row's actions belong to the shown panel:** **Share** while it is
+  local, **Remove** unless it is a chat panel (§5.4).
+- **Switching tabs starts the next chat panel fresh:** the body is keyed by panel
+  id, so a chat panel's scroll position is not kept across a switch. **A web
+  panel is the exception:** every open web tab stays mounted and the ones not
+  shown are parked off-screen, because a `<webview>` unmounted or moved loads its
+  page again (§10.3). Closing the tab does unmount it.
+- **The Panels menu** in the space header lists the room's panels, checked when
+  open. Choosing one opens it or shows its tab; choosing the shown tab closes
+  it. It also makes a side chat (named, public or private) and opens a web page
+  (a bare address is taken as `http` for localhost, `https` otherwise). It
+  appears only in a local room: a synced space has no panels to read yet.
 
-**Web panels** use `WebContentsView` exactly as `LOCAL-ROOMS.md` §10.4
-specifies — own session partition per account, sandboxed, no preload, window
-opens and app schemes refused, permissions denied, downloads prompted, hidden
-rather than destroyed on close, a capped LRU of hidden views, and the overlay
-problem resolved by the spike (§12.1). Nothing in that section changes except
-the object it renders: a panel row, not a page row.
+As built: `routes/Space.tsx`, `features/panels/PanelContainer.tsx`,
+`PanelMenu.tsx` and `useOpenPanels.ts`. The chat view both panes use is
+`features/chat/ChatView.tsx`.
 
-**Panel chrome** (shared by every type): title, type icon, *local* marker, and
-actions — Share (local only), Remove (per §5.4), Close, Pop out.
+### 10.2 The type registry
+
+A registry in `PanelContainer.tsx` maps `type` → body:
+
+```ts
+const PANEL_BODIES: Partial<Record<string, ComponentType<PanelBodyProps>>> = {
+  chat: /* ChatView, scoped to the panel's chat */,
+  // diff, file, attachment: added with their steps
+};
+```
+
+A `web` panel is not in the registry: its body is drawn for every open web tab,
+not only the shown one (§10.3). An unknown type renders a "needs a newer
+version" placeholder (§3.3). A body that throws is caught by a boundary around
+it, so the container and the main chat keep working.
+
+### 10.3 Web pages
+
+A web panel is `features/panels/WebPanel.tsx`: a toolbar (back, forward, reload
+or stop, and an editable address) over a **`<webview>`** that fills the panel.
+When a load fails, a message with **Try again** is drawn over it.
+
+**The address bar** shows where the page is, and takes the person anywhere:
+Enter loads what they typed, Escape puts the page's address back. What is typed
+goes through `addressFromTyped` (`shared/web-panels.ts`), also used by the Panels
+menu: a bare host becomes https (http for localhost), and text that is not an
+address — no dot, or a space — becomes a Google search. A scheme other than http
+or https is refused in the bar, as main would refuse it anyway. Where the page
+goes is never written back to the panel: `payload.url` stays where it was opened,
+and browsing inside it is device-local view state (§8).
+
+**Why `<webview>` and not `WebContentsView`.** `LOCAL-ROOMS.md` §10.1 first chose
+`WebContentsView`, following Electron's guide. A native view is drawn above the
+whole window, which costs two things this layout cannot avoid: every menu,
+popover or dialog opened over a page needs the page hidden and a picture drawn
+in its place, and every move of the panel — a drag of the split, a resized
+sidebar — has to be measured and sent to main. It was built that way first and
+replaced before it shipped. A `<webview>` is an element: CSS sizes it, and
+anything with a higher z-index draws over it. t3code ships the same choice for
+its preview panels (`apps/web/src/browser/HostedBrowserWebview.tsx` there),
+which is the evidence that the tag Electron discourages holds up in practice.
+
+**Kept mounted.** A `<webview>` that is unmounted, or moved to another parent,
+loads its page again. So the container renders every open web tab in tab order,
+and parks the ones not shown at `left: -100000px` with `inert`. Not
+`visibility: hidden`: t3code records that Electron can leave a macOS webview
+blank for good after it. Closing a tab unmounts its page; leaving the room
+unmounts them all. There is no cap: a person has as many pages alive as web tabs
+open.
+
+**Checked by main** (`main/web-panels.ts`). The window enables `webviewTag`,
+which lets anything running in the window create one, so every attach goes
+through `will-attach-webview`:
+
+| Rule | How |
+|---|---|
+| Only the open account's session | `partition` must equal `persist:panels:<accountId>`, or the attach is refused. Per account, so two accounts' logins do not mix, and never the app's own session |
+| Only a web page | `src` must be http or https |
+| Nothing of the app's in the page | Any `preload` is deleted; `sandbox`, `contextIsolation`, `webSecurity` forced on, Node integration forced off, whatever the tag asked for |
+| No windows | `setWindowOpenHandler`: an http(s) URL goes to the system browser, and nothing opens in the app. `allowpopups` is set on the tag so a `target="_blank"` link reaches that handler rather than doing nothing |
+| No leaving the web | `will-frame-navigate` and `will-redirect` refuse anything but http and https, in every frame |
+| Permissions | Denied, except `clipboard-sanitized-write` — the copy buttons on a dev server's error page need it (t3code found the same). Camera, microphone, location, notifications and clipboard read stay denied |
+| User agent | `Electron/…` removed; `Relayed/<version>` kept. Removing both made the agent claim Google Chrome while Client Hints say Chromium, and Google's sign-in refused it as an insecure browser. Named as an app, the way t3code's preview is, it matched t3code, which signs in |
+| Downloads | Nothing set: with no save path, Electron asks where to save |
+
+**Measured** in `spikes/web-panels` under Electron 44.2, with the renderer's real
+CSP: a `<webview>` loads despite `frame-src 'none'`; a wrong partition, a missing
+one, a `file:` source never attach; a requested preload and Node integration are
+stripped; `window.open` and `target="_blank"` reach the system browser and open
+no window; the app's own scheme is refused while an unguarded page reaches it; an
+element above the webview draws over it; a parked webview keeps its page and
+draws again; a moved one reloads.
+
+**Not built:** opening the page in the system browser from the toolbar, the
+page's title on its tab, shortcuts while the page has focus (key presses go to
+the page, not the app's command bus), and pop-out into a window.
 
 ---
 
@@ -573,8 +685,8 @@ actions — Share (local only), Remove (per §5.4), Close, Pop out.
 
 | Spike | Question | If it fails |
 |---|---|---|
-| **`WebContentsView` overlays** (already in `LOCAL-ROOMS.md` §13.1) | Does hide-and-snapshot look acceptable under menus and dialogs? Do bounds keep up with `react-resizable-panels` during a drag? | Web panels open in a separate window; the panel shows a placeholder with *Focus window* |
-| **Many views** | Memory and process count with 5 open and 10 hidden web panels | Lower the LRU cap; destroy on close |
+| **`<webview>` under the app's window** ✅ `spikes/web-panels`, 19 checks | Does it load under the renderer's CSP? Does the attach check hold? Do elements draw over it? Does parking keep the page? | Answered yes to all; see §10.3. Replaced the `WebContentsView` overlay spike, whose question — does hide-and-snapshot look acceptable under menus — stopped mattering once pages were in the DOM |
+| **Many pages** | Memory and process count with 10 web tabs open in one room | Close pages whose tab has not been shown for a while, or cap open web tabs |
 | **Two-file share** | Kill the sync engine at each point in §5.2's diagram; does boot recovery leave exactly one panel? | Move `local_panels` into a device-local table in the replica file, excluded from rebuild |
 
 ### 12.2 Steps — each usable by hand, each shippable
@@ -583,8 +695,8 @@ actions — Share (local only), Remove (per §5.4), Close, Pop out.
 |---|---|---|---|
 | 1 | **Private chats stay hidden.** Move `chat.created` for `kind='private'` to the chat stream; fan-out test that a non-member receives nothing | `server/sync/events.ts`, `fanout.ts`, `spaces.ts` | A room member outside a private chat has no trace of it in their replica |
 | 2 | **Chat panels, schema and backfill.** `panels` on server (`009_panels.sql`), replica, and `local-rooms.db`; chat panel inserted with every non-default chat; backfill; `panel.created` on the chat stream; apply + staging; `welcome` carries panels | server migrations + `spaces.ts`; `sync/migrations/workspace.ts`, `local.ts`; `sync/apply.ts`; `sync/local/store.ts`; `packages/protocol` | Replica schema tests pass on both engines, including `panel_chat_ref`'s NULL cases and `panel_chat`'s uniqueness |
-| 3 | **Panel strip in the room view.** `Panel` read type in the shared read contract; `?p=` parsing with bare-chat-id fallback; registry with `ChatPanel` and `UnknownPanel`; `react-resizable-panels` layout; close; per-panel error boundary | `renderer/features/rooms/*` (new), `renderer/app/router.tsx`, sync read contract | A local room's side chats open as panels by URL; back closes; a removed id drops out of the URL |
-| 4 | **Local web panels, local rooms first.** `local_panels` in `local-rooms.db`; `panels.openLocal` command; main's view manager (`main/views.ts`) with the §10.4 security settings; `WebPanel`; *local* marker; sweep | `sync/local/*`, `main/*`, `preload`, renderer | Opening a URL in a local room shows it beside the chat; it survives an app restart; it is gone after 14 days unopened |
+| 3 | **Panel container in the room view.** `Panel` read type in the shared read contract; `?p=`/`?pa=` with bare-chat-id fallback; the container with tabs; registry with chat and unknown bodies; `react-resizable-panels` split; close; per-panel error boundary | `renderer/features/panels/*` (new), `renderer/routes/Space.tsx`, sync read contract | A local room's side chats open as tabs by URL; Back closes; a removed id drops out of the URL |
+| 4 | **Local web panels, local rooms first.** `local_panels` in `local-rooms.db`; `panels.openLocal` command; main's attach check (`main/web-panels.ts`, §10.3); `WebPanel`; *local* marker; sweep | `sync/local/*`, `main/*`, renderer | Opening a URL in a local room shows it beside the chat; it survives an app restart; it is gone after 14 days unopened |
 | 5 | **Local web panels in synced rooms.** Same table, `workspace_id` set; orphan sweep across both stores | `sync/local/store.ts`, renderer | Same as 4, in a synced room, with no network traffic |
 | 6 | **Share.** `panel.share` op: authz rule, server op + `ops` ledger, `outbox.kind` widening, optimistic insert, boot recovery, loopback warning; `panel.created` on the space stream; share-at-publish for local rooms | `packages/authz`, `server/sync/ops.ts`, `sync/outbox.ts`, `sync/apply.ts`, `LOCAL-ROOMS` publish manifest | Two clients: A shares, B sees it appear without a reload; killing A mid-share leaves exactly one panel after restart |
 | 7 | **Remove.** `panel.remove` op, `panel.removed`, authz (creator or admin) | as 6 | B's open panel closes when A removes it; a non-creator member cannot |
@@ -592,12 +704,12 @@ actions — Share (local only), Remove (per §5.4), Close, Pop out.
 | 9 | **Make a private chat public.** `chat.make_public` op, confirmation dialog, gap + tail for new viewers | `packages/authz`, `server/sync/*`, renderer | A room member outside the chat gains the chat and its panel with history, after an explicit confirm |
 | 10 | **`diff`, `file`, `attachment`.** One renderer and one payload schema each, when their producers exist (§11) | registry + `protocol` | — |
 
-Steps 1–3 are pure structure and can land before the overlay spike resolves.
-Step 4 is where the spike's answer is needed.
+Steps 1–3 are pure structure. Step 4 needed the web page spike's answer.
 
 **Progress (2026-09-14).** The server writes no rooms yet — only channels
-(`spaces.ts`; rooms are Phase 5) — so the server and replica halves of steps 1–2
-have no writer to exercise them. What landed is the part that has one:
+(`spaces.ts`; rooms are Phase 5) — so the server and replica halves of steps 1–2,
+and steps 5–9, have no writer to exercise them. What landed is the part that has
+one:
 
 - **Step 1, as a guard.** `ChatCreated.kind` on the space stream excludes
   `private`, so announcing a private chat there is a compile error.
@@ -608,8 +720,20 @@ have no writer to exercise them. What landed is the part that has one:
   `removePanel`, `sweepLocalPanels` (on open). Handlers `local.chats.create` and
   `local.panels.{list,open,touch,share,remove}`, topic `localPanels(spaceId)`.
   Tested per constraint in `sync/local/panels.test.ts`.
+- **Before step 3, the route.** Spaces are addressed by id in both scopes —
+  `/w/:wsId/s/:spaceId` and `/local/s/:spaceId` — and both stores return one
+  `Space` shape (`shared/spaces.ts`), so the room view is one view.
+- **Step 3, done** for local rooms, as §8 and §10.1 describe: tabs in one
+  container rather than a strip of side-by-side panels. `?p=` parsing,
+  resolution and tab closing are tested in `shared/panels.test.ts`.
+- **Step 4, done** for local rooms. Local web panels are stored, opened from the
+  Panels menu, shared into a local room, removed and swept, and **drawn** as a
+  `<webview>` with back, forward and reload (§10.3). The attach check is proven
+  in `spikes/web-panels` (`pnpm verify:web-panels`); `shared/web-panels.test.ts`
+  covers the URL rule and the partition name. Not yet looked at by hand inside
+  the app.
 - **Not yet:** server `009_panels.sql` and the replica table (wait for rooms on
-  the server), and everything from step 3 on.
+  the server), and steps 5–10.
 
 ### 12.3 Tests that must exist
 
@@ -635,7 +759,7 @@ have no writer to exercise them. What landed is the part that has one:
 | `panel.shared` `{type, age_s}` | event | How long a panel lives locally before someone shares it; if often immediately, the default is wrong |
 | `panel.local.swept` | counter | Retention tuning |
 | `panel.share.recovered` `{outcome}` | counter | Should be ~0; nonzero means the two-file write is hurting |
-| `web_panel.views` | gauge | Process count against the LRU cap |
+| `web_panel.pages` | gauge | Web pages alive at once, each a process — whether open tabs need a cap (§12.1, many pages) |
 
 Dashboards ship with the metrics (`OBSERVABILITY.md`).
 
@@ -643,13 +767,17 @@ Dashboards ship with the metrics (`OBSERVABILITY.md`).
 
 ## 13. Docs to change when this is accepted
 
+Done for what is built (2026-09-14): `FRONTEND.md` §4.5–§4.7 and §6.1 (routes
+by space, panels in the query), `LOCAL-ROOMS.md` §1, §2, §6, §9, §10, §11.3,
+§12 and §13 (`pages` replaced by panels; §10.1 and §13 again for `<webview>`
+replacing `WebContentsView`), and `AGENT-RESPONSES.md` §6.3. The rest waits on
+the synced half.
+
 | Doc | Change |
 |---|---|
 | `DESIGN.md` §7.1–§7.3 | Add panels to the containment diagram; add §4.3's chat conversion and §6's permissions |
 | `DESIGN.md` §10.3 | Op kinds: `panel.share`, `panel.remove`, `chat.make_public` |
-| `LOCAL-ROOMS.md` §1, §10.2–§10.3, §12 manifest, §13.2 step 7 | Replace `pages` with `panels` / `local_panels`; `?p=` carries panel ids |
-| `AGENT-RESPONSES.md` §6.3 | `Link` → "Open as panel"; add the `panel` part |
-| `FRONTEND.md` §4.7 | `?p=` carries panel ids, with the bare-chat-id fallback |
+| `AGENT-RESPONSES.md` §6.3 | Add the `panel` part (step 8) |
 | `SYNC-FLOWS.md` | Panel events per stream; private `chat.created` on the chat stream |
 | `AUTHZ.md` | The three new actions |
 

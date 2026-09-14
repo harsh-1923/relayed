@@ -645,7 +645,7 @@ function validPayload(type: ContentPanelType, payload: Record<string, unknown>):
   const url = typeof payload['url'] === 'string' ? payload['url'] : '';
   let parsed: URL;
   try { parsed = new URL(url); } catch { throw new Error(`not a URL: ${url}`); }
-  // A panel is a web page, never a way into the app's own schemes or the disk (LOCAL-ROOMS.md §10.4).
+  // A panel is a web page, never a way into the app's own schemes or the disk (LOCAL-ROOMS.md §10.1).
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error(`a web panel opens http and https only, not ${parsed.protocol}`);
   return { url: parsed.href };
 }

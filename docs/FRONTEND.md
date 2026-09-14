@@ -183,14 +183,14 @@ app on every file save.
 
 **A URL that omits the workspace is not an address.**
 
-Chat ids are workspace-scoped — every workspace is its own `relayed.db`
-(`STORAGE.md` §5) — so `/c/C5` means something only relative to whichever
+Space ids are workspace-scoped — every workspace is its own `relayed.db`
+(`STORAGE.md` §5) — so `/s/S5` means something only relative to whichever
 workspace happens to be active. Paste a link from another workspace and the app
-looks `C5` up in the wrong replica, misses, and renders "not found" instead of
+looks `S5` up in the wrong replica, misses, and renders "not found" instead of
 switching. Silently wrong is worse than unsupported, and it is the failure a
 shared link produces every single time it crosses a workspace.
 
-So the workspace is in the path: `#/w/:workspaceId/c/:chatId`. The **id**, not
+So the workspace is in the path: `#/w/:workspaceId/s/:spaceId`. The **id**, not
 the slug — slugs change on rename, and a renamed workspace must not invalidate
 links people have already shared.
 
@@ -201,7 +201,7 @@ input.**
 
 ```
   rail click   ──┐
-  deep link    ──┼──▶ navigate('/w/W2/c/C5') ──▶ guard: wsId ≠ active?
+  deep link    ──┼──▶ navigate('/w/W2/s/S5') ──▶ guard: wsId ≠ active?
   back/forward ──┘                                      │ yes
                                                         ▼
                                                workspace.switch   ← unchanged
@@ -258,7 +258,7 @@ session banner: say what is actually known.
 the job it was written for. It buffers URLs arriving before `whenReady`,
 handles the macOS `open-url` event, the Windows/Linux argv paths, and cold
 start, and forwards through the single-instance lock. It currently sinks the
-OAuth callback; `relayed://w/W2/c/C5` is the same sink with a different path.
+OAuth callback; `relayed://w/W2/s/S5` is the same sink with a different path.
 
 One constraint carried from `PHASE-1-IDENTITY.md` §6: `relayed://` does not
 resolve unpackaged on macOS, while `isDefaultProtocolClient()` still reports
@@ -272,7 +272,6 @@ loop.
 /                                → last workspace's remembered location
 /w/:wsId                         → that workspace's remembered location
 /w/:wsId/s/:spaceId              → a space; its sole or default chat, main pane
-/w/:wsId/s/:spaceId/c/:chatId    → a room's other chat, in the main pane
 /w/:wsId/dm/:actorId             → resolve-or-create, redirects to /s/:spaceId
 /w/:wsId/people                  → the workspace directory (already replicated)
 /w/:wsId/people/:actorId         → an actor's profile
@@ -280,20 +279,22 @@ loop.
 /w/:wsId/settings/profile        → your actor in this workspace
 /w/:wsId/search?q=               → search (Phase 4)
 
+/local/s/:spaceId                → a local room (account tier; LOCAL-ROOMS.md)
+
 /onboarding/create               → pre-workspace; today's needs_workspace form
 /onboarding/join/:wsId?          → pending invitations; today's PendingJoins
 /account                         → sign out, devices, workspaces
 /settings/general                → app-wide behavior
 /settings/appearance             → system theme and window material
 /settings/notifications          → app-wide notification preferences
-/settings/advanced               → local data and diagnostics preferences
 /settings/shortcuts              → keyboard shortcuts: view, record, disable, reset (SHORTCUTS.md)
+/settings/advanced               → local data and diagnostics preferences
 
 ```
 
 Three things the shape encodes:
 
-- **The path mirrors the storage tiers.** `/account`, `/settings` and
+- **The path mirrors the storage tiers.** `/account`, `/settings`, `/local` and
   `/onboarding` sit outside `/w/` because they are account- or device-tier;
   everything under `/w/:wsId` is workspace-tier and unresolvable without that
   replica open (`STORAGE.md` §5). A route that cannot be answered from the tier
@@ -323,21 +324,34 @@ Note the two-level resolution this implies: `/s/:spaceId` names a space, and
 the main pane needs a chat. The schema already has the primitive —
 `CREATE UNIQUE INDEX chat_singleton ON chats(space_id) WHERE kind IN
 ('sole','default')` — so it is one indexed unique lookup, offline, and
-sub-millisecond. It becomes a hook, built once, because a route param is no
-longer directly a query key: the live-query client keys reads on a **topic**,
-and a chat is one kind of topic (§5.1).
+sub-millisecond.
+
+**No route names a chat.** An earlier table had `/s/:spaceId/c/:chatId` for
+working in a room's other chat. A room's other chats open in the panel
+container instead (§4.7), so a chat in the path would only be a second answer
+to "where am I" that could disagree with the space.
+
+**As built.** `routes/Space.tsx` serves both scopes. It reads one space —
+`space.get` from the replica, `local.space.get` from `local-rooms.db` — and
+both return the same `Space` (`shared/spaces.ts`): `id, kind, name, slug,
+visibility, chats`, with `name` always something to show. `mainChat()` picks
+the `sole` or `default` chat, and the chat view (`features/chat/ChatView.tsx`)
+draws it. `SpaceHeader` reads the same space by id. What only a local room has
+— its folder, mode, model, effort, and whether Claude is replying — is a
+separate read, `local.rooms.get`, never mixed into the space.
 
 ### 4.7 Panes are query, not path
 
 The route table above addresses **one** thing: what is in the main pane. Every
-other pane — a thread, a room's side panels, where each is scrolled — is a
-query parameter.
+other pane — a thread, a room's panels, where each is scrolled — is a query
+parameter.
 
 ```
 ?a=:messageId              anchor the main pane on a message
 ?t=:messageId              thread pane open
 ?ta=:messageId             anchor within the thread pane
-?p=:chatId[,:chatId]       room chats open as side panels
+?p=:panelId[,:panelId]     a room's open panels, as tabs, in the order opened
+?pa=:panelId               the tab shown; omitted when it is the last one
 ```
 
 **The principle: path = identity, query = view state.**
@@ -352,7 +366,7 @@ scheme like `/s/:sid/t/:messageId/p/:chatId` has to answer:
   in the main chat" in one position and "thread in the panel" in another. The
   same segment meaning different things by position is where a path stops being
   readable.
-- Two panels open at once has no sane path at all.
+- Several panels open at once has no sane path at all.
 
 **The test that settles it:** strip the query and the link still works — right
 workspace, right space, right chat, just no thread open and at the default
@@ -363,24 +377,37 @@ split buys.
 Nothing is lost on history: `navigate('?t=M1')` pushes an entry like any other
 navigation, so "back closes the thread" still works.
 
-Worked through, for a room with a default chat `C1` and chats `C2`, `C5`:
+Worked through, for a room with a default chat `C1`, side chats whose panels
+are `P2` and `P5`, and a web page in panel `P7`:
 
 | Situation | URL |
 |---|---|
-| Room, nothing else open | `/w/W/s/S` |
-| Room, one panel | `/w/W/s/S?p=C2` |
-| Room, thread in the default chat + a panel | `/w/W/s/S?t=M1&p=C2` |
-| Working *in* `C2`, not beside it | `/w/W/s/S/c/C2` |
-| Two panels | `/w/W/s/S?p=C2,C5` |
+| Room, no panels open | `/w/W/s/S` |
+| Room, one panel open | `/w/W/s/S?p=P2` |
+| Thread in the default chat, and a panel | `/w/W/s/S?t=M1&p=P2` |
+| Three tabs, the last shown | `/w/W/s/S?p=P2,P5,P7` |
+| Three tabs, the first shown | `/w/W/s/S?p=P2,P5,P7&pa=P2` |
 | A channel, anchored on a message | `/w/W/s/S?a=M7` |
 
-The fourth row is the one a path-only scheme cannot express, and it is not
-exotic: a room's non-default chats are chats people work in for an hour, not
-permanent side panels.
+**One panel is shown at a time.** With no tab open the space takes the whole
+pane; with any open the pane splits, the space keeping its header on the left
+and the panel container on the right showing every open panel as a tab.
+Opening another panel adds a tab rather than splitting again (`PANELS.md` §10).
 
-**`?p=` carries chat ids**, because a room's panels *are* its chats
-(DESIGN §7.1). If panels later hold surfaces that are not chats — a canvas, an
-agent run — it becomes a discriminated segment. Not worth pre-building.
+**`?p=` carries panel ids**, because a panel is a room object with a type — a
+chat, a web page, later a diff or a file (`PANELS.md` §3). One table and ids
+that say `pnl_` mean the row says what it is, so no segment has to. A bare
+chat id still resolves to that chat's panel, and ids that match nothing — a
+removed panel, another device's local one — are dropped from the URL once the
+room's panels are known.
+
+**History:** opening a panel pushes an entry, so Back closes it. Switching
+between open tabs replaces the entry, because it is not navigating. Closing the
+shown tab shows its right-hand neighbour, or its left when it was last.
+
+**Not settled: a thread inside a chat panel.** `?t=` belongs to the main pane's
+chat. A thread opened in a panel would be scoped to that panel in the query
+(for example `pt=P2:M1`); nothing opens one yet.
 
 ### 4.8 Cross-workspace history comes for free
 
@@ -526,8 +553,9 @@ Recorded here because it constrains the query contract, not the component:
   `?a=` and `?ta=` resolve into, one per pane.
 - **Resolving a space to its main chat is a query too.** `/s/:spaceId` names a
   space; the pane needs a chat. `chat_singleton` makes it one indexed unique
-  lookup, but it is a lookup, so it belongs in the client as a hook rather than
-  repeated per surface (§4.6).
+  lookup. Built as the `space.get` / `local.space.get` read plus `mainChat()`
+  in `shared/spaces.ts`, used by the space route rather than repeated per
+  surface (§4.6).
 
 ---
 
@@ -542,6 +570,7 @@ renderer/
   main.tsx          the root: HashRouter, the state provider, the command bus, the top bar, the router
   app/              application-wide and ROUTE-INDEPENDENT
     state.tsx         AppState enters here; useSession, useActiveWorkspace
+    Commands.tsx      mounts the command bus with the platform and stored bindings (§6.4)
     router.tsx        the route table (§4.6)
     Telemetry.tsx     renders nothing; route and first paint
     RootRedirect.tsx  where you belong, decided from state
@@ -563,7 +592,9 @@ renderer/
         use-sidebar-presence.ts
   routes/           one file per route in §4.6; thin — composition, not logic
   features/
-    chat/           the space directory, the message list, the composer
+    chat/           the space directory and header, the chat view, the composer
+    local-rooms/    the local room directory, mode and model pickers, approvals
+    panels/         the panel container, its tabs, the Panels menu, ?p= and ?pa=
     identity/       sign-in, onboarding, account
     settings/       members, invitations, profile
     dev/            development-only controls
@@ -572,8 +603,8 @@ renderer/
     <shared>/       ours, used by more than one feature
   lib/
     ipc.ts          the narrow bridge to the preload surface
-    Commands.tsx      mounts the command bus with the platform and stored bindings (§6.4)
     query/          the live-query client, its registry and its catalogue
+    commands/       the command bus: provider, registry, dispatch, Shortcut, recorder (SHORTCUTS.md)
     hooks/          hooks that belong to no particular thing
     utils.ts        formatting and class helpers
 ```
@@ -604,7 +635,6 @@ the one import line to `@relayed/icons` with aliases, as above. The check that
 catches a missed one is `grep -rn lucide apps/desktop/src`: nothing should match,
 and `lucide-react` is not installed, so a missed line also fails `pnpm
 typecheck`.
-    commands/       the command bus: provider, registry, dispatch, Shortcut, recorder (SHORTCUTS.md)
 
 ### 6.1a Naming
 
@@ -654,8 +684,8 @@ outgrowing a file, and nothing is gained by granting it in advance.
 today and the reason is structural rather than neglect: component props here are
 three-to-five line inline object types, read in the same glance as the function
 that takes them, and the types that actually matter — `AppState`,
-`WorkspaceRow`, `ReplicaSpace` — are the sync engine's contract and live in
-`preload/api.d.ts` and `sync/storage.ts`. A renderer `.types.ts` would either
+`WorkspaceRow`, `Space` — are the sync engine's contract and live in
+`preload/api.d.ts`, `sync/storage.ts` and `shared/`. A renderer `.types.ts` would either
 duplicate one of those or separate a props interface from its only consumer.
 
 **Two things this rule does not reach.**
@@ -1386,7 +1416,7 @@ What gets tested, given that no DOM testing exists today and none is proposed.
 | 1 | The transition table rejects an undeclared edge | Unit: every pair in `Status × Status`; assert exactly the ten declared pass. Negative control — delete an edge, the test must fail |
 | 2 | Switching workspaces lands on the remembered location | Two workspaces, navigate in each, switch twice, assert the location both times |
 | 3 | Nothing calls `workspace.switch` except the route guard | A boundary-rule pattern. Cheap, and it is the single check that keeps §4.5 true as surfaces multiply |
-| 4 | A link into a non-active workspace switches, then lands | Navigate to `/w/W2/c/C5` with W1 active; assert the epoch bumped and the chat rendered, in that order |
+| 4 | A link into a non-active workspace switches, then lands | Navigate to `/w/W2/s/S5` with W1 active; assert the epoch bumped and the space rendered, in that order |
 | 5 | The same link **offline** says "cannot check", not "no access" | Airplane toggle plus a workspace id absent from `account.db`. Negative control — the online path must still say "no access" |
 | 6 | A link into a workspace that is local and active resolves **with no network at all** | `withoutNetwork()`; this is the property that makes a pasted link work on a plane |
 | 7 | Stripping the query from any URL still resolves | Generate every §4.7 shape, drop the query, assert each still names a real space and chat. This is the property that makes a shared link degrade rather than misfire |
@@ -1434,6 +1464,8 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 | 69 | Telemetry leaves the renderer **through the port**, never a second SDK | A renderer flush timer is throttled to ~1 tick/minute when the window is hidden (DESIGN §13.9), so telemetry stops draining exactly when it is least observed |
 | 70 | A **failed read keeps the rows it had** and reports the error beside them | A failed read rendered as an empty result paints "nothing here" over a populated replica — the one failure local-first exists to prevent |
 | 71 | No frame carries a collection sized by the **workspace** rather than by the **actor** | `welcome` grows with the company rather than with what a person joined (`DESIGN.md` §9.9) |
+| 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
+| 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing a character through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
 
 ---
 
@@ -1464,8 +1496,6 @@ To fold into `DESIGN.md` §14. Numbering continues from 54.
 5. **Optimistic UI and the composer.** DESIGN §10.2 specifies optimistic apply in the
    engine. What the renderer shows for a message that is written, unsent, and
    possibly failing — and how that interacts with the outbox hint already on
-| 72 | Every application shortcut dispatches through the **command bus**; nothing else adds a window or document key listener | Listeners fight by mount order — the sidebar's Mod+B stole the composer's bold — and a shortcut owned by a sidebar vanishes on the route that unmounts it (`SHORTCUTS.md` §3) |
-| 73 | A shortcut matches the **character typed**, never the physical key position, and a keydown is skipped during IME composition or with AltGraph | A key producing `-` at the Slash position fires `Mod+/`, and a person typing a character through an IME or AltGraph triggers commands (`SHORTCUTS.md` §4.5, §11) |
    the rail — is unspecified.
 6. **Whether `can()` needs space and chat grants on the client.** `AUTHZ.md`
    §14 item 5 holds this open. The route table's `/r/:spaceId` is the first

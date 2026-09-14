@@ -1,0 +1,14 @@
+{
+  "name": "web-panels-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Web pages inside panels as <webview> under real Electron (PANELS.md, web pages) — standalone, not a workspace member",
+  "dependencies": {
+    "esbuild": "0.28.2"
+  },
+  "main": "main.cjs",
+  "scripts": {
+    "bundle": "esbuild ../../apps/desktop/src/main/web-panels.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/guard.cjs",
+    "test": "npm run bundle && ../../apps/desktop/node_modules/.bin/electron ."
+  }
+}

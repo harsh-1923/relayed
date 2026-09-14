@@ -13,12 +13,13 @@ import { ChatView } from '@/features/chat/ChatView';
 import { call } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
+import { WebPanel } from './WebPanel';
 
 interface PanelBodyProps { panel: Panel; space: Space; scope: SpaceScope }
 
+/** Bodies drawn only while their tab is shown. A `web` panel is not here: its page stays mounted while its tab is open. */
 const PANEL_BODIES: Partial<Record<string, ComponentType<PanelBodyProps>>> = {
   chat: ({ panel, space, scope }) => (panel.chatId ? <ChatView spaceId={space.id} chatId={panel.chatId} scope={scope} /> : null),
-  web: WebPanelBody,
 };
 
 export function PanelContainer({ tabs, space, scope, openPanels }: {
@@ -57,11 +58,20 @@ export function PanelContainer({ tabs, space, scope, openPanels }: {
           <Button variant="ghost" size="xs" title="Remove from the room" onClick={remove}>Remove</Button>
         )}
       </div>
-      <div role="tabpanel" className="flex min-h-0 flex-1 flex-col">
+      <div role="tabpanel" className="relative flex min-h-0 flex-1 flex-col">
         {/* Keyed, so a tab switch starts the next panel fresh rather than reusing the last one's state. */}
-        <PanelBoundary key={shown.id}>
-          <Body panel={shown} space={space} scope={scope} />
-        </PanelBoundary>
+        {shown.type !== 'web' && (
+          <PanelBoundary key={shown.id}>
+            <Body panel={shown} space={space} scope={scope} />
+          </PanelBoundary>
+        )}
+        {/* Every open page stays mounted, in tab order, and the ones not shown are parked:
+            a webview unmounted or moved loads its page again (WebPanel.tsx). */}
+        {tabs.filter(panel => panel.type === 'web').map(panel => (
+          <PanelBoundary key={panel.id}>
+            <WebPanel panel={panel} shown={panel.id === shown.id} />
+          </PanelBoundary>
+        ))}
       </div>
     </section>
   );
@@ -119,21 +129,6 @@ export function panelTitle(panel: Panel, chatName: string | null | undefined): s
     try { return new URL(url).host; } catch { return url; }
   }
   return panel.type;
-}
-
-/**
- * A web page. Drawn by a native view once the overlay spike settles how
- * (LOCAL-ROOMS.md §10.4, PANELS.md §12.1); until then it says where it points.
- */
-function WebPanelBody({ panel }: PanelBodyProps) {
-  const url = typeof panel.payload['url'] === 'string' ? panel.payload['url'] : '';
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-      <Globe className="size-6 text-muted-foreground" />
-      <p className="max-w-full truncate text-sm font-medium select-text" title={url}>{url}</p>
-      <p className="text-xs text-muted-foreground">Web pages are not drawn inside panels yet.</p>
-    </div>
-  );
 }
 
 function UnknownPanelBody({ panel }: PanelBodyProps) {

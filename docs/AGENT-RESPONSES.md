@@ -8,7 +8,7 @@
 > It touches `AGENT-RUNTIME.md` (a custom tool is one of its "not built yet"
 > triggers) and the message schema in `DESIGN.md`; §11 lists the edits.
 
-**Last updated:** 2026-09-13
+**Last updated:** 2026-09-14
 
 This doc settles how an agent's reply is **represented, produced, stored,
 streamed, rendered and acted on** — the same way whether the agent is the
@@ -373,7 +373,7 @@ line of defence.
 | Component | On click |
 |---|---|
 | `Reply` | `messages.send` **from the person who clicked**, in the same chat, `body = message`, with a `reply_to_ui` part. Everyone in the room sees who chose what |
-| `Link` | the system browser, or "Open as page panel" |
+| `Link` | the system browser, or "Open in a panel": a local web panel beside the chat, only on this device until shared ([`PANELS.md`](PANELS.md) §5) |
 
 *Measured:* a click reaches relayed as
 `{ type: 'relayed.reply', humanFriendlyMessage: 'Apply the one-line fix', params: { label: 'Apply the fix' } }`.
@@ -443,7 +443,7 @@ Each phase ends in something a person can use or see, not only a passing test.
 | 3 | **Message contract**: `parts` in the replica, the server schema and `@relayed/protocol`; derived `body`; server checks (§7.1); unknown kinds fall back to `body` | A hand-written agent message with a `ui` part syncs to two dev clients and renders on both; a human message with one is refused |
 | 4 | **Service agent**: `apps/agent` appends the instructions and registers `show_ui`; a run's result carries parts; `spikes/genui/3-pi.mjs` becomes `pnpm eval:genui`. Records the custom-tool trigger in `AGENT-RUNTIME.md` | A run returns valid parts; the eval matches §8 or the change is explained |
 | 5 ✅ | **Local runner**: Claude Code with §5.3; `show_ui` input streamed on `agent:stream`; parts persisted when the turn completes. Depends on the local-room runner existing | A local room shows a card filling in while Claude writes it, and the same card after a restart. Built in `agent-runner/claude/turns.ts`: an in-process MCP server per session carries `show_ui`, the shared instructions are appended, a valid call becomes a `ui` part at its place in the reply and an invalid one goes back to Claude. Verified on a real Sonnet 5 turn (a stats, table and callout card, streamed, no table repeated in text); not yet looked at inside the app |
-| 6 | **Actions**: `Reply` → `messages.send` with `reply_to_ui`; `Link` → browser or page panel | Clicking "Apply the fix" posts that message as the clicker, and the agent acts on it |
+| 6 | **Actions**: `Reply` → `messages.send` with `reply_to_ui`; `Link` → browser or a local web panel | Clicking "Apply the fix" posts that message as the clicker, and the agent acts on it |
 
 **Observability, to agree before phase 3** (`OBSERVABILITY.md` asks for the
 question each marker answers): `genui.block{outcome}` — valid, repaired, or

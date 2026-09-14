@@ -11,7 +11,7 @@
 > side of the same story: what runs an agent once a room has been published.
 > This document is the *laptop* side: what runs before.
 
-**Last updated:** 2026-09-13
+**Last updated:** 2026-09-14
 
 ---
 
@@ -46,7 +46,7 @@ definition elsewhere; this is the short version.
 | What does it look like on disk? | **The replica's room tables, column for column**, plus a few tables that only mean something locally. | 6 |
 | One room view or two? | **One.** The view reads by *scope* (`local` or `workspace`) and never branches on it. Building it for local rooms builds it for synced rooms. | 11 |
 | How does Claude fit into a room? | **One Claude session per chat**, one running turn per room. Claude is a member of the room like any agent. | 8, 9 |
-| How do web pages fit? | A **page** is a room object like a chat is. Panels become typed: `?p=c:<chat>,w:<page>`. | 10 |
+| How do side chats and web pages fit? | As **panels**: room objects with a type, opened as tabs beside the default chat. Designed in [`PANELS.md`](PANELS.md); `?p=` carries panel ids. | 10 |
 | How is a room published? | A saved, resumable job: upload blobs → `begin` → `batch`… → `commit`. IDs are kept, so a retry is safe and the URL barely changes. | 12 |
 | Does Claude's own transcript go to the service? | **No** (unless the user opts in). The service gets the conversation, the code, and a handoff brief. | 12 |
 
@@ -60,7 +60,7 @@ definition elsewhere; this is the short version.
    │  local room                      │ ────────────────▶ │  room                          │
    │   ├ default chat  ← Claude       │  1 conversation   │   history, imported in order   │
    │   ├ side chat     ← Claude       │  2 code           │   sandbox: repo at base+patch  │
-   │   ├ page panel: localhost:5173   │  3 handoff brief  │   service agent takes over     │
+   │   ├ web panel: localhost:5173    │  3 handoff brief  │   service agent takes over     │
    │   └ you, as admin                │                   │   people join                  │
    │  local-rooms.db = the only copy  │                   └───────────────┬────────────────┘
    └──────────────────────────────────┘                                   │ ordinary sync
@@ -410,18 +410,12 @@ CREATE TABLE approvals (
   CHECK (kind IN ('tool','question','plan'))
 );
 
--- A web page pinned in the room (§10). The replica gains the identical table
--- when synced rooms get pages.
-CREATE TABLE pages (
-  id                  TEXT PRIMARY KEY,
-  space_id            TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-  url                 TEXT NOT NULL,
-  title               TEXT,
-  created_by_actor_id TEXT,
-  created_at          INTEGER NOT NULL,
-  updated_at          INTEGER NOT NULL
-);
-CREATE INDEX page_space ON pages(space_id);
+-- Panels (§10, PANELS.md §3). `panels` is the table a synced room will hold:
+-- a chat panel for every non-default chat, and content panels once shared.
+-- `local_panels` holds content panels that exist only on this device. Built as
+-- local-rooms.db version 6; the DDL is in PANELS.md §3.2 and §3.4.
+CREATE TABLE panels (…);
+CREATE TABLE local_panels (…);
 
 -- A publish in progress (§12.2). One row per attempt, kept for the audit trail.
 CREATE TABLE publish_jobs (
@@ -759,9 +753,14 @@ fenced block with colour codes stripped, and a `compact_boundary` becomes a
 
 ## 9. Starting a new chat in a room
 
-Exactly as in a synced room: the room header's **New chat** button, a name, and
-optionally **private**. What differs is only what the new chat's Claude session
-starts from.
+Exactly as in a synced room: **New side chat…** in the room header's Panels
+menu, a name, and optionally **private**. The new chat opens as a tab in the
+panel container (`PANELS.md` §10). What differs from a synced room is only what
+the new chat's Claude session starts from.
+
+**As built:** `local.chats.create { spaceId, name, kind }` returns
+`{ chatId, panelId }`, and every new chat starts a fresh session. `startFrom`
+below — forking another chat's session — is not built (§13.2 step 6).
 
 **Step 1 — the ask.**
 
@@ -784,21 +783,27 @@ starts from.
 INSERT INTO chats (id, workspace_id, space_id, kind, name, created_by_actor_id, created_at, updated_at)
 VALUES ('cht_P3RT8W', 'local', 'spc_7Q2M4K', 'public', 'try a different fix', 'act_local_me', 1789000100000, 1789000100000);
 
+-- Its panel, in the same transaction: a chat panel cannot exist without its
+-- chat, and a non-default chat is never without its panel (PANELS.md §4.1).
+INSERT INTO panels (id, workspace_id, space_id, type, chat_id, created_by_actor_id, created_at, updated_at)
+VALUES ('pnl_H2V6Q8', 'local', 'spc_7Q2M4K', 'chat', 'cht_P3RT8W', 'act_local_me', 1789000100000, 1789000100000);
+
 INSERT INTO chat_sessions (chat_id, forked_from, updated_at)
 VALUES ('cht_P3RT8W', 'cht_K9XV3N', 1789000100000);
 -- session_id stays NULL until the first message: the fork happens when the
 -- child starts, not when the chat is created.
 ```
 
-A **private** chat additionally writes a chat-level membership row for
-`act_local_me` — the same row a private chat in a synced room has. There is
+A **private** chat additionally writes chat-level membership rows for
+`act_local_me` and `act_local_agent` — the rows a private chat in a synced room
+has. Claude works in every chat of a local room, so it is a member. There is
 nobody to hide it from yet, but it publishes as private without any conversion,
-because the row already says so.
+because the rows already say so.
 
-**Step 3 — invalidate `local:space:spc_7Q2M4K`** so the room's chat list
-repaints, and navigate to `#/local/s/spc_7Q2M4K/c/cht_P3RT8W` — the new chat in
-the main pane — or `#/local/s/spc_7Q2M4K?p=c:cht_P3RT8W` to open it beside the
-default one. Both are the synced room's URLs with a different prefix.
+**Step 3 — invalidate `local:rooms` and `local:space:spc_7Q2M4K:panels`** so the
+room and its panels repaint, and open the new chat's tab:
+`#/local/s/spc_7Q2M4K?p=pnl_H2V6Q8`. That is the synced room's URL with a
+different prefix.
 
 **Step 4 — first message in the new chat** goes through §8.2 unchanged, except
 the runner starts the child with:
@@ -831,91 +836,64 @@ as in a synced chat.
 
 ## 10. Panels
 
-### 10.1 Chats as panels — nothing new
+A room's side chats and web pages are **panels**, designed in
+[`PANELS.md`](PANELS.md), which replaces the typed `?p=c:…,w:…` segments and
+the `pages` table this section first proposed. In brief, as built for local
+rooms:
 
-`?p=` already opens a room's chats beside the main pane (`FRONTEND.md`, *panes
-are query, not path*, §4.7). A local room uses it unchanged:
+- **One table with a type.** `panels` holds a chat panel for every non-default
+  chat, made with it, and content panels once shared into the room;
+  `local_panels` holds content panels that exist only on this device
+  (`local-rooms.db` version 6).
+- **Tabs, one shown.** With no panel open the room takes the whole pane. With
+  any open, it splits: the room on the left, and on the right a container with a
+  tab per open panel and the shown panel beneath.
+- **The URL** is the room, with panels in the query:
 
 | URL | Shows |
 |---|---|
-| `#/local/s/spc_7Q2M4K` | The default chat |
-| `#/local/s/spc_7Q2M4K?p=c:cht_P3RT8W` | Default chat, with "try a different fix" beside it |
-| `#/local/s/spc_7Q2M4K/c/cht_P3RT8W?t=msg_B7` | "try a different fix" as the main pane, a thread open |
+| `#/local/s/spc_7Q2M4K` | The default chat, full width |
+| `#/local/s/spc_7Q2M4K?p=pnl_H2V6Q8` | The default chat, with "try a different fix" in a tab beside it |
+| `#/local/s/spc_7Q2M4K?p=pnl_H2V6Q8,pnl_W7K3&pa=pnl_H2V6Q8` | Two tabs; "try a different fix" shown |
 
-### 10.2 Panels become typed
+A web page is a `web` panel. Where the person has browsed to inside it is
+device-local view state and is never written anywhere; otherwise one click would
+change the page for everyone in a synced room, and every navigation would be a
+write. The strongest local use is obvious once it exists: Claude editing code in
+the main chat, the app under test running in a web panel beside it. Built:
+pages are drawn, as §10.1 says.
 
-That same section says `?p=` carries chat ids, and that if panels ever hold
-something that is not a chat, it "becomes a discriminated segment". A web page
-is that something. The segment is a one-letter kind and an id:
+### 10.1 Rendering a real web page inside a panel
 
-```
-?p=c:cht_P3RT8W,w:pg_H2V6
-   └ a chat     └ a page
-```
-
-The renderer keeps a small registry from kind → component (`c` → chat panel,
-`w` → page panel). A future kind (a canvas, a live agent-run view) is a new entry
-in that registry and touches nothing else. A bare id with no kind keeps meaning
-a chat, so existing links keep working.
-
-### 10.3 A page is a room object
-
-```sql
-INSERT INTO pages (id, space_id, url, title, created_by_actor_id, created_at, updated_at)
-VALUES ('pg_H2V6', 'spc_7Q2M4K', 'http://localhost:5273/#/w/wsp_1/s/spc_9', 'Relayed (dev)',
-        'act_local_me', 1789000200000, 1789000200000);
-```
-
-The page belongs to the room and travels with it (§12). **What is open** is in
-the URL. **Where the person has browsed to inside it** is neither: navigating
-inside a page panel is device-local view state and is never written anywhere.
-Otherwise one click would change the page for everyone in a synced room, and
-every navigation would be a write. Changing the *pinned* URL is a deliberate
-action with its own button.
-
-The strongest local use is obvious once it exists: Claude editing code in the
-main chat, the app under test running in a page panel beside it.
-
-### 10.4 Rendering a real web page inside the window
-
-Three ways exist, and Electron's own guidance rules out two:
+Three ways exist:
 
 | Way | Verdict | Why |
 |---|---|---|
 | `<iframe>` | No | Most sites refuse to be framed; the renderer's CSP would have to be loosened; a heavy page shares the app's process |
-| `<webview>` tag | No | Electron's web-embeds guide says "we do not recommend you to use WebViews" and points at the alternative below |
-| **`WebContentsView`** | **Yes** | A native view with its own process, layered into the window by main. Electron's guide: it "exists outside the DOM", so main and renderer coordinate its position |
+| **`<webview>` tag** | **Yes** | An element in the window's DOM with its own process. CSS places it, and menus and dialogs draw over it |
+| `WebContentsView` | No, after building it | A native view layered over the window by main. It draws above every menu, popover and dialog, so each one needs the page hidden and a picture shown in its place, and every move of the panel has to be measured and sent to main |
 
-**How it works.** The renderer renders an empty panel and measures it with a
-`ResizeObserver`. Every change of size, position, or visibility is sent to main
-as `{ key, url, bounds, visible }`. Main owns a `WebContentsView` per key, calls
-`setBounds`, and reports back `{ key, title, loading, canGoBack }`. Main holds
-**no room data** — it knows keys, URLs and rectangles, which keeps it as thin as
-the process design requires.
+**Why this reversed.** This section first chose `WebContentsView`, because
+Electron's web-embeds guide says "we do not recommend you to use WebViews". The
+cost that choice carried — the overlay swap and the bounds messages — was the
+one thing it said needed a spike. It was built that way, and then compared with
+t3code, which ships `<webview>` for exactly this job (a dev server's page beside
+a coding agent's conversation) on Electron 43. Pages in the DOM make the overlay
+question disappear rather than answering it, so the tag's stability risk was
+taken instead, with t3code as the evidence it holds up. What Electron's warning
+still costs is named in `PANELS.md` §10.3: a webview reloads when moved, and
+t3code records a macOS blank-webview bug after `visibility: hidden`.
 
-**Security, stated as settings:**
+**How it works, and the security settings**, are `PANELS.md` §10.3. In short:
+the renderer draws `<webview partition="persist:panels:<acc>">`; main checks
+every attach (that partition only, http or https only, preload deleted, sandbox
+and context isolation forced on), sends window opens to the system browser,
+refuses navigation off http and https, grants no permission but clipboard write,
+and leaves downloads to Electron's save dialog. Main holds **no room data**.
 
-| Setting | Why |
-|---|---|
-| Its own session partition, `persist:pages:<acc>` | A page must never see the app's cookies or origin. Per account, so two accounts' logins do not mix |
-| `sandbox: true`, `contextIsolation: true`, no `nodeIntegration`, **no preload** | The page is untrusted content |
-| `setWindowOpenHandler` → system browser | A page cannot open windows inside the app |
-| Navigation to `file:`, `relayed:`, `relayed-blob:` refused | A page cannot reach the app's own schemes |
-| Permission requests denied (camera, mic, location, notifications) | Until there is a reason to ask the person |
-| Downloads prompt first | A page cannot write to disk silently |
-
-**The overlay problem — the one thing that needs a spike before this is
-promised.** A native view draws *above* the window's HTML. Menus, popovers,
-the command palette, toasts and dialogs cannot appear over it. The intended
-fix: whenever any overlay opens, and while a panel or the sidebar is being
-dragged (bounds updates trail the drag), hide the view and show a
-`capturePage()` snapshot in its place. Whether that is smooth enough is a
-measurement, not an opinion (§13.1).
-
-**Lifecycle.** Closing a panel hides its view rather than destroying it, and a
-small least-recently-used set of hidden views is kept, so reopening a page does
-not reload it or lose a login. The set is capped, because every view is a
-renderer process.
+**Lifecycle.** Every open web tab stays mounted, the ones not shown parked
+off-screen, so switching tabs does not reload a page or lose a login. Closing a
+tab closes its page. The session is persistent, so a login survives both.
 
 ---
 
@@ -970,15 +948,23 @@ under `/w/:wsId` must be answerable from that replica; account-tier things sit
 outside it. Local rooms are account-tier, so:
 
 ```
-/local                          the list of local rooms
 /local/s/:spaceId               ↔  /w/:wsId/s/:spaceId
-/local/s/:spaceId/c/:chatId     ↔  /w/:wsId/s/:spaceId/c/:chatId
-?a= ?t= ?ta= ?p=                identical in meaning
+?a= ?t= ?ta= ?p= ?pa=           identical in meaning
 ```
 
+No route names a chat: a side chat is a tab in the panel container, in the
+query (`PANELS.md` §8). The list of local rooms is in the sidebar, grouped by
+folder; it has no route of its own.
+
+**As built.** `routes/Space.tsx` serves both prefixes. It reads the space with
+`local.space.get` or `space.get`, which return the same `Space` shape
+(`shared/spaces.ts`), and opens on its `default` or `sole` chat. What only a
+local room has — folder, mode, model, effort, whether Claude is replying — is
+`local.rooms.get`, read by the pickers and the header's activity indicator.
+
 Publishing is then `navigate('/w/' + wsId + '/s/' + spaceId + location.search,
-{ replace: true })`. Because chat, message and page ids are kept through
-publish, **the open panel, the open thread and the scroll anchor survive it**.
+{ replace: true })`. Because chat, message and panel ids are kept through
+publish, **the open tabs, the open thread and the scroll anchor survive it**.
 
 ### 11.4 What a local room cannot show you
 
@@ -1071,7 +1057,7 @@ POST /rooms/import/begin
   "space":  { "id": "spc_7Q2M4K", "name": "Fix the flaky sync test", "visibility": "private" },
   "chats":  [ { "id": "cht_K9XV3N", "kind": "default", "name": null },
               { "id": "cht_P3RT8W", "kind": "public",  "name": "try a different fix" } ],
-  "pages":  [ { "id": "pg_H2V6", "url": "http://localhost:5273/…", "title": "Relayed (dev)", "flagged": "loopback" } ],
+  "panels": [ { "id": "pnl_W7K3", "type": "web", "payload": { "url": "http://localhost:5273/…" }, "title": "Relayed (dev)", "flagged": "loopback" } ],
   "code":   { "remote": "git@github.com:harsh/relayed.git", "branch": "main", "base": "4448d29…",
               "bundleBlob": "blob_…", "patchBlob": "blob_…" },
   "handoff": "## Goal\nMake catchup.test.ts stop flaking …",
@@ -1082,7 +1068,8 @@ POST /rooms/import/begin
 The server, in one transaction: creates the space and chats **with the ids
 given** (it validates the shape and uniqueness; today `sync/spaces.ts` mints
 ids itself, so this is a change), makes the caller admin, creates or finds the
-caller's local-agent actor (§12.5), stores the code reference and the pages,
+caller's local-agent actor (§12.5), stores the code reference and the shared
+panels (a chat's panel comes with its chat; local panels stay on the laptop),
 and posts the handoff brief as ordinal 1 of the default chat. It replies:
 
 ```json
@@ -1207,7 +1194,7 @@ is that, written by the party with the most context and reviewed by a person.
 | **Packaged PATH** | Build, launch from Finder, print `PATH`, try to resolve `claude`. Confirm it fails; confirm the explicit resolver fixes it | Nothing — but it must be seen failing once, or the resolver will be "simplified" away |
 | **The probe spends nothing** | Run §3.2's probe; confirm nothing new under `~/.claude/projects` and nothing on the usage page | The status screen needs a different source |
 | **Delta rate** | Deltas per second on a real turn with `includePartialMessages` | Whether per-frame coalescing suffices or `agent:stream` needs a byte budget |
-| **`WebContentsView` overlays** | Does hide-and-snapshot look acceptable when a menu opens over a page? Do bounds keep up with `react-resizable-panels` during a drag? | Page panels ship as "open in a new window" instead |
+| **Web pages in panels** ✅ | First asked of `WebContentsView`: does hide-and-snapshot look acceptable under a menu? Replaced by `<webview>` (§10.1), which has no overlay problem; `spikes/web-panels` proves the tag loads under the app's CSP and that main's attach check holds | — |
 | **`resumeSessionAt` + `forkSession`** | Do they combine, so a thread can fork from mid-session? | Threads fork from the end of the session (§9.1) |
 
 Each is an afternoon. Each is written as a script under `spikes/`, not as app
@@ -1220,12 +1207,12 @@ A step that only ever ran under `node --test` has not been used.
 | # | Step | What it proves | Touches |
 |---|---|---|---|
 | 1 | **Status only.** Settings → Claude Agent: not installed / signed out / ready, with email, plan, version and the **resolved binary path** | The credential story (§3.1), the probe (§3.2), the PATH resolver (§3.6) | new `src/agent-runner/`; a `claude.status` query; a settings pane |
-| 2 | **The local store and the room view, with no Claude.** Create a local room, add chats, post messages *by hand*, open panels, threads, anchors, paging | Most of the room view (§11), the shared read contract, `?p=` typed segments | `local-rooms.db` migration; `scope` on queries and ops; `/local/…` routes; `useRoomScope`; the `Chat.tsx` message list pulled into a `RoomView` |
+| 2 | **The local store and the room view, with no Claude.** Create a local room, add chats, post messages *by hand*, open panels, threads, anchors, paging | Most of the room view (§11), the shared read contract, `?p=` panel tabs | `local-rooms.db` migration; `scope` on queries and ops; `/local/s/…` routes; the message list pulled into `ChatView`, used by the room and its chat panels. ✅ Built for side chats and panels (`PANELS.md` §12.2); threads, anchors and paging are not |
 | 3 | **Fixtures for synced-only states** (§11.4), rendered by the same view | The view is not built around local shortcuts | fixture rows; a dev route |
 | 4 | **Claude in the room.** Send → child starts → streaming row → tool parts → turn completes | §8 end to end; the runner ↔ sync port; `agent:stream` | runner turn loop; sync-engine event apply; `message_parts`; the stream push |
 | 5 | **Approvals, questions, plans, modes.** The four modes; `canUseTool`; the cards. ✅ Built: the mode picker in the room header (new rooms start in `auto`), `approvals` (local-rooms.db v4), `local.rooms.setMode` / `local.approvals.respond`, and the cards at the live edge. Plan is not a room mode yet; an `ExitPlanMode` from the person's own settings still gets its card | §8.5 | `approvals`; ops; cards |
 | 6 | **Resume and new chats.** Quit mid-room, reopen, continue; new chat fresh; new chat forked | §3.5, §9 | `chat_sessions`; `startFrom` |
-| 7 | **Page panels**, after the overlay spike passes | §10 | main's view manager; the panel registry; `pages` |
+| 7 | **Web panels drawn.** ✅ The `panels` / `local_panels` tables, the Panels menu, the tab container, the type registry, and the page as a `<webview>` with back, forward and reload. Not yet looked at by hand inside the app | §10, `PANELS.md` §10.3 | `main/web-panels.ts`; `features/panels/WebPanel.tsx` |
 | 8 | **Publish, conversation only**, into a new private room. No code, no service agent | §12.1–12.6 with the smallest server change; id preservation; batched import as join-style history; attribution | server: rooms, import endpoints accepting client ids; client: `publish_jobs`, the review screen |
 | 9 | **Publish the code and the brief.** Bundle, patch, secret scan, handoff turn | §12.1 steps 2–4 | git helpers in the runner; scan rules; the brief prompt |
 | 10 | **The service takes over.** Persistent sandbox, repo access, @-mention starts a run, branch push | The four triggers in §14 | `apps/agent`; a source-control integration |
@@ -1261,10 +1248,10 @@ events only.
 | Doc | Change |
 |---|---|
 | `DESIGN.md`, *agents at the transport layer* (§6.5) and *agents* (§13.8) | A third kind of agent: runs on the laptop, drives local rooms, and is neither a sync participant nor a server-side consumer. The local-agent actor and message provenance |
-| `DESIGN.md`, *rooms* (§7.2) | A room can be created from a local session; pages are room objects |
+| `DESIGN.md`, *rooms* (§7.2) | A room can be created from a local session; panels are room objects (`PANELS.md`) |
 | `STORAGE.md`, *directory layout* (§5) and *sign-out and removal* (§13) | `local-rooms.db` and `local-blobs/` at the account tier, marked "copies the replica's room tables — not a replica"; removal of a *workspace* does not touch them |
 | `DESIGN.md`, *the IPC contract* (§13.2) | The `scope: 'local'` exemption from the stale-reply rule, as a new invariant beside 41 |
-| `FRONTEND.md`, *the route table* (§4.6) and *panes are query, not path* (§4.7) | `/local/…`; typed `?p=`, which closes the trigger that section names; a rule that no component branches on scope |
+| `FRONTEND.md`, *the route table* (§4.6) and *panes are query, not path* (§4.7) | ✅ Done: `/local/s/:spaceId`; `?p=` and `?pa=` carry panel ids; no route names a chat |
 | `AGENT-RUNTIME.md`, *deliberately not built* (§8) | The four triggers in §14 below are crossed by step 10 |
 | `MULTI-CLIENT-DEV.md` | Two dev clients isolate `userData` and so each has its own `local-rooms.db`, but share one `~/.claude`. Expected, not a bug |
 
@@ -1281,7 +1268,7 @@ Local, deferred with a trigger:
 | Attachments in local chats | Wanted. Images go inline as base64 blocks; files as paths the child can read |
 | Claude's own file checkpoints / revert | Wanted. A separate subsystem |
 | A live agent-run panel kind | The service agent exists and someone wants to watch it |
-| Publishing a *page's* browsing state | Never — see §10.3 |
+| Publishing a *page's* browsing state | Never — see §10 |
 
 **Step 10 crosses four triggers that `AGENT-RUNTIME.md` lists as reasons to
 build something.** They stop being deferred the moment a published room's agent

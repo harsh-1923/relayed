@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { call } from '@/lib/ipc';
 import type { OpenPanels } from './useOpenPanels';
+import { addressFromTyped } from '../../../shared/web-panels.ts';
 
 type Adding = 'chat' | 'web' | null;
 
@@ -124,13 +125,10 @@ function OpenWebPage({ space, onDone }: { space: Space; onDone: (panelId: string
   const submit = (event: FormEvent) => {
     event.preventDefault();
     setError(null);
-    // A bare host is what people type. A dev server on this machine speaks http;
-    // anything else is assumed to be https. The store refuses every other scheme.
-    const typed = url.trim();
-    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(typed)
-      ? typed
-      : `${/^(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(typed) ? 'http' : 'https'}://${typed}`;
-    void call(api => api.query('local.panels.open', { spaceId: space.id, type: 'web', payload: { url: withScheme } }))
+    // The store refuses every scheme but http and https.
+    const address = addressFromTyped(url);
+    if (!address) return;
+    void call(api => api.query('local.panels.open', { spaceId: space.id, type: 'web', payload: { url: address } }))
       .then(opened => onDone(opened?.id ?? null))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   };

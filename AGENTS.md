@@ -63,7 +63,9 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/COMPOSER.md`](docs/COMPOSER.md) | **Proposal.** Tiptap-based Slack-like rich editing, the editor-independent message document, durable actor and audience mentions, collapsed links, local drafts and the atomic send transition. |
 | [`docs/AGENT-RUNTIME.md`](docs/AGENT-RUNTIME.md) | The agent service: one endpoint in two modes, the pi loop, the provider table, and what bounds a run. |
 | [`docs/AGENT-RESPONSES.md`](docs/AGENT-RESPONSES.md) | **Proposal, backed by spikes.** How an agent's reply is represented, produced, stored, streamed, rendered and acted on: message parts, OpenUI Lang blocks through one `show_ui` tool, the library contract. Evidence in [`spikes/genui/`](spikes/genui/README.md). |
+| [`docs/PANELS.md`](docs/PANELS.md) | **Proposal, partly built.** A room's side chats and web pages as typed panels, opened as tabs beside the space: local until shared, the tables, sync, addressing (`?p=`, `?pa=`), web pages as `<webview>`, and the implementation plan with what is built. Evidence in [`spikes/web-panels/`](spikes/web-panels/README.md) (`pnpm verify:web-panels`). |
 | [`docs/LOCAL-ROOMS.md`](docs/LOCAL-ROOMS.md) | **Proposal.** Rooms driven by the person's own Claude Code on their laptop, and how one is published into a shared room. Not yet the design of record — its header says which `DESIGN.md` sections it contradicts. |
+| [`docs/WORKSPACE-AGENTS.md`](docs/WORKSPACE-AGENTS.md) | **Proposal.** Creating agents as actors, a mention becoming a run in `apps/agent`, tool calls brokered by the server through Composio as the invoker, connections and the connector store, and restricted messages with what they do to `ord` and `rev`. Its header lists the `DESIGN.md` decisions it replaces. |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |
@@ -228,8 +230,9 @@ pnpm typecheck       # all packages, then the boundary checker
 pnpm test            # all packages
 pnpm spike:sync      # sync-protocol model tests — must stay green
 pnpm spike:authz     # authorization model tests
-pnpm check:boundaries # the rules below, run by typecheck too
 pnpm verify:hotkeys  # keyboard shortcut spikes under real Electron (spikes/hotkeys)
+pnpm verify:web-panels # web pages in panels as <webview>, and main's attach check (spikes/web-panels)
+pnpm check:boundaries # the rules below, run by typecheck too
 pnpm otel:smoke      # prove the telemetry loop works before debugging the app
 ```
 

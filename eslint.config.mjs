@@ -48,6 +48,7 @@ export default tseslint.config(
       // Electron behaviour. Not part of this workspace's graph.
       'spikes/electron-verify/**',
       'spikes/hotkeys/**',
+      'spikes/web-panels/**',
       // Declaration files describe types; there is no code in them to lint, and
       // type-aware rules on one report nothing but the cost of loading it.
       '**/*.d.ts',

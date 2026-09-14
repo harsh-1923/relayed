@@ -11,6 +11,7 @@ import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
 import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
+import { guardWebPanels } from './web-panels';
 import {
   buildMenuTemplate, defaultMenuItems, parseMenuItems, shouldIgnoreMenuShortcut, type NativeMenuItem,
 } from './menu';
@@ -120,6 +121,8 @@ if (!app.isPackaged) {
 }
 let syncProcess: Electron.UtilityProcess | null = null;
 let runnerProcess: Electron.UtilityProcess | null = null;
+/** The open account, as the sync engine last said: whose session a web panel's page may use (web-panels.ts). */
+let panelAccountId: string | null = null;
 
 function startSyncEngine(): Electron.UtilityProcess {
   const child = utilityProcess.fork(join(__dirname, 'sync.js'), [], {
@@ -245,6 +248,8 @@ function createWindow(): BrowserWindow {
       contextIsolation: true,   // non-negotiable (§13.2)
       sandbox: true,
       nodeIntegration: false,
+      // Web panels are `<webview>` elements; every attach is checked by guardWebPanels.
+      webviewTag: true,
     },
   });
   // Surface renderer errors in the main log during development; a silent CSP
@@ -281,6 +286,8 @@ function createWindow(): BrowserWindow {
   win.webContents.on('before-input-event', (_event, input) => {
     win.webContents.setIgnoreMenuShortcuts(shouldIgnoreMenuShortcut(input, menuPlatform, menuItems));
   });
+
+  guardWebPanels(win, () => panelAccountId);
 
   win.once('ready-to-show', () => {
     win.show();
@@ -414,7 +421,12 @@ app.whenReady().then(() => {
       case 'vault:clear': clearRefreshToken(...slot()); reply(null); break;
       // Which account's blobs may be served. Storage lives in the sync
       // process, so main is told rather than deriving it.
-      case 'blob:account': setBlobAccount(msg.accountId ?? null); reply(null); break;
+      // The same signal decides whose session a web panel may browse in.
+      case 'blob:account':
+        setBlobAccount(msg.accountId ?? null);
+        panelAccountId = msg.accountId ?? null;
+        reply(null);
+        break;
       // The theme preference, applied (PREFERENCES.md §9). One value drives the
       // native material AND prefers-color-scheme in the renderer, so the CSS
       // tokens and the window's vibrancy cannot disagree — the renderer's
