@@ -24,7 +24,11 @@ export const grantKey = (scope: Scope, id: string): string => `${scope}:${id}`;
 export interface Placement {
   /** chat id -> space id */
   spaceOf?: Readonly<Record<string, string>>;
-  /** space id -> workspace id */
+  /**
+   * space id -> workspace id, and agent actor id -> workspace id. One map for
+   * both because both sit directly in a workspace and ids never collide across
+   * kinds (`spc_…`, `act_…`).
+   */
   workspaceOf?: Readonly<Record<string, string>>;
   privateChats?: ReadonlySet<string>;
   /**
@@ -50,6 +54,22 @@ export function can(
   if (needed === undefined) return false;
 
   if (scope === 'workspace') return holds(grants, 'workspace', id, needed);
+
+  if (scope === 'agent') {
+    const ws = placement.workspaceOf?.[id];
+    // Containment, as for a space: an agent row without the workspace
+    // membership above it grants nothing — a maintainer who left the workspace
+    // keeps a tombstone-proof row and no power.
+    if (!ws || !grants.has(grantKey('workspace', ws))) return false;
+    if (needed === null) return true;
+    // THE WORKSPACE-ADMIN EXCEPTION, and it is the deliberate opposite of
+    // spaces, where a workspace role inherits nothing (invariant 51). A private
+    // space's confidentiality must not rest on trusting every admin; an agent
+    // is different in kind — it SPENDS other people's authority, so someone
+    // accountable for the workspace must always be able to edit it or switch it
+    // off, including after every maintainer has left.
+    return holds(grants, 'agent', id, needed) || holds(grants, 'workspace', ws, 'admin');
+  }
 
   if (scope === 'space') {
     const ws = placement.workspaceOf?.[id];

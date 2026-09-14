@@ -22,7 +22,9 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { allocateStream } from './allocate.ts';
-import { appendEvent, workspaceStream, type ActorChanged } from './events.ts';
+import {
+  appendEvent, workspaceStream, type ActorChanged, type AgentSummary, type AppendedEvent,
+} from './events.ts';
 
 /** One directory row, in domain shape. Mapped to the wire shape below. */
 export interface DirectoryActor {
@@ -32,7 +34,11 @@ export interface DirectoryActor {
   handle: string;
   displayName: string;
   avatarUrl: string | null;
+  /** Required for an agent, null for a person — as `actor_owner` requires. */
+  ownerActorId: string | null;
   state: 'invited' | 'active' | 'suspended' | 'deactivated';
+  /** An agent's summary; omitted for a person. */
+  agent?: AgentSummary;
 }
 
 /**
@@ -52,20 +58,26 @@ export interface DirectoryActor {
  *
  * Takes a `Transaction`: the actor row and the event that announces it commit
  * together, or a workspace ends up with a member nobody else can see.
+ *
+ * Returns the event, for a caller that can deliver it after the commit — an
+ * agent created from Settings should reach every client's autocomplete now,
+ * not at their next heartbeat. A caller with nobody to deliver to may ignore it.
  */
 export async function recordActor(
   trx: Transaction<DB>,
   change: 'actor.created' | 'actor.updated',
   actor: DirectoryActor,
-): Promise<void> {
+): Promise<AppendedEvent> {
   const payload: ActorChanged = {
     id: actor.id,
     type: actor.type,
     handle: actor.handle,
     display_name: actor.displayName,
     avatar_url: actor.avatarUrl,
+    owner_actor_id: actor.ownerActorId,
     state: actor.state,
+    ...(actor.agent ? { agent: actor.agent } : {}),
   };
   const allocated = await allocateStream(trx, workspaceStream(actor.workspaceId));
-  await appendEvent(trx, allocated, change, payload, { kind: 'stream' });
+  return appendEvent(trx, allocated, change, payload, { kind: 'stream' });
 }

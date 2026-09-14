@@ -24,10 +24,12 @@ export const results = () => ({ pass, fail, fails });
 // ─── the closed vocabularies (AUTHZ §6) ──────────────────────────────────────
 export const ROLES = ['owner', 'admin', 'member'];
 export const ACTIONS = {
-  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership'],
+  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership', 'create_agent'],
   space:     ['read', 'join', 'add_member', 'remove_member', 'create_chat',
               'make_public', 'promote'],
   chat:      ['read', 'post', 'edit_own', 'delete_own', 'delete_any'],
+  // WORKSPACE-AGENTS.md §4.4. `invoke` is derived from chat `post`, never stored.
+  agent:     ['edit', 'manage_maintainers', 'deactivate', 'read_definition'],
 };
 
 // ─── the world ───────────────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ export class World {
     this.workspaces = new Map();  // id -> {}
     this.spaces = new Map();      // id -> { workspaceId, visibility }
     this.chats = new Map();       // id -> { spaceId, kind }
+    this.agents = new Map();      // actor id -> { workspaceId }
     /** The single source of truth. AUTHZ §4: a permission is a row here. */
     this.memberships = [];        // { scopeType, scopeId, actorId, role, leftAt }
     this.delegations = [];        // { agentId, principalId, chatId, action, expiresAt }
@@ -45,6 +48,7 @@ export class World {
     this.spaces.set(id, { workspaceId, visibility }); return id;
   }
   chat(id, spaceId, kind = 'public') { this.chats.set(id, { spaceId, kind }); return id; }
+  agent(id, workspaceId) { this.agents.set(id, { workspaceId }); return id; }
 
   join(scopeType, scopeId, actorId, role = 'member') {
     this.memberships.push({ scopeType, scopeId, actorId, role, leftAt: null });
@@ -85,7 +89,27 @@ export class World {
         case 'invite':
         case 'manage_members':      return m.role === 'admin' || m.role === 'owner';
         case 'transfer_ownership':  return m.role === 'owner';
-        case 'create_space':        return true;
+        case 'create_space':
+        case 'create_agent':        return true;
+        default: return false;
+      }
+    }
+
+    if (objectType === 'agent') {
+      const agent = this.agents.get(objectId);
+      if (!agent) return false;
+      // Containment first, as for a space.
+      const ws = this.#row('workspace', agent.workspaceId, actorId);
+      if (!ws) return false;
+      switch (action) {
+        case 'read_definition': return true;
+        // The one reach of a workspace role into an object: an agent spends
+        // other people's authority, so an accountable admin can always stop it.
+        case 'edit':
+        case 'manage_maintainers':
+        case 'deactivate':
+          return this.#row('agent', objectId, actorId)?.role === 'admin'
+              || ws.role === 'admin' || ws.role === 'owner';
         default: return false;
       }
     }
@@ -169,7 +193,20 @@ export class World {
       if (!has(obj, anyRole)) return false;
       if (action === 'invite' || action === 'manage_members') return has(obj, ['admin', 'owner']);
       if (action === 'transfer_ownership') return has(obj, ['owner']);
-      if (action === 'create_space') return true;
+      if (action === 'create_space' || action === 'create_agent') return true;
+      return false;
+    }
+
+    if (objectType === 'agent') {
+      const agent = this.agents.get(objectId);
+      if (!agent) return false;
+      const parent = `workspace:${agent.workspaceId}`;
+      if (!has(parent, anyRole)) return false;
+      if (action === 'read_definition') return true;
+      if (['edit', 'manage_maintainers', 'deactivate'].includes(action)) {
+        // tuple-to-userset: the agent's admins, plus the parent's admins.
+        return has(`agent:${objectId}`, ['admin']) || has(parent, ['admin', 'owner']);
+      }
       return false;
     }
 
@@ -211,6 +248,8 @@ export function everyCheck(world, actors) {
       for (const action of ACTIONS.space) out.push([a, action, 'space', s]);
     for (const c of world.chats.keys())
       for (const action of ACTIONS.chat) out.push([a, action, 'chat', c]);
+    for (const g of world.agents.keys())
+      for (const action of ACTIONS.agent) out.push([a, action, 'agent', g]);
   }
   return out;
 }

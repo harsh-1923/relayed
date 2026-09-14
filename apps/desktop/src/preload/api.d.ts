@@ -46,6 +46,46 @@ export interface Invitation {
   expires_at: string;
 }
 
+/**
+ * An agent command's answer. A refusal is an answer, not an exception, so the
+ * editor can put it beside the field it names (WORKSPACE-AGENTS.md §4).
+ */
+export type AgentAnswer<T> =
+  | ({ ok: true } & T)
+  | { ok: false; status: number; error: string; field?: string; reason?: string; action?: string };
+
+/** The agent editor's fields, as the server names them. */
+export interface AgentInput {
+  name?: string;
+  handle?: string;
+  description?: string;
+  instructions?: string;
+  /** `provider/model`, or null for the runtime's fallback. */
+  model?: string | null;
+  space_ids?: string[];
+}
+
+/** What an agent was told — an online read, never in the replica. */
+export interface AgentDefinition {
+  agent_id: string;
+  found: boolean;
+  definition?: {
+    description: string;
+    instructions: string;
+    model: string | null;
+    thinking_level: string | null;
+    config_rev: number;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    maintainers: string[];
+    tools: { toolkit: string; tool: string; effect: string }[];
+    space_ids: string[];
+    /** What the server says this person may do. For hiding controls, never for permitting. */
+    you: { edit: boolean; manage_maintainers: boolean; deactivate: boolean };
+  };
+}
+
 /** An actor as the client holds it — no Layer 1 identifiers (DESIGN.md §6.3). */
 export interface ReplicaActor {
   id: string;
@@ -60,6 +100,16 @@ export interface ReplicaActor {
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
+  /** An agent's summary, or null for a person. Instructions are an online read. */
+  agent: ReplicaAgentSummary | null;
+}
+
+export interface ReplicaAgentSummary {
+  description: string;
+  /** Bumped when instructions, model or tools change. */
+  configRev: number;
+  /** Per toolkit, the highest effect among its tools. */
+  toolkits: { toolkit: string; effect: string }[];
 }
 
 /**
@@ -369,6 +419,25 @@ export interface RelayedApi {
     op: "auth.join",
     params: { workspaceId: string; handle: string },
   ): Promise<AppState>;
+  query(
+    op: "agents.handle",
+    params: { handle: string; except?: string },
+  ): Promise<AgentAnswer<{ handle: string; available: boolean; reason: string | null }>>;
+  query(op: "agents.create", params: AgentInput): Promise<AgentAnswer<{ agent_id: string }>>;
+  query(
+    op: "agents.update",
+    params: AgentInput & { agentId: string },
+  ): Promise<AgentAnswer<{ agent_id: string }>>;
+  query(
+    op: "agents.deactivate",
+    params: { agentId: string },
+  ): Promise<AgentAnswer<{ agent_id: string; state: string }>>;
+  query(
+    op: "agents.setMaintainers",
+    params: { agentId: string; actorIds: string[] },
+  ): Promise<AgentAnswer<{ agent_id: string; maintainers: string[] }>>;
+  /** Null when the socket is not live: unreachable, which is not "not found". */
+  query(op: "agents.definition", params: { agentId: string }): Promise<AgentDefinition | null>;
   subscribe(channel: "app:state", fn: (s: AppState) => void): () => void;
   /** The live text of a reply Claude is writing. Never stored; the parts carry it in the end. */
   subscribe(channel: "agent:stream", fn: (stream: AgentStream) => void): () => void;

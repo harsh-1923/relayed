@@ -316,7 +316,8 @@ test('an actor joining a workspace is one event on the workspace stream',
       }).execute();
       await recordActor(trx, 'actor.created', {
         id: newcomer, workspaceId: wsp, type: 'human',
-        handle: 'newcomer', displayName: 'Newcomer', avatarUrl: null, state: 'active',
+        handle: 'newcomer', displayName: 'Newcomer', avatarUrl: null, ownerActorId: null,
+        state: 'active',
       });
     });
 

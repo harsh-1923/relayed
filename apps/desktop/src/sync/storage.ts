@@ -70,6 +70,19 @@ export interface ReplicaActor {
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
+  /**
+   * An agent's summary — description, config revision, toolkits — or null for
+   * a person. On the actor read rather than a read of its own: it only ever
+   * changes with an actor event, so the `actors` topic already wakes it, and
+   * autocomplete needs both in one list.
+   */
+  agent: ReplicaAgentSummary | null;
+}
+
+export interface ReplicaAgentSummary {
+  description: string;
+  configRev: number;
+  toolkits: { toolkit: string; effect: string }[];
 }
 
 /**
@@ -122,7 +135,7 @@ export interface ReplicaMessage {
  * is deliberately absent here. `syncActors` preserves whatever we already hold
  * rather than asking the caller for a null it could only guess at.
  */
-export type DirectoryRow = Omit<ReplicaActor, 'avatarBlob'>;
+export type DirectoryRow = Omit<ReplicaActor, 'avatarBlob' | 'agent'>;
 
 export interface AccountSummary {
   accountId: string;
@@ -820,8 +833,12 @@ export class Storage {
   }
 
   actors(): ReplicaActor[] {
-    return (this.workspace.prepare('SELECT * FROM actors ORDER BY handle')
-      .all() as Record<string, unknown>[]).map(r => ({
+    return (this.workspace.prepare(`
+      SELECT a.*, s.description AS agent_description, s.config_rev AS agent_config_rev,
+             s.toolkits AS agent_toolkits
+        FROM actors a LEFT JOIN agent_summaries s ON s.actor_id = a.id
+       ORDER BY a.handle
+    `).all() as Record<string, unknown>[]).map(r => ({
         id: String(r['id']),
         workspaceId: String(r['workspace_id']),
         type: r['type'] === 'agent' ? 'agent' : 'human',
@@ -832,6 +849,11 @@ export class Storage {
         ownerActorId: (r['owner_actor_id'] as string | null) ?? null,
         state: String(r['state']),
         updatedAt: Number(r['updated_at'] ?? 0),
+        agent: r['agent_config_rev'] === null || r['agent_config_rev'] === undefined ? null : {
+          description: typeof r['agent_description'] === 'string' ? r['agent_description'] : '',
+          configRev: Number(r['agent_config_rev']),
+          toolkits: readToolkits(r['agent_toolkits']),
+        },
       }));
   }
 
@@ -1124,6 +1146,22 @@ function bumpEpoch(root: string, current: number): number {
   const next = current + 1;
   writeFileSync(p.epochFile(root), String(next) + '\n', { mode: 0o600 });
   return next;
+}
+
+/** A stored toolkit list; anything malformed reads as none rather than throwing a render. */
+function readToolkits(raw: unknown): { toolkit: string; effect: string }[] {
+  if (typeof raw !== 'string') return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((t): t is { toolkit: string; effect: string } =>
+          typeof t === 'object' && t !== null
+          && typeof (t as { toolkit?: unknown }).toolkit === 'string'
+          && typeof (t as { effect?: unknown }).effect === 'string')
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 /**

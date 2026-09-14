@@ -18,7 +18,7 @@ import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
   type Hello, type CatchupRequest, type BackfillRequest, type RepairRequest,
-  type ThreadRequest, type DirectoryRequest,
+  type ThreadRequest, type DirectoryRequest, type AgentDefinitionRequest,
   type OpFrame, type Ping,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
@@ -34,6 +34,7 @@ import {
   type Snapshot, type MessageRow,
 } from './feed.ts';
 import { send, deleteMessage, MessageNotFoundError } from './ops.ts';
+import { agentDefinition } from '../agents/definitions.ts';
 import { Forbidden } from '../authz/can.ts';
 import {
   startSpan, openSpan, annotate, traceparent, parseTraceparent,
@@ -302,6 +303,11 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       await startSpan('sync.op', () => onOp(state, read.body as OpFrame), { parent });
       return;
     }
+    if (read.t === 'agent_definition') {
+      await startSpan('sync.agent_definition',
+        () => onAgentDefinition(state, read.body as AgentDefinitionRequest), { parent });
+      return;
+    }
 
     // `ping` is NOT traced. A span is a logical operation, never a connection
     // (OBSERVABILITY.md §4) — one span per heartbeat per socket every
@@ -499,11 +505,40 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
         display_name: row.displayName, avatar_url: row.avatarUrl,
         owner_actor_id: row.ownerActorId, state: row.state,
         updated_at: row.updatedAt,
+        ...(row.agent ? { agent: row.agent } : {}),
       })),
       next_after_id: page.nextAfterId,
       complete: page.complete,
       head_rev: headRev,
     });
+  }
+
+  /**
+   * What an agent was told (WORKSPACE-AGENTS.md §4.5), for anyone in its
+   * workspace. Answered as the connection's actor — never a workspace or an
+   * actor named in the request — and with `found: false` rather than silence
+   * when they may not read it, because a person is waiting on the answer.
+   */
+  async function onAgentDefinition(
+    state: ConnectionState, request: AgentDefinitionRequest,
+  ): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    annotate({ agent_id: request.agent_id });
+    const d = await agentDefinition(deps.db, claims.actorId, request.agent_id);
+    state.send('agent_definition_ok', d === null
+      ? { agent_id: request.agent_id, found: false }
+      : {
+          agent_id: request.agent_id, found: true,
+          definition: {
+            description: d.description, instructions: d.instructions, model: d.model,
+            thinking_level: d.thinkingLevel, config_rev: d.configRev, created_by: d.createdBy,
+            created_at: d.createdAt, updated_at: d.updatedAt, maintainers: d.maintainers,
+            tools: d.tools, space_ids: d.spaceIds,
+            you: { edit: d.you.edit, manage_maintainers: d.you.manageMaintainers,
+                   deactivate: d.you.deactivate },
+          },
+        });
   }
 
   /**

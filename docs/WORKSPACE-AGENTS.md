@@ -183,14 +183,14 @@ one or opens the same editor and adds the result to that space.
 |---|---|
 | **Name** | Display name. `Triage` |
 | **Handle** | `@triage`. The human handle policy, unchanged: lowercase `a–z 0–9 . - _`, 3–30 characters, starts with a letter, reserved words refused, **one namespace shared with people** (`PHASE-1-IDENTITY.md`, handles §10). Checked live as you type |
-| **Avatar** | Upload, or a generated one. Stored like a person's (`DESIGN.md`, blob storage §13.3) |
+| **Avatar** | Upload, or a generated one. Stored like a person's (`DESIGN.md`, blob storage §13.3). *v1 of the editor: a monogram; upload waits for a file picker (plan D18)* |
 | **Description** | One line. Shown in mention autocomplete, on the profile and on access cards — it is how an invoker decides whether to trust it |
 | **Instructions** | The system prompt, as Markdown. Capped (32 KB) |
-| **Model** | A picker over the runtime's provider table. Blank means the runtime's fallback (`AGENT-RUNTIME.md`, models and providers §4) |
-| **Tools** | Pick toolkits from the catalogue, then tools within each, grouped **Read · Write · Destructive**. Read tools are preselected, write tools are opt-in, destructive tools start off (§6.6) |
+| **Model** | A picker over the runtime's provider table. Blank means the runtime's fallback (`AGENT-RUNTIME.md`, models and providers §4). *Until the server knows that table (the plan's step 3), `provider/model` as text, checked for shape (D17)* |
+| **Tools** | Pick toolkits from the catalogue, then tools within each, grouped **Read · Write · Destructive**. Read tools are preselected, write tools are opt-in, destructive tools start off (§6.6). *Arrives with the connector store (D11)* |
 | **Spaces** | Optional. Adds the agent as a member now; it can be added anywhere later like a person |
 
-**Try it** opens a DM with the new agent. **Create** is disabled until the handle
+**Try it** opens a DM with the new agent (once DMs exist, D2). **Create** is disabled until the handle
 is free and at least the name and instructions are filled.
 
 **The profile** — what anyone in the workspace sees when they click `@triage`:
@@ -290,7 +290,9 @@ memberships(scope_type='agent', scope_id=<agent actor id>, actor_id=<creator>, r
 ```
 
 `membership_scope` widens to admit `'agent'`, deliberately and in the same
-migration.
+migration, and `membership_agent_role` refuses any role on an agent but
+`admin` — a `member` row there would be a grant that looks like something and
+does nothing.
 
 | Object | Action | Who |
 |---|---|---|
@@ -301,6 +303,13 @@ migration.
 | agent | `read_definition` | any workspace member |
 | agent | `invoke` | anyone who may `post` in a chat whose space the agent belongs to — derived, not stored (§5.1) |
 | space | `add_member` for an agent | unchanged: any space member, as for a person |
+
+**Why a workspace admin reaches every agent.** The deliberate opposite of
+spaces, where a workspace role inherits nothing (`AUTHZ.md` invariant 51): an
+agent spends other people's authority, so someone accountable for the workspace
+must always be able to change it or switch it off, including once every
+maintainer has left. Its definition is readable by every member anyway, so no
+confidentiality is traded for it.
 
 **Why any member may create, not only admins.** The risk a creator poses is an
 agent that misuses its *invokers'* accounts. That is closed by permissions
@@ -327,7 +336,7 @@ The actor already reaches every client through the directory stream. Its
 
 ```jsonc
 { "id": "act_01N0…", "type": "agent", "handle": "triage", "display_name": "Triage",
-  "avatar_url": "…", "state": "active",
+  "avatar_url": "…", "owner_actor_id": "act_alice", "state": "active",
   "agent": { "description": "Files and triages bugs", "config_rev": 3,
              "toolkits": [ { "toolkit": "linear", "effect": "write" },
                            { "toolkit": "github", "effect": "read" } ] } }
@@ -344,6 +353,14 @@ the `welcome` ceiling forbids (`DESIGN.md` §9.9, invariant 71). The profile and
 the editor fetch them over the socket with an `agent_definition` frame, as an
 **online-only read** — the same exception the room directory takes in Phase 5,
 and for the same reason: it is rare and it is large.
+
+`owner_actor_id` is on the payload because the replica requires an owner for an
+agent, exactly as the server does; without it an agent created while a client
+was connected failed to apply there. The answer to `agent_definition` is
+`found: false` for anything the reader may not read, and carries **`you`** —
+whether the reader may edit, manage maintainers or deactivate — decided by the
+server, because a creator's own admin row reaches their client only with the
+next `welcome` (plan D20). The summary rides the ordinary actor read (D19).
 
 ---
 

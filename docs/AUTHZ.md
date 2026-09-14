@@ -124,7 +124,13 @@ workspace            ← added here; §7.3 covered only the two below
        └── chat      rows exist ONLY for private chats (§7.3)
 ```
 
-`scope_type ∈ 'workspace' | 'space' | 'chat'`.
+`scope_type ∈ 'workspace' | 'space' | 'chat' | 'agent'`.
+
+**`agent` is an object, not a level.** A workspace agent sits directly in its
+workspace, beside spaces rather than inside one, and its rows are its
+maintainers — always `admin`, which `membership_agent_role` enforces
+(`WORKSPACE-AGENTS.md` §4.4). "The creator may edit" is such a row, never
+`owner_actor_id = me`, for the reason §4 gives.
 
 The absence of a row is meaningful and differs by level: no `chat` row for a
 public chat means access derives from the space, while no `space` row means no
@@ -143,7 +149,7 @@ what stops authorization becoming a policy language by accretion.
 | Role | Valid on | Meaning |
 |---|---|---|
 | `owner` | workspace | Founded it, or was handed it. Exactly one per workspace |
-| `admin` | workspace, space | May change who else may do things |
+| `admin` | workspace, space, agent | May change who else may do things. On an agent: its maintainers |
 | `member` | workspace, space, chat | Belongs, and may act within it |
 
 ### Actions
@@ -154,6 +160,7 @@ what stops authorization becoming a policy language by accretion.
 | workspace | `manage_members` — remove, change role | admin, owner |
 | workspace | `create_space` | any member |
 | workspace | `transfer_ownership` | owner |
+| workspace | `create_agent` | any member — the risk an agent poses is closed by each invoker's permission, not by who typed its instructions (`WORKSPACE-AGENTS.md` §4.4) |
 | space | `read` | any member (of the space) |
 | space | `join` | anyone in the workspace, where the space's policy is `open` |
 | space | `add_member` | any member — §7.3, deliberate |
@@ -178,6 +185,13 @@ needs no permission and never reaches the evaluator.
 | chat | `post` | derived |
 | chat | `edit_own`, `delete_own` | the author |
 | chat | `delete_any` | space admin |
+| agent | `edit` — instructions, model, tools, description | agent admin (maintainer), **workspace admin** |
+| agent | `manage_maintainers` | agent admin, **workspace admin** |
+| agent | `deactivate` | agent admin, **workspace admin** |
+| agent | `read_definition` | any member of the agent's workspace — no secret prompts |
+
+`invoke` is **not** an action. Mentioning an agent in a chat whose space it is in
+is derived from `post` in that chat, and never stored (§14, item 2).
 
 The `add_member` / `make_public` asymmetry is §7.3's and its reasoning belongs
 there: adding one person and exposing everything to the workspace have very
@@ -205,6 +219,12 @@ access(actor, chat)       ⟸  member(actor, chat.space_id)
                               ∧ (chat.kind ≠ 'private' ∨ ∃ membership(chat, chat.id, actor, _))
 ```
 
+```
+agent_admin(actor, agent) ⟸  member(actor, agent.workspace_id)
+                              ∧ ( ∃ membership(agent, agent.id, actor, admin)
+                                ∨ ∃ membership(workspace, agent.workspace_id, actor, admin | owner) )
+```
+
 The third is §7.3's access predicate unchanged. **Space membership is the
 leading conjunct**, structurally: an actor removed from a space cannot retain
 access to a private chat inside it, and that property is a consequence of the
@@ -220,6 +240,17 @@ indefensible as a default: it would mean a private room's confidentiality rests
 on trusting whoever happens to hold an admin role. Should compliance ever
 require it, it arrives as an explicit, audited action, not as an ambient
 inherited power.
+
+### …but DOES reach an agent — the one exception
+
+A workspace admin passes `edit`, `manage_maintainers` and `deactivate` on every
+agent in the workspace, holding no row on it. The deliberate opposite of the
+rule above, for a reason that does not apply to spaces: **an agent spends other
+people's authority**. Someone accountable for the workspace must always be able
+to change what it does or switch it off — including after every maintainer has
+left — and a private space's confidentiality is not in play, because an agent's
+definition is readable by every member anyway. It is named in `can()` with this
+reason, and the spike's equivalence fixture carries it.
 
 ### `can()`
 
@@ -536,10 +567,14 @@ that is a grant, and it belongs in tuples.
    permits zero owners; nothing yet decides who inherits. §7.3 solves the room
    case by letting the creator promote others; the workspace case is open, and
    is now reachable rather than hypothetical.
-2. **Agent action vocabulary.** §6 lists actions for humans. Agents need their
-   own verbs (`invoke`, `read_history`, `post_as`), and `DESIGN.md` §16 item 10
-   has been holding this open. It should be settled *with* the delegation
-   design, not before.
+2. **Agent action vocabulary — settled for workspace agents.** Actions ON an
+   agent are §6's `edit`, `manage_maintainers`, `deactivate` and
+   `read_definition`, plus `create_agent` on the workspace. `invoke` is derived
+   from `post`, never stored. What an agent may do in a third-party app is not
+   an authorization action here at all: it is each invoker's per-agent,
+   per-toolkit permission (`WORKSPACE-AGENTS.md` §6.4). `read_history` and
+   `post_as` remain open for agents that act without an invoker, which nothing
+   builds.
 3. **Guest / single-channel access.** Slack's most-requested shape and a real
    containment problem: a guest is a workspace member for exactly one space.
    Expressible in this model — a workspace row with a `guest` role — but the

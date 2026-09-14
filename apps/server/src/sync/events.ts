@@ -167,7 +167,27 @@ export interface ActorChanged {
   handle: string;
   display_name: string;
   avatar_url: string | null;
+  /**
+   * Who operates an agent; null for a person. Carried because the replica, like
+   * the server, REQUIRES it for an agent — an `actor.created` without it failed
+   * the replica's CHECK on every client, so a new agent never arrived live.
+   */
+  owner_actor_id: string | null;
   state: 'invited' | 'active' | 'suspended' | 'deactivated';
+  /** For an agent only: enough to render autocomplete and a profile offline (WORKSPACE-AGENTS.md §4.5). */
+  agent?: AgentSummary;
+}
+
+/**
+ * What every member's client holds about an agent. NOT the instructions, which
+ * at 32 KB each would put a workspace's prompts into directory pages sized by
+ * the company (invariant 71); those are an online read (`agent_definition`).
+ */
+export interface AgentSummary {
+  description: string;
+  config_rev: number;
+  /** Per toolkit, the highest effect among the agent's tools in it. */
+  toolkits: { toolkit: string; effect: 'read' | 'write' | 'destructive' }[];
 }
 
 // ─── The catalogue ──────────────────────────────────────────────────────────

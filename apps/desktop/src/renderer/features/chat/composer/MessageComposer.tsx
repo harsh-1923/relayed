@@ -87,8 +87,9 @@ const COMMANDS: SuggestionItem[] = [
 ];
 
 const LOCAL_ACTORS: ReplicaActor[] = [
-  { id: 'act_local_me', workspaceId: 'local', type: 'human', handle: 'me', displayName: 'You', avatarUrl: null, avatarBlob: null, ownerActorId: null, state: 'active', updatedAt: 0 },
-  { id: 'act_local_agent', workspaceId: 'local', type: 'agent', handle: 'agent', displayName: 'Claude Agent', avatarUrl: null, avatarBlob: null, ownerActorId: 'act_local_me', state: 'active', updatedAt: 0 },
+  { id: 'act_local_me', workspaceId: 'local', type: 'human', handle: 'me', displayName: 'You', avatarUrl: null, avatarBlob: null, ownerActorId: null, state: 'active', updatedAt: 0, agent: null },
+  { id: 'act_local_agent', workspaceId: 'local', type: 'agent', handle: 'agent', displayName: 'Claude Agent', avatarUrl: null, avatarBlob: null, ownerActorId: 'act_local_me', state: 'active', updatedAt: 0,
+    agent: { description: 'Your Claude Code, in this room', configRev: 1, toolkits: [] } },
 ];
 
 const editorExtensions = [
@@ -446,7 +447,11 @@ function suggestionsFor(trigger: ComposerTrigger | null, actors: ReplicaActor[],
     .slice(0, 8)
     .map<SuggestionItem>(actor => ({
       id: `actor:${actor.id}`, label: `@${actor.handle}`,
-      description: `${actor.displayName}${actor.type === 'agent' ? ' · Agent' : ''}`,
+      // An agent's own description is how an invoker decides whether to trust
+      // it (WORKSPACE-AGENTS.md §4.1), so it is what the menu says about one.
+      description: actor.type === 'agent'
+        ? `${actor.displayName} · Agent${actor.agent?.description ? ` — ${actor.agent.description}` : ''}`
+        : actor.displayName,
       group: 'People and agents', actor,
     }));
   return [...people, ...AUDIENCES.filter(item => item.label.slice(1).includes(query))];

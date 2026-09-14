@@ -120,6 +120,71 @@ async function post<T>(path: string, body: unknown, bearer?: string): Promise<T>
   return json as T;
 }
 
+/**
+ * A request whose refusal is an ANSWER, not an exception: the agent editor has
+ * to put "that handle is taken" beside the handle field, and an error thrown
+ * across the port arrives as a message and nothing else. Only a network
+ * failure throws.
+ */
+export type Answer<T> =
+  | ({ ok: true } & T)
+  | { ok: false; status: number; error: string; field?: string; reason?: string; action?: string };
+
+async function request<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, bearer: string, body?: unknown,
+): Promise<Answer<T>> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl()}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (e) {
+    throw new ServerError((e as Error).message, 'network', 0);
+  }
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (res.ok) return { ok: true, ...(json as T) };
+  const refusal: Extract<Answer<T>, { ok: false }> = {
+    ok: false, status: res.status,
+    error: typeof json['error'] === 'string' ? json['error'] : `http_${res.status}`,
+  };
+  for (const key of ['field', 'reason', 'action'] as const) {
+    const value = json[key];
+    if (typeof value === 'string') refusal[key] = value;
+  }
+  return refusal;
+}
+
+/** The fields of the agent editor, as the server's routes name them. */
+export interface AgentInput {
+  name?: string;
+  handle?: string;
+  description?: string;
+  instructions?: string;
+  model?: string | null;
+  space_ids?: string[];
+}
+
+// Agents (WORKSPACE-AGENTS.md §4). Commands over HTTPS, as invitations are
+// (the plan's D3): each needs a check the server must answer now.
+export const agentHandle = (accessToken: string, handle: string, except?: string) =>
+  request<{ handle: string; available: boolean; reason: string | null }>('GET',
+    `/agents/handles/${encodeURIComponent(handle)}${except ? `?except=${encodeURIComponent(except)}` : ''}`,
+    accessToken);
+export const createAgent = (accessToken: string, input: AgentInput) =>
+  request<{ agent_id: string }>('POST', '/agents', accessToken, input);
+export const updateAgent = (accessToken: string, agentId: string, input: AgentInput) =>
+  request<{ agent_id: string }>('PATCH', `/agents/${encodeURIComponent(agentId)}`, accessToken, input);
+export const deactivateAgent = (accessToken: string, agentId: string) =>
+  request<{ agent_id: string; state: string }>('POST', `/agents/${encodeURIComponent(agentId)}/deactivate`, accessToken, {});
+export const setAgentMaintainers = (accessToken: string, agentId: string, actorIds: string[]) =>
+  request<{ agent_id: string; maintainers: string[] }>('PUT',
+    `/agents/${encodeURIComponent(agentId)}/maintainers`, accessToken, { actor_ids: actorIds });
+
 interface RawSession {
   needs_workspace?: boolean;
   identity?: { email: string; displayName: string };

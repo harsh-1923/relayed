@@ -301,12 +301,25 @@ export const OpFrame = z.object({
 });
 export type OpFrame = z.infer<typeof OpFrame>;
 
+/**
+ * What an agent was told, asked for by its id (WORKSPACE-AGENTS.md §4.5).
+ *
+ * An ONLINE-ONLY read: at 32 KB each, instructions would put a workspace's
+ * prompts into directory pages sized by the company (invariant 71), so the
+ * profile and the editor fetch one when they open.
+ */
+export const AgentDefinitionRequest = z.object({
+  agent_id: z.string().min(1),
+});
+export type AgentDefinitionRequest = z.infer<typeof AgentDefinitionRequest>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
   catchup: CatchupRequest, backfill: BackfillRequest,
   repair: RepairRequest, thread: ThreadRequest,
   directory: DirectoryRequest, op: OpFrame,
+  agent_definition: AgentDefinitionRequest,
 };
 
 // ─── Server → client ────────────────────────────────────────────────────────
@@ -576,6 +589,14 @@ export const ThreadOk = z.object({
 });
 export type ThreadOk = z.infer<typeof ThreadOk>;
 
+/** What every member's client holds about an agent. */
+export const AgentSummaryFrame = z.object({
+  description: z.string(),
+  config_rev: z.number().int().positive(),
+  toolkits: z.array(z.object({ toolkit: z.string(), effect: z.string() })),
+});
+export type AgentSummaryFrame = z.infer<typeof AgentSummaryFrame>;
+
 /**
  * One page of the directory, plus where the stream was when the page was taken.
  *
@@ -598,6 +619,13 @@ export const DirectoryOk = z.object({
     owner_actor_id: z.string().nullable(),
     state: z.string(),
     updated_at: z.number().int(),
+    /**
+     * An agent's summary — enough for autocomplete and a profile offline, and
+     * NOT its instructions, which are an `agent_definition` read
+     * (WORKSPACE-AGENTS.md §4.5). Optional: a person has none, and a server
+     * that predates agents sends none.
+     */
+    agent: AgentSummaryFrame.optional(),
   })),
   /** Pass back as `after_id` for the next page. Null on the last. */
   next_after_id: z.string().nullable(),
@@ -645,12 +673,46 @@ export const NackFrame = z.object({
 });
 export type NackFrame = z.infer<typeof NackFrame>;
 
+/**
+ * The answer to `agent_definition`. `found: false` for an agent that does not
+ * exist, is not an agent, or is in another workspace — one answer for all
+ * three, because the difference would tell a caller about a tenant they are not
+ * in. An answer rather than silence, because a person is waiting on this one.
+ */
+export const AgentDefinitionOk = z.object({
+  agent_id: z.string(),
+  found: z.boolean(),
+  definition: z.object({
+    description: z.string(),
+    instructions: z.string(),
+    model: z.string().nullable(),
+    thinking_level: z.string().nullable(),
+    config_rev: z.number().int().positive(),
+    created_by: z.string().nullable(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    maintainers: z.array(z.string()),
+    tools: z.array(z.object({ toolkit: z.string(), tool: z.string(), effect: z.string() })),
+    /** Spaces the agent is in that the reader is in too. */
+    space_ids: z.array(z.string()),
+    /**
+     * What the reader may do, decided by the server now. A creator's own grant
+     * on a new agent reaches their client only with the next `welcome`; asking
+     * here keeps Edit from being hidden from the person who just made it.
+     * Hiding is all a client may do with it (invariant 49).
+     */
+    you: z.object({ edit: z.boolean(), manage_maintainers: z.boolean(), deactivate: z.boolean() }),
+  }).optional(),
+});
+export type AgentDefinitionOk = z.infer<typeof AgentDefinitionOk>;
+
 /** Every frame this client accepts. */
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
   repair_ok: RepairOk, thread_ok: ThreadOk,
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
+  agent_definition_ok: AgentDefinitionOk,
 };
 
 /**

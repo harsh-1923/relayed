@@ -14,7 +14,7 @@
 // all. The moment it starts holding opinions it becomes a second place where
 // the frontier rule lives.
 import type { DatabaseSync } from 'node:sqlite';
-import type { Welcome, DirectoryOk } from '@relayed/protocol';
+import type { Welcome, DirectoryOk, AgentDefinitionOk } from '@relayed/protocol';
 import { Connection, type LinkState, type SocketLike } from './transport/connection.ts';
 import type { Gate } from './network.ts';
 import {
@@ -78,6 +78,13 @@ export interface Link {
    * sit anywhere in it, so there is no floor to page from.
    */
   thread(chatId: string, rootId: string): boolean;
+  /**
+   * What an agent was told, asked of the server now (WORKSPACE-AGENTS.md §4.5).
+   * ONLINE-ONLY: resolves null when the socket is not live or no answer comes
+   * in time, which a surface draws as "unreachable" rather than as an agent
+   * with no instructions.
+   */
+  definition(agentId: string): Promise<AgentDefinitionOk | null>;
   /** Reconnect now — waking from sleep, or a freshly refreshed token. */
   retryNow(): void;
   readonly state: LinkState;
@@ -163,6 +170,12 @@ export function createLink(deps: LinkDeps): Link {
    * empty page instead would look like a complete directory.
    */
   let awaitingPage: ((page: DirectoryOk | null) => void) | null = null;
+  /**
+   * Readers of an agent's definition, keyed by the agent id the answer echoes.
+   * A list per id, because the profile and the editor can ask about the same
+   * agent at once and the frame carries no request id to tell them apart.
+   */
+  const awaitingDefinition = new Map<string, ((answer: AgentDefinitionOk | null) => void)[]>();
 
   const connection = new Connection({
     url: deps.url,
@@ -411,6 +424,14 @@ export function createLink(deps: LinkDeps): Link {
       resolve?.(body as DirectoryOk);
       return;
     }
+
+    if (t === 'agent_definition_ok') {
+      const answer = body as AgentDefinitionOk;
+      const waiting = awaitingDefinition.get(answer.agent_id) ?? [];
+      awaitingDefinition.delete(answer.agent_id);
+      for (const resolve of waiting) resolve(answer);
+      return;
+    }
   }
 
   /**
@@ -618,11 +639,40 @@ export function createLink(deps: LinkDeps): Link {
     });
   }
 
+  function definition(agentId: string): Promise<AgentDefinitionOk | null> {
+    return new Promise(resolve => {
+      let settled = false;
+      const settle = (answer: AgentDefinitionOk | null): void => {
+        if (settled) return;
+        settled = true;
+        resolve(answer);
+      };
+      const waiting = awaitingDefinition.get(agentId) ?? [];
+      waiting.push(settle);
+      awaitingDefinition.set(agentId, waiting);
+      // Only the first reader asks; the rest ride on its answer.
+      if (waiting.length === 1 && !connection.send('agent_definition', { agent_id: agentId })) {
+        awaitingDefinition.delete(agentId);
+        for (const each of waiting) each(null);
+        return;
+      }
+      // A deadline, as every wait on the outside world has (invariant 64).
+      const timer = setTimeout(() => {
+        const left = (awaitingDefinition.get(agentId) ?? []).filter(each => each !== settle);
+        if (left.length > 0) awaitingDefinition.set(agentId, left);
+        else awaitingDefinition.delete(agentId);
+        settle(null);
+      }, 10_000);
+      timer.unref?.();
+    });
+  }
+
   return {
     start: () => { connection.start(); },
     drain,
     backfill,
     thread,
+    definition,
     stop: () => {
       // The pager may be waiting on a page that will never arrive now. Settling
       // it is the difference between a stopped link and a stopped link holding
@@ -636,6 +686,8 @@ export function createLink(deps: LinkDeps): Link {
       // as a monogram until they happened to change. The pager already has a
       // word for "no page is coming"; this is it.
       waiting?.(null);
+      for (const readers of awaitingDefinition.values()) for (const each of readers) each(null);
+      awaitingDefinition.clear();
       // Same rule for spans: one still open when the link stops is never
       // reported at all, so the trace would simply lack its last step rather
       // than showing a send that did not finish.

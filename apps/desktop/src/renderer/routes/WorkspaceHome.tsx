@@ -80,6 +80,10 @@ export function WorkspaceHome() {
             Members
           </Link>
           <span className="text-muted-foreground">·</span>
+          <Link to="settings/agents" className="text-primary underline-offset-4 hover:underline">
+            Agents
+          </Link>
+          <span className="text-muted-foreground">·</span>
           <Link to="settings/profile" className="text-primary underline-offset-4 hover:underline">
             Your profile
           </Link>

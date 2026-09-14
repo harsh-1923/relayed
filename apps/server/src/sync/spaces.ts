@@ -286,7 +286,7 @@ async function membersOf(
  * member's copy of the member list permanently wrong, with nothing to repair it
  * short of a full resync.
  */
-async function addMember(
+export async function addMember(
   trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
 ): Promise<AppendedEvent> {
   await trx.insertInto('memberships')

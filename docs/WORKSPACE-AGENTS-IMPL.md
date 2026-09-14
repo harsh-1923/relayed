@@ -85,7 +85,7 @@ Each row is folded into the proposal in the commit that builds it.
 |---|---|---|---|---|
 | D1 | ✅ *Folded.* **A client op that carries an audience has the field dropped, not refused.** The op schema never declares one, a protocol test asserts an op carrying `visible_to` or `audience` parses with them dropped, and the boundary rule `sync/no-client-audience` keeps `writeMessage` out of `socket.ts` | The proposal said such a send "is refused". But incoming frames are parsed permissively and unknown fields are dropped — an unknown field is never an error (invariant 66, `DESIGN.md` §9.10). Refusing one would be the only `.strict()` parse in the protocol. *Built differently from first planned:* a line-based rule over `frames.ts` could not tell the op schema from the row schemas, which do carry `visible_to` | [Who may write one (§8.8)](WORKSPACE-AGENTS.md#88-who-may-write-one-and-what-it-may-contain) | 1 |
 | D2 | **Invoking by DM waits for DMs to exist.** v1 invokes on mentions in channels | The server creates channels only. `spaces.ts` names `createDm` and `createRoom` as Phase 5 siblings | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
-| D3 | **Creating, editing and deactivating agents are HTTPS commands, not outbox ops** | They need a live handle check, happen rarely, and nobody creates an agent offline. The same shape invitations use (`apps/server/src/auth/invitations.ts`) | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
+| D3 | ✅ *Folded.* **Creating, editing and deactivating agents are HTTPS commands, not outbox ops** | They need a live handle check, happen rarely, and nobody creates an agent offline. The same shape invitations use (`apps/server/src/auth/invitations.ts`) | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
 | D4 | **The grant is an HS256 JWT signed with `AGENT_GRANT_SECRET`,** audience `relayed-agent-tools`, through `jose` | Only the server signs and verifies it, so a shared secret suffices. `jose` is already the session-token library (`apps/server/src/auth/tokens.ts`). A separate secret and audience keep a session token and a grant from standing in for each other, as the proposal requires | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 3 |
 | D5 | **The dispatcher starts only when the runtime is configured** (`AGENT_RUNTIME_URL`, `AGENT_S2S_KEY`, `AGENT_GRANT_SECRET`), and logs one line naming what is missing | The same behaviour `pnpm dev` already has for `apps/agent` (`AGENT-RUNTIME.md`, local development §11). A server without a runtime must still boot | [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | 3 |
 | D6 | **The mention parser moves to `apps/server/src/sync/mentions.ts`**, used by both the counters and `invocationsFor` | The proposal requires "one parser, the one the counters use". Today it is a private helper (`mentionPattern`) inside `feed.ts` | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | 3 |
@@ -93,12 +93,16 @@ Each row is folded into the proposal in the commit that builds it.
 | D8 | **Webhook delivery ids are deduplicated in a table** (`composio_webhook_deliveries`, swept after 24 h) | The proposal says "dedupes on `webhook-id`" without saying where. There is no Redis on the write path, and a table keeps the dedupe durable across a restart | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | 4 |
 | D9 | **The sign-in loopback listener is generalised** to take a path and parameter names | `listenForCallback` (`apps/desktop/src/sync/auth/loopback.ts`) is built for `/auth/callback?code&state`. The connect flow returns `/connected?session_uri&state`. One listener with one set of tests beats a copy | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) | 4 |
 | D10 | **Toolkits are enabled by a script, not a screen** (`apps/server/scripts/enable-toolkit.ts`) | The proposal makes enabling "our decision". Nothing in v1 needs an admin UI for it, and a script leaves a reviewable record | [The catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) | 4 |
-| D11 | **Step 2's editor ships without its Tools section**, which arrives in step 4 | The picker lists the catalogue, which step 4 creates. An agent with no tools is valid, and it is exactly what step 3 runs | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 4 |
-| D12 | **Agent summaries get their own replica table** (`agent_summaries`), not columns on `actors` | Keeps the actor row identical for people and agents on the client, as it is on the server (`DESIGN.md`, the actor model §6.3) | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
+| D11 | ✅ *Folded.* **Step 2's editor ships without its Tools section**, which arrives in step 4 | The picker lists the catalogue, which step 4 creates. An agent with no tools is valid, and it is exactly what step 3 runs | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 4 |
+| D12 | ✅ *Folded.* **Agent summaries get their own replica table** (`agent_summaries`), not columns on `actors` | Keeps the actor row identical for people and agents on the client, as it is on the server (`DESIGN.md`, the actor model §6.3) | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
 | D13 | **`agent_activity` reaches the renderer through the bridge's push channel**, as `agent:stream` already does (`apps/desktop/src/renderer/lib/agent-stream.ts`) | It is ephemeral. Writing it to the replica would make every client store and invalidate a value that is stale within a minute | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | 3 |
 | D14 | ✅ *Folded.* **Every existing `appendEvent` call gains an explicit `{ kind: 'stream' }`** — eight today: `ops.ts` (`message.created`, `message.deleted`), `directory.ts` (`recordActor`), and five in `spaces.ts` (`space.created`, `chat.created` and the founder's `space.member_added` when a channel is created; `space.member_added` and `space.member_removed` afterwards) | The proposal makes the audience a required argument. That is only a guard if every call is edited on purpose, not defaulted | [What happens to `ord` (§8.5)](WORKSPACE-AGENTS.md#85-what-happens-to-ord-and-why-an-empty-array-must-not-mean-everyone) | 1 |
 | D15 | ✅ *Folded.* **Access cards are public; only their actor acts on them.** Each client draws the card for its own person from `actor_id`; the card's coarse `state` lives on the message; the server refuses anyone but the request's actor. Restricted messages stay built as a **dormant capability** | Hidden from the room, a card leaves everyone else seeing a mention answered by nothing — the room has to see that the agent is waiting, and on whom. Raised by the dev after step 1 was built | [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), [§8.1](WORKSPACE-AGENTS.md#81-why-this-exists-and-why-nothing-in-v1-uses-it), invariant 88 | 1, 5 |
 | D16 | ✅ *Folded.* **`message.updated`, a new chat event: the server replacing a message's complete content**, not marked edited. `message.edited` stays reserved for a person's own edit | A card changing state must reach everyone, and nobody else holds the actor's connections to derive it from. A person's edit is a client op with LWW and an "edited" mark, which a card changing state is not | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | 1 |
+| D17 | ✅ *Folded.* **The model is named as `provider/model` text until step 3**, validated for shape only; blank is the runtime's fallback | The proposal asks for a picker over the runtime's provider table, and the server does not know that table until the dispatcher is configured (D5). A wrong name fails the run loudly rather than the save | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2, 3 |
+| D18 | ✅ *Folded.* **Step 2 ships without avatar upload, Try it, and Add agent from a space's member list.** An agent gets a monogram; spaces are chosen when it is created | No file picker exists in the renderer yet; Try it opens a DM, which waits for DMs (D2); a space member list with Add does not exist yet for people either | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
+| D19 | ✅ *Folded.* **Agent summaries ride the existing `actors.list` read**, joined from `agent_summaries`, rather than a read and topic of their own | A summary only ever changes with an actor event, so the `actors` topic already wakes it; autocomplete and the agents list need both in one list | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
+| D20 | ✅ *Folded.* **`agent_definition_ok` carries `you` — what the reader may do — decided by the server** | A creator's own admin row reaches their client only with the next `welcome`, so a client-side `can()` hid Edit from the person who had just created the agent. Hiding is all a client may do with it (invariant 49) | [§4.5](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
 
 ---
 
@@ -565,6 +569,32 @@ added**: it is proposed to the dev before it goes into
 
 **First:** nothing. This step can run in parallel with step 1.
 
+**Status: built** — schema, authorization (package, server and both spike
+evaluators), server, protocol, replica, commands and the three screens, with
+tests. **Not yet done by hand.** What changed from the tables below while
+building it:
+
+- **A bug fixed on the way.** The client's `actor.created` effect wrote a NULL
+  owner, which the replica's CHECK refuses for an agent: an agent created while
+  a client was connected would never have reached that client. The directory
+  event now carries `owner_actor_id` (server `ActorChanged`, client effect).
+- **Schema:** `membership_agent_role` (an agent's rows are `admin`, nothing
+  else), `agent_description_size` (200 characters) and `agent_config_rev` beside
+  the constraints §4.3 names.
+- **Server:** also `GET /agents/handles/:handle` for the editor's live check;
+  `recordActor` now returns its event so the routes deliver it after commit;
+  `agentPlacement` in `sync/placement.ts`; the summary is read by one module
+  (`agents/summary.ts`) for both the event and the directory page.
+  `setMaintainers` refuses an empty list and anyone but an active person in the
+  workspace. Deactivation keeps the agent's memberships.
+- **Protocol:** `agent_definition_ok` answers `found: false` rather than silence,
+  and carries `you` (D20).
+- **Client:** no `agents` read or topic of its own (D19); refusals come back as
+  answers with `field` and `reason` rather than thrown errors, so the editor puts
+  them beside the field; routes are `…/agents`, `…/agents/new`, `…/agents/:id`
+  (the profile) and `…/agents/:id/edit`. No avatar upload, Try it or Add agent
+  from a space (D18); the model is a text field (D17).
+
 ### Schema
 
 **New** `apps/server/src/db/migrations/010_agents.sql`:
@@ -619,6 +649,11 @@ added**: it is proposed to the dev before it goes into
 | Test | File |
 |---|---|
 | Every new CHECK, one test each; `membership_scope` admits `agent` and nothing else new | **new** `apps/server/src/db/agents-schema.test.ts` |
+| The agent matrix in the shipped evaluator — maintainer, workspace admin, owner, member, outsider, an agent row with no workspace row — and agents in the lagging-replica property test | `packages/authz/src/can.test.ts` |
+| The shipped evaluator agrees with the spike exhaustively, agents included, with a maintainer from another workspace as the negative control; the spike's tuple evaluator was checked to fail with agent containment removed | `apps/server/src/authz/can.test.ts`, `spikes/authz-tests.mjs` |
+| Create writes the five things; a real failure injected after the directory event (a trigger on the last insert) leaves none of them; spaces need `add_member`; edit, deactivate and maintainers by who may; `config_rev` moves for instructions and model only; the definition's `you` and space intersection | **new** `apps/server/src/agents/definitions.test.ts` |
+| Routes: 401, 201 with delivery, 409 `handle_taken`, 400 naming the field, 403, 404, 409 `agent_deactivated` | **new** `apps/server/src/agents/routes.test.ts` |
+| An agent created live applies with its owner and summary; a page stores the summary; the actor read carries it; `definition()` shares one frame between readers and settles null on stop | `apps/desktop/src/sync/catchup.test.ts`, `storage.test.ts`, `trace.test.ts` |
 | The `agent` scope over the full actor × role × action matrix, including workspace admin against agent admin | `packages/authz/src/can.test.ts` |
 | A failure after the actor insert leaves no actor, no `agents` row and no directory event | **new** `apps/server/src/agents/definitions.test.ts` |
 | An agent cannot take a handle a person holds, nor the reverse | `definitions.test.ts` |

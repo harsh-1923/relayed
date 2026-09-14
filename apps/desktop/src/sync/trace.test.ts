@@ -745,3 +745,26 @@ test('AN EVENT FOR THE OLD WORKSPACE IS NOT WRITTEN INTO THE NEW REPLICA', async
   before.close();
   after.close();
 });
+
+// ─── an agent's definition, online only ─────────────────────────────────────
+
+test('definition(): two readers of one agent send ONE frame and share its answer', async () => {
+  const h = await harness();
+  const first = h.link.definition('act_triage');
+  const second = h.link.definition('act_triage');
+  assert.equal(h.socket.frames.filter(f => f.t === 'agent_definition').length, 1);
+
+  const answer = { agent_id: 'act_triage', found: false };
+  h.socket.deliver('agent_definition_ok', answer);
+  assert.deepEqual(await first, answer);
+  assert.deepEqual(await second, answer);
+  h.stop();
+});
+
+test('definition(): stopping the link settles a waiting reader with null — unreachable, not not-found', async () => {
+  const h = await harness();
+  const waiting = h.link.definition('act_triage');
+  h.link.stop();
+  assert.equal(await waiting, null);
+  h.db.close();
+});

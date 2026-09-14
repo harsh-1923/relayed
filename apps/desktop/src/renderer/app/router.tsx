@@ -22,6 +22,9 @@ import { Space } from '@/routes/Space';
 import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
+import { SettingsAgents } from '@/routes/SettingsAgents';
+import { SettingsAgentEditor } from '@/routes/SettingsAgentEditor';
+import { AgentProfile } from '@/features/agents/AgentProfile';
 import { Account } from '@/routes/Account';
 import { AccountSettings } from '@/routes/AccountSettings';
 import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
@@ -78,6 +81,10 @@ export function Router() {
             <Route index element={<Navigate to="members" replace />} />
             <Route path="members" element={<SettingsMembers />} />
             <Route path="profile" element={<SettingsProfile />} />
+            <Route path="agents" element={<SettingsAgents />} />
+            <Route path="agents/new" element={<SettingsAgentEditor />} />
+            <Route path="agents/:agentId" element={<AgentProfile />} />
+            <Route path="agents/:agentId/edit" element={<SettingsAgentEditor />} />
           </Route>
         </Route>
       </Route>

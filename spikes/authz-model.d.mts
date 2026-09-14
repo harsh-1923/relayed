@@ -3,18 +3,20 @@
 //
 // Hand-written and deliberately partial: the spike is a JavaScript model, not a
 // library, and only the surface a test needs is declared.
-export type Scope = 'workspace' | 'space' | 'chat';
+export type Scope = 'workspace' | 'space' | 'chat' | 'agent';
 export type Role = 'owner' | 'admin' | 'member';
 
 export declare class World {
   workspaces: Map<string, object>;
   spaces: Map<string, { workspaceId: string; visibility: string }>;
   chats: Map<string, { spaceId: string; kind: string }>;
+  agents: Map<string, { workspaceId: string }>;
   memberships: { scopeType: Scope; scopeId: string; actorId: string; role: Role; leftAt: number | null }[];
 
   workspace(id: string): string;
   space(id: string, workspaceId: string, visibility?: string): string;
   chat(id: string, spaceId: string, kind?: string): string;
+  agent(id: string, workspaceId: string): string;
   join(scopeType: Scope, scopeId: string, actorId: string, role?: Role): this;
   leave(scopeType: Scope, scopeId: string, actorId: string, at?: number): this;
   promote(scopeType: Scope, scopeId: string, actorId: string, role: Role): { changed: boolean };

@@ -78,7 +78,7 @@ export async function seed(db: Kysely<DB>, size: WorldSize): Promise<World> {
       }).execute();
       await recordActor(trx, 'actor.created', {
         id, workspaceId, type: 'human', handle, displayName,
-        avatarUrl: null, state: 'active',
+        avatarUrl: null, ownerActorId: null, state: 'active',
       });
     });
   }

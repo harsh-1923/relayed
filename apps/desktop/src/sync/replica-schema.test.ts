@@ -97,8 +97,8 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 10,
-      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages'] });
+    { from: 1, to: 11,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])
@@ -364,7 +364,7 @@ test('a replica that reports version 7 without a drafts table gets one, and a co
     const stale = openDatabase(join(dir, 'stale.db'));
     migrate(stale, workspaceMigrations.filter(m => m.version <= 6));
     stale.exec('ALTER TABLE messages ADD COLUMN parts TEXT; PRAGMA user_version = 7');
-    assert.deepEqual(migrate(stale, workspaceMigrations).applied, ['8:drafts-repair', '9:gap-repair', '10:restricted-messages']);
+    assert.deepEqual(migrate(stale, workspaceMigrations).applied, ['8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries']);
     stale.prepare("INSERT INTO drafts (chat_id, body, revision, updated_at) VALUES ('cht_1', 'hi', 1, 0)").run();
     stale.close();
 

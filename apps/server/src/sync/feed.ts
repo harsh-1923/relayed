@@ -11,6 +11,8 @@ import { type Stream } from './events.ts';
 import { spaceMembers } from './spaces.ts';
 import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
+import { agentSummaries } from '../agents/summary.ts';
+import type { AgentSummary } from './events.ts';
 
 /**
  * How far behind a client may be before catch-up becomes a gap marker.
@@ -736,6 +738,8 @@ export interface DirectoryRow {
   ownerActorId: string | null;
   state: string;
   updatedAt: number;
+  /** An agent's summary (WORKSPACE-AGENTS.md §4.5); absent for a person. */
+  agent?: AgentSummary;
 }
 
 export interface DirectoryPage {
@@ -778,13 +782,20 @@ export async function directoryPage(
   if (afterId !== null) query = query.where('id', '>', afterId);
 
   const rows = await query.execute();
+  // Only the page's agents are looked up, in two statements whatever the page
+  // holds; a page of people costs none.
+  const summaries = await agentSummaries(db, rows.filter(r => r.type === 'agent').map(r => r.id));
   return {
-    rows: rows.map(row => ({
-      id: row.id, type: row.type, handle: row.handle,
-      displayName: row.display_name, avatarUrl: row.avatar_url,
-      ownerActorId: row.owner_actor_id, state: row.state,
-      updatedAt: new Date(row.updated_at as unknown as string).getTime(),
-    })),
+    rows: rows.map(row => {
+      const agent = summaries.get(row.id);
+      return {
+        id: row.id, type: row.type, handle: row.handle,
+        displayName: row.display_name, avatarUrl: row.avatar_url,
+        ownerActorId: row.owner_actor_id, state: row.state,
+        updatedAt: new Date(row.updated_at as unknown as string).getTime(),
+        ...(agent ? { agent } : {}),
+      };
+    }),
     // Derived from the page being short rather than asked for, so a client
     // cannot be told to keep paging into nothing.
     nextAfterId: rows.length === limit ? (rows.at(-1)?.id ?? null) : null,

@@ -10,29 +10,12 @@
 // to WorkOS and never written down.
 import type { FastifyInstance } from 'fastify';
 import { db } from '../db/client.ts';
-import { verifyAccessToken } from './tokens.ts';
+import { caller, type Caller } from './caller.ts';
 import { canDb, Forbidden } from '../authz/can.ts';
 import { workspace } from '@relayed/authz';
 import {
   createInvitation, listInvitations, revokeInvitation, WorkOSError,
 } from '../workos/management.ts';
-
-interface Caller { actorId: string; workspaceId: string; orgId: string; workosUserId: string | null }
-
-/** Resolves our own bearer token to the actor making the request. */
-async function caller(authorization: string | undefined): Promise<Caller | null> {
-  const token = (authorization ?? '').startsWith('Bearer ') ? (authorization ?? '').slice(7) : '';
-  if (!token) return null;
-  try {
-    const claims = await verifyAccessToken(token);
-    const actor = await db.selectFrom('actors')
-      .select(['identity_id', 'state'])
-      .where('id', '=', claims.actorId).executeTakeFirst();
-    if (!actor || actor.state !== 'active') return null;
-    return { actorId: claims.actorId, workspaceId: claims.workspaceId,
-             orgId: claims.orgId, workosUserId: actor.identity_id };
-  } catch { return null; }
-}
 
 /** The WorkOS organization an invitation is addressed to. */
 async function workosOrgFor(workspaceId: string): Promise<string | null> {

@@ -410,6 +410,23 @@ test('a directory sync keeps an avatar already fetched, and drops it when the ur
   assert.equal(storage.actors()[0]?.avatarBlob, null, 'a changed url must drop the pointer');
 });
 
+test('the actor read carries an agent\'s summary, and null for a person', () => {
+  // One read for autocomplete and the agents list: the summary only ever
+  // changes with an actor event, so the `actors` topic already wakes it.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  storage.syncActors([dirRow({ id: 'act_a' }),
+                      dirRow({ id: 'act_triage', handle: 'triage', type: 'agent', ownerActorId: 'act_a' })]);
+  storage.workspace.prepare(`INSERT INTO agent_summaries (actor_id, description, config_rev, toolkits)
+                                 VALUES ('act_triage', 'Files bugs', 4, '[{"toolkit":"linear","effect":"write"},{"bad":1}]')`).run();
+
+  const byId = new Map(storage.actors().map(a => [a.id, a]));
+  assert.equal(byId.get('act_a')?.agent, null);
+  assert.deepEqual(byId.get('act_triage')?.agent,
+    { description: 'Files bugs', configRev: 4, toolkits: [{ toolkit: 'linear', effect: 'write' }] },
+    'a malformed toolkit entry is dropped rather than breaking the read');
+});
+
 test('a directory sync removes actors the snapshot no longer contains', () => {
   const dir = root();
   const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);

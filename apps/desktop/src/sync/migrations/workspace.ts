@@ -548,4 +548,26 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE messages ADD COLUMN visible_to TEXT;
     `,
   },
+  {
+    version: 11,
+    name: 'agent-summaries',
+    up: `
+      -- What every member holds about a workspace agent (WORKSPACE-AGENTS.md
+      -- §4.5): enough for autocomplete and a profile, offline. NOT the
+      -- instructions, which are an online read.
+      --
+      -- A table of its own rather than columns on \`actors\`, so the actor row
+      -- stays identical for people and agents, as it is on the server (the
+      -- plan's D12). No foreign key: a summary can arrive in the same page as
+      -- its actor, and the directory never deletes an actor anyway.
+      CREATE TABLE agent_summaries (
+        actor_id     TEXT PRIMARY KEY,
+        description  TEXT NOT NULL DEFAULT '',
+        config_rev   INTEGER NOT NULL,
+        -- JSON: [{ "toolkit": "linear", "effect": "write" }, …]
+        toolkits     TEXT NOT NULL DEFAULT '[]',
+        CHECK (config_rev >= 1)
+      );
+    `,
+  },
 ];

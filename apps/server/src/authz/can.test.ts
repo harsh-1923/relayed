@@ -13,6 +13,7 @@ interface Fixture {
   /** Spaces whose policy is `open` — the ones anyone in the workspace may join. */
   openSpaces?: string[];
   chats: Record<string, { space: string; private: boolean }>;
+  agents?: Record<string, string>;                   // agent -> workspace
   members: [Scope, string, string, Role][];          // scope, id, actor, role
   left?: [Scope, string, string][];
 }
@@ -29,11 +30,12 @@ function build(f: Fixture) {
     w.space(s, ws, open.has(s) ? 'public' : 'private');
   }
   for (const [c, meta] of Object.entries(f.chats)) w.chat(c, meta.space, meta.private ? 'private' : 'public');
+  for (const [a, ws] of Object.entries(f.agents ?? {})) w.agent(a, ws);
   for (const [scope, id, actor, role] of f.members) w.join(scope, id, actor, role);
   for (const [scope, id, actor] of f.left ?? []) w.leave(scope, id, actor);
 
   const placement: Placement = {
-    workspaceOf: f.spaces,
+    workspaceOf: { ...f.spaces, ...f.agents },
     spaceOf: Object.fromEntries(Object.entries(f.chats).map(([c, m]) => [c, m.space])),
     privateChats: new Set(Object.entries(f.chats).filter(([, m]) => m.private).map(([c]) => c)),
     openSpaces: open,
@@ -49,8 +51,9 @@ function build(f: Fixture) {
 
 /** The same shapes the spike uses, including the ones that should never occur. */
 const FIXTURE: Fixture = {
-  workspaces: ['W'],
+  workspaces: ['W', 'W2'],
   spaces: { S_pub: 'W', S_priv: 'W' },
+  agents: { A: 'W' },
   openSpaces: ['S_pub'],
   chats: {
     C_pub:  { space: 'S_pub',  private: false },
@@ -75,12 +78,19 @@ const FIXTURE: Fixture = {
     ['workspace', 'W', 'a_left_ws', 'admin'],
     ['space', 'S_priv', 'a_left_ws', 'admin'],
     ['chat', 'C_priv', 'a_left_ws', 'member'],
+    ['agent', 'A', 'a_left_ws', 'admin'],
+    // Agents (WORKSPACE-AGENTS.md §4.4): a maintainer, and a maintainer row held
+    // by an admin of ANOTHER workspace — only containment refuses the second.
+    ['workspace', 'W', 'a_maintainer', 'member'],
+    ['agent', 'A', 'a_maintainer', 'admin'],
+    ['workspace', 'W2', 'a_foreign', 'admin'],
+    ['agent', 'A', 'a_foreign', 'admin'],
   ],
   left: [['workspace', 'W', 'a_ghost'], ['workspace', 'W', 'a_left_ws']],
 };
 
 const ACTORS = ['a_owner', 'a_admin', 'a_member', 'a_space_admin',
-                'a_outsider', 'a_ghost', 'a_orphan', 'a_left_ws'];
+                'a_outsider', 'a_ghost', 'a_orphan', 'a_left_ws', 'a_maintainer', 'a_foreign'];
 
 test('the shipped evaluator agrees with the validated model, exhaustively', () => {
   const { world, placement, grantsFor } = build(FIXTURE);
@@ -93,6 +103,7 @@ test('the shipped evaluator agrees with the validated model, exhaustively', () =
       ...FIXTURE.workspaces.map(w => ['workspace', w] as [Scope, string]),
       ...Object.keys(FIXTURE.spaces).map(s => ['space', s] as [Scope, string]),
       ...Object.keys(FIXTURE.chats).map(c => ['chat', c] as [Scope, string]),
+      ...Object.keys(FIXTURE.agents ?? {}).map(a => ['agent', a] as [Scope, string]),
     ];
     for (const [scope, id] of targets) {
       for (const action of ACTIONS[scope]) {
@@ -114,7 +125,8 @@ test('the shipped evaluator agrees with the validated model, exhaustively', () =
   assert.equal(checks, ACTORS.length * (
     ACTIONS.workspace.length * FIXTURE.workspaces.length
     + ACTIONS.space.length * Object.keys(FIXTURE.spaces).length
-    + ACTIONS.chat.length * Object.keys(FIXTURE.chats).length));
+    + ACTIONS.chat.length * Object.keys(FIXTURE.chats).length
+    + ACTIONS.agent.length * Object.keys(FIXTURE.agents ?? {}).length));
   assert.ok(allowed > 20 && allowed < checks - 20, `${allowed}/${checks} allowed — suspiciously uniform`);
 });
 

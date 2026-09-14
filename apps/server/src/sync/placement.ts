@@ -64,6 +64,20 @@ export async function spacePlacement(db: Kysely<DB>, spaceId: string): Promise<P
 }
 
 /**
+ * Load containment for one agent: the workspace it sits in, directly.
+ *
+ * Only an actor whose type is `agent`. A person's id resolves to nothing, so an
+ * agent action asked about a person is denied rather than evaluated against
+ * whatever workspace that person happens to be in.
+ */
+export async function agentPlacement(db: Kysely<DB>, agentId: string): Promise<Placement> {
+  const row = await db.selectFrom('actors').select(['id', 'workspace_id'])
+    .where('id', '=', agentId).where('type', '=', 'agent')
+    .executeTakeFirst();
+  return row ? { workspaceOf: { [row.id]: row.workspace_id } } : {};
+}
+
+/**
  * Placement for every chat an actor could reach in one workspace.
  *
  * `hello` asks about ~150 chats at once (DESIGN.md §9.1), and asking per chat

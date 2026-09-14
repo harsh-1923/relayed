@@ -52,7 +52,8 @@ export interface ActorsTable {
  * makes the evaluator swappable without touching the data.
  */
 export interface MembershipsTable {
-  scope_type: 'workspace' | 'space' | 'chat';
+  /** `agent` rows are an agent's maintainers, always `admin` (010_agents.sql). */
+  scope_type: 'workspace' | 'space' | 'chat' | 'agent';
   scope_id: string;
   actor_id: string;
   role: 'owner' | 'admin' | 'member';
@@ -165,6 +166,31 @@ export interface MessagesTable {
   visible_to: string[] | null;
 }
 
+/** An agent's definition, beside its actor row (WORKSPACE-AGENTS.md §4.3). */
+export interface AgentsTable {
+  actor_id: string;
+  workspace_id: string;
+  description: Generated<string>;
+  /** Markdown, at most 32 KB. Readable by every member of the workspace. */
+  instructions: string;
+  /** A runtime provider-table key; NULL is the runtime's fallback. */
+  model: string | null;
+  thinking_level: string | null;
+  /** Bumped on every change to instructions, model or tools. */
+  config_rev: Generated<number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** One tool an agent may call. Never a wildcard (WORKSPACE-AGENTS.md §4.3). */
+export interface AgentToolsTable {
+  agent_actor_id: string;
+  toolkit: string;
+  tool: string;
+  effect: 'read' | 'write' | 'destructive';
+  approval: Generated<'never' | 'always'>;
+}
+
 /**
  * The idempotency ledger (DESIGN.md §8.4). A retried op returns the SAME ack
  * rather than doing the work twice — the fix for the most common offline-sync
@@ -238,4 +264,6 @@ export interface DB {
   ops: OpsTable;
   chat_read_state: ChatReadStateTable;
   sync_events: SyncEventsTable;
+  agents: AgentsTable;
+  agent_tools: AgentToolsTable;
 }

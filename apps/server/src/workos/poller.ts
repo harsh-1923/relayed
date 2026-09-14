@@ -140,7 +140,7 @@ async function deactivate(workosUserId: string, workosOrgId: string | null): Pro
       .set({ state: 'deactivated', updated_at: sql`now()` })
       .where('id', 'in', ids)
       .returning(['id', 'workspace_id', 'type', 'handle', 'display_name',
-                  'avatar_url', 'state'])
+                  'avatar_url', 'owner_actor_id', 'state'])
       .execute();
 
     // One directory event per workspace this identity had an actor in. A single
@@ -155,7 +155,7 @@ async function deactivate(workosUserId: string, workosOrgId: string | null): Pro
       await recordActor(tx, 'actor.updated', {
         id: actor.id, workspaceId: actor.workspace_id, type: actor.type,
         handle: actor.handle, displayName: actor.display_name,
-        avatarUrl: actor.avatar_url, state: actor.state,
+        avatarUrl: actor.avatar_url, ownerActorId: actor.owner_actor_id, state: actor.state,
       });
     }
     // Membership is a row, so removal is a tombstone on that row (AUTHZ.md §4).

@@ -419,8 +419,11 @@ unique-email constraint belongs anywhere near the actors table.
 
 ```
 LAYER 1 — IDENTITY                                          (WorkOS owns)
-   humans → WorkOS User            (email, SSO, MFA, SCIM)
-   agents → WorkOS M2M Application (client credentials, JWT via JWKS)
+   humans          → WorkOS User            (email, SSO, MFA, SCIM)
+   external agents → WorkOS M2M Application (client credentials, JWT via JWKS)
+   workspace agents → none: identity_kind = 'system', identity_id NULL
+                     (they run inside our service and present no credential;
+                      WORKSPACE-AGENTS.md §4.2)
 
 LAYER 2 — ACTOR                                             (we own)
    actors(id, org_id, workspace_id, type, handle, display_name, ...

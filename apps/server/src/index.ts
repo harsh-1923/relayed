@@ -10,6 +10,7 @@ import { startPoller } from './workos/poller.ts';
 import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 import { startRetention } from './sync/retention.ts';
 import { devRoutes } from './web/dev.ts';
+import { agentRoutes } from './agents/routes.ts';
 
 useOtlpIfConfigured('server');
 
@@ -56,6 +57,10 @@ const sync = attachSyncSocket(app.server, {
   onEvent: (name, detail) => { app.log.debug({ ...detail }, name); },
 });
 app.log.info({ path: SYNC_PATH }, 'sync socket attached');
+
+// After the socket, because agent writes deliver their directory events through
+// it the moment they commit.
+await app.register(agentRoutes({ db, deliver: sync.deliver }));
 
 // Development only, and said so in the log: a route that writes messages
 // nobody authenticated is fine on a laptop and nowhere else.

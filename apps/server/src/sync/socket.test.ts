@@ -17,6 +17,7 @@ import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
 import { createChannel, addToSpace } from './spaces.ts';
 import { send } from './ops.ts';
+import { createAgent } from '../agents/definitions.ts';
 import type { SessionClaims } from '../auth/tokens.ts';
 import { setSink, type FinishedSpan } from '@relayed/telemetry';
 
@@ -935,6 +936,65 @@ test('head_rev rides along, so a completed snapshot knows its cursor', opts, asy
   assert.equal(page.complete, true);
   assert.equal(typeof page.head_rev, 'number');
   peer.socket.close();
+});
+
+// ─── an agent's definition, online only ─────────────────────────────────────
+
+test('AGENT_DEFINITION returns the instructions to a member, and found:false to anyone else',
+  opts, async () => {
+  // Online-only (WORKSPACE-AGENTS.md §4.5), and answered as the CONNECTION'S
+  // actor. A reader in another workspace gets the same answer as for an id
+  // that does not exist.
+  const { agentId } = await createAgent(db, {
+    workspaceId: wsp, createdBy: me, name: 'Triage', handle: `t-${ulid('h').slice(-8).toLowerCase()}`,
+    description: 'Files bugs', instructions: 'File every bug in Linear.', model: null,
+  });
+
+  const peer = await connect();
+  peer.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await peer.next('welcome');
+  peer.send('agent_definition', { agent_id: agentId });
+  const mine = await peer.next('agent_definition_ok') as {
+    found: boolean; definition?: { instructions: string; you: Record<string, boolean> };
+  };
+  assert.equal(mine.found, true);
+  assert.equal(mine.definition?.instructions, 'File every bug in Linear.', 'no secret prompts');
+  assert.deepEqual(mine.definition?.you, { edit: false, manage_maintainers: false, deactivate: false });
+  peer.socket.close();
+
+  // A fresh peer: `next` reads the first matching frame, not the newest.
+  const asker = await connect();
+  asker.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await asker.next('welcome');
+  const nobody = ulid('act');
+  asker.send('agent_definition', { agent_id: nobody });
+  assert.deepEqual(await asker.next('agent_definition_ok'), { agent_id: nobody, found: false });
+  asker.socket.close();
+
+  const otherOrg = ulid('org');
+  const otherWsp = ulid('wsp');
+  const stranger = ulid('act');
+  await db.insertInto('organizations').values({ id: otherOrg, workos_org_id: `test_${otherOrg}`, name: 'Other' }).execute();
+  await db.insertInto('workspaces').values({ id: otherWsp, org_id: otherOrg, name: 'Other',
+    slug: `o-${otherWsp.slice(-6).toLowerCase()}` }).execute();
+  await db.insertInto('actors').values({
+    id: stranger, org_id: otherOrg, workspace_id: otherWsp, type: 'human',
+    handle: 'stranger', display_name: 'Stranger', avatar_url: null,
+    identity_kind: 'workos_user', identity_id: `wu_${stranger}`,
+    owner_actor_id: null, provisioned_by: 'api', state: 'active' }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: otherWsp, actor_id: stranger, role: 'admin' }).execute();
+  try {
+    const theirs = await connect();
+    theirs.send('hello', { protocol: PROTOCOL, access_token: `good:${stranger}` });
+    await theirs.next('welcome');
+    theirs.send('agent_definition', { agent_id: agentId });
+    assert.deepEqual(await theirs.next('agent_definition_ok'), { agent_id: agentId, found: false },
+      'an admin of another workspace reads nothing, and learns nothing from the answer');
+    theirs.socket.close();
+  } finally {
+    await db.deleteFrom('memberships').where('scope_id', '=', otherWsp).execute();
+    await db.deleteFrom('organizations').where('id', '=', otherOrg).execute();
+  }
 });
 
 // ─── writes ─────────────────────────────────────────────────────────────────

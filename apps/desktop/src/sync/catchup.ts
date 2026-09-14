@@ -16,6 +16,7 @@ import {
   applyBatch, behind, frontierOf, type ApplyDeps, type Stream, type Envelope,
 } from './apply.ts';
 import { observe } from './observe.ts';
+import { storeAgentSummary, type AgentSummary } from './effects.ts';
 
 /**
  * One catch-up request in flight per stream, and one queued behind it.
@@ -501,6 +502,8 @@ export interface DirectoryRow {
   owner_actor_id: string | null;
   state: string;
   updated_at: number;
+  /** An agent's summary; absent for a person and from an older server. */
+  agent?: AgentSummary;
 }
 
 /**
@@ -542,6 +545,7 @@ export function applyDirectoryPage(
     for (const row of rows) {
       upsert.run(row.id, workspaceId, row.type, row.handle, row.display_name,
                  row.avatar_url, row.owner_actor_id, row.state, row.updated_at);
+      if (row.agent) storeAgentSummary(db, row.id, row.agent);
     }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }

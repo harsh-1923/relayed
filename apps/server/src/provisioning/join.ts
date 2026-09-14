@@ -145,7 +145,7 @@ export async function joinWorkspace(
     // stream (docs/SYNC-FLOWS.md §9.1).
     await recordActor(tx, 'actor.created', {
       id: actorId, workspaceId, type: 'human', handle,
-      displayName: id.displayName, avatarUrl: id.avatarUrl, state: 'active',
+      displayName: id.displayName, avatarUrl: id.avatarUrl, ownerActorId: null, state: 'active',
     });
 
     // A member, not an admin. Being invited grants belonging, never authority

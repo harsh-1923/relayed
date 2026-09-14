@@ -265,6 +265,7 @@ export async function createWorkspace(
       handle: opts.handle,
       displayName: id.displayName,
       avatarUrl: id.avatarUrl,
+      ownerActorId: null,
       state: "active",
     });
 

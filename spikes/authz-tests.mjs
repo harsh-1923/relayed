@@ -11,6 +11,7 @@ function world() {
   w.chat('C_pub', 'S_pub', 'public');
   w.chat('C_priv', 'S_priv', 'private');
   w.chat('C_open', 'S_priv', 'public');   // public chat inside a private room
+  w.agent('A', 'W');
   return w;
 }
 
@@ -24,7 +25,8 @@ section('§10  the portability claim: direct and tuple evaluation agree');
   // control caught exactly that, with the tuple evaluator's containment check
   // deleted and the suite still green.
   const actors = ['a_owner', 'a_admin', 'a_member', 'a_space_admin',
-                  'a_outsider', 'a_ghost', 'a_orphan', 'a_left_ws'];
+                  'a_outsider', 'a_ghost', 'a_orphan', 'a_left_ws',
+                  'a_maintainer', 'a_foreign_maintainer'];
   const w = world();
   w.join('workspace', 'W', 'a_owner', 'owner');
   w.join('workspace', 'W', 'a_admin', 'admin');
@@ -51,6 +53,16 @@ section('§10  the portability claim: direct and tuple evaluation agree');
   w.join('space', 'S_priv', 'a_left_ws', 'admin');
   w.join('chat', 'C_priv', 'a_left_ws');
   w.leave('workspace', 'W', 'a_left_ws');
+  w.join('agent', 'A', 'a_left_ws', 'admin');
+
+  // Agents (WORKSPACE-AGENTS.md §4.4). A maintainer in the workspace; and the
+  // negative control — a member of ANOTHER workspace holding an admin row on
+  // this workspace's agent, which only containment can refuse.
+  w.workspace('W2');
+  w.join('workspace', 'W', 'a_maintainer', 'member');
+  w.join('agent', 'A', 'a_maintainer', 'admin');
+  w.join('workspace', 'W2', 'a_foreign_maintainer', 'admin');
+  w.join('agent', 'A', 'a_foreign_maintainer', 'admin');
 
   const checks = everyCheck(w, actors);
   const disagreements = checks.filter(([a, action, type, id]) =>
@@ -65,7 +77,8 @@ section('§10  the portability claim: direct and tuple evaluation agree');
   const expected = actors.length
     * (ACTIONS.workspace.length * w.workspaces.size
      + ACTIONS.space.length * w.spaces.size
-     + ACTIONS.chat.length * w.chats.size);
+     + ACTIONS.chat.length * w.chats.size
+     + ACTIONS.agent.length * w.agents.size);
   const trues = checks.filter(([a, act, t, i]) => w.can(a, act, t, i)).length;
   check('the domain is every actor x object x action', checks.length, expected);
   check('and the answers are genuinely mixed',
@@ -78,7 +91,11 @@ section('§10  the portability claim: direct and tuple evaluation agree');
   check('leaving the WORKSPACE denies everything inside it',
         [w.can('a_left_ws', 'read', 'space', 'S_priv'),
          w.can('a_left_ws', 'read', 'chat', 'C_priv'),
-         w.can('a_left_ws', 'invite', 'workspace', 'W')], [false, false, false]);
+         w.can('a_left_ws', 'invite', 'workspace', 'W'),
+         w.can('a_left_ws', 'edit', 'agent', 'A')], [false, false, false, false]);
+  check('an admin row on an agent from ANOTHER workspace grants nothing',
+        ACTIONS.agent.map(a => w.can('a_foreign_maintainer', a, 'agent', 'A')),
+        ACTIONS.agent.map(() => false));
 }
 
 // ── invariant 50: the leading conjunct ───────────────────────────────────────
@@ -129,6 +146,31 @@ section('§7  a workspace role never inherits space-level read');
   check('only the owner may transfer ownership',
         [w.can('a_owner', 'transfer_ownership', 'workspace', 'W'),
          w.can('a_admin', 'transfer_ownership', 'workspace', 'W')], [true, false]);
+}
+
+// ── WORKSPACE-AGENTS §4.4: the one reach of a workspace role ─────────────────
+section('§7  agents: maintainers and workspace admins, and nobody else');
+{
+  const w = world();
+  w.join('workspace', 'W', 'a_member');
+  w.join('workspace', 'W', 'a_maint').join('agent', 'A', 'a_maint', 'admin');
+  w.join('workspace', 'W', 'a_admin', 'admin');
+  check('any member reads the definition, and may create an agent',
+        [w.can('a_member', 'read_definition', 'agent', 'A'),
+         w.can('a_member', 'create_agent', 'workspace', 'W')], [true, true]);
+  check('a member may not edit, manage maintainers or deactivate',
+        ['edit', 'manage_maintainers', 'deactivate'].map(a => w.can('a_member', a, 'agent', 'A')),
+        [false, false, false]);
+  check('a maintainer may do all three',
+        ['edit', 'manage_maintainers', 'deactivate'].map(a => w.can('a_maint', a, 'agent', 'A')),
+        [true, true, true]);
+  check('a workspace admin may too, holding no row on the agent',
+        ['edit', 'manage_maintainers', 'deactivate'].map(a => w.can('a_admin', a, 'agent', 'A')),
+        [true, true, true]);
+  check('and still reads no private space (invariant 51 untouched)',
+        w.can('a_admin', 'read', 'space', 'S_priv'), false);
+  w.leave('agent', 'A', 'a_maint');
+  check('a maintainer removed is a member again', w.can('a_maint', 'edit', 'agent', 'A'), false);
 }
 
 // ── §6 the deliberate asymmetry ──────────────────────────────────────────────
@@ -202,12 +244,13 @@ section('§6  the action vocabulary is closed');
   check('an unknown action is denied on a workspace', w.can('a_any', 'nuke', 'workspace', 'W'), false);
   check('an unknown action is denied on a space',     w.can('a_any', 'nuke', 'space', 'S_pub'), false);
   check('an unknown action is denied on a chat',      w.can('a_any', 'nuke', 'chat', 'C_pub'), false);
+  check('an unknown action is denied on an agent',    w.can('a_any', 'nuke', 'agent', 'A'), false);
   check('an unknown object type is denied',           w.can('a_any', 'read', 'planet', 'Mars'), false);
   // Derived, not counted by hand — a hardcoded total silently rots the moment
   // an action is added, which is the opposite of a closed vocabulary's purpose.
   check('the vocabulary is exactly what §6 declares',
         Object.fromEntries(Object.entries(ACTIONS).map(([k, v]) => [k, v.length])),
-        { workspace: 4, space: 7, chat: 5 });
+        { workspace: 5, space: 7, chat: 5, agent: 4 });
 }
 
 // ─── summary ─────────────────────────────────────────────────────────────────

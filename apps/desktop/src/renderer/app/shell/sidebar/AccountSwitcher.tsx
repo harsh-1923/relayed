@@ -14,7 +14,7 @@
 // reasoning in a dropdown is a second place for it to drift.
 import { Link, useParams } from 'react-router';
 import {
-  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo,
+  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo, Bot,
 } from '@relayed/icons';
 import { useSession } from '../../state';
 import { blobSrc, initials } from '@/lib/ipc';
@@ -71,6 +71,12 @@ export function AccountSwitcher() {
               <DropdownMenuItem render={<Link to={`/w/${me.workspaceId}/people`} />}>
                 <UserTwo className="size-4 text-muted-foreground" />
                 People
+              </DropdownMenuItem>
+              {/* Workspace settings has no other door from the shell: ⌘, opens
+                  the ACCOUNT settings, which is a different page. */}
+              <DropdownMenuItem render={<Link to={`/w/${me.workspaceId}/settings/agents`} />}>
+                <Bot className="size-4 text-muted-foreground" />
+                Agents
               </DropdownMenuItem>
             </DropdownMenuGroup>
 

@@ -19,7 +19,10 @@ import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
-import { listInvitations, createInvite, revokeInvite } from './auth/relayed.ts';
+import {
+  listInvitations, createInvite, revokeInvite,
+  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, type AgentInput,
+} from './auth/relayed.ts';
 import { newId } from './ids.ts';
 import { enqueue } from './outbox.ts';
 import { installNetworkGate } from './network.ts';
@@ -843,6 +846,46 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     if (!token) throw new Error('offline');
     return revokeInvite(token, (params as { id: string }).id);
   },
+  // ── agents (WORKSPACE-AGENTS.md §4) ────────────────────────────────────
+  // Refusals come back as answers ({ ok: false, field, reason }) so the editor
+  // can draw them beside the field; only being offline throws. The directory
+  // event the server delivers after a write is what updates every list — none
+  // of these invalidates anything itself.
+  'agents.handle': async (params) => {
+    const p = params as { handle: string; except?: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return agentHandle(token, p.handle, p.except);
+  },
+  'agents.create': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — an agent cannot be created offline');
+    return createAgent(token, params as AgentInput);
+  },
+  'agents.update': async (params) => {
+    const { agentId, ...input } = params as AgentInput & { agentId: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — changes to an agent cannot be queued');
+    return updateAgent(token, agentId, input);
+  },
+  'agents.deactivate': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return deactivateAgent(token, (params as { agentId: string }).agentId);
+  },
+  'agents.setMaintainers': async (params) => {
+    const p = params as { agentId: string; actorIds: string[] };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return setAgentMaintainers(token, p.agentId, p.actorIds);
+  },
+  /**
+   * An agent's instructions, over the socket, online only. Null when the socket
+   * is not live or does not answer in time — "unreachable", which is not the
+   * same as `found: false`.
+   */
+  'agents.definition': async (params) => link.definition((params as { agentId: string }).agentId),
+
   'auth.join': async (params) => {
     const p = params as { workspaceId: string; handle: string };
     await session.joinWorkspace(p.workspaceId, p.handle);

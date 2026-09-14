@@ -844,3 +844,53 @@ test('THE MONOGRAM WINDOW: an author renders before their row lands', () => {
   assert.equal(named.display_name, 'Harsh Sharma', 'and the name arrives after');
   db.close();
 });
+
+// ─── agents in the directory (WORKSPACE-AGENTS.md §4.5) ─────────────────────
+
+const agentPayload = {
+  id: 'act_triage', type: 'agent', handle: 'triage', display_name: 'Triage', avatar_url: null,
+  owner_actor_id: 'act_alice', state: 'active',
+  agent: { description: 'Files bugs', config_rev: 2, toolkits: [{ toolkit: 'linear', effect: 'write' }] },
+};
+
+const summaryOf = (db: DatabaseSync, id: string) =>
+  ({ ...(db.prepare('SELECT description, config_rev, toolkits FROM agent_summaries WHERE actor_id = ?')
+    .get(id) as Record<string, unknown>) });
+
+test('AN AGENT CREATED LIVE applies: the owner rides the event, and the summary lands beside the row', () => {
+  // The bug this fixes: the effect wrote a NULL owner, the replica's CHECK
+  // refuses that for an agent, and the event threw — so an agent created while
+  // a client was connected never reached that client's autocomplete.
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  const applied = applyEvent(deps, WORKSPACE, { rev: 1, type: 'actor.created', payload: agentPayload });
+
+  assert.equal(applied.outcome, 'applied');
+  const row = db.prepare('SELECT type, owner_actor_id FROM actors WHERE id = ?').get('act_triage');
+  assert.deepEqual({ ...row }, { type: 'agent', owner_actor_id: 'act_alice' });
+  assert.deepEqual(summaryOf(db, 'act_triage'),
+    { description: 'Files bugs', config_rev: 2, toolkits: '[{"toolkit":"linear","effect":"write"}]' });
+
+  applyEvent(deps, WORKSPACE, { rev: 2, type: 'actor.updated',
+    payload: { ...agentPayload, agent: { ...agentPayload.agent, description: 'Files and dedupes', config_rev: 3 } } });
+  assert.equal(summaryOf(db, 'act_triage')['description'], 'Files and dedupes', 'an update replaces it');
+  db.close();
+});
+
+test('a person from a server that predates the owner field still applies', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect() };
+  assert.equal(applyEvent(deps, WORKSPACE, actorEvent(1, 'act_old')).outcome, 'applied');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM agent_summaries').get()?.['n'], 0, 'and a person has no summary');
+  db.close();
+});
+
+test('a DIRECTORY PAGE stores an agent\'s summary with its row', () => {
+  const db = replica();
+  applyDirectoryPage(db, WORKSPACE.id, [
+    person('act_alice'),
+    { ...person('act_triage'), type: 'agent', owner_actor_id: 'act_alice', agent: agentPayload.agent },
+  ]);
+  assert.equal(summaryOf(db, 'act_triage')['config_rev'], 2);
+  db.close();
+});

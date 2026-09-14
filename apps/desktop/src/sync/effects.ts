@@ -19,6 +19,33 @@ import type { Effect, Stream, Envelope } from './apply.ts';
 interface ActorChanged {
   id: string; type: string; handle: string; display_name: string;
   avatar_url: string | null; state: string;
+  /**
+   * Absent from servers that predate agents, where it could only have been
+   * null: nothing but a person reached the directory then.
+   */
+  owner_actor_id?: string | null;
+  agent?: AgentSummary;
+}
+
+/** What every member holds about an agent. The instructions are not in it. */
+export interface AgentSummary {
+  description: string;
+  config_rev: number;
+  toolkits: { toolkit: string; effect: string }[];
+}
+
+/**
+ * Store an agent's summary beside its actor row. Shared by the live event and
+ * the directory page, so the two cannot write one agent differently.
+ */
+export function storeAgentSummary(db: DatabaseSync, actorId: string, summary: AgentSummary): void {
+  db.prepare(`
+    INSERT INTO agent_summaries (actor_id, description, config_rev, toolkits)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(actor_id) DO UPDATE SET
+      description = excluded.description, config_rev = excluded.config_rev,
+      toolkits = excluded.toolkits
+  `).run(actorId, summary.description, summary.config_rev, JSON.stringify(summary.toolkits));
 }
 
 interface MessageCreated {
@@ -187,19 +214,25 @@ function actorChanged(db: DatabaseSync, stream: Stream, event: Envelope): string
   // would render yesterday's picture; dropping it on every update would make
   // prefetching pointless. Same rule the HTTP directory used, for the same
   // reason.
+  // THE OWNER, from the payload. This wrote NULL, which the replica's CHECK
+  // refuses for an agent — so an agent created while a client was connected
+  // failed to apply on that client and never reached its autocomplete. Only
+  // directory pages, which carried the owner, could deliver one.
   db.prepare(`
     INSERT INTO actors (id, workspace_id, type, handle, display_name,
                         avatar_url, owner_actor_id, state, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       type = excluded.type, handle = excluded.handle,
       display_name = excluded.display_name, avatar_url = excluded.avatar_url,
+      owner_actor_id = excluded.owner_actor_id,
       state = excluded.state, updated_at = excluded.updated_at,
       avatar_blob = CASE
         WHEN actors.avatar_url IS NOT DISTINCT FROM excluded.avatar_url
         THEN actors.avatar_blob ELSE NULL END
   `).run(actor.id, stream.id, actor.type, actor.handle, actor.display_name,
-         actor.avatar_url, actor.state, Date.now());
+         actor.avatar_url, actor.owner_actor_id ?? null, actor.state, Date.now());
+  if (actor.agent) storeAgentSummary(db, actor.id, actor.agent);
 
   // A DEACTIVATED actor is updated, never removed. Their past messages still
   // have to render — a client that dropped the row would show an empty name

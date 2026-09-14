@@ -228,12 +228,12 @@ test('the directory reaches the whole workspace — the one stream that does',
     // recipient ends up with a cursor full of holes (DESIGN.md §9.9).
     const event = await db.transaction().execute(trx => recordActor(trx, 'actor.updated', {
       id: bob, workspaceId: wsp, type: 'human', handle: 'bob',
-      displayName: 'Bob', avatarUrl: null, state: 'active',
+      displayName: 'Bob', avatarUrl: null, ownerActorId: null, state: 'active',
     }).then(async () => appendEvent(
       trx, await allocateStream(trx, workspaceStream(wsp)),
       'actor.updated',
       { id: bob, type: 'human', handle: 'bob', display_name: 'Bob',
-        avatar_url: null, state: 'active' }, { kind: 'stream' })));
+        avatar_url: null, owner_actor_id: null, state: 'active' }, { kind: 'stream' })));
 
     const audience = await audienceFor(db, event);
     assert.deepEqual(audience.sort(), [alice, bob, carol].sort(),
