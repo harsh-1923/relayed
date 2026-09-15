@@ -121,6 +121,7 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
     // parsing drops one), and this is the only place a client send reaches
     // the writer (WORKSPACE-AGENTS.md §8.8).
     const written = await writeMessage(trx, {
+      kind: 'actor',
       chatId: input.chatId, messageId: input.messageId, authorId: input.actorId,
       parentId: input.parentId ?? null, audience: { kind: 'stream' },
       ...(input.parts !== undefined ? { parts: input.parts } : { body: input.body }),
@@ -173,8 +174,19 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
  * compile error rather than a body silently ignored.
  */
 export type MessageContent =
-  | { body: string; parts?: never }
-  | { parts: readonly unknown[]; body?: never };
+  | { body: string; parts?: never; trustedParts?: never }
+  | { parts: readonly unknown[]; body?: never; trustedParts?: never }
+  /**
+   * Server-authored parts, already `MessagePart`s, with the body to store
+   * beside them — never a model's or a client's input, so none of
+   * `contentOf`'s untrusted-input checks apply, and `trustedBody` is required
+   * rather than derived: an `access_request` part carries only ids, and a
+   * sentence needs names `@relayed/genui` has no way to look up. The access
+   * card (`access.ts`) is the one caller today; its part is `SERVER_ONLY`
+   * (`@relayed/protocol`) and would be refused by the ordinary `parts` path
+   * regardless of author.
+   */
+  | { trustedParts: readonly MessagePart[]; trustedBody: string; body?: never; parts?: never };
 
 /** Parts a writer may not store, and why — for a nack, never carrying the source. */
 export class PartsRefusedError extends Error {
@@ -196,7 +208,8 @@ export class PartsRefusedError extends Error {
  *
  * 1. the shape, strictly: known kinds, the part limits, nothing extra kept;
  * 2. `tool` and `ui` parts only on an AGENT's message — on a person's they are
- *    a costume (`forbiddenPartKind`, the same check the renderer makes);
+ *    a costume (`forbiddenPartKind`; the renderer's `undrawablePartKind` is the
+ *    same rule except for access cards, which only the broker writes);
  * 3. every `ui` block validates, against a library this build can read —
  *    because the server must be able to derive `body` from every block it
  *    stores.
@@ -207,6 +220,9 @@ export class PartsRefusedError extends Error {
 async function contentOf(
   trx: Transaction<DB>, authorId: string, content: MessageContent,
 ): Promise<{ body: string; parts: MessagePart[] | null }> {
+  if (content.trustedParts !== undefined) {
+    return { body: content.trustedBody, parts: content.trustedParts as MessagePart[] };
+  }
   if (content.parts === undefined) return { body: content.body, parts: null };
 
   const refuse = (reason: 'invalid' | 'forbidden_kind' | 'invalid_ui', detail: string | null = null): never => {
@@ -240,21 +256,43 @@ async function contentOf(
 /** A JSONB value, serialised here: node-postgres would send an array as a Postgres array. */
 const jsonb = (value: unknown) => sql`${JSON.stringify(value)}::jsonb`;
 
-export type MessageWrite = {
+interface MessageWriteCommon {
   chatId: string;
   messageId: string;
   authorId: string;
-  parentId: string | null;
   /** Required, with no default: a writer that forgets must not compile (§8.5). */
   audience: Audience;
-  /**
-   * Delegation attribution (§5.7, `DESIGN.md` §6.4): whose authority the
-   * author spent, and the run that spent it. Absent for an ordinary message —
-   * a person's send never sets these, and neither does a card in v1.
-   */
-  onBehalfOfActorId?: string;
-  delegationId?: string;
-} & MessageContent;
+}
+
+/**
+ * A system row's write, discriminated from an ordinary one by `kind` rather
+ * than a second insertion path (SPACE-MEMBERSHIP-MARKERS.md — `writeMessage`
+ * stays the only function that inserts a message). No parent, no parts, no
+ * delegation: a system row is never a reply, is never made of parts, and is
+ * never spending anyone's authority — it is the server recording its own
+ * successful command.
+ */
+export type MessageWrite = MessageWriteCommon & (
+  | ({
+      kind: 'actor';
+      parentId: string | null;
+      /**
+       * Delegation attribution (§5.7, `DESIGN.md` §6.4): whose authority the
+       * author spent, and the run that spent it. Absent for an ordinary
+       * message — a person's send never sets these, and neither does a card
+       * in v1.
+       */
+      onBehalfOfActorId?: string;
+      delegationId?: string;
+    } & MessageContent)
+  | {
+      kind: 'system';
+      systemKind: 'space.member_added';
+      subjectActorId: string;
+      /** The compatibility rendering, captured at write time. */
+      body: string;
+    }
+);
 
 /**
  * Write one message and its event, inside a transaction the caller owns.
@@ -290,42 +328,56 @@ export async function writeMessage(
     }
   }
 
+  // A system row is never a reply — the parent-check below is for `kind:
+  // 'actor'` alone, and reads as a no-op (its guard is `parentId !== null`).
+  const parentId = input.kind === 'actor' ? input.parentId : null;
+
   // NOTHING REPLIES TO A RESTRICTED MESSAGE in v1 (§8.8): a thread under one
   // would need every reply restricted too, and nothing needs it. Read only for
   // a reply, so a top-level send costs no statement. Refused as NOT FOUND to an
   // author who cannot see the parent — the answer they would get for an id that
   // does not exist — and as forbidden to one who can.
-  if (input.parentId !== null) {
+  if (parentId !== null) {
     const parent = await trx.selectFrom('messages').select('visible_to')
-      .where('id', '=', input.parentId).where('chat_id', '=', input.chatId)
+      .where('id', '=', parentId).where('chat_id', '=', input.chatId)
       .executeTakeFirst();
     if (parent && parent.visible_to !== null) {
       if (!parent.visible_to.includes(input.authorId)) {
-        throw new MessageNotFoundError(input.parentId);
+        throw new MessageNotFoundError(parentId);
       }
       throw new Forbidden('reply', chatTarget(input.chatId));
     }
   }
 
-  const { body, parts } = await contentOf(trx, input.authorId, input);
+  // A system row skips shape/forbidden-kind/UI validation entirely — its body
+  // is the server's own compatibility rendering, never a client's or a
+  // model's input to distrust.
+  const { body, parts } = input.kind === 'system'
+    ? { body: input.body, parts: null }
+    : await contentOf(trx, input.authorId, input);
 
   const allocated = await allocateChat(trx, input.chatId, true);
   const row = await trx.insertInto('messages').values({
-    id: input.messageId, chat_id: input.chatId, parent_id: input.parentId,
+    id: input.messageId, chat_id: input.chatId, parent_id: parentId,
     ord: allocated.ord as number, rev: allocated.rev,
     author_id: input.authorId, body, visible_to: visibleTo,
     parts: parts === null ? null : jsonb(parts),
-    on_behalf_of_actor_id: input.onBehalfOfActorId ?? null,
-    delegation_id: input.delegationId ?? null,
+    on_behalf_of_actor_id: input.kind === 'actor' ? (input.onBehalfOfActorId ?? null) : null,
+    delegation_id: input.kind === 'actor' ? (input.delegationId ?? null) : null,
+    message_kind: input.kind,
+    system_kind: input.kind === 'system' ? input.systemKind : null,
+    subject_actor_id: input.kind === 'system' ? input.subjectActorId : null,
   }).returning('created_at').executeTakeFirstOrThrow();
 
   // The space's activity clock, which drives auto-dormancy and sidebar order.
   // Bumped here and not in the allocator, because a delete is activity for the
   // sync cursor but not a reason to keep a space out of the "inactive" list.
   //
-  // NOT for a restricted message: the room would jump to the top of an unlisted
-  // member's sidebar with nothing new in it they can see (§8.7).
-  if (visibleTo === null) {
+  // NOT for a restricted message, for the same reason as a system row: a
+  // system row is administrative history, not something that should bump the
+  // space to the top of the sidebar as if new conversation happened (§8.7,
+  // SPACE-MEMBERSHIP-MARKERS.md).
+  if (visibleTo === null && input.kind !== 'system') {
     await trx.updateTable('spaces')
       .set({ last_activity_at: sql`now()` })
       .where('id', 'in', eb => eb.selectFrom('chats').select('space_id')
@@ -343,14 +395,17 @@ export async function writeMessage(
   const event = await appendEvent(trx, allocated, 'message.created', {
     id: ack.messageId,
     ord: allocated.ord as number,
-    parent_id: input.parentId,
+    parent_id: parentId,
     author_id: input.authorId,
     body,
     created_at: ack.createdAt,
     ...(visibleTo !== null ? { visible_to: visibleTo } : {}),
     ...(parts !== null ? { parts } : {}),
-    ...(input.onBehalfOfActorId ? { on_behalf_of_actor_id: input.onBehalfOfActorId } : {}),
-    ...(input.delegationId ? { delegation_id: input.delegationId } : {}),
+    ...(input.kind === 'actor' && input.onBehalfOfActorId ? { on_behalf_of_actor_id: input.onBehalfOfActorId } : {}),
+    ...(input.kind === 'actor' && input.delegationId ? { delegation_id: input.delegationId } : {}),
+    ...(input.kind === 'system'
+      ? { message_kind: 'system' as const, system_kind: input.systemKind, subject_actor_id: input.subjectActorId }
+      : {}),
   }, fromColumn(visibleTo));
 
   return { ack, event };

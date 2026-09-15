@@ -181,6 +181,23 @@ properties of the object rather than of a membership.
 the same one `make_public` has: adding a person is reversible by that person,
 removing one is not. Leaving is not this action — an actor removing themselves
 needs no permission and never reaches the evaluator.
+
+`add_member` decides who may do the adding; it does not loosen containment for
+the actor being added. The addressee must be active and must hold an active
+workspace membership in the space's own workspace. Humans and agents use the
+same rule. Adding always grants `member`; restoring or creating an `admin` is
+the separate, space-admin-only `promote` action. In particular, re-adding a
+tombstoned former admin must not silently restore that role.
+
+A `sealed` space (a DM or group DM) refuses `add_member` outright — adding a
+third participant makes a new conversation, not a mutation of the old one
+(`SPACE-MEMBERSHIP-MARKERS.md`). This is enforced as a precondition inside the
+authoritative domain operation (`addToSpace`, `apps/server/src/sync/spaces.ts`)
+rather than added to this table: sealed gates one action on one kind of object,
+unlike `openSpaces`, which every scope-level caller of `Placement` needs. A
+successful add also writes a durable chat marker — history the server records
+about its own command, never a second permission path; the marker's initiating
+actor (`by_actor_id`) is attribution, not authorization.
 | chat | `read` | derived (§7) |
 | chat | `post` | derived |
 | chat | `edit_own`, `delete_own` | the author |
@@ -582,7 +599,9 @@ that is a grant, and it belongs in tuples.
 4. **Audit.** Every `can()` denial is a fact worth recording, and a permission
    change doubly so. Not built; the chokepoint in §7 is what makes it a
    one-file addition later.
-5. **Space and chat grants on the client.** The replica holds only the workspace
-   tier today, because that is all that exists. Phase 2 has to decide whether
-   every membership replicates or only the caller's own — the second is smaller
-   and is all `can()` needs, but rendering "who is in this room" needs the first.
+5. **Space member lists on the client.** The replica holds the caller's own
+   workspace, space and chat grants, which is the smaller projection `can()`
+   needs and lets every affordance be decided offline. It does not hold everyone
+   else's space memberships. Rendering an authoritative "who is in this room"
+   list still requires deciding how those rows replicate; it must not become a
+   renderer network read merely because a picker wants to hide existing members.

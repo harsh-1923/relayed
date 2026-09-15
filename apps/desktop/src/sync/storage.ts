@@ -126,6 +126,15 @@ export interface ReplicaMessage {
    * for the whole chat. For saying so under the message; nothing decides on it.
    */
   visibleTo: string[] | null;
+  /**
+   * `'system'`: history the server wrote about a successful command, not
+   * authored content (SPACE-MEMBERSHIP-MARKERS.md) — rendered as a `Marker`,
+   * never a speech bubble. `'actor'` for every message a person or agent sent.
+   */
+  kind: 'actor' | 'system';
+  systemKind: string | null;
+  /** Who a system row is about — Alice, for "Alice was added by Bob". */
+  subjectActorId: string | null;
 }
 
 /**
@@ -254,6 +263,26 @@ export interface WelcomePayload {
     chatUnread: number; threadUnread: number; mentionCount: number;
   }[];
   memberships: { scopeType: string; scopeId: string; role: string }[];
+  /** Optional, like the wire frame's own fields: absent and empty mean the same thing. */
+  connections?: ConnectionRow[];
+  agentPermissions?: AgentPermissionRow[];
+}
+
+/** One connected account, in the client's own shape (WORKSPACE-AGENTS.md §6.3). */
+export interface ConnectionRow {
+  id: string;
+  toolkit: string;
+  status: 'connecting' | 'active' | 'needs_reauth' | 'failed' | 'disconnected';
+  statusReason: 'expired' | 'revoked_upstream' | 'scopes_changed' | 'failed' | null;
+  label: string | null;
+}
+
+/** One agent's grant, in the client's own shape (WORKSPACE-AGENTS.md §6.4). */
+export interface AgentPermissionRow {
+  agentActorId: string;
+  toolkit: string;
+  effect: 'read' | 'write' | 'destructive';
+  revoked: boolean;
 }
 
 export class Storage {
@@ -694,11 +723,80 @@ export class Storage {
         membership.run(row.scopeType, row.scopeId, payload.actorId, row.role, now);
       }
 
+      // Full replacement, like `memberships` above: `welcome` carries the
+      // caller's COMPLETE current set (§6.3, §6.4), so a row missing from it
+      // is one that no longer exists, not one to leave stale.
+      db.prepare('DELETE FROM connections WHERE actor_id = ?').run(payload.actorId);
+      const connection = db.prepare(`
+        INSERT INTO connections (id, actor_id, toolkit, status, status_reason, label)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (const row of payload.connections ?? []) {
+        connection.run(row.id, payload.actorId, row.toolkit, row.status, row.statusReason, row.label);
+      }
+
+      db.prepare('DELETE FROM agent_permissions WHERE actor_id = ?').run(payload.actorId);
+      const permission = db.prepare(`
+        INSERT INTO agent_permissions (actor_id, agent_actor_id, toolkit, effect, revoked)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      for (const row of payload.agentPermissions ?? []) {
+        permission.run(payload.actorId, row.agentActorId, row.toolkit, row.effect, row.revoked ? 1 : 0);
+      }
+
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
       throw e;
     }
+  }
+
+  /**
+   * A `connections` push (WORKSPACE-AGENTS.md §6.3) — one or more rows,
+   * replaced by id. Never a delete: `welcome` is the only thing that knows
+   * the complete set, so a push only ever upserts what it names.
+   */
+  applyConnections(actorId: string, rows: readonly ConnectionRow[]): void {
+    const upsert = this.workspace.prepare(`
+      INSERT INTO connections (id, actor_id, toolkit, status, status_reason, label)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        toolkit = excluded.toolkit, status = excluded.status,
+        status_reason = excluded.status_reason, label = excluded.label
+    `);
+    for (const row of rows) upsert.run(row.id, actorId, row.toolkit, row.status, row.statusReason, row.label);
+  }
+
+  /** An `agent_permissions` push (WORKSPACE-AGENTS.md §6.4) — same idempotent-replace rule as `applyConnections`. */
+  applyAgentPermissions(actorId: string, rows: readonly AgentPermissionRow[]): void {
+    const upsert = this.workspace.prepare(`
+      INSERT INTO agent_permissions (actor_id, agent_actor_id, toolkit, effect, revoked)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(actor_id, agent_actor_id, toolkit) DO UPDATE SET
+        effect = excluded.effect, revoked = excluded.revoked
+    `);
+    for (const row of rows) upsert.run(actorId, row.agentActorId, row.toolkit, row.effect, row.revoked ? 1 : 0);
+  }
+
+  /** This actor's connected accounts, for the connector store's Yours list (§7.1). Every status, including `disconnected`. */
+  connections(actorId: string): ConnectionRow[] {
+    const rows = this.workspace.prepare(`
+      SELECT id, toolkit, status, status_reason, label FROM connections WHERE actor_id = ? ORDER BY toolkit
+    `).all(actorId) as { id: string; toolkit: string; status: ConnectionRow['status'];
+                          status_reason: ConnectionRow['statusReason']; label: string | null }[];
+    return rows.map(row => ({
+      id: row.id, toolkit: row.toolkit, status: row.status, statusReason: row.status_reason, label: row.label,
+    }));
+  }
+
+  /** This actor's grants to agents, revoked included — the connector store and the agent profile both need to tell "never allowed" from "allowed, then revoked" (§7.4). */
+  agentPermissions(actorId: string): AgentPermissionRow[] {
+    const rows = this.workspace.prepare(`
+      SELECT agent_actor_id, toolkit, effect, revoked FROM agent_permissions WHERE actor_id = ? ORDER BY toolkit
+    `).all(actorId) as { agent_actor_id: string; toolkit: string; effect: AgentPermissionRow['effect']; revoked: number }[];
+    return rows.map(row => ({
+      agentActorId: row.agent_actor_id, toolkit: row.toolkit, effect: row.effect, revoked: row.revoked === 1,
+    }));
   }
 
   syncActors(actors: readonly DirectoryRow[]): void {
@@ -809,6 +907,7 @@ export class Storage {
     const rows = this.workspace.prepare(`
       SELECT m.id, m.chat_id, m.parent_id, m.ord, m.author_id, m.body,
              m.created_at, m.deleted, m.state, m.visible_to, m.parts,
+             m.message_kind, m.system_kind, m.subject_actor_id,
              a.display_name, a.handle, a.avatar_blob, a.type
         FROM messages m
         LEFT JOIN actors a ON a.id = m.author_id
@@ -839,6 +938,9 @@ export class Storage {
       deleted: Number(row['deleted'] ?? 0) === 1,
       state: String(row['state']),
       visibleTo: readVisibleTo(row['visible_to']),
+      kind: row['message_kind'] === 'system' ? 'system' : 'actor',
+      systemKind: (row['system_kind'] as string | null) ?? null,
+      subjectActorId: (row['subject_actor_id'] as string | null) ?? null,
     }));
   }
 
@@ -865,6 +967,20 @@ export class Storage {
           toolkits: readToolkits(r['agent_toolkits']),
         },
       }));
+  }
+
+  /**
+   * The active actor's local authorization projection for this workspace.
+   * Workspace, space and private-chat rows share the evaluator's `scope:id`
+   * key, so the renderer receives the same input shape as the server.
+   */
+  grants(actorId: string): [string, 'owner' | 'admin' | 'member'][] {
+    const rows = this.workspace.prepare(`
+      SELECT scope_type, scope_id, role
+        FROM memberships WHERE actor_id = ? AND left_at IS NULL
+        ORDER BY scope_type, scope_id
+    `).all(actorId) as { scope_type: string; scope_id: string; role: 'owner' | 'admin' | 'member' }[];
+    return rows.map(row => [`${row.scope_type}:${row.scope_id}`, row.role]);
   }
 
   // ── preferences (PREFERENCES.md) ────────────────────────────────────────

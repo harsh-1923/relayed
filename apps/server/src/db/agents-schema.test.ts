@@ -3,6 +3,7 @@
 // CHECK that permits exactly the row it forbids passes every happy-path test.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { sql } from 'kysely';
 import { db, pool, reachable } from './client.ts';
 import { ulid } from './ulid.ts';
 
@@ -104,46 +105,27 @@ test('agent_config_rev refuses a revision below 1', opts, async () => {
   await rejects(() => agentRow({ config_rev: 0 }), 'agent_config_rev');
 });
 
-test('deleting the actor takes the definition and its tools with it', opts, async () => {
+test('deleting the actor takes the definition with it', opts, async () => {
   const id = await agentRow();
-  await db.insertInto('agent_tools').values({
-    agent_actor_id: id, toolkit: 'linear', tool: 'LINEAR_CREATE_LINEAR_ISSUE', effect: 'write',
-  }).execute();
   await db.deleteFrom('actors').where('id', '=', id).execute();
   assert.equal((await db.selectFrom('agents').select('actor_id').where('actor_id', '=', id).execute()).length, 0);
-  assert.equal((await db.selectFrom('agent_tools').select('tool').where('agent_actor_id', '=', id).execute()).length, 0);
 });
 
-// ── agent_tools ─────────────────────────────────────────────────────────────
+// ── tool discovery (016_tool_discovery.sql) ─────────────────────────────────
 
-const tool = async (agentId: string, over: Record<string, unknown> = {}) =>
-  db.insertInto('agent_tools').values({
-    agent_actor_id: agentId, toolkit: 'linear', tool: `LINEAR_${ulid('t')}`,
-    effect: 'read', ...over,
-  } as never).execute();
-
-test('a tool inserts with approval defaulting to never', opts, async () => {
-  const id = await agentRow();
-  await tool(id, { tool: 'LINEAR_LIST_ISSUES' });
-  const row = await db.selectFrom('agent_tools').select('approval')
-    .where('agent_actor_id', '=', id).executeTakeFirstOrThrow();
-  assert.equal(row.approval, 'never');
+test('agent_tools is gone: nobody picks an agent\'s tools', opts, async () => {
+  const { rows } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM information_schema.tables WHERE table_name = 'agent_tools'`.execute(db);
+  assert.equal(rows[0]?.n, 0);
 });
 
-test('agent_tool_effect refuses an effect outside read, write, destructive', opts, async () => {
-  const id = await agentRow();
-  await rejects(() => tool(id, { effect: 'admin' }), 'agent_tool_effect');
-});
-
-test('agent_tool_approval refuses a value outside never and always', opts, async () => {
-  const id = await agentRow();
-  await rejects(() => tool(id, { approval: 'sometimes' }), 'agent_tool_approval');
-});
-
-test('one row per tool: the same tool twice on one agent is refused', opts, async () => {
-  const id = await agentRow();
-  await tool(id, { tool: 'LINEAR_LIST_ISSUES' });
-  await rejects(() => tool(id, { tool: 'LINEAR_LIST_ISSUES', effect: 'write' }), 'agent_tools_pkey');
+test('a Composio session is one per person: a second for the same person is refused', opts, async () => {
+  const owner = await agentActor();
+  const row = (sessionId: string) => db.insertInto('composio_sessions').values({
+    invoker_actor_id: owner, session_id: sessionId,
+    toolkits: sql`ARRAY['github']::text[]`, connected_accounts: sql`'{}'::jsonb`,
+  }).execute();
+  await row('trs_first');
+  await rejects(() => row('trs_second'), 'composio_sessions_pkey');
 });
 
 // ── memberships ─────────────────────────────────────────────────────────────

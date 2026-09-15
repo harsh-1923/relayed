@@ -749,6 +749,10 @@ turn like any reply. Output that arrives as `local_command_output` is kept as a
 fenced block with colour codes stripped, and a `compact_boundary` becomes a
 "Context compacted: 120k → 18k tokens" line.
 
+The leading `/name` is a primary-colour chip while composing and in the sent
+message bubble. That decoration is renderer-only: drafts and messages keep the
+ordinary `/name` Markdown that Claude Code expects.
+
 ---
 
 ## 9. Starting a new chat in a room

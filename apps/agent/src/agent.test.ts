@@ -31,7 +31,7 @@ process.env['AGENT_PROVIDER_STUB_REASONING'] = 'false';
 process.env['AGENT_MODEL_FALLBACK'] = 'stub/stub-model';
 process.env['AGENT_MAX_TURNS'] = '5';
 
-const { startRun, NULL_SINK } = await import('./agent.ts');
+const { startRun, NULL_SINK, describeBrokerResult } = await import('./agent.ts');
 const { env } = await import('./env.ts');
 const MUTABLE_ENV = env as unknown as { modelStallMs: number };
 
@@ -125,6 +125,24 @@ test('palette \'none\' sends the model no built-in tools; \'default\' sends the 
   await startRun(req({ runId: 'run_default', palette: 'default' }), NULL_SINK).result;
   const names = (seenTools as { function: { name: string } }[] | undefined)?.map(t => t.function.name) ?? [];
   assert.ok(names.includes('bash'), 'the default palette (a local room\'s own Claude Code) keeps its tools');
+});
+
+test('a broker stop is described to the model as a reason to stop, never as success', () => {
+  // The bug this exists to catch: the broker answers every one of its ten
+  // steps with HTTP 200 (WORKSPACE-AGENTS.md §5.5), so `res.ok` alone cannot
+  // tell a real execution apart from a stop. Found by first live exercise of
+  // this path — a blocked call was reported to the model as a successful
+  // result whose content was the literal string '{"result":"permission_required"}'.
+  assert.match(describeBrokerResult('permission_required'), /access.*card|card.*access/i);
+  assert.match(describeBrokerResult('connection_required'), /do not retry/i);
+  assert.match(describeBrokerResult('tool_not_allowed'), /find_tools/);
+  assert.match(describeBrokerResult('needs_reauth'), /reconnect/i);
+  assert.match(describeBrokerResult('duplicate_call'), /already ran/i);
+  assert.match(describeBrokerResult('run_not_running'), /already ended/i);
+  assert.match(describeBrokerResult('rate_limited'), /rate-limiting/i);
+  assert.match(describeBrokerResult('provider_forbidden', 'no repo access'), /no repo access/);
+  assert.match(describeBrokerResult('failed', 'boom'), /boom/);
+  assert.match(describeBrokerResult('failed'), /failed/i);
 });
 
 test('a cancel wins over the reason pi reports as it unwinds', async () => {

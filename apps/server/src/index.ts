@@ -11,7 +11,13 @@ import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
 import { startRetention } from './sync/retention.ts';
 import { devRoutes } from './web/dev.ts';
 import { agentRoutes } from './agents/routes.ts';
+import { connectionRoutes } from './agents/connections.ts';
+import { permissionRoutes } from './agents/permissions.ts';
+import { brokerRoutes } from './agents/broker.ts';
+import { accessRoutes } from './agents/access.ts';
+import { startCatalogueRefresh } from './agents/catalogue.ts';
 import { startDispatcher, type Dispatcher } from './agents/dispatcher.ts';
+import { spaceRoutes } from './sync/routes.ts';
 
 useOtlpIfConfigured('server');
 
@@ -73,6 +79,15 @@ await app.register(agentRoutes({
   db, deliver: sync.deliver, registry: sync.registry,
   dispatcher: { cancel: (runId) => dispatcher?.cancel(runId) },
 }));
+await app.register(spaceRoutes({ db, deliver: sync.deliver }));
+await app.register(connectionRoutes({ db, registry: sync.registry }));
+await app.register(permissionRoutes({
+  db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
+}));
+await app.register(brokerRoutes({ db, deliver: sync.deliver }));
+await app.register(accessRoutes({
+  db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
+}));
 
 // Development only, and said so in the log: a route that writes messages
 // nobody authenticated is fine on a laptop and nowhere else.
@@ -94,8 +109,14 @@ const stopPoller = startPoller(Number(process.env['WORKOS_POLL_MS'] ?? 30_000));
 // a replay.
 const stopRetention = startRetention(db, Number(process.env['RETENTION_MS'] ?? 3_600_000),
   (deleted, passes) => { app.log.info({ deleted, passes }, 'retention swept'); });
+
+// Keeps `toolkits`/`toolkit_tools` current from Composio's own catalogue
+// (WORKSPACE-AGENTS.md §6.6). Ticks immediately, so a fresh boot does not
+// wait a day for the enabled toolkits' tools to appear.
+const stopCatalogue = startCatalogueRefresh(db);
+
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { stopPoller(); stopRetention(); dispatcher?.stop(); void pool.end(); process.exit(0); });
+  process.once(sig, () => { stopPoller(); stopRetention(); stopCatalogue(); dispatcher?.stop(); void pool.end(); process.exit(0); });
 }
 
 await app.listen({ port: env.port, host: '127.0.0.1' });

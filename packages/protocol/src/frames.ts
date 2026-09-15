@@ -345,6 +345,40 @@ export const INBOUND: Bodies = {
  * not break a client. That is the line between the two leniency rules — tolerate
  * what carries no information, refuse what is missing.
  */
+/**
+ * One connected account, as `welcome` or a `connections` push carries it
+ * (WORKSPACE-AGENTS.md §6.3). Never the Composio account id — that is ours to
+ * mirror, not the client's to hold.
+ */
+export const ConnectionRow = z.object({
+  id: z.string(),
+  toolkit: z.string(),
+  status: z.enum(['connecting', 'active', 'needs_reauth', 'failed', 'disconnected']),
+  status_reason: z.enum(['expired', 'revoked_upstream', 'scopes_changed', 'failed']).nullable(),
+  label: z.string().nullable(),
+});
+export type ConnectionRow = z.infer<typeof ConnectionRow>;
+
+/** One agent's grant, as `welcome` or an `agent_permissions` push carries it (WORKSPACE-AGENTS.md §6.4). `invoker_actor_id` is never sent — every row here is the caller's own. */
+export const AgentPermissionRow = z.object({
+  agent_actor_id: z.string(),
+  toolkit: z.string(),
+  effect: z.enum(['read', 'write', 'destructive']),
+  revoked: z.boolean(),
+});
+export type AgentPermissionRow = z.infer<typeof AgentPermissionRow>;
+
+/**
+ * A delivery-address push, not a `sync_event` (WORKSPACE-AGENTS.md §6.3): one
+ * row changed, replaced idempotently by its own id — never merged, and never
+ * the whole table. A missed push is repaired by the next `welcome`.
+ */
+export const ConnectionsPush = z.object({ rows: z.array(ConnectionRow) });
+export type ConnectionsPush = z.infer<typeof ConnectionsPush>;
+
+export const AgentPermissionsPush = z.object({ rows: z.array(AgentPermissionRow) });
+export type AgentPermissionsPush = z.infer<typeof AgentPermissionsPush>;
+
 export const Welcome = z.object({
   protocol: z.number().int(),
   now: z.number().int(),
@@ -413,6 +447,17 @@ export const Welcome = z.object({
     id: z.string(),
     rev: z.number().int().nonnegative(),
   })).optional(),
+
+  /**
+   * The CALLER's own connected accounts (WORKSPACE-AGENTS.md §6.3) — never
+   * everyone's, the same sizing rule `memberships` holds. Every status is
+   * sent, disconnected and failed included: the client's table mirrors the
+   * server's exactly, so a push later replaces a row rather than merging into
+   * one that never existed locally.
+   */
+  connections: z.array(ConnectionRow).optional(),
+  /** The CALLER's own grants to agents (WORKSPACE-AGENTS.md §6.4) — revoked rows included, for the same reason. */
+  agent_permissions: z.array(AgentPermissionRow).optional(),
 });
 export type Welcome = z.infer<typeof Welcome>;
 
@@ -605,6 +650,7 @@ export type ThreadOk = z.infer<typeof ThreadOk>;
 export const AgentSummaryFrame = z.object({
   description: z.string(),
   config_rev: z.number().int().positive(),
+  /** Always empty since agents find their own tools (WORKSPACE-AGENTS-IMPL.md step 7); sent because older clients require it. */
   toolkits: z.array(z.object({ toolkit: z.string(), effect: z.string() })),
 });
 export type AgentSummaryFrame = z.infer<typeof AgentSummaryFrame>;
@@ -704,6 +750,7 @@ export const AgentDefinitionOk = z.object({
     created_at: z.string(),
     updated_at: z.string(),
     maintainers: z.array(z.string()),
+    /** Always empty since agents find their own tools (WORKSPACE-AGENTS-IMPL.md step 7); sent because older clients require it. */
     tools: z.array(z.object({ toolkit: z.string(), tool: z.string(), effect: z.string() })),
     /** Spaces the agent is in that the reader is in too. */
     space_ids: z.array(z.string()),
@@ -746,6 +793,7 @@ export const OUTBOUND: Bodies = {
   repair_ok: RepairOk, thread_ok: ThreadOk,
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
   agent_definition_ok: AgentDefinitionOk, agent_activity: AgentActivity,
+  connections: ConnectionsPush, agent_permissions: AgentPermissionsPush,
 };
 
 /**

@@ -38,18 +38,40 @@ export type WriteOutcome = { posted: true; ack: Ack; event: AppendedEvent } | { 
 
 /**
  * A remote call's line in the reply: name, outcome and duration — never the
- * arguments or the result (§5.7; those live in the audit trail alone, step 5).
+ * arguments or the result (§5.7; those live in the audit trail alone).
+ *
+ * Read from `agent_tool_calls`, not from the runtime's own list of calls. That
+ * list only knows the two names every run is given (`find_tools`, `call_tool`),
+ * which mean nothing to a person; the audit holds the tool that actually ran,
+ * named as the catalogue names it. A search is not a call and is never in the
+ * audit, so it gets no line. Nor does a call that stopped for access: the card
+ * in the thread already says so, and a red "failed" beside it reads as an error
+ * when the agent is simply waiting (the plan's step 7).
+ *
  * `input` is a required field of `ToolPart` upstream, so it is written as
  * `null` deliberately rather than omitted.
  */
-function toolPart(call: RunResultBody['toolCalls'][number]): MessagePart {
-  return { kind: 'tool', tool_use_id: call.name, name: call.name, ok: call.ok, ms: call.ms, input: null };
+async function remoteCallParts(db: Kysely<DB>, runId: string): Promise<MessagePart[]> {
+  const calls = await db.selectFrom('agent_tool_calls')
+    .leftJoin('toolkit_tools', join => join
+      .onRef('toolkit_tools.toolkit', '=', 'agent_tool_calls.toolkit')
+      .onRef('toolkit_tools.slug', '=', 'agent_tool_calls.tool'))
+    .select(['agent_tool_calls.tool_call_id', 'agent_tool_calls.tool', 'agent_tool_calls.outcome',
+             'agent_tool_calls.duration_ms', 'toolkit_tools.name'])
+    .where('agent_tool_calls.run_id', '=', runId)
+    .where('agent_tool_calls.outcome', 'not in', ['pending', 'permission_required', 'connection_required', 'duplicate_call'])
+    .orderBy('agent_tool_calls.created_at')
+    .execute();
+  return calls.map(call => ({
+    kind: 'tool', tool_use_id: call.tool_call_id, name: call.name ?? call.tool,
+    ok: call.outcome === 'ok', ms: call.duration_ms ?? 0, input: null,
+  }));
 }
 
-function answerParts(result: RunResultBody): MessagePart[] {
+async function answerParts(db: Kysely<DB>, runId: string, result: RunResultBody): Promise<MessagePart[]> {
   const parts: MessagePart[] = [];
   if (result.text.trim().length > 0) parts.push({ kind: 'markdown', text: result.text });
-  for (const call of result.toolCalls) parts.push(toolPart(call));
+  parts.push(...await remoteCallParts(db, runId));
   return parts;
 }
 
@@ -83,6 +105,7 @@ async function writeRunMessage(
 
     const content = build(state);
     const written = await writeMessage(trx, {
+      kind: 'actor',
       chatId: run.chatId, messageId: run.replyMessageId, authorId: run.agentActorId,
       parentId: run.replyParentId, audience: { kind: 'stream' },
       onBehalfOfActorId: run.invokerActorId, delegationId: run.id,
@@ -103,9 +126,10 @@ async function writeRunMessage(
 }
 
 /** The run's terminal message: the model's answer, or a one-line notice (§5.7). */
-export function deliverReply(db: Kysely<DB>, run: FinishedRun, outcome: RunOutcome): Promise<WriteOutcome> {
+export async function deliverReply(db: Kysely<DB>, run: FinishedRun, outcome: RunOutcome): Promise<WriteOutcome> {
   if (outcome.state === 'completed') {
-    return writeRunMessage(db, run, () => ({ parts: answerParts(outcome.result), nextState: 'completed' }));
+    const parts = await answerParts(db, run.id, outcome.result);
+    return writeRunMessage(db, run, () => ({ parts, nextState: 'completed' }));
   }
   const text = outcome.state === 'refused' ? noticeFor({ state: 'refused', code: outcome.code })
     : outcome.state === 'failed' ? noticeFor({ state: 'failed', reason: outcome.reason })

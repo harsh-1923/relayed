@@ -79,6 +79,44 @@ export interface RunHandle {
 }
 
 /**
+ * What the broker's own result codes mean to the MODEL (WORKSPACE-AGENTS.md
+ * §5.5, §6.8) — never shown to a person as-is. The point of each message is
+ * the same: stop trying this tool and say so, rather than retrying a call
+ * that will refuse the same way every time, or — the bug this exists to fix
+ * — quietly treating a blocked call as if it had succeeded.
+ */
+export function describeBrokerResult(result: string, message?: string): string {
+  switch (result) {
+    case 'permission_required':
+    case 'connection_required':
+      return "You need the person's access to this service first, and a card asking them for it has "
+        + 'already been posted in this chat. Tell them in one short sentence that you need access, and stop. '
+        + 'Do not retry, and do not try another service instead — the request runs again by itself once they give it.';
+    case 'needs_reauth':
+      return "The person's account needs reconnecting — a card has been posted asking them to. Tell them, and do not retry.";
+    case 'run_not_running':
+      return 'This run has already ended and can no longer call tools.';
+    case 'duplicate_call':
+      return "This exact call already ran once and its result was lost. If you still need it, make a new call rather than repeating this one.";
+    case 'tool_not_allowed':
+      return 'That is not a tool you can use here. Use a tool name exactly as find_tools returned it, for a service find_tools offers.';
+    case 'tool_deprecated':
+      return 'This tool has been removed by the provider and no longer works.';
+    case 'rate_limited':
+      return 'The provider is rate-limiting this account right now. Tell the person to try again later.';
+    case 'provider_forbidden':
+      return `The provider refused this action: ${message ?? 'the account lacks permission for it.'}`;
+    case 'provider_unavailable':
+      return 'The provider is temporarily unavailable. Tell the person to try again later.';
+    case 'refused':
+      return 'This tool call was refused unexpectedly. Tell the person something went wrong, rather than retrying.';
+    case 'failed':
+    default:
+      return message ?? 'This tool call failed.';
+  }
+}
+
+/**
  * One remote tool, registered as a pi `customTools` entry whose `execute`
  * calls the broker — the only place a workspace agent's tool calls go
  * (WORKSPACE-AGENTS.md §5.4, §5.5). `runId` and `grant` come from the run
@@ -87,8 +125,7 @@ export interface RunHandle {
  * `parameters` is Composio's JSON Schema, passed through as-is rather than
  * converted to a TypeBox schema: whether pi's validation accepts a raw JSON
  * Schema object here, or needs `Type.Unsafe`, is exactly what
- * `spikes/agent-tools/` (WORKSPACE-AGENTS-IMPL.md) is meant to settle — and
- * nothing exercises this path until a run actually carries tools (steps 4/5).
+ * `spikes/agent-tools/` (WORKSPACE-AGENTS-IMPL.md) is meant to settle.
  */
 function remoteTool(tool: RunTool, runId: string, grant: string | undefined): ToolDefinition {
   return {
@@ -97,7 +134,15 @@ function remoteTool(tool: RunTool, runId: string, grant: string | undefined): To
     description: tool.description,
     parameters: tool.parameters as unknown as ToolDefinition['parameters'],
     // Errors are signalled by THROWING, never by a return value (pi's
-    // convention): a return is always reported to the model as success.
+    // convention): a return is always reported to the model as success. The
+    // broker answers every one of its ten steps with HTTP 200 and a `result`
+    // field (WORKSPACE-AGENTS.md §5.5) — `res.ok` alone cannot tell a real
+    // execution apart from a stop, so anything but `result: 'ok'` has to be
+    // thrown here, not returned. Left unfixed, a blocked call (missing
+    // permission, say) is reported to the model as a SUCCESSFUL tool result
+    // whose content happens to be the string '{"result":"permission_required"}' —
+    // which is exactly the bug that made a run sit confused rather than
+    // stopping and asking the person, found by first live exercise of this path.
     async execute(toolCallId, params, signal) {
       if (!env.agentBrokerUrl) throw new Error('no tool broker is configured for this runtime');
       const res = await fetch(`${env.agentBrokerUrl}/agent/tools`, {
@@ -108,7 +153,9 @@ function remoteTool(tool: RunTool, runId: string, grant: string | undefined): To
       });
       const text = await res.text();
       if (!res.ok) throw new Error(`tool call failed (${res.status}): ${text}`);
-      return { content: [{ type: 'text', text }], details: undefined };
+      const body = JSON.parse(text) as { result: string; data?: unknown; message?: string };
+      if (body.result !== 'ok') throw new Error(describeBrokerResult(body.result, body.message));
+      return { content: [{ type: 'text', text: JSON.stringify(body.data ?? null) }], details: undefined };
     },
   };
 }

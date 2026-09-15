@@ -25,6 +25,7 @@ interface ChatBubbleProps {
 
 export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = false }: ChatBubbleProps) {
   const align = mine ? 'end' : 'start';
+  const agentAuthored = message.authorType === 'agent';
   // A restricted message always shows who it is for, mid-stack or not: that is
   // not detail to reveal on hover.
   const showFooter = message.state !== 'acked' || endsGroup || message.visibleTo !== null;
@@ -45,7 +46,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   ];
   const arriving = liveParts.length > 0;
   const parts = streaming && arriving ? [...(message.parts ?? []), ...liveParts] : message.parts;
-  const unbubbled = !message.deleted && message.authorType === 'agent' && (parts !== null || streaming);
+  const unbubbled = !message.deleted && agentAuthored && (parts !== null || streaming);
 
   return (
     <MessageScrollerItem
@@ -53,7 +54,9 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
       // Consecutive rows remain individually addressable while visually
       // forming one sender stack. MessageScrollerContent supplies the normal
       // 24px row gap; pulling continuation rows up leaves the group's 8px gap.
-      className={!startsGroup ? '-mt-4' : undefined}
+      // Agent replies each carry their own page-style author divider, including
+      // consecutive replies from the same agent, so they keep the normal gap.
+      className={!startsGroup && !agentAuthored ? '-mt-4' : undefined}
     >
       <Message align={align}>
         {!mine && (
@@ -73,7 +76,17 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
         )}
 
         <MessageContent>
-          {!mine && startsGroup && <MessageHeader>{message.authorName}</MessageHeader>}
+          {!mine && (startsGroup || agentAuthored) && (
+            <MessageHeader
+              // Agent replies read as a page, so their author belongs in a
+              // full-width metadata row rather than as a small bubble label.
+              className={agentAuthored
+                ? 'w-full border-b border-border px-0 pb-2.5 text-sm font-normal'
+                : undefined}
+            >
+              {message.authorName}
+            </MessageHeader>
+          )}
 
           <Bubble
             variant={unbubbled ? 'ghost' : mine ? 'outgoing' : 'muted'}
@@ -112,16 +125,12 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
             </BubbleContent>
           </Bubble>
 
-          {/* Time and Copy sit under the bubble. The last message of a stack
-              always shows them; one inside a stack opens the row on hover,
-              so a run of messages keeps its tight spacing. */}
-          <div
-            className={cn(
-              'grid transition-[grid-template-rows] duration-150',
-              showFooter ? 'grid-rows-[1fr]' : 'grid-rows-[0fr] group-hover/message:grid-rows-[1fr] has-focus-visible:grid-rows-[1fr]',
-            )}
-          >
-            <MessageFooter className={cn('min-h-0 gap-1 overflow-hidden', showFooter && 'h-5')}>
+          {/* Only the last message in a sender stack has the ordinary footer,
+              and its height is permanent. Expanding a continuation row on
+              hover moved every message below it. Exceptional state and
+              visibility labels still surface immediately, even mid-stack. */}
+          {showFooter && (
+            <MessageFooter className="h-5 gap-1">
               {message.state === 'pending' && (
                 <span className="flex items-center gap-1" role="status">
                   <ClockDefault className="size-3" /> Queued
@@ -129,7 +138,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
               )}
               {message.state === 'failed' && (
                 <span className="flex items-center gap-1 text-destructive" role="status">
-                  <AlertCircle className="size-3" /> {message.authorType === 'agent' ? 'Did not finish' : 'Not sent'}
+                  <AlertCircle className="size-3" /> {agentAuthored ? 'Did not finish' : 'Not sent'}
                 </span>
               )}
               {message.state === 'acked' && formatTime(message.createdAt)}
@@ -148,7 +157,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 />
               )}
             </MessageFooter>
-          </div>
+          )}
         </MessageContent>
       </Message>
     </MessageScrollerItem>

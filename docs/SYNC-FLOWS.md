@@ -2098,11 +2098,69 @@ Remaining members           receive space.member_removed and update their
 There is no revocation step, because there was never a grant held by the
 transport. The audience is a query, and the query now returns a different set.
 
-### 16.2 Bob is re-added
+### 16.2 Bob adds Alice — the atomic write and its marker
+
+`SPACE-MEMBERSHIP-MARKERS.md`, built. The outcome is a durable chat message,
+not only a membership row: "Alice was added by Bob," rendered with the shadcn
+`Marker`, in the space's structural chat.
 
 ```
-addToSpace(db, spaceId, bob, by)     ← membership row REUSED, left_at = NULL
+addToSpace(db, spaceId, alice, bob, messageId)         spaces.ts, built
+  requireSpace(bob, 'add_member')       ← any member may
+  requireAddableSpace(spaceId)          ← refuses a SEALED space (DM/group DM)
+  requireAddableActor(spaceId, alice)   ← active actor, active workspace membership
+
+  ONE transaction:
+    addMember(spaceId, alice, 'member', bob)
+      SELECT … FOR UPDATE                          ← locks the row against a race
+      already active? → return { status: 'already_member' }, nothing else runs
+      INSERT/UPDATE memberships … left_at = NULL    ← REUSED if tombstoned
+      + allocate(space:S, withOrd=false) → rev
+      + INSERT sync_events  space.member_added
+          { actor_id: alice, role, by_actor_id: bob, hydration }   ← NEW fields
+    writeMessage(kind: 'system', chatId, messageId, authorId: bob,
+                 systemKind: 'space.member_added', subjectActorId: alice)
+      + allocate(chat:C, withOrd=true) → ord, rev
+      + INSERT messages   message_kind='system', subject_actor_id=alice
+      + INSERT sync_events  message.created { …, message_kind: 'system', … }
 ```
+
+**All three writes or none.** A marker without membership is false; membership
+without a marker violates the product promise; a message row without its event
+never reaches a replica. There is deliberately no ordering between the two
+delivered events beyond "membership before marker" at the delivery step below
+— the membership row is already committed by the time either event reaches
+fanout, so a client applying the marker first still resolves Alice as a member.
+
+**Idempotent.** A second `addToSpace` for an already-active Alice returns
+`already_member` before allocating a revision or writing anything — no
+duplicate event, no duplicate marker, no `joined_at` change. Re-adding a
+*tombstoned* Alice is the built §16.2 case below: a real add, one new marker.
+
+**`hydration`, and why it needs no per-recipient shaping.** `space.member_added`
+now carries the space's current shape — the row and its chats — computed once,
+inside the transaction. Fanout (`fanout.ts`) delivers ONE payload to every
+reader of the stream; there is no per-recipient redaction below the
+audience/withheld split it already does. So `hydration` rides on every
+delivery, and the CLIENT decides whether to apply it: only the replica whose
+own actor id equals the event's `actor_id` writes the space/chat/membership
+rows from it (`effects.ts`, built) — everyone else uses the event purely as
+topology invalidation, exactly as before. This is what lets Alice see the
+space appear without a reconnect, closing the gap §9 otherwise leaves open
+until the next `welcome`.
+
+### 16.2a Bob re-adds a former member
+
+```
+addToSpace(db, spaceId, bob, by, messageId)     ← membership row REUSED, left_at = NULL
+```
+
+The target is first checked as an active actor with an active workspace
+membership in this space's workspace. Re-addition writes the requested role as
+well as clearing `left_at`; the ordinary add flow requests `member`, so a
+tombstoned former admin cannot regain administration without the separate
+space-admin-only promotion check. One new marker is written — a re-add is a
+real event, distinct from the idempotent no-op above.
 
 His cursor for those chats is far behind `server_head_rev`. That is a gap, and
 the ordinary gap path heals it. **Re-adding needs no special case at all** — this

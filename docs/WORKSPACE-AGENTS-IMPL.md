@@ -1,6 +1,8 @@
 # Workspace agents — implementation
 
-> **Status: plan. Nothing here is built.** This is how
+> **Status: plan, partly built.** Reconnecting (step 6) is not built. Agents
+> finding their own tools (step 7) is built and tested; its by-hand milestone
+> has not been run. This is how
 > [`WORKSPACE-AGENTS.md`](WORKSPACE-AGENTS.md) (the proposal) gets built: in what
 > order, in which files, proven by which tests and by what someone does by hand.
 >
@@ -11,7 +13,7 @@
 > that builds it**, so the two never disagree for longer than one change
 > (`AGENTS.md`, keep the docs true, rule 3).
 
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-15
 
 ---
 
@@ -39,12 +41,12 @@
 | [What this doc decides (§1)](WORKSPACE-AGENTS.md#1-what-this-doc-decides) | Every row is built in the step for its section |
 | [The whole flow, in one picture (§2)](WORKSPACE-AGENTS.md#2-the-whole-flow-in-one-picture) | Complete only after [step 5](#9-step-5--the-broker) |
 | [Background (§3)](WORKSPACE-AGENTS.md#3-background-what-already-exists) and [what a production agent platform taught](WORKSPACE-AGENTS.md#what-a-production-agent-platform-taught) | Constraints on every step. The lessons land in [step 3](#7-step-3--runs-with-no-tools) |
-| [Creating an agent (§4.1–§4.5)](WORKSPACE-AGENTS.md#4-creating-an-agent) | [Step 2](#6-step-2--creating-agents). The editor's tool picker waits for [step 4](#8-step-4--connections-and-the-connector-store) |
+| [Creating an agent (§4.1–§4.5)](WORKSPACE-AGENTS.md#4-creating-an-agent) | [Step 2](#6-step-2--creating-agents). The editor's tool picker waits for [step 4](#8-step-4--connections-and-the-connector-store), and [step 7](#11-step-7--agents-find-their-own-tools) removes it |
 | [What starts a run (§5.1)](WORKSPACE-AGENTS.md#51-what-starts-a-run) | [Step 3](#7-step-3--runs-with-no-tools), mentions in channels. Invoking by DM waits for DMs to exist (§3.2) |
 | [The handoff is part of the write (§5.2)](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write) | [Step 3](#7-step-3--runs-with-no-tools) |
 | [The dispatcher (§5.3)](WORKSPACE-AGENTS.md#53-the-dispatcher) | [Step 3](#7-step-3--runs-with-no-tools) |
-| [What the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent) | [Step 3](#7-step-3--runs-with-no-tools) for every field. [Step 5](#9-step-5--the-broker) fills `tools` |
-| [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | [Step 5](#9-step-5--the-broker) |
+| [What the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent) | [Step 3](#7-step-3--runs-with-no-tools) for every field. [Step 5](#9-step-5--the-broker) fills `tools`; [step 7](#11-step-7--agents-find-their-own-tools) replaces them with `find_tools` and `call_tool` |
+| [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | [Step 5](#9-step-5--the-broker); [step 7](#11-step-7--agents-find-their-own-tools) changes step 5 of the call, the snapshot check |
 | [What the agent reads (§5.6)](WORKSPACE-AGENTS.md#56-what-the-agent-reads) | [Step 3](#7-step-3--runs-with-no-tools) |
 | [The reply (§5.7)](WORKSPACE-AGENTS.md#57-the-reply) | [Step 3](#7-step-3--runs-with-no-tools) |
 | [Stopping a run (§5.8)](WORKSPACE-AGENTS.md#58-stopping-a-run) | [Step 3](#7-step-3--runs-with-no-tools). The broker's refusal after Stop lands in [step 5](#9-step-5--the-broker) |
@@ -52,28 +54,28 @@
 | [Why Composio (§6.1)](WORKSPACE-AGENTS.md#61-why-composio) | [Step 4](#8-step-4--connections-and-the-connector-store): the `DESIGN.md` edit |
 | [Project, keys and `user_id` (§6.2)](WORKSPACE-AGENTS.md#62-project-keys-and-user_id) | [The Composio setup (§4.3)](#43-composio-setup-per-environment), before step 4 |
 | [Our record of connections (§6.3)](WORKSPACE-AGENTS.md#63-our-record-of-connections) | [Step 4](#8-step-4--connections-and-the-connector-store) |
-| [Permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection) | Table and routes in [step 4](#8-step-4--connections-and-the-connector-store); enforced in [step 5](#9-step-5--the-broker) |
+| [Permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection) | Table and routes in [step 4](#8-step-4--connections-and-the-connector-store); enforced in [step 5](#9-step-5--the-broker); what Allow grants, [step 7](#11-step-7--agents-find-their-own-tools) |
 | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) | [Step 4](#8-step-4--connections-and-the-connector-store) |
 | [The catalogue (§6.6)](WORKSPACE-AGENTS.md#66-the-catalogue-and-what-counts-as-a-write) | [Step 4](#8-step-4--connections-and-the-connector-store) |
-| [Executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) | [Step 5](#9-step-5--the-broker) |
+| [Executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) | [Step 5](#9-step-5--the-broker); one session per person, [step 7](#11-step-7--agents-find-their-own-tools) |
 | [Errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do) | [Step 5](#9-step-5--the-broker); `needs_reauth` finished in [step 6](#10-step-6--reconnecting) |
 | [Keeping the mirror true (§6.9)](WORKSPACE-AGENTS.md#69-keeping-the-mirror-true) | [Step 4](#8-step-4--connections-and-the-connector-store) (webhook, reconciliation, sweep); [step 6](#10-step-6--reconnecting) (scope changes) |
 | [Disconnecting (§6.10)](WORKSPACE-AGENTS.md#610-disconnecting) | [Step 4](#8-step-4--connections-and-the-connector-store) |
 | [Whose OAuth app (§6.11)](WORKSPACE-AGENTS.md#611-auth-configs-whose-oauth-app) | [The Composio setup (§4.3)](#43-composio-setup-per-environment) |
 | [The Composio facts (§6.12)](WORKSPACE-AGENTS.md#612-the-composio-facts-this-rests-on) | Re-checked by [the Composio spikes (§4.1)](#41-spikes) before step 4 |
 | [The connector store (§7.1–§7.3)](WORKSPACE-AGENTS.md#7-the-connector-store) | [Step 4](#8-step-4--connections-and-the-connector-store) |
-| [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | [Step 5](#9-step-5--the-broker); its event, `message.updated`, in [step 1](#5-step-1--restricted-messages-with-no-agent) |
+| [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | [Step 5](#9-step-5--the-broker); its event, `message.updated`, in [step 1](#5-step-1--restricted-messages-with-no-agent); raised at search time and re-run automatically in [step 7](#11-step-7--agents-find-their-own-tools) |
 | [Messages only some people can see (§8.1–§8.9)](WORKSPACE-AGENTS.md#8-messages-only-some-people-can-see) | [Step 1](#5-step-1--restricted-messages-with-no-agent), after [step 0](#44-step-0--the-gap-path-the-version-rule-complete-rows-repair-at-reconnect) fixes the gap path it runs on. **Dormant**: nothing in v1 writes one (D15) |
-| [Security (§9)](WORKSPACE-AGENTS.md#9-security-in-one-table) | Each row's control is built in the step for its section. The tests are in [§12](#12-test-matrix) |
+| [Security (§9)](WORKSPACE-AGENTS.md#9-security-in-one-table) | Each row's control is built in the step for its section. The tests are in [§13](#13-test-matrix) |
 | [Failure modes (§10)](WORKSPACE-AGENTS.md#10-failure-modes) | Steps [3](#7-step-3--runs-with-no-tools), [4](#8-step-4--connections-and-the-connector-store), [5](#9-step-5--the-broker) |
-| [Observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed) | Per step, once agreed ([§11.3](#113-telemetry-by-step)) |
+| [Observability (§11)](WORKSPACE-AGENTS.md#11-observability-proposed) | Per step, once agreed ([§12.3](#123-telemetry-by-step)) |
 | [Spikes (§12.1)](WORKSPACE-AGENTS.md#121-spikes-first--each-can-change-the-design-above) | [§4.1](#41-spikes) |
-| [Steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand) | Steps 1–6 below, one for one |
-| [Tests that must exist (§12.3)](WORKSPACE-AGENTS.md#123-tests-that-must-exist) | [§12](#12-test-matrix) |
-| [Deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built) | Not in this plan. [§15](#15-not-in-this-plan) says which checkpoint each would change |
-| [Docs to change (§14)](WORKSPACE-AGENTS.md#14-docs-to-change-when-this-is-accepted) | [§13](#13-docs-matrix) |
-| [Invariants to add](WORKSPACE-AGENTS.md#invariants-to-add) | [§14](#14-invariants-by-step) |
-| [Open questions (§15)](WORKSPACE-AGENTS.md#15-open-questions) | [§16](#16-open-questions-carried) |
+| [Steps (§12.2)](WORKSPACE-AGENTS.md#122-steps--each-usable-by-hand) | Steps 1–6 below, one for one. [Step 7](#11-step-7--agents-find-their-own-tools) is new: it changes how steps 2, 4 and 5 give an agent its tools |
+| [Tests that must exist (§12.3)](WORKSPACE-AGENTS.md#123-tests-that-must-exist) | [§13](#13-test-matrix) |
+| [Deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built) | Not in this plan. [§16](#16-not-in-this-plan) says which checkpoint each would change |
+| [Docs to change (§14)](WORKSPACE-AGENTS.md#14-docs-to-change-when-this-is-accepted) | [§14](#14-docs-matrix) |
+| [Invariants to add](WORKSPACE-AGENTS.md#invariants-to-add) | [§15](#15-invariants-by-step) |
+| [Open questions (§15)](WORKSPACE-AGENTS.md#15-open-questions) | [§17](#17-open-questions-carried) |
 
 ---
 
@@ -103,6 +105,13 @@ Each row is folded into the proposal in the commit that builds it.
 | D18 | ✅ *Folded.* **Step 2 ships without avatar upload, Try it, and Add agent from a space's member list.** An agent gets a monogram; spaces are chosen when it is created | No file picker exists in the renderer yet; Try it opens a DM, which waits for DMs (D2); a space member list with Add does not exist yet for people either | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) | 2 |
 | D19 | ✅ *Folded.* **Agent summaries ride the existing `actors.list` read**, joined from `agent_summaries`, rather than a read and topic of their own | A summary only ever changes with an actor event, so the `actors` topic already wakes it; autocomplete and the agents list need both in one list | [How clients learn about agents (§4.5)](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
 | D20 | ✅ *Folded.* **`agent_definition_ok` carries `you` — what the reader may do — decided by the server** | A creator's own admin row reaches their client only with the next `welcome`, so a client-side `can()` hid Edit from the person who had just created the agent. Hiding is all a client may do with it (invariant 49) | [§4.5](WORKSPACE-AGENTS.md#45-how-clients-learn-about-agents) | 2 |
+| D21 | ✅ *Folded.* **Nobody picks an agent's tools. A run finds them**, through `find_tools` and `call_tool`, within the toolkits the workspace has enabled | An agent created with instructions and no tools could never raise a card, so it could never get access — observed with a real `@triage` asked about a GitHub commit. Choosing among 894 GitHub tools while creating an agent is the friction the product exists to remove. The proposal's "one row per tool, never a wildcard" guarded against an agent silently gaining destructive tools; per-agent permission with an effect ceiling (D23) is that guard now, and it runs on every call | [The product (§4.1)](WORKSPACE-AGENTS.md#41-the-product), [the definition (§4.3)](WORKSPACE-AGENTS.md#43-the-definition), [what the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent), [a tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 7 |
+| D22 | ✅ *Folded.* **`find_tools` takes the toolkit as an argument**, an enum of the enabled toolkits, and the prompt tells the model never to substitute one service for another | The discovery spike: Composio's search never says "nothing fits". Asked to post in Slack with only GitHub and Notion enabled, it returned GitHub discussion tools. Naming the toolkit first also makes "which card to raise" unambiguous when a request could touch two | [What the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent) | 7 |
+| D23 | ✅ *Folded.* **Allow grants up to `write`; a destructive call asks again** | The proposal granted "the highest effect among the agent's tools", and with no tools there is nothing to take the highest of. `write` keeps one click for ordinary work (a PR review writes); destructive stays a separate, explicit card through the existing effect check | [Permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection) | 7 |
+| D24 | ✅ *Folded.* **One Composio session per person**, created with no tool list and the connect tool, workbench and multi-execute off, and **pinned to the person's active accounts by `PATCH`** | Tools are no longer per agent, so nothing makes a session per agent. The spike found pinning is not required to execute — correcting the comment in `composio.ts` and `014_broker.sql` — but pinning from `connections` keeps the account executed identical to the one `agent_tool_calls.connection_id` records | [Executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session), [the Composio facts (§6.12)](WORKSPACE-AGENTS.md#612-the-composio-facts-this-rests-on) | 7 |
+| D25 | ✅ *Folded.* **A resolved card re-runs the request automatically**, once all of that run's cards are resolved; Run again is removed | The person may connect hours later; nothing waits, and nobody should have to ask twice. `UNIQUE (trigger_message_id, agent_actor_id, attempt)` already makes two cards resolving together queue one re-run | [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat), [deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built) | 7 |
+| D26 | ✅ *Folded.* **A card has its own message id**, never the run's reply id | Found planning step 7: sharing the id makes the answer that follows a card collide on `messages_pkey`, leaving the run stuck `running` and its expiry notice failing on every sweep | [The card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat) | 7, fix first |
+| D27 | ✅ *Folded.* **Composio's search response never reaches the model.** The server returns its own `{ tools: [{ name, description, parameters }] }` | The spike: a connected search carries the person's whole provider profile, the Composio account id, and instructions to call tools the session does not have (`COMPOSIO_MANAGE_CONNECTIONS`, the workbench) | [A tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call) | 7 |
 
 ---
 
@@ -136,11 +145,14 @@ Each row is folded into the proposal in the commit that builds it.
       │                   message parts ──┘                        │
       │                                                            ▼
       └── Composio setup ──► step 4  connections ─────────► step 5  the broker ──► step 6  reconnecting
+                                                                    │
+                                          discovery spike ─────────┴──► step 7  agents find their own tools
 ```
 
 Step 0 first; then steps 1, 2 and 4 can proceed in parallel. Step 5 is the
 milestone and needs steps 3 and 4, and from step 1 only `message.updated` —
-cards are public, so the restricted-message path is not on it (D15).
+cards are public, so the restricted-message path is not on it (D15). Step 7
+needs step 5 and the discovery spike, and not step 6.
 
 ---
 
@@ -159,6 +171,7 @@ gates.
 | **Composio connect, verification on** | `spikes/composio/connect.mjs` and a browser | Linear over OAuth and one API-key toolkit through `link()`. It answers: does the hosted page collect a key and a subdomain; does the `SameSite=Lax` cookie survive provider → Composio → verifier; does `complete_auth` with a different `user_id` fail the account; what does `revoke` return per toolkit | Step 4 | [Connecting (§6.5)](WORKSPACE-AGENTS.md#65-connecting) — another carrier for the attempt, or our own key form |
 | **Composio sessions and errors** | `spikes/composio/sessions.mjs` | The raw session tool list, and the observed result of `session.execute` for: no connection, an `EXPIRED` account, a `403`, a provider rejection, a restricted tool. Written to `spikes/composio/results/` | Step 5 | Replaces the partly inferred [error table (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do) |
 | **Tool definitions, measured** | `spikes/composio/tokens.mjs` | Input tokens for the full GitHub and Gmail schemas and for a curated ten | Step 5 | The 30-tool cap in [executing (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) |
+| **Composio discovery** — ✅ **done, 2026-09-15** | [`spikes/composio-discovery/`](../spikes/composio-discovery/README.md) | One session per person with the switches off; search for six requests, connected and not, with latency over ten runs; executing by name with every error shape, pinning and re-pinning; the size of what the model would be sent. Findings in [step 7](#11-step-7--agents-find-their-own-tools), *what the spike settled* | Step 7 — **gate passed**. It changed the design twice: the toolkit is named by the model (D22), and the search response is rebuilt rather than passed through (D27) | Would have meant our own search over `toolkit_tools` instead of Composio's |
 
 ### 4.1.1 The visibility spike — what it did and what it found
 
@@ -337,7 +350,7 @@ Nothing on the server: `messages.rev` and the `msg_rev (chat_id, rev)` index exi
 **Replica migration 9** (`workspace.ts`): `messages.reply_count`,
 `messages.deleted` already exists; `chat_state.repair_since_rev`,
 `repair_max_ord`, `repair_after_rev`, `repair_after_id`. Step 1's migration
-becomes 10, step 2's 11, step 4's 12 (§11.2).
+becomes 10, step 2's 11, step 4's 12 (§12.2).
 
 #### Server
 
@@ -783,7 +796,7 @@ in [§5.2](WORKSPACE-AGENTS.md#52-the-handoff-is-part-of-the-write), including:
 |---|---|
 | **No mention is lost:** a committed send has its run; a replayed op creates no second run; a mention of an agent not a member of the chat, or with no mention at all, starts none | `apps/server/src/sync/ops.test.ts` |
 | `SKIP LOCKED`: two dispatchers polling the same table never claim the same run; a deferred run is not reclaimed before its own `not_before` | **new** `apps/server/src/agents/dispatcher.test.ts` |
-| One refusal code end to end (invoker gone inactive, never reaching the runtime); `invoker_busy` defers rather than refuses | `dispatcher.test.ts` |
+| One refusal code end to end (invoker gone inactive, never reaching the runtime); a person's runs already in flight never defer their next mention | `dispatcher.test.ts` |
 | An expired lease is swept and posted as `interrupted` | `dispatcher.test.ts` |
 | Two people mention one agent in one thread: two independent runs, two answers, neither dedup'd nor shared | `dispatcher.test.ts` |
 | Every non-answer outcome's notice text (`refused`, `failed`, `timeout`, `interrupted`, `cancelled`); a completed run's parts and `on_behalf_of`/`delegation_id` | **new** `apps/server/src/agents/reply.test.ts` |
@@ -1049,7 +1062,7 @@ permission is not hers. Clicking Allow on Bob's earlier card from Alice's client
 
 - The milestone holds by hand against the development Composio project and a
   real Linear workspace.
-- Every security test in [§12](#12-test-matrix) is green.
+- Every security test in [§13](#13-test-matrix) is green.
 
 ---
 
@@ -1085,9 +1098,226 @@ even with the webhook subscription disabled.
 
 ---
 
-## 11. Cross-cutting
+## 11. Step 7 — Agents find their own tools
 
-### 11.1 Module layout
+> **Built 2026-09-15**, fix first included. **Checked:** server 398 tests, 18 of
+> them new (`broker.test.ts` 8, `access.test.ts` 7, the sweep test, two migration
+> tests) and four removed with the `agent_tools` table, with four rules broken on
+> purpose to confirm their tests fail; runtime 6, desktop 529, protocol 29,
+> telemetry 39. **Live**, against the running server, the real model
+> and Composio, in a throwaway workspace removed afterwards: a mention made
+> the model call `find_tools`, the GitHub card was posted *and* the model's own
+> reply was written beside it (the fix first, live); allowing it re-ran the
+> request with nothing pressed, and the re-run stopped at a new card because
+> nobody there had GitHub connected. **Not checked:** the by-hand milestone below,
+> which needs a real GitHub connection made through the app. *Where the build
+> differs from this plan* is listed at the end of the step.
+
+**Why this step exists.** Step 5 gives an agent exactly the tools its creator
+picked in the editor. Creating "Triage" with instructions and no tools — the
+natural first thing anyone does — gives a model that cannot even try GitHub,
+so no card is ever raised and it answers "give me the repository URL". Asking
+people to choose from GitHub's 894 tools while creating an agent is the
+friction this product exists to remove. After this step, **nobody picks tools**:
+an agent looks for what it needs when it runs, and the card asks for access at
+that moment.
+
+**The flow this step delivers, with the people from the proposal:**
+
+1. `@triage` is created with a name and instructions, and nothing else.
+2. Alice: "@triage look at github issue #445 and tell me about it".
+3. Triage's prompt says it can reach **GitHub** and **Notion**. It calls
+   `find_tools({ toolkit: 'github', use_case: 'look at issue #445' })`.
+4. Alice has no GitHub connection, so the server posts the card — **Connect
+   GitHub and allow @triage** — and tells the model to say so and stop. The run
+   ends. Nothing waits for her.
+5. Hours later Alice clicks Connect, signs in, and the card allows @triage in the
+   same click. **The run starts again by itself.**
+6. `find_tools` now returns `GITHUB_GET_AN_ISSUE` with its schema; Triage calls
+   `call_tool({ tool: 'GITHUB_GET_AN_ISSUE', arguments: { owner, repo, issue_number: 445 } })`
+   and answers.
+7. Later, "@pr-review review PR #4561": Alice is connected but never allowed
+   @pr-review, so the card is one click — **Allow @pr-review** — with no sign-in.
+   It re-runs and reviews. Neither agent asks her again.
+
+Permission stays **per agent** ([permissions, §6.4](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection)):
+connecting is once per person, allowing is once per agent. That click is the
+only moment Alice agrees to *this* agent spending her account — and any member
+can write an agent's instructions.
+
+**Implements:** decisions D21–D27 (§2), which change
+- [the product (§4.1)](WORKSPACE-AGENTS.md#41-the-product) and [the definition (§4.3)](WORKSPACE-AGENTS.md#43-the-definition): no Tools field, no `agent_tools`
+- [what the runtime is sent (§5.4)](WORKSPACE-AGENTS.md#54-what-the-runtime-is-sent) and [a tool call (§5.5)](WORKSPACE-AGENTS.md#55-a-tool-call)
+- [permissions (§6.4)](WORKSPACE-AGENTS.md#64-permissions-which-agents-may-use-a-connection): what Allow grants
+- [executing through a session (§6.7)](WORKSPACE-AGENTS.md#67-executing-through-a-composio-session) and [errors (§6.8)](WORKSPACE-AGENTS.md#68-errors-mapped-to-what-the-person-can-do)
+- [the card in a chat (§7.4)](WORKSPACE-AGENTS.md#74-the-card-in-a-chat): Run again becomes automatic
+
+**First:** step 5. **Evidence:** the Composio discovery spike (§4.1),
+[`spikes/composio-discovery/`](../spikes/composio-discovery/README.md). Step 6
+is independent of this step.
+
+### Fix first — the card takes the run's reply id
+
+**A bug in step 5, found while planning this step, and it ships on its own.**
+`raiseAccessRequest` (`apps/server/src/agents/access.ts`) writes the card with
+`claimReplyMessageId`, which returns the id the dispatcher already chose for the
+run's **answer**. When the model then finishes — "I need access to your
+GitHub" — `deliverReply` writes the answer with the same id and hits
+`messages_pkey`. `applyOnce` retries once, finds no ledger row, fails again, and
+the run is left `running`. When its lease expires, the sweep's notice collides
+with the same id — the server crash of 2026-09-15, which is now caught and
+counted as `agent.dispatcher.sweep_error` but repeats on every sweep, for ever.
+
+| File | Change |
+|---|---|
+| **Changes** `apps/server/src/agents/access.ts` | The card gets its own id, `ulid('msg')`. The answer keeps the run's reply id |
+| **Changes** `apps/server/src/agents/dispatcher.ts` | `sweepExpiredLeases` moves a run whose notice failed to `interrupted` directly, as it already does for a run with no reply id, so one bad row is not retried every five seconds |
+
+**Test:** a run that raises a card and then completes posts both the card and
+the answer, and ends `completed` (`apps/server/src/agents/access.test.ts`).
+
+### What the spike settled
+
+| Question | Answer | Consequence here |
+|---|---|---|
+| Can one Composio session serve a person, across every agent? | Yes — no tool list, limited to the enabled toolkits, with `manage_connections`, `workbench` and multi-execute off. Only search and schema meta tools remain | One session per **person**, not per (agent, person, `config_rev`) |
+| Does search work before a connection exists? | Yes, reporting `has_active_connection: false` | The card is raised at search time |
+| Does search say "nothing fits"? | **No.** A Slack request with Slack not enabled returned GitHub tools | The model names the toolkit (D22) |
+| Latency | Search p50 2.1s, max 3.1s; execute 750–950ms | Search once per need, never per call |
+| Must the model search before calling a tool? | No — an unsearched tool executes | `call_tool` is checked on its own; search is guidance, not a gate |
+| Is the search response safe to pass through? | **No.** It carries the person's whole GitHub profile, the Composio account id, and instructions to call tools the session does not have | The server builds its own result (D27) |
+| Must a session pin the account? | Not in the spike — contradicting the comment in `composio.ts` and `014_broker.sql`. Pinning can be added later with `PATCH`, and Composio refuses to pin someone else's account | Pin anyway, from `connections`, so the account executed is the one the audit records (D24) |
+| Size | The cleaned result is ~1,400 tokens; all of GitHub ~459,000, all of Notion ~92,000 | Search for every toolkit, however small |
+
+### Schema
+
+**New** `apps/server/src/db/migrations/016_tool_discovery.sql`:
+
+| Change | Why |
+|---|---|
+| `DROP TABLE agent_tools` | Nobody picks tools (D21). No compatibility layer: nothing reads it after this step |
+| `composio_sessions` recreated as `(invoker_actor_id PRIMARY KEY, session_id, toolkits TEXT[], connected_accounts JSONB, created_at)` | One session per person (D24). `toolkits` is the enabled set it was created for: when a toolkit is enabled or disabled, the session is recreated |
+
+No new column for automatic re-runs: the existing
+`UNIQUE (trigger_message_id, agent_actor_id, attempt)` on `agent_runs` already
+makes "one re-run per attempt" true when two cards resolve at once (D25).
+
+**Replica:** unchanged. `agent_summaries.toolkits` stays, always empty, and is
+dropped together with the wire field once no client in use requires it (§12.4).
+
+### Server
+
+| File | Change |
+|---|---|
+| **Changes** `apps/server/src/agents/dispatcher.ts` | Every run gets two tools instead of the agent's list: `find_tools` with `toolkit` as an **enum of the enabled toolkits** and `use_case`, and `call_tool` with `tool` and `arguments`. The system prompt gains one line naming the enabled toolkits, and one rule: **if a request needs a service that is not listed, say so — never substitute another service.** `agent_runs.config` records the toolkits offered instead of a tool list |
+| **Changes** `apps/server/src/agents/composio.ts` | `searchSessionTools(sessionId, useCase)` for `POST /tool_router/session/:id/search`, returning only tool names and schemas; `patchSessionAccounts(sessionId, connectedAccounts)`. `createSession` loses its tool list. The comment claiming pinning is required is corrected to what the spike observed |
+| **Changes** `apps/server/src/agents/sessions.ts` | `sessionFor(db, invoker)`, and `enabledToolkits(db)`: one per person, recreated when the enabled toolkits change, and patched when their active `connections` differ from its pin. No longer lists the session's tools |
+| **Changes** `apps/server/src/agents/broker.ts` | `POST /agent/tools` dispatches on the tool name. **`find_tools`:** checks the toolkit is enabled; checks permission for (invoker, agent, toolkit) at `read` and then connection, through the same `checkAccess` steps 7 and 8 of §5.5 use; if either is missing, raises the card at effect `write` and stops with `permission_required` or `connection_required`; otherwise searches and returns **its own shape** — `{ tools: [{ name, description, parameters }] }` for tools of that toolkit only, schemas Composio did not include filled from `toolkit_tools.input_schema`. **`call_tool`:** the steps of §5.5, with step 5 changed below. Anything else is `tool_not_allowed` |
+| **Changes** `apps/server/src/agents/checkpoints.ts` | `beforeToolCall` step 5, "tool in the snapshot", becomes **"the tool is in `toolkit_tools`, not deprecated, in an enabled toolkit"**. Its effect is `effect_override ?? effect_derived` from the catalogue, never from the model. `onRunEnd` is finally called (below) |
+| **Changes** `apps/server/src/agents/access.ts` | `grantPermission` grants **`write`**, or `destructive` when the card being allowed is for a destructive call (D23) — never computed from `agent_tools`. `resolveAccessRequests` resolves only cards the grant covers (an ordinary Allow leaves a destructive card open) and returns their runs; `rerunResolved` re-runs them and wakes the dispatcher. **New** `rerun.ts`, `rerunIfReady(runId)`: when the run has finished, has at least one resolved card and **no pending one**, insert attempt `+ 1` (`ON CONFLICT DO NOTHING`). Its own module, so `access.ts` and `checkpoints.ts` both call it without an import cycle through `dispatcher.ts`. `permissions.ts`'s grant route re-runs the same way. The invoker-only `POST /agent-runs/:id/retry` route is deleted |
+| **Changes** `apps/server/src/agents/checkpoints.ts`, `dispatcher.ts` | `onRunEnd` calls `rerunIfReady`, for a card resolved **before** its run had finished |
+| **Changes** `apps/server/src/agents/tool-errors.ts` | From the spike: `ToolRouterV2_ToolNotFound` for a tool our catalogue still lists → `tool_deprecated`; `ToolRouterV2_ToolkitNotAllowed` → `refused` with the alert; a `200` with `error` set → `failed`, message kept, so the model can correct its arguments |
+| **New** `apps/server/src/agents/run-tools.ts` | The two tool definitions and the prompt text, shared by the dispatcher (which offers them) and the broker (which answers them), so the names cannot drift |
+| **Changes** `apps/server/src/agents/definitions.ts`, `routes.ts`, `summary.ts`, `catalogue.ts` | The tools write path and its `PUT /agents/:id/tools` route, the `tools` limit and field, and `toolDefinitions` are deleted. Summaries send `toolkits: []` until clients that read the field are gone (§12.4) |
+
+**Not recorded in `agent_tool_calls`:** a `find_tools` call. It executes nothing
+against anyone's account.
+
+### Protocol
+
+**Changes** `packages/protocol`: none to the shapes. The definition's `tools` and
+the summary's `toolkits` stay in the wire schema, always empty and commented as
+such, until no client in use requires them (§12.4).
+
+### Runtime (`apps/agent`)
+
+**Changes** `src/agent.ts`: `describeBrokerResult` gains the wording for a stop
+raised by `find_tools` — "a card has been posted asking them for access; tell
+them in one short sentence and stop". No change to how remote tools register:
+`find_tools` and `call_tool` are two ordinary `RunTool`s.
+
+### Client
+
+| File | Change |
+|---|---|
+| **Delete** `apps/desktop/src/renderer/features/agents/AgentTools.tsx`; **changes** `routes/SettingsAgentEditor.tsx` | No Tools section. Creating an agent is name, handle, description, instructions and model |
+| **Changes** `features/agents/AccessCard.tsx` | Resolved shows "GitHub is ready. @triage is running again." instead of Run again. `EFFECT_WORDS` gets its own `destructive` wording ("to delete or overwrite things in your") |
+| **Changes** `apps/desktop/src/sync/index.ts`, `sync/auth/relayed.ts`, `preload/api.d.ts`, `features/connectors/useToolkits.ts` | `agents.retryRun`, `agents.setTools` and `toolkits.get` are deleted, with their HTTP calls and `useToolkitDetail` — the tool picker was their only user |
+| **Changes** `routes/SettingsAgents.tsx`, `features/agents/AgentProfile.tsx` | The toolkit badges go. The profile's Tools row says the agent finds what it needs and asks you for access the first time it uses yours |
+
+**Already built, contrary to what planning first assumed:** "Connect and allow in
+one go". `AccessCard.tsx` connects, then calls allow, in one click.
+
+### Tests
+
+| Test | File |
+|---|---|
+| `find_tools` with no permission raises one card, a second search raises no second, and Composio is never called; allowed but not connected returns `connection_required` | **new** `apps/server/src/agents/broker.test.ts` |
+| `find_tools` connected but not allowed for **this** agent raises the Allow card; allowed for another agent does not count | `broker.test.ts` |
+| `find_tools` returns only the named toolkit's real, non-deprecated tools, in exactly `{ name, description, parameters }`, with Composio's schema when it sent one and ours otherwise. (`composio.ts`'s `searchSessionTools` never returns the raw response, so profile and guidance cannot reach the broker at all.) | `broker.test.ts`, Composio stubbed |
+| `call_tool` refuses a name not in the catalogue, a deprecated tool, and a tool of a toolkit not enabled — none reach Composio | `broker.test.ts` |
+| `call_tool` takes the effect from the catalogue: a destructive tool with a `write` permission raises a second card | `broker.test.ts` |
+| Allow grants `write`; allowing a destructive card grants `destructive`; an ordinary Allow never lowers it, and leaves a destructive card open | `access.test.ts` |
+| A card resolving after its run finished queues exactly one re-run; two cards resolving at once still queue one; a run with a second card still pending queues none; a card resolving **before** the run finished re-runs when it ends | `access.test.ts` |
+| A run that raises a card and then completes posts both (fix first); a swept run whose notice cannot be written still leaves `running` | `access.test.ts`, `dispatcher.test.ts` |
+| Migration 016 against Postgres: `agent_tools` gone, `composio_sessions` keyed per person | `apps/server/src/db/agents-schema.test.ts` |
+
+### By hand — the milestone
+
+The flow at the top of this step, on two clients, against the development
+Composio project and a real GitHub account:
+1. Create `@triage` with instructions only, and `@pr-review` likewise.
+2. As a person with no GitHub connection, ask `@triage` about a real issue. One
+   card; the other client sees "@triage is waiting for …".
+3. Leave it for five minutes, then Connect. The card resolves on both clients and
+   Triage answers **without anyone pressing anything else**.
+4. Ask `@pr-review` about a real pull request: one-click Allow, no sign-in, then
+   the answer.
+5. Ask both again: no card.
+6. Ask `@triage` to post in Slack: it says it cannot reach Slack. It does **not**
+   comment on GitHub.
+
+### Observability
+
+**Not added.** Proposed, to agree with the dev before adding (`AGENTS.md`,
+observability is part of the feature):
+
+| Marker | Question it answers |
+|---|---|
+| `agent.tool.search{result}` — `found`, `access_required`, `empty`, `error` | Do agents find tools, or stall at access? A rising `empty` means the prompt's toolkit rule or search quality is failing |
+| `agent.tool.search.duration` | Is Composio search what makes a first reply slow? The spike measured p50 2.1s |
+| `agent.run.rerun` | Does a card actually lead to finished work, or do people connect and nothing happens? |
+
+### Docs, in the same commit
+
+- `WORKSPACE-AGENTS.md`: the sections listed under Implements, and
+  [deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built) — "a tool-search
+  meta-tool" and retrying after a card are no longer deferred.
+- `apps/server/src/agents/composio.ts` and `014_broker.sql`'s comments on pinning.
+- `AGENTS.md`'s documentation table: seven steps.
+
+### Done when
+
+- The milestone holds by hand, including step 6's refusal to substitute a service.
+- Every test above is green, and so is the fix-first test on its own before it.
+
+### Where the build differs from this plan
+
+- **`agent_summaries.toolkits` is not dropped**, and neither are the wire fields — see Replica and Protocol above.
+- **The profile's Tools row is a sentence**, not a list of enabled toolkits with your access to each: the smallest thing that stops it describing a list that no longer exists.
+- **The fix first also touched `packages/telemetry`**: `agent.dispatcher.sweep_error`'s description, since a failed notice now moves the run on.
+- **`composio_op` label values**: `session_tools` replaced by `patch_session` and `session_search`.
+- **A reply's tool lines come from `agent_tool_calls`** (`reply.ts`), not the runtime's list of calls: that list only says `find_tools` and `call_tool`. Searches and calls that stopped for access get no line, and the working indicator names neither tool. Added after the dev saw red "find tools — failed" markers beside cards that were working as intended.
+- **The prompt says to use only the services a request needs**, and to call `find_tools` for every request even when earlier messages show access being asked for. Added after one run asked for GitHub on a Notion request, and a test run skipped asking when an earlier card was in the thread. Measured afterwards on the live model: six requests, each asked only for the service it named, each with its card. Six runs cannot prove an intermittent behaviour gone.
+- **Every access card was drawn as its public sentence, for everyone** — including the person who could act on it. The renderer reused `forbiddenPartKind`, the write rule, which refuses a card for every author. The renderer now uses `undrawablePartKind` (`packages/protocol/src/parts.ts`), which draws a card on an agent's message. A step-5 bug, found by the dev in the app.
+- **The per-person run cap is gone.** `admitRun` deferred a run as `invoker_busy` once three of that person's runs were `running` — and counted runs left `running` by a server restart until their lease expired, so every new mention from that person queued for up to ten minutes behind requests nobody was working on. Asked by the dev: a stuck request must not hold back any other, the same person's included. `runtime_busy`, the runtime's own capacity, is the remaining defer reason.
+- **A test toolkit leaked into the development database** when one run of `access.test.ts` failed during cleanup, and was offered to real agents' prompts until removed by hand. Tests share the development database; a test that enables a toolkit is visible to a running dispatcher for as long as it lives.
+
+---
+
+## 12. Cross-cutting
+
+### 12.1 Module layout
 
 ```
 apps/server/src/agents/
@@ -1102,10 +1332,11 @@ apps/server/src/agents/
   composio.ts           the only @composio/core import                 step 4
   catalogue.ts  connections.ts  permissions.ts  webhook.ts
   reconcile.ts  label.ts                                               step 4
-  broker.ts  sessions.ts  tool-errors.ts  access.ts                    step 5
+  broker.ts  sessions.ts  tool-errors.ts  access.ts                    step 5; find_tools, call_tool,
+                                                                       one session per person, re-runs: step 7
 ```
 
-### 11.2 Migrations
+### 12.2 Migrations
 
 | Number | Name | Step |
 |---|---|---|
@@ -1115,15 +1346,17 @@ apps/server/src/agents/
 | 012 | `agent_runs` | 3 |
 | 013 | `connections` | 4 |
 | 014 | `broker` | 5 |
+| 015 | `tool_schemas` — `toolkit_tools.input_schema`, from the catalogue | 5 |
+| 016 | `tool_discovery` — drops `agent_tools`; `composio_sessions` per person | 7 |
 
 Steps that run in parallel must renumber on merge rather than share a number.
 Every CHECK added gets one test per constraint, against Postgres
 (`AGENTS.md`, rule 2).
 
 Replica migrations in `apps/desktop/src/sync/migrations/workspace.ts`:
-version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4).
+version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4). Step 7 needs none: `agent_summaries.toolkits` stays until the wire field goes.
 
-### 11.3 Telemetry by step
+### 12.3 Telemetry by step
 
 | Step | Markers | Catalogue |
 |---|---|---|
@@ -1131,13 +1364,14 @@ version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4).
 | 3 | `agent.run{outcome}`, `agent.run.refused{refusal}`, `agent.run.deferred{reason}`, `agent.run.queue_wait`; the runtime's markers from `AGENT-RUNTIME.md` §8 | `metrics.ts` |
 | 4 | `connection.flow{scheme, stage, outcome}`, `composio.request{op, outcome}` + duration | `metrics.ts` |
 | 5 | `agent.tool{effect, outcome}` | `metrics.ts` |
+| 7 | Proposed, not agreed: `agent.tool.search{result}`, `agent.tool.search.duration`, `agent.run.rerun` | `metrics.ts` |
 
 Each is proposed to the dev before it is added (`AGENTS.md`, rule 8). Two limits
 are enforced by the catalogue's types:
 - **No id as a label**, and a `toolkit` label only through an allowlist.
 - **No tool arguments, results, instructions or card text** in any event.
 
-### 11.4 Rolling out
+### 12.4 Rolling out
 
 In order, because old clients and old runtimes persist (`DESIGN.md`, forward
 compatibility §9.10):
@@ -1151,16 +1385,17 @@ compatibility §9.10):
 3. **Composio production project** (§4.3) before step 4 reaches production,
    including our own OAuth apps.
 4. **Clients** with the agent screens and the connector store.
+5. **Step 7: server first, then clients, then stop sending `toolkits`.** The server keeps sending `toolkits: []` in agent summaries until no client in use reads the field, because an old client's parse requires it.
 
-### 11.5 Data kept, and for how long
+### 12.5 Data kept, and for how long
 
 Neither the proposal nor this plan settles retention for
 `agent_runs.config`, `agent_tool_calls.arguments` or `access_requests`. They are
-product data, not telemetry. See §16.
+product data, not telemetry. See §17.
 
 ---
 
-## 12. Test matrix
+## 13. Test matrix
 
 The proposal's [tests that must exist (§12.3)](WORKSPACE-AGENTS.md#123-tests-that-must-exist),
 each with its step and file.
@@ -1175,14 +1410,16 @@ each with its step and file.
 | No mention is lost | 3 | `apps/server/src/sync/ops.test.ts` |
 | Nobody else finishes a connection | 4 | `apps/server/src/agents/connections.test.ts`, `apps/desktop/src/sync/auth/loopback.test.ts` |
 | A call id executes once | 5 | `broker.test.ts` |
-| Permission is per agent | 5 | `broker.test.ts` |
+| Permission is per agent | 5, 7 | `broker.test.ts` — in step 7, at search time as well as at call time |
 | Stop wins | 3, 5 | `apps/server/src/agents/reply.test.ts`, `broker.test.ts` |
 | Nothing is silent | 3 | `apps/server/src/agents/dispatcher.test.ts` |
+| A run finds tools only in enabled toolkits, and a tool name from the model is checked against the catalogue before Composio sees it | 7 | `broker.test.ts` |
+| A resolved card re-runs once | 7 | `apps/server/src/agents/access.test.ts` |
 | Boundary rules | 1, 4 | `tools/check-boundaries.mjs`: `protocol/no-client-audience`, `agents/composio-only-here`, `agent/no-composio-env` |
 
 ---
 
-## 13. Docs matrix
+## 14. Docs matrix
 
 The proposal's [docs to change (§14)](WORKSPACE-AGENTS.md#14-docs-to-change-when-this-is-accepted),
 each landing in the step that makes it true — never before.
@@ -1195,7 +1432,7 @@ each landing in the step that makes it true — never before.
 | `DESIGN.md`, accepted exposures (§6.6), item 2 | 1 |
 | `DESIGN.md`, membership and access (§7.3) | 1 |
 | `DESIGN.md`, client schema (§8.3) and sync protocol (§9) | 1, 2, 3, 4 — each its own additions |
-| `DESIGN.md`, invariants (§14) | By [§14](#14-invariants-by-step) |
+| `DESIGN.md`, invariants (§14) | By [§15](#15-invariants-by-step) |
 | `DESIGN.md`, build order (§15) | 1: Phase 6 rewritten to point at this plan |
 | `AUTHZ.md` | 2 |
 | `AGENT-RUNTIME.md` | 3 |
@@ -1203,11 +1440,12 @@ each landing in the step that makes it true — never before.
 | `AGENT-RESPONSES.md` | 5 |
 | `STACK.md` | 4 |
 | `OBSERVABILITY.md` | Each step whose markers are agreed |
-| `AGENTS.md` | Done: the proposal is listed. This plan is added beside it |
+| `AGENTS.md` | Done: the proposal is listed. This plan is added beside it. Step 7: seven steps |
+| `WORKSPACE-AGENTS.md`, §4.1, §4.3, §5.4, §5.5, §6.4, §6.7, §6.12, §7.4, §13 — folding D21–D27 | 7 |
 
 ---
 
-## 14. Invariants by step
+## 15. Invariants by step
 
 From [invariants to add](WORKSPACE-AGENTS.md#invariants-to-add).
 
@@ -1221,13 +1459,15 @@ From [invariants to add](WORKSPACE-AGENTS.md#invariants-to-add).
 | 79 | Visibility filters run in SQL, before `LIMIT` | 1 | `visibility.ts` used by every read path; hidden-ordinal-1 test |
 | 80 | A list is never empty, and only `writeMessage` inserts a message | 1 | `toColumn`, the `cardinality` CHECKs, boundary rule `sync/messages-written-by-one-writer`; schema and ops tests |
 | 81 | A card carries no URL; the redirect goes only to the named actor | 4, 5 | `connections.ts`, the `access_request` part shape; connection tests |
-| 82 | An agent reaches a connection only through a permission naming it | 5 | `broker.ts` step 7; per-agent permission test |
+| 82 | An agent reaches a connection only through a permission naming it | 5, 7 | `broker.ts` step 7, and in step 7 also before a search; per-agent permission test |
 | 83 | Nothing learned for one invoker is given to a run for another | 5 (recorded) | `transcript.ts` builds per invoker. No sessions or memory exist to violate it |
 | 88 | An access card is public, only its actor acts on it, and its state changes for everyone through `message.updated` | 1, 5 | `updateMessage` and the version rule (1); `access.ts` actor check, resolution in one transaction (5); actor-only and resolve tests |
+| *New, numbered when folded* | **What a tool call names is resolved against our catalogue**: the tool must exist, not be deprecated, be in an enabled toolkit, and its effect comes from the catalogue — never from the model | 7 | `checkpoints.ts` step 5; `call_tool` refusal tests |
+| *New, numbered when folded* | **A provider's search response never reaches the model**; the server builds the result from it | 7 | `broker.ts` `find_tools`; the test that the recorded response's profile and guidance are absent |
 
 ---
 
-## 15. Not in this plan
+## 16. Not in this plan
 
 The proposal's [deliberately not built (§13)](WORKSPACE-AGENTS.md#13-deliberately-not-built),
 with the checkpoint each would change, so that building one later starts from
@@ -1238,29 +1478,31 @@ the right file.
 | One run at a time per agent per thread | `admitRun`: `defer('thread_busy')`; `onRunEnd` wakes the next |
 | Steering a running run with a follow-up | `invocationsFor`: return *steer* |
 | Agent sessions across turns; agent memory | `onRunEnd` and `transcript.ts`, under invariant 83 |
-| Approval before write or destructive tools | `beforeToolCall`: honour `agent_tools.approval` |
+| Approval before write or destructive tools | `beforeToolCall`. `agent_tools.approval` was reserved for it; step 7 drops that table, so an approval lands on `agent_permissions` |
 | Invoker-only replies with Share | `deliverReply`: `post({ listed: [invoker] })` |
 | Pausing a run while someone connects | `beforeToolCall` and the runtime's out-of-band results |
-| Retrying runs | `onRunEnd`, once `agent_tool_calls` becomes a result marker |
+| Retrying a run that failed | `onRunEnd`, once `agent_tool_calls` becomes a result marker. Re-running after a card resolves is built in step 7 (D25) |
 | Several accounts per toolkit | `connections` unique index; the card's picker |
-| A workspace allow-list of toolkits | `beforeToolCall` |
+| A workspace allow-list of toolkits | `beforeToolCall`. Step 7 limits search to `toolkits.enabled`, which is per deployment, not per workspace |
 | Disconnecting on deactivation | `apps/server/src/workos/poller.ts`, beside its `recordActor` |
-| Scheduled or triggered agents; agents invoking agents; external agents; person-to-person restricted messages; a tool-search meta-tool | Separate designs |
+| Scheduled or triggered agents; agents invoking agents; external agents; person-to-person restricted messages | Separate designs |
+| Telling the sender an agent they mentioned is not in the space, with an Add button | `invocationsFor` already skips such an agent silently. Deferred by the dev on 2026-09-15: for now, nothing happens |
 
 ---
 
-## 16. Open questions carried
+## 17. Open questions carried
 
 From the proposal's [open questions (§15)](WORKSPACE-AGENTS.md#15-open-questions),
 plus what this plan raised.
 
 | Question | Blocks | Decide by |
 |---|---|---|
-| Per-toolkit or per-tool permissions | Step 4's table shape | Before migration 013 |
-| The tool cap | Step 5's editor limit | The tool-definitions spike |
+| ~~Per-toolkit or per-tool permissions~~ — per toolkit, with an effect ceiling (step 4, confirmed by D23) | — | Decided |
+| ~~The tool cap~~ — gone with the editor's Tools section (D21) | — | Decided |
 | Cost visibility and ceilings | Nothing in v1 | Before production traffic |
 | Group DMs with an agent | Nothing until DMs exist | With DMs (D2) |
 | Catalogue refresh frequency; deprecated pinned tools | Step 4's refresh | Before step 4 ships |
 | **Retention of `agent_runs.config`, `agent_tool_calls.arguments` and `access_requests`** — raised here | Nothing in v1; an audit trail with no retention grows for ever | Alongside `DESIGN.md`'s retention (§13.6) |
 | **Whether the dev-only restricted-message route survives after step 3** — raised here | Nothing | Kept while restricted messages are dormant: it is their only writer, and what the by-hand check uses |
-| **Whether an untouched access card expires with time**, and after how long — raised by D15 | Nothing in v1 | With step 5 |
+| **Whether an untouched access card expires with time**, and after how long — raised by D15 | Nothing in v1. With automatic re-runs (D25), a card resolved weeks later would start a stale request | **Deferred by the dev, 2026-09-15.** `access_requests.created_at` is when a card was raised, which is all an age-based expiry needs |
+| **Which account an unpinned session uses** when a person has an `EXPIRED` and an `ACTIVE` account for one toolkit — raised by the discovery spike | Nothing while D24 pins | If pinning is ever dropped |

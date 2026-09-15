@@ -98,6 +98,10 @@ export interface MessageRow {
   visibleTo: string[] | null;
   /** The parts `body` was derived from, as stored; null for a message that is its body. */
   parts: unknown[] | null;
+  /** `'system'`: history the server wrote about a command, not authored content (SPACE-MEMBERSHIP-MARKERS.md). */
+  kind: 'actor' | 'system';
+  systemKind: string | null;
+  subjectActorId: string | null;
 }
 
 /**
@@ -445,7 +449,8 @@ export async function threadReplies(
 function messageRows(db: Kysely<DB>, readerId: string) {
   return db.selectFrom('messages as m')
     .select(['m.id', 'm.ord', 'm.rev', 'm.author_id', 'm.body', 'm.parent_id',
-             'm.deleted', 'm.edited_at', 'm.visible_to', 'm.parts'])
+             'm.deleted', 'm.edited_at', 'm.visible_to', 'm.parts',
+             'm.message_kind', 'm.system_kind', 'm.subject_actor_id'])
     .select(eb => eb.selectFrom('messages as r')
       .select(eb2 => eb2.fn.countAll<number>().as('n'))
       .whereRef('r.parent_id', '=', 'm.id')
@@ -492,6 +497,9 @@ export async function counters(
     .where('ord', '>', lastRead)
     .where('deleted', '=', false)
     .where('author_id', '!=', actorId)
+    // A system row is history, not conversation — it creates no unread or
+    // mention count (SPACE-MEMBERSHIP-MARKERS.md).
+    .where('message_kind', '=', 'actor')
     // A badge for a message the reader can never open is worse than wrong when
     // it is the newest: reading the chat marks read up to the highest ordinal
     // they HOLD, which is below it, and the badge never clears (§8.7).
@@ -540,11 +548,28 @@ export interface WelcomeStream {
  * the workspace rather than by the person, which is how a frame that is fine at
  * a hundred people becomes half a megabyte at sixteen hundred (DESIGN.md §9.9).
  */
+export interface WelcomeConnection {
+  id: string;
+  toolkit: string;
+  status: 'connecting' | 'active' | 'needs_reauth' | 'failed' | 'disconnected';
+  statusReason: 'expired' | 'revoked_upstream' | 'scopes_changed' | 'failed' | null;
+  label: string | null;
+}
+
+export interface WelcomeAgentPermission {
+  agentActorId: string;
+  toolkit: string;
+  effect: 'read' | 'write' | 'destructive';
+  revoked: boolean;
+}
+
 export interface WelcomePayload {
   spaces: WelcomeSpace[];
   chats: WelcomeChat[];
   memberships: WelcomeMembership[];
   streams: WelcomeStream[];
+  connections: WelcomeConnection[];
+  agentPermissions: WelcomeAgentPermission[];
 }
 
 
@@ -586,22 +611,46 @@ export async function welcome(
   // into one query with `json_build_object`. The test asserts the count is
   // EQUAL at 150 chats and at 300, which is the property; asserting "one" would
   // have been asserting a number that happened to hold.
-  const [chats, spaces, memberships, workspaceRev] = await Promise.all([
+  const [chats, spaces, memberships, connections, agentPermissions, workspaceRev] = await Promise.all([
     welcomeChats(db, workspaceId, actorId),
     welcomeSpaces(db, actorId),
     welcomeMemberships(db, actorId),
+    welcomeConnections(db, actorId),
+    welcomeAgentPermissions(db, actorId),
     db.selectFrom('workspaces').select('next_rev')
       .where('id', '=', workspaceId).executeTakeFirst(),
   ]);
 
   return {
-    spaces, chats, memberships,
+    spaces, chats, memberships, connections, agentPermissions,
     // Only the workspace stream. There is no actor cursor: an actor is a
     // delivery address rather than an ordered stream, so there is nothing to
     // be behind on (docs/SYNC-FLOWS.md §5). Space cursors ride on the space
     // rows themselves, above.
     streams: [{ kind: 'workspace', id: workspaceId, rev: workspaceRev?.next_rev ?? 0 }],
   };
+}
+
+/** The caller's own connected accounts (WORKSPACE-AGENTS.md §6.3) — every status, not only `active`. */
+async function welcomeConnections(db: Kysely<DB>, actorId: string): Promise<WelcomeConnection[]> {
+  const rows = await db.selectFrom('connections')
+    .select(['id', 'toolkit', 'status', 'status_reason', 'label'])
+    .where('actor_id', '=', actorId)
+    .execute();
+  return rows.map(row => ({
+    id: row.id, toolkit: row.toolkit, status: row.status, statusReason: row.status_reason, label: row.label,
+  }));
+}
+
+/** The caller's own grants to agents (WORKSPACE-AGENTS.md §6.4) — revoked rows included, so a revoke replicates too. */
+async function welcomeAgentPermissions(db: Kysely<DB>, actorId: string): Promise<WelcomeAgentPermission[]> {
+  const rows = await db.selectFrom('agent_permissions')
+    .select(['agent_actor_id', 'toolkit', 'effect', 'revoked_at'])
+    .where('invoker_actor_id', '=', actorId)
+    .execute();
+  return rows.map(row => ({
+    agentActorId: row.agent_actor_id, toolkit: row.toolkit, effect: row.effect, revoked: row.revoked_at !== null,
+  }));
 }
 
 /**
@@ -687,6 +736,8 @@ async function welcomeChats(
         .where(sql<boolean>`messages.ord > COALESCE(chat_read_state.last_read_ord, 0)`)
         .where('messages.deleted', '=', false)
         .where('messages.author_id', '!=', actorId)
+        // Same exclusion `counters` applies, for the same reason.
+        .where('messages.message_kind', '=', 'actor')
         // The same clause `counters` uses, so a badge cannot differ between
         // arriving in `welcome` and arriving in a later push.
         .where(visibleTo('messages', actorId))
@@ -717,6 +768,7 @@ const toMessage = (row: {
   edited_at: Date | string | null; reply_count: number | string | null;
   visible_to: string[] | null;
   parts: unknown;
+  message_kind: string; system_kind: string | null; subject_actor_id: string | null;
 }): MessageRow => ({
   id: row.id, ord: row.ord, rev: row.rev, authorId: row.author_id,
   body: row.body, parentId: row.parent_id, deleted: row.deleted,
@@ -727,6 +779,9 @@ const toMessage = (row: {
   visibleTo: row.visible_to,
   // JSONB arrives parsed. Anything but an array is not parts.
   parts: Array.isArray(row.parts) ? row.parts : null,
+  kind: row.message_kind === 'system' ? 'system' : 'actor',
+  systemKind: row.system_kind,
+  subjectActorId: row.subject_actor_id,
 });
 
 export interface DirectoryRow {

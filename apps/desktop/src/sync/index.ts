@@ -21,8 +21,12 @@ import { prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
-  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, stopAgentRun, type AgentInput,
+  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSpace, type SpaceInput,
+  stopAgentRun, type AgentInput,
+  listToolkits, disconnectConnection,
+  grantAgentPermission, revokeAgentPermission, allowAccessRequest,
 } from './auth/relayed.ts';
+import { connect as connectToolkit } from './connect.ts';
 import { newId } from './ids.ts';
 import { enqueue } from './outbox.ts';
 import { installNetworkGate } from './network.ts';
@@ -31,6 +35,7 @@ import { decode } from '../shared/prefs.ts';
 import type { PreferenceChange } from './prefs.ts';
 import { createInvalidator } from './invalidate.ts';
 import { createLink } from './link.ts';
+import { createReauth } from './reauth.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
 import { createRunnerLink } from './runner.ts';
 import { LocalStore } from './local/store.ts';
@@ -296,6 +301,16 @@ async function fillAvatars(): Promise<void> {
  * with it (§13.1).
  */
 /**
+ * The active workspace's own actor id — who "me" is in the open workspace.
+ * `connections` and `agent_permissions` are always this actor's own rows
+ * (WORKSPACE-AGENTS.md §6.3, §6.4), so every read and push scoped to "me"
+ * resolves through this same lookup.
+ */
+function activeActorId(): string | null {
+  return storage.workspaces().find(w => w.workspaceId === storage.workspaceId)?.actorId ?? null;
+}
+
+/**
  * The socket, and everything that arrives on it.
  *
  * Constructed once and started when a workspace is open — the connection itself
@@ -307,13 +322,32 @@ async function fillAvatars(): Promise<void> {
  * fetch and nothing else, and half a simulation is worse than none because it
  * looks like it worked.
  */
+/**
+ * Brings the link back when the server refused its token — see `reauth.ts`.
+ * `link` is read when an attempt fires, long after both exist.
+ */
+const reauth = createReauth({
+  refresh: () => session.ensureFresh(),
+  held: () => session.accessToken,
+  signedOut: () => session.state.status === 'signed_out',
+  retryNow: () => { link.retryNow(); },
+});
+
 const link = createLink({
   url: (process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787')
     .replace(/^http/, 'ws') + '/sync',
   gate: net,
   db: () => (storage.hasWorkspace ? storage.workspace : null),
   workspaceId: () => storage.workspaceId,
-  token: async () => session.accessToken,
+  // Same lookup `messages.send` uses: the replica's own workspace row, not
+  // the session — the source of truth for who I am here (SPACE-MEMBERSHIP-MARKERS.md).
+  actorId: () => storage.workspaces()
+    .find(w => w.workspaceId === storage.workspaceId)?.actorId ?? null,
+  // Refreshed when expired, not merely read: a reconnect after the token lapsed
+  // under a live socket — a server restart, say — presented it anyway, was
+  // refused, and parked in `unauthorised` for good.
+  token: () => session.ensureFresh(),
+  onState: (state) => { reauth.onState(state); },
   invalidate: (topics) => {
     invalidate(topics);
     // NEW ACTORS MEAN NEW PICTURES, and this is the only place that can know.
@@ -349,6 +383,12 @@ const link = createLink({
       memberships: (body.memberships ?? []).map(m => ({
         scopeType: m.scope_type, scopeId: m.scope_id, role: m.role,
       })),
+      connections: (body.connections ?? []).map(c => ({
+        id: c.id, toolkit: c.toolkit, status: c.status, statusReason: c.status_reason, label: c.label,
+      })),
+      agentPermissions: (body.agent_permissions ?? []).map(p => ({
+        agentActorId: p.agent_actor_id, toolkit: p.toolkit, effect: p.effect, revoked: p.revoked,
+      })),
     });
     // Every badge in the sidebar is correct as of this line, with the message
     // table still empty. Waking the surfaces is what makes that visible.
@@ -359,6 +399,25 @@ const link = createLink({
   // `ended` rules itself (WORKSPACE-AGENTS.md §5.7).
   onActivity: (activity) => {
     for (const p of ports) p.postMessage({ push: AGENT_ACTIVITY_CHANNEL, data: activity });
+  },
+  // Both pushes are always the signed-in actor's own rows (§6.3, §6.4) — the
+  // same lookup `actorId` above uses, repeated rather than shared: the four
+  // other call sites in this file already do the same.
+  onConnections: (rows) => {
+    const actorId = activeActorId();
+    if (!actorId) return;
+    storage.applyConnections(actorId, rows.map(c => ({
+      id: c.id, toolkit: c.toolkit, status: c.status, statusReason: c.status_reason, label: c.label,
+    })));
+    invalidate([topic.connections()]);
+  },
+  onAgentPermissions: (rows) => {
+    const actorId = activeActorId();
+    if (!actorId) return;
+    storage.applyAgentPermissions(actorId, rows.map(p => ({
+      agentActorId: p.agent_actor_id, toolkit: p.toolkit, effect: p.effect, revoked: p.revoked,
+    })));
+    invalidate([topic.agentPermissions()]);
   },
   // `onEvent` is deliberately not passed. It is a test seam now, not the
   // wiring: the engine records every marker through `sync/observe.ts` on the
@@ -378,9 +437,10 @@ function view() {
      * `can()` takes (AUTHZ.md §3). Sent as an array because a Map does not
      * survive structured cloning to the renderer intact.
      *
-     * Space and chat grants join this in Phase 2, when spaces exist.
+     * `welcome` replaces the active actor's workspace, space and chat rows in
+     * one transaction, so this never combines grants from different moments.
      */
-    grants: active ? [[`workspace:${active.workspaceId}`, active.actorRole]] : [],
+    grants: active && storage.hasWorkspace ? storage.grants(active.actorId) : [],
     installId: storage.installId,
     epoch: storage.epoch,
     accountId: storage.accountId,
@@ -432,6 +492,11 @@ const invalidate = createInvalidator(({ invalidation, topics }) => {
   if (ports.size === 0) return;
   const data = { invalidation, topics };
   for (const p of ports) p.postMessage({ push: INVALIDATE_CHANNEL, data });
+  // `grants` rides on AppState, not on a query, so an invalidation alone never
+  // reaches it. Every write to the replica's own memberships (a space created
+  // or joined, `welcome`) invalidates `spaces` — without this, a channel you
+  // just created hides its admin affordances until something else pushes.
+  if (topics.includes(topic.spaces())) push();
 });
 
 session.onChange((_state: AuthState) => push());
@@ -550,6 +615,17 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
 
   /** The sidebar: spaces this actor is in, each with its chats. */
   'spaces.list': () => (storage.hasWorkspace ? storage.spaces() : []),
+
+  /** The connector store's Yours list, straight from the replica — no network (WORKSPACE-AGENTS.md §6.3). */
+  'connections.list': () => {
+    const actorId = activeActorId();
+    return storage.hasWorkspace && actorId ? storage.connections(actorId) : [];
+  },
+  /** Which agents this actor has allowed, and at what effect (§6.4). */
+  'agentPermissions.list': () => {
+    const actorId = activeActorId();
+    return storage.hasWorkspace && actorId ? storage.agentPermissions(actorId) : [];
+  },
 
   /** One space and its chats. An array, as every read is: one row, or none. */
   'space.get': (params) => {
@@ -853,6 +929,21 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     if (!token) throw new Error('offline');
     return revokeInvite(token, (params as { id: string }).id);
   },
+  // A live command, not an outbox item: membership changes who may receive the
+  // next event, so the server must decide it now. Its event updates replicas.
+  'spaces.create': async (params) => {
+    const input = params as SpaceInput;
+    if (input.workspaceId !== storage.workspaceId) throw new Error('Workspace changed. Reopen the dialog.');
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('Could not refresh your session. Reconnect or sign in again to create a channel or room.');
+    return createSpace(token, input);
+  },
+  'spaces.addMember': async (params) => {
+    const { spaceId, actorId } = params as { spaceId: string; actorId: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — a space member cannot be added');
+    return addSpaceMember(token, spaceId, actorId, newId('msg'));
+  },
   // ── agents (WORKSPACE-AGENTS.md §4) ────────────────────────────────────
   // Refusals come back as answers ({ ok: false, field, reason }) so the editor
   // can draw them beside the field; only being offline throws. The directory
@@ -897,6 +988,52 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('offline');
     return stopAgentRun(token, (params as { runId: string }).runId);
+  },
+
+  // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ────────────────
+
+  /** The offered catalogue, online-only (§7.1) — the same offline shape `invite.list` uses. */
+  'toolkits.list': async () => {
+    const token = await session.ensureFresh();
+    if (!token) return { toolkits: [], offline: true };
+    return { ...(await listToolkits(token)), offline: false };
+  },
+  /**
+   * Listens, asks the server to start a connection, opens the result in the
+   * system browser, and resolves once the account is ACTIVE (§6.5) — slow,
+   * by design: it waits on the person, not on us.
+   */
+  'connections.connect': async (params) => {
+    const p = params as { toolkit: string; accessRequestId?: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — connecting needs the server');
+    const result = await connectToolkit(openBrowser, token, p.toolkit, p.accessRequestId);
+    return result.ok
+      ? { ok: true, connectionId: result.connectionId, status: result.status }
+      : { ok: false, status: 0, error: result.reason };
+  },
+  'connections.disconnect': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return disconnectConnection(token, (params as { connectionId: string }).connectionId);
+  },
+  'permissions.grant': async (params) => {
+    const p = params as { agentId: string; toolkit: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return grantAgentPermission(token, p.agentId, p.toolkit);
+  },
+  'permissions.revoke': async (params) => {
+    const p = params as { agentId: string; toolkit: string };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return revokeAgentPermission(token, p.agentId, p.toolkit);
+  },
+  /** The card's own Allow (§7.4) — the same grant as `permissions.grant`, reached from the request instead of the connector store. */
+  'access.allow': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return allowAccessRequest(token, (params as { requestId: string }).requestId);
   },
 
   'auth.join': async (params) => {

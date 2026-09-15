@@ -1,0 +1,14 @@
+{
+  "raw_bytes": 10567,
+  "raw_tokens_est": 2642,
+  "cleaned_bytes": 5446,
+  "cleaned_tokens_est": 1362,
+  "tools_returned": 6,
+  "full_schemas": 3,
+  "plan_fields_present": [
+    "recommended_plan_steps",
+    "known_pitfalls",
+    "reference_workbench_snippets"
+  ],
+  "plan_mentions_disabled_tools": true
+}

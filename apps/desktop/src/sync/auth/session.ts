@@ -95,6 +95,8 @@ export class Session {
    */
   #attempt: { close(): void; url: string } | null = null;
   #listeners = new Set<(s: AuthState) => void>();
+  /** The refresh in flight, if any — see `ensureFresh`. */
+  #refreshing: Promise<string | null> | null = null;
   readonly #deps: SessionDeps;
   readonly #now: () => number;
 
@@ -328,12 +330,25 @@ export class Session {
     return this.#state;
   }
 
-  /** Refresh if the access token is expired or close to it. */
+  /**
+   * Refresh if the access token is expired or close to it.
+   *
+   * ONE refresh at a time, shared by every caller that asks while it runs. The
+   * server rotates refresh tokens on use, so two concurrent refreshes spend the
+   * same token twice: the second is refused, and the session goes stale though
+   * nothing was wrong. The socket's reconnect and an HTTP command arriving
+   * together is exactly that race.
+   */
   async ensureFresh(): Promise<string | null> {
     if (this.#state.status === 'authenticated' && this.#session
         && this.#session.expiresAt - this.#now() > REFRESH_SKEW_MS) {
       return this.#session.accessToken;
     }
+    this.#refreshing ??= this.#refresh().finally(() => { this.#refreshing = null; });
+    return this.#refreshing;
+  }
+
+  async #refresh(): Promise<string | null> {
     const workspaceId = this.#workspaceId;
     if (!workspaceId) return null;
     const refreshToken = this.#session?.refreshToken ?? await this.#deps.vault.read(workspaceId);

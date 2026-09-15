@@ -18,6 +18,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { createChannel, addToSpace } from '../sync/spaces.ts';
 import type { AppendedEvent } from '../sync/events.ts';
+import { ulid } from '../db/ulid.ts';
 
 /** The channel every workspace starts with. */
 const DEFAULT_CHANNEL = 'general';
@@ -87,7 +88,11 @@ export async function joinPublicSpaces(
     // it, and is skipped rather than forced — the alternative is a path that
     // can add anybody to anything.
     if (!space.created_by_actor_id) continue;
-    events.push(await addToSpace(db, space.id, actorId, space.created_by_actor_id));
+    const added = await addToSpace(
+      db, space.id, actorId, space.created_by_actor_id, ulid('msg'));
+    // 'already_member' cannot happen given the pre-check above, but the union
+    // is handled rather than asserted away — `addToSpace` makes no such promise.
+    if (added.status === 'added') events.push(added.membershipEvent, added.messageEvent);
   }
   return events;
 }

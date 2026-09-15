@@ -69,3 +69,26 @@ test('times out and stops listening', async () => {
   await assert.rejects(l.result, /timed out/);
   await assert.rejects(fetch(l.redirectUri), () => true);
 });
+
+// ── generalised for the connect flow (WORKSPACE-AGENTS.md §6.5, D9) ─────────
+
+test('a custom path and param name work, and sign-in is unaffected by their existing', async () => {
+  const l = await listenForCallback<'session_uri'>({
+    path: '/connected', paramNames: ['session_uri'], state: 'st_1',
+    successPage: { title: 'Connected', body: 'You can close this tab.' },
+  });
+  assert.match(l.redirectUri, /^http:\/\/127\.0\.0\.1:\d+\/connected$/);
+  const res = await fetch(`${l.redirectUri}?session_uri=session_abc&state=st_1`);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /close this tab/);
+  assert.deepEqual(await l.result, { session_uri: 'session_abc', state: 'st_1' });
+});
+
+test('a missing named param is refused by name, not assumed to be `code`', async () => {
+  const l = await listenForCallback<'session_uri'>({
+    path: '/connected', paramNames: ['session_uri'], state: 's',
+  });
+  const res = await fetch(`${l.redirectUri}?state=s`);
+  assert.equal(res.status, 400);
+  await assert.rejects(l.result, /session_uri/);
+});

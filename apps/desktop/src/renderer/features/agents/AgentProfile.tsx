@@ -1,6 +1,7 @@
 // An agent's profile: what anyone in the workspace sees (WORKSPACE-AGENTS.md
 // §4.1) — name, handle, description, creator, maintainers, the instructions,
-// readable, and the tools with their effects.
+// readable. It has no tool list: it finds what it needs among the workspace's
+// toolkits when it runs, and asks each person for access then.
 //
 // The instructions are an online read. Everything else is from the replica,
 // so offline the profile still says who the agent is and who maintains it
@@ -80,11 +81,7 @@ export function AgentProfile() {
         <dt className="text-muted-foreground">Model</dt>
         <dd className="font-mono">{definition ? (definition.model ?? 'The runtime default') : '—'}</dd>
         <dt className="text-muted-foreground">Tools</dt>
-        <dd>
-          {(agent.agent?.toolkits.length ?? 0) === 0
-            ? 'None'
-            : agent.agent?.toolkits.map(t => <Badge key={t.toolkit} variant="secondary" className="mr-1">{t.toolkit} · {t.effect}</Badge>)}
-        </dd>
+        <dd>Finds what it needs in the workspace's connectors, and asks you for access the first time it uses yours.</dd>
       </dl>
 
       <section className="space-y-2">

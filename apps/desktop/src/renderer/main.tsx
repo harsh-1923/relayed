@@ -12,7 +12,7 @@ import { Theme } from '@/app/Theme';
 import { TopBar } from '@/app/shell/TopBar';
 import { SearchPalette } from '@/app/shell/SearchPalette';
 import { AppCommands } from '@/app/shell/AppCommands';
-import { SidebarProvider } from '@/components/ui/sidebar';
+import { PersistentSidebarProvider } from '@/app/shell/PersistentSidebarProvider';
 import { Commands } from '@/app/Commands';
 
 // The FIRST GUESS, before React mounts and before the stored preference has
@@ -43,19 +43,18 @@ createRoot(document.getElementById('root')!).render(
 
         {/* THE PROVIDER IS AT THE ROOT so the top bar can hold the sidebar's
             toggle. It is state plus a wrapper div, and the wrapper takes our
-            className — a COLUMN here, so the bar spans the whole window and the
+            class — a COLUMN here, so the bar spans the whole window and the
             sidebar and the route share the row beneath it. The block this is
             based on puts its header inside the inset instead, which gives a bar
             that stops where the sidebar starts.
 
-            Its own persistence is a no-op in this app — it writes a cookie that
-            nothing reads, a server-rendering trick that is dead on file:// —
-            so the toggle is deliberately session-only until there is somewhere
-            honest to keep it. */}
+            PersistentSidebarProvider controls its desktop state from the
+            account preference. The vendored shadcn provider still writes its
+            unused server-rendering cookie; account.db is the authority. */}
         {/* The command bus: one keyboard listener and every command handler,
             for the window's lifetime (SHORTCUTS.md §6.2). */}
         <Commands>
-        <SidebarProvider className="h-svh min-h-0 flex-col overflow-hidden">
+        <PersistentSidebarProvider>
           {/* Outside the route tree on purpose, and above it: it is the window's
               title bar now, so every screen needs it — including the ones a cut
               network or a signed-out session strands you on. */}
@@ -67,7 +66,7 @@ createRoot(document.getElementById('root')!).render(
           <div className="flex min-h-0 flex-1">
             <Router />
           </div>
-        </SidebarProvider>
+        </PersistentSidebarProvider>
         </Commands>
       </AppStateProvider>
     </HashRouter>

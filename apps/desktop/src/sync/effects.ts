@@ -58,6 +58,30 @@ interface MessageCreated {
   /** Present only on an agent's reply: whose authority it spent, and the run that spent it. */
   on_behalf_of_actor_id?: string;
   delegation_id?: string;
+  /** Present only for a system row (SPACE-MEMBERSHIP-MARKERS.md). Absent means 'actor'. */
+  message_kind?: 'system';
+  system_kind?: 'space.member_added';
+  subject_actor_id?: string;
+}
+
+interface SpaceMemberAddedHydration {
+  space: {
+    id: string; kind: string; name: string | null; slug: string | null;
+    visibility: string | null; membership_policy: string; lifecycle: string;
+    rev: number;
+  };
+  chats: {
+    id: string; space_id: string; kind: string; name: string | null;
+    head_ord: number; head_rev: number;
+  }[];
+}
+
+interface SpaceMemberAdded {
+  actor_id: string;
+  role: string;
+  by_actor_id?: string;
+  /** Present on every delivery; only applied when `actor_id` is the active replica actor. */
+  hydration?: SpaceMemberAddedHydration;
 }
 
 /** Parts as the replica stores them: JSON, or NULL for a message that is its body. */
@@ -70,8 +94,17 @@ export const partsColumn = (parts: unknown): string | null =>
  * `onUnknown` is called for a type with no entry. It is NOT an error path: a
  * client from three months ago is meeting a server that has shipped since, and
  * updates are opt-in, so that is the ordinary state of the fleet.
+ *
+ * `activeActorId` is read once per event, not captured — the active workspace
+ * actor can change under a live link (switching workspaces), so this is a
+ * getter closure, the same convention `LinkDeps.workspaceId` already uses.
+ * Optional and additive: every existing call site with zero or one argument
+ * keeps working, and simply never hydrates (SPACE-MEMBERSHIP-MARKERS.md).
  */
-export function replicaEffect(onUnknown?: (type: string) => void): Effect {
+export function replicaEffect(
+  onUnknown?: (type: string) => void,
+  activeActorId?: () => string | null,
+): Effect {
   return (db: DatabaseSync, stream: Stream, event: Envelope): string[] => {
     switch (event.type) {
       case 'message.created': return messageCreated(db, stream, event);
@@ -87,8 +120,11 @@ export function replicaEffect(onUnknown?: (type: string) => void): Effect {
 
       // Space topology. The rows already arrive in `welcome`; these keep them
       // current between reconnects, which is the whole reason a space is a
-      // stream rather than a snapshot.
+      // stream rather than a snapshot. `space.member_added` additionally
+      // hydrates the space itself when it names the active actor, so a newly
+      // added member sees it without reconnecting.
       case 'space.member_added':
+        return spaceMemberAdded(db, stream, event, activeActorId?.() ?? null);
       case 'space.member_removed':
       case 'space.created':
       case 'chat.created':
@@ -115,11 +151,15 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   // ack that stamps its optimistic row, once as this event travelling the same
   // path as on every other device. One convergence mechanism rather than a
   // special case for "mine" is worth the conflict clause.
+  // `message_kind`/`system_kind`/`subject_actor_id` are absent from the
+  // ON CONFLICT SET: kind is immutable once written (SPACE-MEMBERSHIP-MARKERS.md),
+  // the same reason `id`/`chat_id`/`author_id` are absent from it too.
   db.prepare(`
     INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body,
                           created_at, state, local_only, visible_to, parts,
-                          on_behalf_of_actor_id, delegation_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?, ?, ?, ?)
+                          on_behalf_of_actor_id, delegation_id,
+                          message_kind, system_kind, subject_actor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'acked', 0, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       ord = excluded.ord, rev = excluded.rev, body = excluded.body,
       created_at = excluded.created_at, state = 'acked',
@@ -127,7 +167,8 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   `).run(body.id, stream.id, body.parent_id, body.ord, event.rev,
          body.author_id, body.body, Date.parse(body.created_at),
          body.visible_to ? JSON.stringify(body.visible_to) : null, partsColumn(body.parts),
-         body.on_behalf_of_actor_id ?? null, body.delegation_id ?? null);
+         body.on_behalf_of_actor_id ?? null, body.delegation_id ?? null,
+         body.message_kind ?? 'actor', body.system_kind ?? null, body.subject_actor_id ?? null);
 
   // `head_ord` is a MAX for the same reason `last_read_ord` is: events can
   // arrive after a `welcome` that already reported a higher head, and walking
@@ -151,6 +192,84 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   }
 
   return [topic.messages(stream.id), topic.chatState(stream.id)];
+}
+
+/**
+ * Hydrate the space named by a `space.member_added` event, when it names the
+ * active replica actor — so a newly added member sees the space, its chats,
+ * and their own membership without waiting for a reconnect
+ * (SPACE-MEMBERSHIP-MARKERS.md).
+ *
+ * Every recipient of this event carries the same `hydration` block; only the
+ * client whose own actor id matches `actor_id` applies it. Everyone else — the
+ * ordinary case, an existing member learning who was added — falls through to
+ * the same topology-invalidation-only behaviour this event has always had.
+ *
+ * Mirrors `Storage.applyWelcome`'s row shapes for `spaces`/`chats`/`chat_state`/
+ * `stream_state`, scoped to one space rather than a full replace. The
+ * membership row is upserted for THIS actor alone, never a delete-then-reinsert
+ * — a wildcard delete here would erase memberships this event knows nothing
+ * about, unlike `applyWelcome`'s full replacement of the whole membership set.
+ *
+ * NO `BEGIN`/`COMMIT` here: `applyEvent` (`apply.ts`) already runs every
+ * effect call inside its own transaction. A nested `BEGIN` throws in SQLite.
+ */
+function spaceMemberAdded(
+  db: DatabaseSync, stream: Stream, event: Envelope, activeActorId: string | null,
+): string[] {
+  const body = event.payload as SpaceMemberAdded;
+
+  if (body.actor_id !== activeActorId || !body.hydration) {
+    return [topic.space(stream.id), topic.spaces()];
+  }
+  const { space, chats } = body.hydration;
+  const now = Date.now();
+
+  db.prepare(`
+    INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
+                        membership_policy, lifecycle, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      kind = excluded.kind, name = excluded.name, slug = excluded.slug,
+      visibility = excluded.visibility,
+      membership_policy = excluded.membership_policy,
+      lifecycle = excluded.lifecycle,
+      updated_at = excluded.updated_at
+  `).run(space.id, stream.id, space.kind, space.name, space.slug,
+         space.visibility, space.membership_policy, space.lifecycle, now, now);
+
+  const chat = db.prepare(`
+    INSERT INTO chats (id, workspace_id, space_id, kind, name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      space_id = excluded.space_id, kind = excluded.kind,
+      name = excluded.name, updated_at = excluded.updated_at
+  `);
+  const chatState = db.prepare(`
+    INSERT INTO chat_state (chat_id, head_ord) VALUES (?, ?)
+    ON CONFLICT(chat_id) DO UPDATE SET
+      head_ord = MAX(chat_state.head_ord, excluded.head_ord)
+  `);
+  const chatCursor = db.prepare(`
+    INSERT INTO stream_state (stream_kind, stream_id, server_head_rev)
+    VALUES ('chat', ?, ?)
+    ON CONFLICT(stream_kind, stream_id) DO UPDATE SET
+      server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev)
+  `);
+  for (const c of chats) {
+    chat.run(c.id, stream.id, c.space_id, c.kind, c.name, now, now);
+    chatState.run(c.id, c.head_ord);
+    chatCursor.run(c.id, c.head_rev);
+  }
+
+  db.prepare(`
+    INSERT INTO memberships (scope_type, scope_id, actor_id, role, joined_at, left_at)
+    VALUES ('space', ?, ?, ?, ?, NULL)
+    ON CONFLICT(scope_type, scope_id, actor_id) DO UPDATE SET
+      role = excluded.role, left_at = NULL
+  `).run(space.id, activeActorId, body.role, now);
+
+  return [topic.space(stream.id), topic.spaces()];
 }
 
 function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): string[] {

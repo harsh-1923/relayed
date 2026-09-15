@@ -18,7 +18,7 @@ import { ulid } from '../db/ulid.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { agentPlacement, spacePlacement } from '../sync/placement.ts';
 import { recordActor } from '../sync/directory.ts';
-import { addMember } from '../sync/spaces.ts';
+import { addMemberWithMarker } from '../sync/spaces.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { validateHandle, type HandleError } from '../provisioning/handle.ts';
 import { agentSummaries } from './summary.ts';
@@ -161,8 +161,13 @@ async function agentGate(db: Kysely<DB>, actorId: string, agentId: string) {
  * the answer for anything outside the actor's workspace — a member of it may
  * always read the definition, so "may not read" and "does not exist" collapse
  * to the same thing for everyone else.
+ *
+ * Exported for `permissions.ts` (§6.4): granting or revoking is not an
+ * agent-editing action, but it still needs the same "does this agent exist,
+ * in my workspace, can I even see it" gate — `'read_definition'` is the
+ * action to ask for there.
  */
-async function requireAgent(
+export async function requireAgent(
   db: Kysely<DB>, actorId: string, agentId: string, action: AgentAction,
 ): Promise<{ workspaceId: string; state: string }> {
   const gate = await agentGate(db, actorId, agentId);
@@ -212,7 +217,7 @@ export interface CreateAgent extends AgentFields {
  * Create an agent: the five writes of §4.3, in ONE transaction.
  *
  * 1. the actor, and its `actor.created` directory event;
- * 2. the definition (tools arrive with the connector store);
+ * 2. the definition — no tools: a run finds its own (the plan's step 7);
  * 3. the agent's workspace membership — the leading conjunct of every access
  *    check it will ever pass;
  * 4. the creator's admin row on the agent — maintainership, as a tuple;
@@ -274,7 +279,14 @@ export async function createAgent(
         displayName: fields.name, avatarUrl: null, ownerActorId: input.createdBy, state: 'active',
         agent: { description: fields.description, config_rev: 1, toolkits: [] },
       })];
-      for (const spaceId of spaceIds) out.push(await addMember(trx, spaceId, agentId, 'member'));
+      for (const spaceId of spaceIds) {
+        // 'already_member' cannot happen here — the agent's actor id is fresh
+        // this same transaction — but the union is handled rather than
+        // asserted away, since `addMemberWithMarker` makes no such promise.
+        const added = await addMemberWithMarker(
+          trx, spaceId, agentId, 'member', input.createdBy, ulid('msg'));
+        if (added.status === 'added') out.push(added.membershipEvent, added.messageEvent);
+      }
       return out;
     });
     return { agentId, events };
@@ -446,7 +458,6 @@ export interface AgentDefinition {
   createdAt: string;
   updatedAt: string;
   maintainers: string[];
-  tools: { toolkit: string; tool: string; effect: string }[];
   /** Spaces the agent is in that the READER is in too — no more than they could see. */
   spaceIds: string[];
   /**
@@ -468,7 +479,7 @@ export async function agentDefinition(
   const gate = await agentGate(db, readerId, agentId);
   if (!gate.placed || !gate.may('read_definition')) return null;
 
-  const [row, maintainers, tools, spaces] = await Promise.all([
+  const [row, maintainers, spaces] = await Promise.all([
     db.selectFrom('agents').innerJoin('actors', 'actors.id', 'agents.actor_id')
       .select(['agents.description', 'agents.instructions', 'agents.model', 'agents.thinking_level',
                'agents.config_rev', 'agents.created_at', 'agents.updated_at', 'actors.owner_actor_id'])
@@ -476,8 +487,6 @@ export async function agentDefinition(
     db.selectFrom('memberships').select('actor_id')
       .where('scope_type', '=', 'agent').where('scope_id', '=', agentId)
       .where('left_at', 'is', null).orderBy('joined_at').execute(),
-    db.selectFrom('agent_tools').select(['toolkit', 'tool', 'effect'])
-      .where('agent_actor_id', '=', agentId).orderBy('toolkit').orderBy('tool').execute(),
     db.selectFrom('memberships as a').select('a.scope_id')
       .where('a.scope_type', '=', 'space').where('a.actor_id', '=', agentId)
       .where('a.left_at', 'is', null)
@@ -503,7 +512,6 @@ export async function agentDefinition(
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     maintainers: maintainers.map(m => m.actor_id),
-    tools,
     spaceIds: spaces.map(s => s.scope_id),
     you: {
       edit: gate.may('edit'),

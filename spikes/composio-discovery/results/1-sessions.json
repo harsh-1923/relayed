@@ -1,0 +1,113 @@
+{
+  "not_connected": {
+    "status": 201,
+    "ms": 765,
+    "session_id": "trs_PqDrUSRS08aN",
+    "tool_router_tools": ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS"],
+    "config": {
+      "user_id": "act_01M234E35YT76C26NGX42D9SAZ",
+      "toolkits": {
+        "enabled": ["github", "notion"]
+      },
+      "manage_connections": {
+        "enabled": false,
+        "enable_wait_for_connections": false,
+        "enable_connection_removal": true
+      },
+      "workbench": {
+        "enable": false,
+        "tool_execution_enabled": true,
+        "proxy_execution_enabled": true,
+        "sandbox_size": "standard"
+      },
+      "multi_account": {
+        "enable": false,
+        "require_explicit_selection": false
+      },
+      "preload": {
+        "tools": []
+      },
+      "search": {
+        "enable": true
+      },
+      "execute": {
+        "enable_multi_execute": false
+      }
+    }
+  },
+  "connected_unpinned": {
+    "status": 201,
+    "ms": 880,
+    "session_id": "trs_HknCKZn0roHh",
+    "tool_router_tools": ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS"],
+    "config": {
+      "user_id": "pg-test-71253ed2-5465-45fb-a8e1-03c216353ecc",
+      "toolkits": {
+        "enabled": ["github", "notion"]
+      },
+      "manage_connections": {
+        "enabled": false,
+        "enable_wait_for_connections": false,
+        "enable_connection_removal": true
+      },
+      "workbench": {
+        "enable": false,
+        "tool_execution_enabled": true,
+        "proxy_execution_enabled": true,
+        "sandbox_size": "standard"
+      },
+      "multi_account": {
+        "enable": false,
+        "require_explicit_selection": false
+      },
+      "preload": {
+        "tools": []
+      },
+      "search": {
+        "enable": true
+      },
+      "execute": {
+        "enable_multi_execute": false
+      }
+    }
+  },
+  "connected_pinned": {
+    "status": 201,
+    "ms": 726,
+    "session_id": "trs_120nSvmDg8ks",
+    "tool_router_tools": ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_GET_TOOL_SCHEMAS"],
+    "config": {
+      "user_id": "pg-test-71253ed2-5465-45fb-a8e1-03c216353ecc",
+      "toolkits": {
+        "enabled": ["github", "notion"]
+      },
+      "manage_connections": {
+        "enabled": false,
+        "enable_wait_for_connections": false,
+        "enable_connection_removal": true
+      },
+      "workbench": {
+        "enable": false,
+        "tool_execution_enabled": true,
+        "proxy_execution_enabled": true,
+        "sandbox_size": "standard"
+      },
+      "multi_account": {
+        "enable": false,
+        "require_explicit_selection": false
+      },
+      "preload": {
+        "tools": []
+      },
+      "connected_accounts": {
+        "github": ["ca_C2cx4zvcBlGM"]
+      },
+      "search": {
+        "enable": true
+      },
+      "execute": {
+        "enable_multi_execute": false
+      }
+    }
+  }
+}

@@ -13,7 +13,7 @@ export function Settings() {
       </div>
 
       <nav className="flex gap-1 border-b text-sm">
-        {([['members', 'Members'], ['agents', 'Agents'], ['profile', 'Your profile']] as const).map(([to, label]) => (
+        {([['members', 'Members'], ['agents', 'Agents'], ['connectors', 'Connectors'], ['profile', 'Your profile']] as const).map(([to, label]) => (
           <NavLink key={to} to={to} className={({ isActive }) =>
             `-mb-px border-b-2 px-3 py-2 ${isActive
               ? 'border-primary font-medium text-foreground'

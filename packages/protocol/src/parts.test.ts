@@ -1,7 +1,7 @@
 // A message's parts: strict where they are written, lenient where they are read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { forbiddenPartKind, PART_KINDS, PART_LIMITS, Parts, readStoredParts } from './parts.ts';
+import { forbiddenPartKind, undrawablePartKind, PART_KINDS, PART_LIMITS, Parts, readStoredParts } from './parts.ts';
 
 const tool = {
   kind: 'tool', tool_use_id: 'toolu_01', name: 'Bash', ok: true, ms: 2210,
@@ -15,7 +15,7 @@ test('every kind the contract names parses, and nothing else is a kind', () => {
     { kind: 'reply_to_ui', message_id: 'msg_A2', label: 'Apply the fix' },
   ]);
   assert.equal(parsed.success, true);
-  assert.deepEqual([...PART_KINDS].sort(), ['markdown', 'reply_to_ui', 'tool', 'ui']);
+  assert.deepEqual([...PART_KINDS].sort(), ['access_request', 'markdown', 'reply_to_ui', 'tool', 'ui']);
 });
 
 test('keys are snake_case: a camelCase part is refused on write, not silently emptied', () => {
@@ -52,6 +52,22 @@ test('only an agent may write tool and ui parts', () => {
   assert.equal(forbiddenPartKind('human', [tool]), 'tool');
   assert.equal(forbiddenPartKind('human', [{ kind: 'reply_to_ui' }, { kind: 'markdown' }]), null,
     'a person replying through a button');
+});
+
+test('access_request is refused for every author on the ordinary write path, agents included', () => {
+  const accessRequest = { kind: 'access_request' };
+  assert.equal(forbiddenPartKind('human', [accessRequest]), 'access_request');
+  assert.equal(forbiddenPartKind('agent', [accessRequest]), 'access_request',
+    'unlike tool and ui, not even an agent may write one this way — only the broker, through trustedParts');
+});
+
+test('an access card stored on an agent\'s message is drawn; on a person\'s it never is', () => {
+  const accessRequest = { kind: 'access_request' };
+  assert.equal(undrawablePartKind('agent', [accessRequest]), null,
+    'the broker writes cards as the agent — the write rule refusing it must not hide it from the reader');
+  assert.equal(undrawablePartKind('human', [accessRequest]), 'access_request');
+  assert.equal(undrawablePartKind('human', [{ kind: 'markdown' }, tool]), 'tool');
+  assert.equal(undrawablePartKind('agent', [tool, ui]), null);
 });
 
 test('stored parts are read leniently: an unknown kind survives for the renderer to fall back on', () => {

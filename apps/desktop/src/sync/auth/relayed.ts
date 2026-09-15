@@ -131,7 +131,7 @@ export type Answer<T> =
   | { ok: false; status: number; error: string; field?: string; reason?: string; action?: string };
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, bearer: string, body?: unknown,
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, bearer: string, body?: unknown,
 ): Promise<Answer<T>> {
   let res: Response;
   try {
@@ -184,10 +184,83 @@ export const deactivateAgent = (accessToken: string, agentId: string) =>
 export const setAgentMaintainers = (accessToken: string, agentId: string, actorIds: string[]) =>
   request<{ agent_id: string; maintainers: string[] }>('PUT',
     `/agents/${encodeURIComponent(agentId)}/maintainers`, accessToken, { actor_ids: actorIds });
+export interface SpaceInput {
+  workspaceId: string;
+  kind: 'channel' | 'room';
+  name: string;
+  visibility: 'public' | 'private';
+}
+
+export const createSpace = (accessToken: string, input: SpaceInput) =>
+  request<{ space_id: string; chat_id: string }>('POST', '/spaces', accessToken, {
+    workspace_id: input.workspaceId, kind: input.kind, name: input.name, visibility: input.visibility,
+  });
+
+// `messageId` is the marker's client-generated id (SPACE-MEMBERSHIP-MARKERS.md):
+// every add produces a chat message alongside the membership, and this add
+// mints its id the same way any other send does — in the main process, since
+// `sync/ids.ts` is Node-only and never reaches the renderer.
+export const addSpaceMember = (accessToken: string, spaceId: string, actorId: string, messageId: string) =>
+  request<{ space_id: string; actor_id: string; message_id: string }>('POST',
+    `/spaces/${encodeURIComponent(spaceId)}/members`, accessToken,
+    { actor_id: actorId, message_id: messageId });
 /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
 export const stopAgentRun = (accessToken: string, runId: string) =>
   request<{ run_id: string; state: string }>('POST',
     `/agent-runs/${encodeURIComponent(runId)}/stop`, accessToken, {});
+
+// ── connections, through Composio (WORKSPACE-AGENTS.md §6) ─────────────────
+
+export interface ToolkitSummary {
+  slug: string; name: string; description: string; logoUrl: string | null;
+  categories: string[]; authScheme: string; deprecated: boolean;
+}
+
+/** The offered catalogue (online-only, §7.1) — enabled toolkits only. */
+export async function listToolkits(accessToken: string): Promise<{ toolkits: ToolkitSummary[] }> {
+  const raw = await get<{ toolkits: { slug: string; name: string; description: string;
+    logo_url: string | null; categories: string[]; auth_scheme: string; deprecated: boolean }[] }>(
+    '/toolkits', accessToken);
+  return {
+    toolkits: raw.toolkits.map(t => ({
+      slug: t.slug, name: t.name, description: t.description, logoUrl: t.logo_url,
+      categories: t.categories, authScheme: t.auth_scheme, deprecated: t.deprecated,
+    })),
+  };
+}
+
+/** Start a connect attempt (§6.5). `port`/`state` are the caller's own loopback listener's. */
+export const startConnection = (
+  accessToken: string, input: { toolkit: string; port: number; state: string; accessRequestId?: string },
+) => request<{ connection_id: string; start_url: string }>('POST', '/connections', accessToken, {
+  toolkit: input.toolkit, port: input.port, state: input.state,
+  ...(input.accessRequestId ? { access_request_id: input.accessRequestId } : {}),
+});
+
+/** The loopback listener's own call, once its `state` check passes (§6.5). */
+export const completeConnection = (accessToken: string, connectionId: string, sessionUri: string) =>
+  request<{ connection_id: string; status: string }>('POST',
+    `/connections/${encodeURIComponent(connectionId)}/complete`, accessToken, { session_uri: sessionUri });
+
+/** Revoke then delete, best effort either way (§6.10). */
+export const disconnectConnection = (accessToken: string, connectionId: string) =>
+  request<{ connection_id: string; status: string; revoked: boolean }>('DELETE',
+    `/connections/${encodeURIComponent(connectionId)}`, accessToken);
+
+/** Grant at the agent's current highest effect in this toolkit — never a client-chosen one (§6.4). */
+export const grantAgentPermission = (accessToken: string, agentId: string, toolkit: string) =>
+  request<{ agent_id: string; toolkit: string; effect: string }>('PUT',
+    `/agent-permissions/${encodeURIComponent(agentId)}/${encodeURIComponent(toolkit)}`, accessToken, {});
+
+/** Revoke: only this agent loses it (§6.4). */
+export const revokeAgentPermission = (accessToken: string, agentId: string, toolkit: string) =>
+  request<{ agent_id: string; toolkit: string; revoked: boolean }>('DELETE',
+    `/agent-permissions/${encodeURIComponent(agentId)}/${encodeURIComponent(toolkit)}`, accessToken);
+
+/** The card's own Allow (§7.4) — the same grant as `grantAgentPermission`, reached from the request instead of the connector store. */
+export const allowAccessRequest = (accessToken: string, requestId: string) =>
+  request<{ request_id: string; state: string; effect?: string }>('POST',
+    `/access-requests/${encodeURIComponent(requestId)}/allow`, accessToken, {});
 
 interface RawSession {
   needs_workspace?: boolean;

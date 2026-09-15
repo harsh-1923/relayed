@@ -93,6 +93,7 @@ test('a message only one of the two may see is excluded from both', opts, async 
   const chatId = await room();
   await say(chatId, 'visible to everyone');
   await db.transaction().execute(trx => writeMessage(trx, {
+    kind: 'actor',
     chatId, messageId: ulid('msg'), authorId: invoker, parentId: null,
     audience: { kind: 'listed', actors: [invoker, other] },   // the AGENT is not listed
     body: 'a private aside between invoker and other',

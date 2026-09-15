@@ -23,6 +23,7 @@ import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
 import { SettingsAgents } from '@/routes/SettingsAgents';
+import { SettingsConnectors } from '@/routes/SettingsConnectors';
 import { SettingsAgentEditor } from '@/routes/SettingsAgentEditor';
 import { AgentProfile } from '@/features/agents/AgentProfile';
 import { Account } from '@/routes/Account';
@@ -82,6 +83,7 @@ export function Router() {
             <Route path="members" element={<SettingsMembers />} />
             <Route path="profile" element={<SettingsProfile />} />
             <Route path="agents" element={<SettingsAgents />} />
+            <Route path="connectors" element={<SettingsConnectors />} />
             <Route path="agents/new" element={<SettingsAgentEditor />} />
             <Route path="agents/:agentId" element={<AgentProfile />} />
             <Route path="agents/:agentId/edit" element={<SettingsAgentEditor />} />

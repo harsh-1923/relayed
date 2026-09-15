@@ -49,12 +49,14 @@ export interface Invitation {
 }
 
 /**
- * An agent command's answer. A refusal is an answer, not an exception, so the
- * editor can put it beside the field it names (WORKSPACE-AGENTS.md §4).
+ * An online command's answer. A refusal is an answer, not an exception, so the
+ * surface can put it beside the field or actor it names.
  */
-export type AgentAnswer<T> =
+export type CommandAnswer<T> =
   | ({ ok: true } & T)
   | { ok: false; status: number; error: string; field?: string; reason?: string; action?: string };
+
+export type AgentAnswer<T> = CommandAnswer<T>;
 
 /** The agent editor's fields, as the server names them. */
 export interface AgentInput {
@@ -81,7 +83,6 @@ export interface AgentDefinition {
     created_at: string;
     updated_at: string;
     maintainers: string[];
-    tools: { toolkit: string; tool: string; effect: string }[];
     space_ids: string[];
     /** What the server says this person may do. For hiding controls, never for permitting. */
     you: { edit: boolean; manage_maintainers: boolean; deactivate: boolean };
@@ -108,10 +109,38 @@ export interface ReplicaActor {
 
 export interface ReplicaAgentSummary {
   description: string;
-  /** Bumped when instructions, model or tools change. */
+  /** Bumped when instructions or model change. */
   configRev: number;
-  /** Per toolkit, the highest effect among its tools. */
+  /** Always empty since agents find their own tools (WORKSPACE-AGENTS-IMPL.md step 7). */
   toolkits: { toolkit: string; effect: string }[];
+}
+
+/** One connected account, as the replica holds it (WORKSPACE-AGENTS.md §6.3). Always the signed-in actor's own. */
+export interface ConnectionRow {
+  id: string;
+  toolkit: string;
+  status: "connecting" | "active" | "needs_reauth" | "failed" | "disconnected";
+  statusReason: "expired" | "revoked_upstream" | "scopes_changed" | "failed" | null;
+  label: string | null;
+}
+
+/** One agent's grant, as the replica holds it (WORKSPACE-AGENTS.md §6.4). Always the signed-in actor's own. */
+export interface AgentPermissionRow {
+  agentActorId: string;
+  toolkit: string;
+  effect: "read" | "write" | "destructive";
+  revoked: boolean;
+}
+
+/** One offered toolkit (§7.1) — online-only, not replicated. */
+export interface ToolkitSummary {
+  slug: string;
+  name: string;
+  description: string;
+  logoUrl: string | null;
+  categories: string[];
+  authScheme: string;
+  deprecated: boolean;
 }
 
 /**
@@ -147,6 +176,15 @@ export interface ReplicaMessage {
   state: string;
   /** A restricted message's actors, this person among them; null for the whole chat. */
   visibleTo: string[] | null;
+  /**
+   * `'system'`: history the server wrote about a successful command, not
+   * authored content (SPACE-MEMBERSHIP-MARKERS.md) — rendered as a `Marker`,
+   * never a speech bubble. `'actor'` for every message a person or agent sent.
+   */
+  kind: 'actor' | 'system';
+  systemKind: string | null;
+  /** Who a system row is about — Alice, for "Alice was added by Bob". */
+  subjectActorId: string | null;
 }
 
 export interface ComposerDraft {
@@ -422,6 +460,14 @@ export interface RelayedApi {
     params: { workspaceId: string; handle: string },
   ): Promise<AppState>;
   query(
+    op: "spaces.create",
+    params: { workspaceId: string; kind: 'channel' | 'room'; name: string; visibility: 'public' | 'private' },
+  ): Promise<CommandAnswer<{ space_id: string; chat_id: string }>>;
+  query(
+    op: "spaces.addMember",
+    params: { spaceId: string; actorId: string },
+  ): Promise<CommandAnswer<{ space_id: string; actor_id: string; message_id: string }>>;
+  query(
     op: "agents.handle",
     params: { handle: string; except?: string },
   ): Promise<AgentAnswer<{ handle: string; available: boolean; reason: string | null }>>;
@@ -442,6 +488,39 @@ export interface RelayedApi {
   query(op: "agents.definition", params: { agentId: string }): Promise<AgentDefinition | null>;
   /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
   query(op: "agents.stopRun", params: { runId: string }): Promise<AgentAnswer<{ run_id: string; state: string }>>;
+
+  // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ───────────────
+  query(op: "connections.list"): Promise<ConnectionRow[]>;
+  query(op: "agentPermissions.list"): Promise<AgentPermissionRow[]>;
+  /** The offered catalogue, online-only (§7.1). Empty, with `offline: true`, when there is no connection — the same shape `invite.list` uses. */
+  query(op: "toolkits.list"): Promise<{ toolkits: ToolkitSummary[]; offline: boolean }>;
+  /**
+   * Listens, asks the server to start a connection, opens the result in the
+   * system browser, and resolves once the account is ACTIVE (§6.5). Slow —
+   * it waits on the person finishing OAuth or the hosted form — and never a
+   * `BrowserWindow`.
+   */
+  query(
+    op: "connections.connect",
+    params: { toolkit: string; accessRequestId?: string },
+  ): Promise<AgentAnswer<{ connectionId: string; status: string }>>;
+  query(
+    op: "connections.disconnect",
+    params: { connectionId: string },
+  ): Promise<AgentAnswer<{ connection_id: string; status: string; revoked: boolean }>>;
+  query(
+    op: "permissions.grant",
+    params: { agentId: string; toolkit: string },
+  ): Promise<AgentAnswer<{ agent_id: string; toolkit: string; effect: string }>>;
+  query(
+    op: "permissions.revoke",
+    params: { agentId: string; toolkit: string },
+  ): Promise<AgentAnswer<{ agent_id: string; toolkit: string; revoked: boolean }>>;
+  /** The card's own Allow (§7.4) — the same grant as `permissions.grant`, reached from the request instead of the connector store. */
+  query(
+    op: "access.allow",
+    params: { requestId: string },
+  ): Promise<AgentAnswer<{ request_id: string; state: string; effect?: string }>>;
   subscribe(channel: "app:state", fn: (s: AppState) => void): () => void;
   /** The live text of a reply Claude is writing. Never stored; the parts carry it in the end. */
   subscribe(channel: "agent:stream", fn: (stream: AgentStream) => void): () => void;

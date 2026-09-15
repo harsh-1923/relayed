@@ -95,6 +95,11 @@
   padding: 0.08rem 0.25rem;
   color: var(--accent-foreground);
 }
+.composer-command {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
 
 .composer-footer {
   display: flex;

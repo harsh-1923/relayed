@@ -15,8 +15,8 @@ import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { Forbidden } from '../authz/can.ts';
 import {
-  createChannel, joinSpace, addToSpace, leaveSpace, removeFromSpace,
-  spaceMembers, SlugTakenError, UnknownWorkspaceError,
+  createChannel, joinSpace, addToSpace, addMember, leaveSpace, removeFromSpace,
+  spaceMembers, SlugTakenError, SpaceMemberUnavailableError, UnknownWorkspaceError,
 } from './spaces.ts';
 import { send, deleteMessage, markRead, writeMessage, MessageNotFoundError } from './ops.ts';
 import {
@@ -64,12 +64,22 @@ after(async () => {
   await pool.end();
 });
 
-/** A channel with `me` as admin and `bob` as a member. */
+/**
+ * A channel with `me` as admin and `bob` as a member.
+ *
+ * Bob joins through `addMember` directly, not `addToSpace` — this file is
+ * about message ordinals, counters and backfill, and `addToSpace`'s own
+ * behaviour (including the marker it now writes) has its own tests in
+ * `spaces.test.ts`. Going through the marker-writing path here would put a
+ * system message at ordinal 1 of every fixture chat, which is exactly the
+ * kind of side effect this file's "same numbers as the spike" ordinals must
+ * not depend on.
+ */
 async function channel() {
   const { spaceId, chatId } = await createChannel(db, {
     workspaceId: wsp, name: 'general', createdBy: me,
   });
-  await addToSpace(db, spaceId, bob, me);
+  await db.transaction().execute(trx => addMember(trx, spaceId, bob, 'member', me));
   return { spaceId, chatId };
 }
 
@@ -141,7 +151,7 @@ test('nobody may walk into a PRIVATE channel', opts, async () => {
   await assert.rejects(() => joinSpace(db, spaceId, stranger),
     (err: Error) => { assert.ok(err instanceof Forbidden); return true; });
   // But a member may still add them, which is the deliberate asymmetry.
-  await addToSpace(db, spaceId, stranger, me);
+  await addToSpace(db, spaceId, stranger, me, ulid('msg'));
   assert.ok((await spaceMembers(db, spaceId)).includes(stranger));
 });
 
@@ -161,8 +171,61 @@ test('joining needs workspace membership above it, open policy or not', opts, as
 
 test('a non-member cannot add somebody to a space', opts, async () => {
   const { spaceId } = await channel();
-  await assert.rejects(() => addToSpace(db, spaceId, stranger, stranger),
+  await assert.rejects(() => addToSpace(db, spaceId, stranger, stranger, ulid('msg')),
     (err: Error) => { assert.ok(err instanceof Forbidden); return true; });
+});
+
+test('a space member may add only an active actor from the same workspace', opts, async () => {
+  const { spaceId } = await channel();
+  const outsiderWorkspace = ulid('wsp');
+  const outsider = ulid('act');
+  await db.insertInto('workspaces').values({
+    id: outsiderWorkspace, org_id: org, name: 'Elsewhere', slug: `e-${outsiderWorkspace.slice(-6).toLowerCase()}`,
+  }).execute();
+  await db.insertInto('actors').values({
+    id: outsider, org_id: org, workspace_id: outsiderWorkspace, type: 'human',
+    handle: `t-${outsider.slice(-6).toLowerCase()}`, display_name: 'Elsewhere',
+    avatar_url: null, identity_kind: 'workos_user', identity_id: `wu_${outsider}`,
+    owner_actor_id: null, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({
+    scope_type: 'workspace', scope_id: outsiderWorkspace, actor_id: outsider, role: 'member',
+  }).execute();
+
+  await assert.rejects(() => addToSpace(db, spaceId, outsider, bob, ulid('msg')),
+    (err: Error) => { assert.ok(err instanceof SpaceMemberUnavailableError); return true; });
+  await db.deleteFrom('memberships').where('scope_id', '=', outsiderWorkspace).execute();
+  await db.deleteFrom('actors').where('id', '=', outsider).execute();
+  await db.deleteFrom('workspaces').where('id', '=', outsiderWorkspace).execute();
+
+  await db.updateTable('actors').set({ state: 'deactivated' }).where('id', '=', stranger).execute();
+  await assert.rejects(() => addToSpace(db, spaceId, stranger, bob, ulid('msg')),
+    (err: Error) => { assert.ok(err instanceof SpaceMemberUnavailableError); return true; });
+  await db.updateTable('actors').set({ state: 'active' }).where('id', '=', stranger).execute();
+
+  await db.updateTable('memberships').set({ left_at: new Date() })
+    .where('scope_type', '=', 'workspace').where('scope_id', '=', wsp)
+    .where('actor_id', '=', stranger).execute();
+  await assert.rejects(() => addToSpace(db, spaceId, stranger, bob, ulid('msg')),
+    (err: Error) => { assert.ok(err instanceof SpaceMemberUnavailableError); return true; });
+  await db.updateTable('memberships').set({ left_at: null })
+    .where('scope_type', '=', 'workspace').where('scope_id', '=', wsp)
+    .where('actor_id', '=', stranger).execute();
+});
+
+test('re-adding a former admin cannot bypass the separate promote permission', opts, async () => {
+  const { spaceId } = await channel();
+  await addToSpace(db, spaceId, stranger, me, ulid('msg'));
+  await db.updateTable('memberships').set({ role: 'admin' })
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId)
+    .where('actor_id', '=', stranger).execute();
+  await leaveSpace(db, spaceId, stranger);
+
+  await addToSpace(db, spaceId, stranger, bob, ulid('msg'));
+  const membership = await db.selectFrom('memberships').select('role')
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId)
+    .where('actor_id', '=', stranger).executeTakeFirstOrThrow();
+  assert.equal(membership.role, 'member');
 });
 
 test('a plain member cannot remove another member — only a space admin may',
@@ -170,7 +233,7 @@ test('a plain member cannot remove another member — only a space admin may',
   // The asymmetry with adding, and it matches make_public: adding a person is
   // reversible by that person, removing one is not.
   const { spaceId } = await channel();
-  await addToSpace(db, spaceId, stranger, bob);
+  await addToSpace(db, spaceId, stranger, bob, ulid('msg'));
 
   await assert.rejects(() => removeFromSpace(db, spaceId, stranger, bob),
     (err: Error) => { assert.ok(err instanceof Forbidden); return true; });
@@ -188,7 +251,7 @@ test('removing YOURSELF is leaving, and needs no permission', opts, async () => 
   await removeFromSpace(db, spaceId, bob, bob);
   assert.deepEqual(await spaceMembers(db, spaceId), [me]);
 
-  await addToSpace(db, spaceId, bob, me);
+  await addToSpace(db, spaceId, bob, me, ulid('msg'));
   await leaveSpace(db, spaceId, bob);
   assert.deepEqual(await spaceMembers(db, spaceId), [me]);
 });
@@ -846,6 +909,7 @@ async function whisper(
 ): Promise<string> {
   const messageId = ulid('msg');
   await db.transaction().execute(trx => writeMessage(trx, {
+    kind: 'actor',
     chatId, messageId, authorId: stranger, body, parentId,
     audience: { kind: 'listed', actors: listed },
   }));

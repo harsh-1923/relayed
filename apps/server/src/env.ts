@@ -45,4 +45,16 @@ export const env = {
   agentS2sKey: process.env['AGENT_S2S_KEY'] ?? null,
   /** Signs the tool-call grant (D4). A separate secret and audience from session tokens — never in `apps/agent`. */
   agentGrantSecret: process.env['AGENT_GRANT_SECRET'] ?? null,
+
+  // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ────────────────
+  //
+  // Optional, like the agent-runtime trio above: the connector store and the
+  // catalogue refresh check this themselves and answer "not configured"
+  // rather than the process refusing to boot (D5's reasoning, again).
+  /** The project's scoped key (§6.2). Lives here and nowhere else (invariant 75). */
+  composioApiKey: process.env['COMPOSIO_API_KEY'] ?? null,
+  /** Base for `start_url` and the Composio verifier callback (§6.5) — must be reachable by Composio's servers, never localhost. */
+  publicUrl: process.env['RELAYED_PUBLIC_URL'] ?? null,
+  /** Signs the `relayed_connect` cookie (§6.5). A separate secret from every other signing key here, on the same reasoning as `AGENT_GRANT_SECRET`. */
+  connectCookieSecret: process.env['CONNECT_COOKIE_SECRET'] ?? null,
 } as const;

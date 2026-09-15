@@ -79,6 +79,10 @@ export const topic = {
    * `appearance.theme` is one segment here rather than two.
    */
   pref: (key: string): string => `prefs:${key}`,
+  /** The signed-in actor's own connected accounts (WORKSPACE-AGENTS.md §6.3) — the connector store's Yours list. */
+  connections: (): string => 'connections',
+  /** The signed-in actor's own grants to agents (WORKSPACE-AGENTS.md §6.4). */
+  agentPermissions: (): string => 'agent_permissions',
 } as const;
 
 /**

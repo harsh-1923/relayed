@@ -259,3 +259,34 @@ test('onSession sees the access token it is about to persist', async () => {
     await server.close();
   }
 });
+
+test('concurrent ensureFresh calls share ONE refresh — rotation would refuse a second', async () => {
+  const { createServer } = await import('node:http');
+  let refreshes = 0;
+  const server = createServer((req, res) => {
+    if (req.url === '/auth/refresh') refreshes++;
+    // Refused, so nothing is adopted: the count is the whole assertion.
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid_refresh_token' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  process.env['RELAYED_SERVER_URL'] = `http://127.0.0.1:${port}`;
+  try {
+    const vault = fakeVault();
+    await vault.store(WSP_A, 'refresh_token_a');
+    const s = new Session(deps({ vault }));
+    await s.activate(WSP_A);            // one refresh; refused, so the session is stale
+    assert.equal(refreshes, 1);
+
+    const [first, second, third] = await Promise.all([s.ensureFresh(), s.ensureFresh(), s.ensureFresh()]);
+    assert.deepEqual([first, second, third], [null, null, null]);
+    assert.equal(refreshes, 2, 'three callers at once, one refresh request');
+
+    await s.ensureFresh();
+    assert.equal(refreshes, 3, 'a later call refreshes again — nothing is cached past the one in flight');
+  } finally {
+    delete process.env['RELAYED_SERVER_URL'];
+    await new Promise(resolve => server.close(resolve));
+  }
+});

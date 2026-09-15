@@ -14,7 +14,9 @@
 // all. The moment it starts holding opinions it becomes a second place where
 // the frontier rule lives.
 import type { DatabaseSync } from 'node:sqlite';
-import type { Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity } from '@relayed/protocol';
+import type {
+  Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity, ConnectionRow, AgentPermissionRow,
+} from '@relayed/protocol';
 import { Connection, type LinkState, type SocketLike } from './transport/connection.ts';
 import type { Gate } from './network.ts';
 import {
@@ -44,6 +46,13 @@ export interface LinkDeps {
   /** The replica for the workspace currently open, or null before one is. */
   db(): DatabaseSync | null;
   workspaceId(): string | null;
+  /**
+   * The active replica actor — who "me" is in the open workspace. Read by the
+   * default effect so a `space.member_added` event can tell whether it names
+   * the actor running this link (SPACE-MEMBERSHIP-MARKERS.md). Optional: a
+   * caller supplying its own `effect` has no use for it.
+   */
+  actorId?(): string | null;
   token(): Promise<string | null>;
   /** Wake whatever the renderer has mounted. */
   invalidate(topics: string[]): void;
@@ -56,6 +65,10 @@ export interface LinkDeps {
    * with topics).
    */
   onActivity?(activity: AgentActivity): void;
+  /** A `connections` push (WORKSPACE-AGENTS.md §6.3) — one or more rows, replaced by id. */
+  onConnections?(rows: ConnectionRow[]): void;
+  /** An `agent_permissions` push (WORKSPACE-AGENTS.md §6.4) — same shape. */
+  onAgentPermissions?(rows: AgentPermissionRow[]): void;
   onState?(state: LinkState): void;
   onEvent?(name: string, detail?: Record<string, unknown>): void;
   /** Test seams, exactly as on the connection itself. */
@@ -150,7 +163,7 @@ export function createLink(deps: LinkDeps): Link {
   }
 
   const effect = deps.effect ?? replicaEffect(type =>
-    note('sync.event.unknown', { type, stream: 'chat', rev: 0 }));
+    note('sync.event.unknown', { type, stream: 'chat', rev: 0 }), deps.actorId);
 
   /**
    * The sends currently in flight, as spans.
@@ -442,6 +455,16 @@ export function createLink(deps: LinkDeps): Link {
 
     if (t === 'agent_activity') {
       deps.onActivity?.(body as AgentActivity);
+      return;
+    }
+
+    if (t === 'connections') {
+      deps.onConnections?.((body as { rows: ConnectionRow[] }).rows);
+      return;
+    }
+
+    if (t === 'agent_permissions') {
+      deps.onAgentPermissions?.((body as { rows: AgentPermissionRow[] }).rows);
       return;
     }
   }

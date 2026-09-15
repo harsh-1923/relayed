@@ -536,3 +536,114 @@ test('`behind` lists exactly the streams that owe a catch-up', () => {
     'the caught-up space is absent');
   db.close();
 });
+
+// ── space.member_added hydration (SPACE-MEMBERSHIP-MARKERS.md) ─────────────
+
+/** A `space.member_added` envelope carrying the hydration block every add now sends. */
+const memberAdded = (rev: number, actorId: string, role = 'member'): Envelope => ({
+  rev, type: 'space.member_added',
+  payload: {
+    actor_id: actorId, role, by_actor_id: 'act_inviter',
+    hydration: {
+      space: {
+        id: 'spc_new', kind: 'channel', name: 'general', slug: 'general',
+        visibility: 'public', membership_policy: 'open', lifecycle: 'active', rev: 3,
+      },
+      chats: [{ id: 'cht_new', space_id: 'spc_new', kind: 'sole', name: null, head_ord: 5, head_rev: 5 }],
+    },
+  },
+});
+
+test('a member_added naming the active actor hydrates the space, its chat, and the membership', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+
+  applyEvent(deps, space, memberAdded(1, 'act_me', 'admin'));
+
+  const spaceRow = db.prepare('SELECT * FROM spaces WHERE id = ?').get('spc_new') as
+    { id: string; kind: string; name: string; membership_policy: string } | undefined;
+  assert.equal(spaceRow?.id, 'spc_new');
+  assert.equal(spaceRow?.kind, 'channel');
+  assert.equal(spaceRow?.name, 'general');
+
+  const chatRow = db.prepare('SELECT * FROM chats WHERE id = ?').get('cht_new') as
+    { space_id: string; kind: string } | undefined;
+  assert.equal(chatRow?.space_id, 'spc_new');
+  assert.equal(chatRow?.kind, 'sole');
+
+  const chatState = db.prepare('SELECT head_ord FROM chat_state WHERE chat_id = ?').get('cht_new') as
+    { head_ord: number } | undefined;
+  assert.equal(chatState?.head_ord, 5);
+
+  const chatCursor = db.prepare(
+    "SELECT server_head_rev FROM stream_state WHERE stream_kind = 'chat' AND stream_id = ?",
+  ).get('cht_new') as { server_head_rev: number } | undefined;
+  assert.equal(chatCursor?.server_head_rev, 5);
+
+  const membership = db.prepare(
+    "SELECT role, left_at FROM memberships WHERE scope_type = 'space' AND scope_id = ? AND actor_id = ?",
+  ).get('spc_new', 'act_me') as { role: string; left_at: number | null } | undefined;
+  assert.equal(membership?.role, 'admin');
+  assert.equal(membership?.left_at, null);
+  db.close();
+});
+
+test('a member_added for someone else stays topology invalidation only — nothing is written', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+
+  const result = applyEvent(deps, space, memberAdded(1, 'act_someone_else'));
+
+  assert.deepEqual(result.topics, ['space:spc_new', 'spaces']);
+  assert.equal(db.prepare('SELECT id FROM spaces WHERE id = ?').get('spc_new'), undefined,
+    'existing members never store a space from this event — only the caller-only projection');
+  assert.equal(
+    db.prepare("SELECT 1 FROM memberships WHERE actor_id = 'act_someone_else'").get(), undefined);
+  db.close();
+});
+
+test('a member_added with no active actor configured behaves exactly as before', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  // No `activeActorId` passed at all — the pre-existing call shape.
+  const deps = { db, effect: replicaEffect() };
+
+  const result = applyEvent(deps, space, memberAdded(1, 'act_me'));
+
+  assert.deepEqual(result.topics, ['space:spc_new', 'spaces']);
+  assert.equal(db.prepare('SELECT id FROM spaces WHERE id = ?').get('spc_new'), undefined);
+  db.close();
+});
+
+for (const kind of ['channel', 'room'] as const) {
+  test(`creation events hydrate a new ${kind} and its structural chat without reconnecting`, () => {
+    const db = replica();
+    try {
+      const stream: Stream = { kind: 'space', id: 'spc_created' };
+      const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+      const chatKind = kind === 'channel' ? 'sole' : 'default';
+      applyEvent(deps, stream, { rev: 1, type: 'space.created', payload: { id: stream.id, kind } });
+      applyEvent(deps, stream, { rev: 2, type: 'chat.created', payload: { id: 'cht_created', kind: chatKind } });
+      const applied = applyEvent(deps, stream, {
+        rev: 3, type: 'space.member_added', payload: {
+          actor_id: 'act_me', role: 'admin', by_actor_id: 'act_me',
+          hydration: {
+            space: { id: stream.id, kind, name: 'Created', slug: null, visibility: 'private',
+              membership_policy: 'invite', lifecycle: 'active', rev: 3 },
+            chats: [{ id: 'cht_created', space_id: stream.id, kind: chatKind, name: null, head_ord: 0, head_rev: 0 }],
+          },
+        },
+      });
+      assert.ok(applied.topics.includes('spaces'));
+      assert.equal(frontierOf(db, stream), 3);
+      assert.equal(db.prepare('SELECT kind FROM spaces WHERE id = ?').get(stream.id)?.kind, kind);
+      assert.equal(db.prepare('SELECT kind FROM chats WHERE id = ?').get('cht_created')?.kind, chatKind);
+      assert.equal(db.prepare('SELECT head_ord FROM chat_state WHERE chat_id = ?').get('cht_created')?.head_ord, 0);
+      assert.equal(db.prepare("SELECT role FROM memberships WHERE scope_id = ? AND actor_id = 'act_me'").get(stream.id)?.role, 'admin');
+    } finally {
+      db.close();
+    }
+  });
+}

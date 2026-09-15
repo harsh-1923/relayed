@@ -8,6 +8,7 @@
     "start": "node --env-file-if-exists=../../.env src/index.ts",
     "migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
     "keygen": "node src/auth/keygen.ts",
+    "enable-toolkit": "node --env-file-if-exists=../../.env scripts/enable-toolkit.ts",
     "test": "node --env-file-if-exists=../../.env --test src/",
     "typecheck": "tsc --noEmit"
   },
@@ -16,6 +17,7 @@
     "@relayed/genui": "workspace:*",
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
+    "@composio/core": "0.18.1",
     "fastify": "^5.2.0",
     "jose": "^6.0.0",
     "kysely": "^0.28.3",

@@ -1,8 +1,6 @@
 // Creating a space, and who may come and go from one.
 //
-// Not sync ops — nothing here allocates a revision — but the log needs somewhere
-// to put messages, and Phase 2's milestone needs two actors who can both reach
-// the same chat.
+// Constructors commit topology and its ordered events together.
 //
 // `createChannel` rather than `createSpace(kind, …)`, deliberately. The kinds
 // share a table because their STRUCTURE is uniform — a container of chats with
@@ -12,17 +10,18 @@
 // queries. Separate constructors are that discriminated union expressed as
 // functions: `createDm(a, b)` has no slug parameter to misuse.
 //
-// Phase 5 adds `createRoom` and `createDm` as siblings. They share a skeleton
-// with this one — a transaction inserting a space, its chat, and the founding
-// membership — which is worth extracting THEN, with two callers to shape it,
-// rather than now with one.
+// Channel and room constructors share the atomic skeleton below while keeping
+// their structural chat and slug policy at the named entry points.
 import { sql, type Kysely, type Transaction } from 'kysely';
 import { can, workspace as workspaceTarget, space as spaceTarget } from '@relayed/authz';
 import type { DB } from '../db/schema.ts';
 import { loadGrants, Forbidden } from '../authz/can.ts';
 import { spacePlacement } from './placement.ts';
 import { allocateStream } from './allocate.ts';
-import { appendEvent, spaceStream, type AppendedEvent } from './events.ts';
+import {
+  appendEvent, spaceStream, type AppendedEvent, type SpaceMemberAdded,
+} from './events.ts';
+import { writeMessage } from './ops.ts';
 import { ulid } from '../db/ulid.ts';
 
 export interface NewChannel {
@@ -33,7 +32,7 @@ export interface NewChannel {
   createdBy: string;
 }
 
-export interface Channel {
+export interface CreatedSpace {
   spaceId: string;
   chatId: string;
   /**
@@ -65,6 +64,16 @@ export class SlugTakenError extends Error {
   }
 }
 
+/** The requested actor cannot hold a membership in this space. */
+export class SpaceMemberUnavailableError extends Error {
+  readonly actorId: string;
+  constructor(actorId: string) {
+    super(`actor ${actorId} is not an active member of this workspace`);
+    this.name = 'SpaceMemberUnavailableError';
+    this.actorId = actorId;
+  }
+}
+
 /**
  * Create a channel: the space, its sole chat, and the creator's membership.
  *
@@ -76,7 +85,18 @@ export class SlugTakenError extends Error {
  * space being stranded when its creator is deprovisioned by SCIM, because an
  * admin can promote somebody else (DESIGN.md §7.3).
  */
-export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<Channel> {
+export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<CreatedSpace> {
+  return createNamedSpace(db, input, 'channel', 'sole');
+}
+
+/** Rooms have a structural default chat and never carry a channel slug. */
+export async function createRoom(db: Kysely<DB>, input: Omit<NewChannel, 'slug'>): Promise<CreatedSpace> {
+  return createNamedSpace(db, { ...input, slug: null }, 'room', 'default');
+}
+
+async function createNamedSpace(
+  db: Kysely<DB>, input: NewChannel, kind: 'channel' | 'room', chatKind: 'sole' | 'default',
+): Promise<CreatedSpace> {
   const grants = await loadGrants(db, input.createdBy);
   // Through can(), never a role comparison here. Membership alone suffices for
   // this action today; if that ever needs a role, it changes in one file.
@@ -104,7 +124,7 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
     await db.transaction().execute(async (trx) => {
       await trx.insertInto('spaces').values({
         id: spaceId, org_id: workspace.org_id, workspace_id: input.workspaceId,
-        kind: 'channel', name: input.name, slug: input.slug ?? null, topic: null,
+        kind, name: input.name, slug: input.slug ?? null, topic: null,
         visibility,
         // Public means discoverable and joinable, NOT auto-joined — membership
         // stays explicit either way (DESIGN.md §7.2).
@@ -114,7 +134,7 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
 
       await trx.insertInto('chats').values({
         id: chatId, workspace_id: input.workspaceId, space_id: spaceId,
-        kind: 'sole', name: null, created_by_actor_id: input.createdBy,
+        kind: chatKind, name: null, created_by_actor_id: input.createdBy,
       }).execute();
 
       await trx.insertInto('memberships').values({
@@ -135,17 +155,20 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
       // join through the ordinary gap path (DESIGN.md §7.2).
       events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
         'space.created', {
-          id: spaceId, kind: 'channel', name: input.name,
+          id: spaceId, kind, name: input.name,
           slug: input.slug ?? null, visibility,
           membership_policy: membershipPolicy, lifecycle: 'active',
         }, { kind: 'stream' }));
 
       events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
         'chat.created',
-        { id: chatId, space_id: spaceId, kind: 'sole', name: null }, { kind: 'stream' }));
+        { id: chatId, space_id: spaceId, kind: chatKind, name: null }, { kind: 'stream' }));
 
-      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-        'space.member_added', { actor_id: input.createdBy, role: 'admin' }, { kind: 'stream' }));
+      const founding = await allocateStream(trx, spaceStream(spaceId));
+      events.push(await appendEvent(trx, founding, 'space.member_added', {
+        actor_id: input.createdBy, role: 'admin', by_actor_id: input.createdBy,
+        hydration: await hydrationSnapshot(trx, spaceId, founding.rev),
+      }, { kind: 'stream' }));
     });
   } catch (err) {
     if (isConstraint(err, 'space_slug')) throw new SlugTakenError(input.slug ?? '');
@@ -168,24 +191,108 @@ export async function createChannel(db: Kysely<DB>, input: NewChannel): Promise<
  */
 export async function joinSpace(
   db: Kysely<DB>, spaceId: string, actorId: string,
-): Promise<AppendedEvent> {
+): Promise<MembershipResult> {
   await requireSpace(db, actorId, spaceId, 'join');
-  return db.transaction().execute(trx => addMember(trx, spaceId, actorId, 'member'));
+  return db.transaction().execute(trx => addMember(trx, spaceId, actorId, 'member', actorId));
 }
 
 /**
- * Add somebody else to a space.
+ * Add somebody else to a space: the membership, the space event, and the
+ * chat marker that says so — all three or none (SPACE-MEMBERSHIP-MARKERS.md).
  *
  * Any member may, deliberately: adding one person and exposing the whole space
  * to the workspace have very different blast radii, which is why this is open
  * and `make_public` is admin-only (DESIGN.md §7.3).
+ *
+ * The marker message id is supplied by the caller (a client-generated id,
+ * threaded through from the route) rather than minted here, preserving the
+ * client-generated-message-id invariant even though the content is generated
+ * by the system.
  */
 export async function addToSpace(
-  db: Kysely<DB>, spaceId: string, actorId: string, by: string,
-  role: 'member' | 'admin' = 'member',
-): Promise<AppendedEvent> {
+  db: Kysely<DB>, spaceId: string, actorId: string, by: string, messageId: string,
+): Promise<AddToSpaceResult> {
   await requireSpace(db, by, spaceId, 'add_member');
-  return db.transaction().execute(trx => addMember(trx, spaceId, actorId, role));
+  await requireAddableSpace(db, spaceId);
+  await requireAddableActor(db, spaceId, actorId);
+
+  return db.transaction().execute(
+    trx => addMemberWithMarker(trx, spaceId, actorId, 'member', by, messageId));
+}
+
+/**
+ * The atomic write itself: membership, the space event, and the chat marker —
+ * all three or none, inside a transaction the CALLER owns.
+ *
+ * Exported (rather than folded into `addToSpace`) so a caller that already has
+ * its own transaction can join it, instead of nesting a second one. Agent
+ * creation is that caller: `createAgent` (`agents/definitions.ts`) adds the new
+ * agent to its chosen spaces inside the same transaction that creates the
+ * agent's actor row, and the doc's product rule treats an agent add as a peer
+ * of a person's — the same wording, the same marker (SPACE-MEMBERSHIP-MARKERS.md).
+ * `addToSpace` itself is a thin wrapper: permission checks, then one owned
+ * transaction around this.
+ */
+export async function addMemberWithMarker(
+  trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
+  by: string, messageId: string,
+): Promise<AddToSpaceResult> {
+  const membership = await addMember(trx, spaceId, actorId, role, by);
+  if (membership.status === 'already_member') return membership;
+
+  const chatId = await structuralChatOf(trx, spaceId);
+  const body = await markerBody(trx, by, actorId);
+  const written = await writeMessage(trx, {
+    kind: 'system', chatId, messageId, authorId: by,
+    systemKind: 'space.member_added', subjectActorId: actorId,
+    audience: { kind: 'stream' }, body,
+  });
+
+  return { status: 'added', membershipEvent: membership.event, messageEvent: written.event };
+}
+
+export type AddToSpaceResult =
+  | { status: 'already_member' }
+  | { status: 'added'; membershipEvent: AppendedEvent; messageEvent: AppendedEvent };
+
+/** The space named is `sealed` — DMs and group DMs; adding a participant makes a new conversation instead. */
+export class SealedSpaceError extends Error {
+  readonly spaceId: string;
+  constructor(spaceId: string) {
+    super(`space ${spaceId} is sealed`);
+    this.name = 'SealedSpaceError';
+    this.spaceId = spaceId;
+  }
+}
+
+/**
+ * Refuse a `sealed` space before anything else runs. Enforced here, in the
+ * authoritative domain operation, rather than in the shared `can()` evaluator
+ * — sealed only ever gates this one action on this one object, unlike
+ * `openSpaces`, which every scope-level caller needs (`placement.ts`).
+ */
+async function requireAddableSpace(db: Kysely<DB>, spaceId: string): Promise<void> {
+  const space = await db.selectFrom('spaces').select('membership_policy')
+    .where('id', '=', spaceId).executeTakeFirst();
+  if (space?.membership_policy === 'sealed') throw new SealedSpaceError(spaceId);
+}
+
+/** The space's structural chat: `sole` for a channel, `default` for a room. */
+async function structuralChatOf(trx: Transaction<DB>, spaceId: string): Promise<string> {
+  const chat = await trx.selectFrom('chats').select('id')
+    .where('space_id', '=', spaceId).where('kind', 'in', ['sole', 'default'])
+    .executeTakeFirstOrThrow();
+  return chat.id;
+}
+
+/** The compatibility rendering, captured at write time (SPACE-MEMBERSHIP-MARKERS.md). */
+async function markerBody(
+  trx: Transaction<DB>, byActorId: string, subjectActorId: string,
+): Promise<string> {
+  const rows = await trx.selectFrom('actors').select(['id', 'display_name'])
+    .where('id', 'in', [byActorId, subjectActorId]).execute();
+  const nameOf = (id: string) => rows.find(row => row.id === id)?.display_name ?? 'someone';
+  return `${nameOf(subjectActorId)} was added by ${nameOf(byActorId)}`;
 }
 
 /**
@@ -272,13 +379,23 @@ async function membersOf(
   return rows.map(row => row.actor_id);
 }
 
+export type MembershipResult =
+  | { status: 'already_member' }
+  | { status: 'added'; event: AppendedEvent };
+
 /**
  * Write the membership row, and record that it changed.
  *
- * Idempotent, and re-joining CLEARS `left_at` rather than inserting a second
- * row. That is what makes re-adding a removed member the gap case rather than a
- * special case: the membership resumes, the cursor is behind, and the existing
- * backfill machinery heals it (DESIGN.md §6.6).
+ * IDEMPOTENT: an actor already active in the space returns `already_member`
+ * without touching the row, allocating a revision, or appending an event
+ * (SPACE-MEMBERSHIP-MARKERS.md — a repeated add must not claim, twice, that
+ * somebody was added). Re-joining after having left CLEARS `left_at` rather
+ * than inserting a second row, which is what makes re-adding a removed member
+ * the gap case rather than a special case: the membership resumes, the cursor
+ * is behind, and the existing backfill machinery heals it (DESIGN.md §6.6).
+ *
+ * The read is LOCKED (`forUpdate`), not merely read, so two concurrent adds of
+ * the same actor cannot both observe "not active yet" and both write a marker.
  *
  * Takes a `Transaction` because the row and its event must commit together.
  * Membership is the one piece of state that decides who receives everything
@@ -287,16 +404,58 @@ async function membersOf(
  * short of a full resync.
  */
 export async function addMember(
-  trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin',
-): Promise<AppendedEvent> {
+  trx: Transaction<DB>, spaceId: string, actorId: string, role: 'member' | 'admin', by: string,
+): Promise<MembershipResult> {
+  const existing = await trx.selectFrom('memberships').select('left_at')
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId)
+    .where('actor_id', '=', actorId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (existing && existing.left_at === null) return { status: 'already_member' };
+
   await trx.insertInto('memberships')
     .values({ scope_type: 'space', scope_id: spaceId, actor_id: actorId, role })
     .onConflict(oc => oc.columns(['scope_type', 'scope_id', 'actor_id'])
-      .doUpdateSet({ left_at: null, joined_at: sql`now()` }))
+      // Re-adding is not promotion. A tombstoned admin row must come back as
+      // the role this operation grants, or any member could restore an admin
+      // without passing the separate `promote` permission.
+      .doUpdateSet({ role, left_at: null, joined_at: sql`now()` }))
     .execute();
 
-  return appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
-    'space.member_added', { actor_id: actorId, role }, { kind: 'stream' });
+  const allocated = await allocateStream(trx, spaceStream(spaceId));
+  const event = await appendEvent(trx, allocated, 'space.member_added', {
+    actor_id: actorId, role, by_actor_id: by,
+    hydration: await hydrationSnapshot(trx, spaceId, allocated.rev),
+  }, { kind: 'stream' });
+  return { status: 'added', event };
+}
+
+/**
+ * The space's current shape, carried on every `space.member_added` event so
+ * the NAMED actor's own replica can render it without waiting for a
+ * reconnect. Every recipient gets the same payload — the client decides
+ * whether it applies (SPACE-MEMBERSHIP-MARKERS.md); this is not a
+ * per-recipient redaction, since `fanout.ts` delivers one payload to everyone
+ * entitled to the stream.
+ */
+async function hydrationSnapshot(
+  trx: Transaction<DB>, spaceId: string, spaceRev: number,
+): Promise<SpaceMemberAdded['hydration']> {
+  const space = await trx.selectFrom('spaces')
+    .select(['id', 'kind', 'name', 'slug', 'visibility', 'membership_policy', 'lifecycle'])
+    .where('id', '=', spaceId).executeTakeFirstOrThrow();
+  const chats = await trx.selectFrom('chats')
+    .select(['id', 'space_id', 'kind', 'name', 'next_ord', 'next_rev'])
+    .where('space_id', '=', spaceId).where('kind', 'in', ['sole', 'default', 'public'])
+    .execute();
+
+  return {
+    space: { ...space, rev: spaceRev },
+    chats: chats.map(chat => ({
+      id: chat.id, space_id: chat.space_id, kind: chat.kind, name: chat.name,
+      head_ord: chat.next_ord, head_rev: chat.next_rev,
+    })),
+  };
 }
 
 /**
@@ -340,6 +499,32 @@ async function requireSpace(
   if (!can(grants, action, spaceTarget(spaceId), placement)) {
     throw new Forbidden(action, spaceTarget(spaceId));
   }
+}
+
+/**
+ * The addressee must be an active actor in the space's workspace, with the
+ * workspace membership that forms the leading containment conjunct.
+ *
+ * Checked after the adder's permission so an unreachable space cannot be used
+ * to probe actor ids. The one answer covers unknown, cross-workspace, removed,
+ * suspended and deactivated actors; none is useful to distinguish here.
+ */
+async function requireAddableActor(
+  db: Kysely<DB>, spaceId: string, actorId: string,
+): Promise<void> {
+  const actor = await db.selectFrom('actors')
+    .innerJoin('spaces', 'spaces.workspace_id', 'actors.workspace_id')
+    .innerJoin('memberships', join => join
+      .on('memberships.scope_type', '=', 'workspace')
+      .onRef('memberships.scope_id', '=', 'spaces.workspace_id')
+      .onRef('memberships.actor_id', '=', 'actors.id')
+      .on('memberships.left_at', 'is', null))
+    .select('actors.id')
+    .where('spaces.id', '=', spaceId)
+    .where('actors.id', '=', actorId)
+    .where('actors.state', '=', 'active')
+    .executeTakeFirst();
+  if (!actor) throw new SpaceMemberUnavailableError(actorId);
 }
 
 const isConstraint = (err: unknown, name: string): boolean =>

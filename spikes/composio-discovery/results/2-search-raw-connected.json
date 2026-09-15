@@ -1,0 +1,268 @@
+{
+  "results": [
+    {
+      "index": 1,
+      "use_case": "look at github issue #445 and tell me about it",
+      "execution_guidance": "IMPORTANT: Follow the recommended plan below. Extract steps before execution, adapt to your current context, execute sequentially with current_step parameter, and check known pitfalls to avoid errors.",
+      "recommended_plan_steps": [
+        "[Optional (if owner/repo is unknown)] [Prerequisite]: Discover accessible repositories using GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER (derive coordinates from returned repository fields).",
+        "[Optional (if access is uncertain or coordinates may be wrong)] [Prerequisite]: Validate reachability using GITHUB_GET_A_REPOSITORY (avoid mistaking auth/mismatch for “no issues”).",
+        "[Required] [Step]: List items using GITHUB_LIST_REPOSITORY_ISSUES (apply state/labels/sort; if you need issues-only, exclude entries that include a pull_request field).",
+        "[Optional (if results span multiple pages)] [Next Step]: Paginate using GITHUB_LIST_REPOSITORY_ISSUES (iterate page/per_page until a short/empty page, then merge results).",
+        "[Optional (if richer context is needed for selected items)] [Next Step]: Hydrate using GITHUB_GET_AN_ISSUE, then fetch discussion using GITHUB_LIST_ISSUE_COMMENTS (paginate comments; use since only for incremental updates).",
+        "[Optional (if multi-page payloads are too large to review inline)] [Step]: Process results in COMPOSIO_REMOTE_WORKBENCH (de-duplicate, compact fields, and split issue vs PR-shaped items).",
+        "[Fallback (if listing fails due to access restrictions or you need server-side keyword filtering)] [Fallback]: Query using GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS (repo-scoped q with is:issue), paginate items, and de-duplicate against any list results."
+      ],
+      "known_pitfalls": [
+        "[GITHUB_LIST_REPOSITORY_ISSUES] per_page is capped at 100; large responses may be truncated inline, so paginate and/or post-process the full payload out-of-band when needed.",
+        "[GITHUB_LIST_REPOSITORY_ISSUES] since filters by updated_at (not created_at); use GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS when creation-time criteria matter.",
+        "[GITHUB_GET_A_REPOSITORY] 404 Not Found can indicate wrong coordinates or missing access; validate before assuming the repository or issues don’t exist.",
+        "[GITHUB_LIST_REPOSITORY_ISSUES] 403 Forbidden can occur under organization OAuth restrictions; fall back to GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS.",
+        "[GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS] repo-scoped q is required; results cap at ~1000 and malformed queries can return 422 Validation Failed."
+      ],
+      "reference_workbench_snippets": [],
+      "difficulty": "easy",
+      "primary_tool_slugs": ["GITHUB_LIST_REPOSITORY_ISSUES"],
+      "related_tool_slugs": [
+        "GITHUB_GET_AN_ISSUE",
+        "GITHUB_LIST_ISSUE_COMMENTS",
+        "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+        "GITHUB_GET_A_REPOSITORY",
+        "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"
+      ],
+      "toolkits": ["github"],
+      "plan_id": "32a6a32d5439430cba5b4cd10be88992",
+      "cached_plan_usecase": "usecase: list issues from a github repository. known: None. apps: github"
+    }
+  ],
+  "toolkit_connection_statuses": [
+    {
+      "toolkit": "github",
+      "has_active_connection": true,
+      "description": "GitHub is a code hosting platform for version control and collaboration, offering Git-based repository management, issue tracking, and continuous integration features",
+      "connection_details": {
+        "connected_account_id": "ca_C2cx4zvcBlGM",
+        "status": "ACTIVE",
+        "created_at": "2026-09-14T07:30:38.807Z"
+      },
+      "current_user_info": "[redacted: 41 profile fields]",
+      "account_type": "PRIVATE",
+      "status_message": "Connection is active and ready to use"
+    }
+  ],
+  "tool_schemas": {
+    "GITHUB_LIST_REPOSITORY_ISSUES": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_LIST_REPOSITORY_ISSUES",
+      "description": "Lists issues (including pull requests) from a GitHub repository. Requires BOTH 'owner' AND 'repo' parameters (e.g., owner='octocat', repo='Hello-World' for github.com/octocat/Hello-World).",
+      "input_schema": {
+        "type": "object",
+        "required": ["owner", "repo"],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "examples": ["1", "5"],
+            "description": "Page number for the set of results. Refer to GitHub's REST API documentation for pagination details."
+          },
+          "repo": {
+            "type": "string",
+            "examples": ["Hello-World", "vscode", "react"],
+            "description": "REQUIRED. The name of the repository (without .git extension). For 'octocat/Hello-World', repo is 'Hello-World'. Not case-sensitive. Must be provided together with 'owner'."
+          },
+          "sort": {
+            "enum": ["created", "updated", "comments"],
+            "type": "string",
+            "default": "created",
+            "examples": ["created", "updated", "comments"],
+            "description": "The field to sort the results by."
+          },
+          "type": {
+            "type": "string",
+            "examples": ["bug", "feature", "*", "none"],
+            "description": "Filter issues by type name. Use '*' for issues with any type, 'none' for issues without a type, or specify a type name."
+          },
+          "owner": {
+            "type": "string",
+            "examples": ["octocat", "microsoft", "facebook"],
+            "description": "REQUIRED. The GitHub account owner (user or organization) of the repository. For 'octocat/Hello-World', owner is 'octocat'. Not case-sensitive. Must be provided together with 'repo'."
+          },
+          "since": {
+            "type": "string",
+            "examples": ["2023-01-15T10:00:00Z", "2024-03-10T00:00:00+05:30"],
+            "description": "Filters issues to include only those updated at or after the specified time. This should be a timestamp in ISO 8601 format (e.g., `YYYY-MM-DDTHH:MM:SSZ`)."
+          },
+          "state": {
+            "enum": ["open", "closed", "all"],
+            "type": "string",
+            "default": "open",
+            "examples": ["open", "closed", "all"],
+            "description": "Filters issues based on their state."
+          },
+          "labels": {
+            "type": "string",
+            "examples": ["bug,ui,@high", "enhancement", "help wanted,good first issue"],
+            "description": "A comma-separated list of label names to filter issues by. Example: 'bug,ui,@high'."
+          },
+          "creator": {
+            "type": "string",
+            "examples": ["octocat"],
+            "description": "Filter issues by the username of the user who created the issue."
+          },
+          "assignee": {
+            "type": "string",
+            "examples": ["codertocat", "none", "*"],
+            "description": "Filter issues by assignee's username. Use 'none' for issues with no assignee, or '*' for issues assigned to any user."
+          },
+          "per_page": {
+            "type": "integer",
+            "default": 30,
+            "examples": ["30", "100"],
+            "description": "Number of results per page (max 100). Default is 30, which matches GitHub's API default. Refer to GitHub's REST API documentation for pagination details."
+          },
+          "direction": {
+            "enum": ["asc", "desc"],
+            "type": "string",
+            "default": "desc",
+            "examples": ["asc", "desc"],
+            "description": "The direction of the sort."
+          },
+          "mentioned": {
+            "type": "string",
+            "examples": ["octodocs", "hubot"],
+            "description": "Filter issues by a user mentioned in the issue's description or comments. Provide the username."
+          },
+          "milestone": {
+            "type": "string",
+            "examples": ["1", "*", "none"],
+            "description": "Filter issues by milestone. Provide the milestone `number` as a string, '*' for issues with any milestone, or 'none' for issues without a milestone."
+          }
+        }
+      },
+      "hasFullSchema": true
+    },
+    "GITHUB_GET_AN_ISSUE": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_GET_AN_ISSUE",
+      "description": "Retrieves detailed information about a specific issue in a repository using the owner, repository name, and issue number.",
+      "input_schema": {
+        "type": "object",
+        "required": ["owner", "repo", "issue_number"],
+        "properties": {
+          "repo": {
+            "type": "string",
+            "examples": ["Hello-World"],
+            "description": "Name of the repository (without `.git` extension). Not case-sensitive."
+          },
+          "owner": {
+            "type": "string",
+            "examples": ["octocat"],
+            "description": "Username of the account owning the repository. Not case-sensitive."
+          },
+          "issue_number": {
+            "type": "integer",
+            "examples": [1347],
+            "description": "The identifying number of the issue."
+          }
+        }
+      },
+      "hasFullSchema": true
+    },
+    "GITHUB_LIST_ISSUE_COMMENTS": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_LIST_ISSUE_COMMENTS",
+      "description": "Lists comments for a specified issue in a GitHub repository.",
+      "input_schema": {
+        "type": "object",
+        "required": ["owner", "repo", "issue_number"],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "default": 1,
+            "examples": ["1", "2", "5"],
+            "description": "Page number of the results to retrieve."
+          },
+          "repo": {
+            "type": "string",
+            "examples": ["Spoon-Knife", "docs"],
+            "description": "Name of the repository, without the `.git` extension (not case-sensitive)."
+          },
+          "owner": {
+            "type": "string",
+            "examples": ["octocat", "github"],
+            "description": "Username of the account owning the repository (not case-sensitive)."
+          },
+          "since": {
+            "type": "string",
+            "examples": ["2023-01-01T00:00:00Z"],
+            "description": "Filters comments to include only those updated at or after this ISO 8601 timestamp (e.g., `YYYY-MM-DDTHH:MM:SSZ`)."
+          },
+          "per_page": {
+            "type": "integer",
+            "default": 30,
+            "examples": ["30", "50", "100"],
+            "description": "Number of comments to return per page (max 100)."
+          },
+          "issue_number": {
+            "type": "integer",
+            "examples": ["42", "101"],
+            "description": "Number that identifies the issue."
+          }
+        }
+      },
+      "hasFullSchema": true
+    },
+    "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+      "description": "Searches GitHub for issues and pull requests. Supports keywords, qualifiers (repo:, org:, user:, sta...",
+      "hasFullSchema": false,
+      "schemaRef": {
+        "tool": "COMPOSIO_GET_TOOL_SCHEMAS",
+        "args": {
+          "tool_slugs": ["GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS"]
+        }
+      }
+    },
+    "GITHUB_GET_A_REPOSITORY": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_GET_A_REPOSITORY",
+      "description": "Retrieves detailed information about an existing and accessible GitHub repository.",
+      "hasFullSchema": false,
+      "schemaRef": {
+        "tool": "COMPOSIO_GET_TOOL_SCHEMAS",
+        "args": {
+          "tool_slugs": ["GITHUB_GET_A_REPOSITORY"]
+        }
+      }
+    },
+    "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER": {
+      "toolkit": "GITHUB",
+      "tool_slug": "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+      "description": "Lists repositories for the authenticated user; using 'type' with 'visibility' or 'affiliation' API p...",
+      "hasFullSchema": false,
+      "schemaRef": {
+        "tool": "COMPOSIO_GET_TOOL_SCHEMAS",
+        "args": {
+          "tool_slugs": ["GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"]
+        }
+      }
+    }
+  },
+  "time_info": {
+    "current_time_utc": "2026-09-14T21:36:55.375Z",
+    "current_time_utc_epoch_seconds": 1789421815,
+    "message": "\n          - This is time in UTC timezone. Get timezone from user if you needed.\n          - Always use this time info to construct parameters for tool calls appropriately even when the tool call requires relative times like 'last week', 'last 24 hours', 'today', 'tomorrow' etc.\n          - Do not hallucinate the time or timezone by yourself.\n        "
+  },
+  "session": {
+    "id": "ants",
+    "generate_id": true,
+    "instructions": "REQUIRED: Pass session_id \"ants\" in ALL subsequent meta tool calls for this workflow."
+  },
+  "next_steps_guidance": [
+    "1) Connections active, proceed to next step",
+    "2) Extract validated plan steps returned above, acknowledge each step, then execute sequentially updating current_step parameter. Check pitfalls during execution."
+  ],
+  "success": true,
+  "error": null
+}

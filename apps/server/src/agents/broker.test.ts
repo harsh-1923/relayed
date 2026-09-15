@@ -1,0 +1,246 @@
+// The broker (docs/WORKSPACE-AGENTS.md §5.5) as step 7 changed it — a run's
+// `find_tools` and `call_tool` — through Fastify's `inject`, against Postgres,
+// with Composio stubbed so nothing here reaches the network.
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import Fastify from 'fastify';
+import { sql } from 'kysely';
+import { db, pool, reachable } from '../db/client.ts';
+import { ulid } from '../db/ulid.ts';
+import { env } from '../env.ts';
+import { createChannel, joinSpace } from '../sync/spaces.ts';
+import { send } from '../sync/ops.ts';
+import { signGrant } from './grant.ts';
+import { brokerRoutes, type BrokerComposio } from './broker.ts';
+import type { SearchResult } from './composio.ts';
+
+const up = await reachable();
+const opts = up && env.agentGrantSecret ? {}
+  : { skip: 'postgres not reachable, or AGENT_GRANT_SECRET unset — run `pnpm services`' };
+
+const org = ulid('org');
+const wsp = ulid('wsp');
+const alice = ulid('act');
+const triage = ulid('act');
+const review = ulid('act');
+
+// Toolkits of this file's own, so nothing depends on what the dev catalogue holds.
+const suffix = ulid('t').slice(-8).toLowerCase();
+const HUB = `hub${suffix}`;
+const OFF = `off${suffix}`;
+const READ_TOOL = `HUB${suffix}_GET_AN_ISSUE`.toUpperCase();
+const WRITE_TOOL = `HUB${suffix}_CREATE_A_REVIEW`.toUpperCase();
+const DESTRUCTIVE_TOOL = `HUB${suffix}_DELETE_A_REPOSITORY`.toUpperCase();
+const DEPRECATED_TOOL = `HUB${suffix}_OLD_THING`.toUpperCase();
+const OFF_TOOL = `OFF${suffix}_ANYTHING`.toUpperCase();
+const CATALOGUE_SCHEMA = { type: 'object', properties: { from: { type: 'string', const: 'catalogue' } } };
+
+before(async () => {
+  if (!up) return;
+  await db.insertInto('organizations').values({ id: org, workos_org_id: `test_${org}`, name: 'Broker' }).execute();
+  await db.insertInto('workspaces').values({ id: wsp, org_id: org, name: 'Broker', slug: `b-${wsp.slice(-6).toLowerCase()}` }).execute();
+  for (const [id, type, name] of [[alice, 'human', 'Alice'], [triage, 'agent', 'Triage'], [review, 'agent', 'Review']] as const) {
+    await db.insertInto('actors').values({
+      id, org_id: org, workspace_id: wsp, type,
+      handle: `b-${id.slice(-6).toLowerCase()}`, display_name: name,
+      avatar_url: null, identity_kind: type === 'agent' ? 'system' : 'workos_user',
+      identity_id: type === 'agent' ? null : `wu_${id}`,
+      owner_actor_id: type === 'agent' ? alice : null, provisioned_by: 'api', state: 'active',
+    }).execute();
+    await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: id, role: 'member' }).execute();
+  }
+  for (const [slug, enabled] of [[HUB, true], [OFF, false]] as const) {
+    await db.insertInto('toolkits').values({
+      slug, name: slug === HUB ? 'Hub' : 'Off', description: '', logo_url: null, auth_scheme: 'OAUTH2',
+      auth_config_id: `ac_${slug}`, auth_managed_by: 'composio', auth_guide_url: null, enabled, refreshed_at: sql`now()`,
+    }).execute();
+  }
+  const tool = (toolkit: string, slug: string, effect: 'read' | 'write' | 'destructive', deprecated = false) => ({
+    toolkit, slug, name: slug, description: `does ${slug}`, effect_derived: effect, effect_override: null,
+    deprecated, input_schema: sql`${JSON.stringify(CATALOGUE_SCHEMA)}::jsonb`,
+  });
+  await db.insertInto('toolkit_tools').values([
+    tool(HUB, READ_TOOL, 'read'), tool(HUB, WRITE_TOOL, 'write'), tool(HUB, DESTRUCTIVE_TOOL, 'destructive'),
+    tool(HUB, DEPRECATED_TOOL, 'read', true), tool(OFF, OFF_TOOL, 'read'),
+  ] as never).execute();
+});
+
+after(async () => {
+  if (!up) return;
+  await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();
+  await db.deleteFrom('spaces').where('workspace_id', '=', wsp).execute();
+  await db.deleteFrom('memberships').where('scope_id', '=', wsp).execute();
+  await db.deleteFrom('organizations').where('id', '=', org).execute();
+  await db.deleteFrom('toolkits').where('slug', 'in', [HUB, OFF]).execute();
+  await pool.end();
+});
+
+interface Recorded { searches: string[]; executions: { tool: string; args: Record<string, unknown> }[] }
+
+async function server(searchResult: SearchResult = { toolSlugs: [], schemas: {} }) {
+  const recorded: Recorded = { searches: [], executions: [] };
+  const composio: BrokerComposio = {
+    session: async () => 'trs_test',
+    search: async (_sessionId, useCase) => { recorded.searches.push(useCase); return searchResult; },
+    execute: async (_sessionId, tool, args) => { recorded.executions.push({ tool, args }); return { ok: true, data: { number: 445 } }; },
+  };
+  const app = Fastify();
+  await app.register(brokerRoutes({
+    db, composio, deliver: async () => ({ audience: 0, delivered: 0, dropped: 0, withheld: 0 }),
+  }));
+  return { app, recorded };
+}
+
+/** A running run of `agent`, invoked by Alice, and its grant. */
+async function run(agent: string) {
+  const made = await createChannel(db, { workspaceId: wsp, name: `b-${ulid('x')}`, createdBy: alice });
+  await joinSpace(db, made.spaceId, agent);
+  const triggered = await send(db, {
+    opId: ulid('op'), chatId: made.chatId, actorId: alice, messageId: ulid('msg'),
+    body: `[Agent](actor:${agent}) look at issue 445`, parentId: null,
+  });
+  const runId = triggered.runIds[0];
+  assert.ok(runId, 'the mention must have started a run');
+  await db.updateTable('agent_runs').set({ state: 'running' }).where('id', '=', runId).execute();
+  const grant = await signGrant({ invokerActorId: alice, agentActorId: agent, runId, chatId: made.chatId });
+  return { runId, grant };
+}
+
+const call = (app: Awaited<ReturnType<typeof server>>['app'], r: { runId: string; grant: string }, tool: string, args: unknown) =>
+  app.inject({
+    method: 'POST', url: '/agent/tools', headers: { authorization: `Bearer ${r.grant}` },
+    payload: { runId: r.runId, toolCallId: ulid('call'), tool, arguments: args },
+  }).then(res => res.json<{ result: string; data?: { tools?: Record<string, unknown>[]; note?: string } }>());
+
+const allow = (agent: string, effect: 'read' | 'write' | 'destructive') =>
+  db.insertInto('agent_permissions').values({ invoker_actor_id: alice, agent_actor_id: agent, toolkit: HUB, effect })
+    .onConflict(oc => oc.columns(['invoker_actor_id', 'agent_actor_id', 'toolkit']).doUpdateSet({ effect, revoked_at: null }))
+    .execute();
+
+async function connect(): Promise<void> {
+  const existing = await db.selectFrom('connections').select('id').where('actor_id', '=', alice).where('toolkit', '=', HUB).executeTakeFirst();
+  if (existing) return;
+  await db.insertInto('connections').values({
+    id: ulid('con'), workspace_id: wsp, actor_id: alice, toolkit: HUB, composio_account_id: 'ca_test',
+    status: 'active', status_reason: null, label: null, connected_at: sql`now()`, last_used_at: null, disconnected_at: null,
+  }).execute();
+}
+
+const cardsFor = (runId: string) => db.selectFrom('access_requests').select(['toolkit', 'effect'])
+  .where('run_id', '=', runId).execute();
+
+test('find_tools with no permission raises one card and never reaches Composio', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  const answer = await call(app, r, 'find_tools', { toolkit: HUB, use_case: 'read issue 445' });
+  assert.equal(answer.result, 'permission_required');
+  assert.deepEqual(await cardsFor(r.runId), [{ toolkit: HUB, effect: 'write' }]);
+  assert.deepEqual(recorded.searches, []);
+
+  await call(app, r, 'find_tools', { toolkit: HUB, use_case: 'read issue 445 again' });
+  assert.equal((await cardsFor(r.runId)).length, 1, 'a second search in the same run raises no second card');
+  await app.close();
+});
+
+test('permission is per agent: allowing one agent does not let another search', opts, async () => {
+  await connect();
+  await allow(triage, 'write');
+  const { app, recorded } = await server();
+  const r = await run(review);
+
+  const answer = await call(app, r, 'find_tools', { toolkit: HUB, use_case: 'review PR 4561' });
+  assert.equal(answer.result, 'permission_required');
+  assert.deepEqual(recorded.searches, []);
+  await app.close();
+});
+
+test('find_tools allowed but not connected raises the card as connection_required', opts, async () => {
+  const other = ulid('act');
+  await db.insertInto('actors').values({
+    id: other, org_id: org, workspace_id: wsp, type: 'agent', handle: `b-${other.slice(-6).toLowerCase()}`,
+    display_name: 'Other', avatar_url: null, identity_kind: 'system', identity_id: null,
+    owner_actor_id: alice, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: other, role: 'member' }).execute();
+  await db.deleteFrom('connections').where('actor_id', '=', alice).where('toolkit', '=', HUB).execute();
+  await allow(other, 'write');
+  const { app } = await server();
+  const r = await run(other);
+
+  const answer = await call(app, r, 'find_tools', { toolkit: HUB, use_case: 'read issue 445' });
+  assert.equal(answer.result, 'connection_required');
+  assert.equal((await cardsFor(r.runId)).length, 1);
+  await app.close();
+});
+
+test('find_tools returns only that toolkit\'s real tools, in our own shape', opts, async () => {
+  await connect();
+  await allow(triage, 'write');
+  const { app, recorded } = await server({
+    toolSlugs: [READ_TOOL, OFF_TOOL, 'HUB_NOT_IN_OUR_CATALOGUE', DEPRECATED_TOOL, WRITE_TOOL],
+    schemas: { [READ_TOOL]: { type: 'object', properties: { from: { type: 'string', const: 'composio' } } } },
+  });
+  const r = await run(triage);
+
+  const answer = await call(app, r, 'find_tools', { toolkit: HUB, use_case: 'read issue 445' });
+  assert.equal(answer.result, 'ok');
+  assert.deepEqual(answer.data?.tools?.map(t => t['name']), [READ_TOOL, WRITE_TOOL],
+    'a tool of another toolkit, one we do not list, and a deprecated one are all left out');
+  assert.deepEqual(Object.keys(answer.data?.tools?.[0] ?? {}).sort(), ['description', 'name', 'parameters']);
+  assert.equal(JSON.stringify(answer.data?.tools?.[0]?.['parameters']).includes('composio'), true, 'Composio\'s schema when it sent one');
+  assert.equal(JSON.stringify(answer.data?.tools?.[1]?.['parameters']).includes('catalogue'), true, 'ours when it did not');
+  assert.deepEqual(recorded.searches, ['Hub: read issue 445']);
+  await app.close();
+});
+
+test('find_tools refuses a toolkit that is not enabled, without searching', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+  assert.equal((await call(app, r, 'find_tools', { toolkit: OFF, use_case: 'anything' })).result, 'tool_not_allowed');
+  assert.equal((await call(app, r, 'find_tools', { toolkit: 'slack', use_case: 'post a message' })).result, 'tool_not_allowed');
+  assert.deepEqual(recorded.searches, []);
+  await app.close();
+});
+
+test('call_tool checks the name against the catalogue before Composio sees it', opts, async () => {
+  await connect();
+  await allow(triage, 'destructive');
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  assert.equal((await call(app, r, 'call_tool', { tool: 'HUB_MADE_UP', arguments: {} })).result, 'tool_not_allowed');
+  assert.equal((await call(app, r, 'call_tool', { tool: OFF_TOOL, arguments: {} })).result, 'tool_not_allowed');
+  assert.equal((await call(app, r, 'call_tool', { tool: DEPRECATED_TOOL, arguments: {} })).result, 'tool_deprecated');
+  assert.equal((await call(app, r, 'some_other_tool', {})).result, 'tool_not_allowed');
+  assert.deepEqual(recorded.executions, []);
+  await app.close();
+});
+
+test('call_tool takes the effect from the catalogue: a destructive tool with write access raises a second card', opts, async () => {
+  await connect();
+  await allow(triage, 'write');
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  const answer = await call(app, r, 'call_tool', { tool: DESTRUCTIVE_TOOL, arguments: { repo: 'web' } });
+  assert.equal(answer.result, 'permission_required');
+  assert.deepEqual(await cardsFor(r.runId), [{ toolkit: HUB, effect: 'destructive' }]);
+  assert.deepEqual(recorded.executions, []);
+  await app.close();
+});
+
+test('call_tool runs a tool the model never searched for, and records it', opts, async () => {
+  await connect();
+  await allow(triage, 'write');
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  const answer = await call(app, r, 'call_tool', { tool: READ_TOOL, arguments: { issue_number: 445 } });
+  assert.equal(answer.result, 'ok');
+  assert.deepEqual(recorded.executions, [{ tool: READ_TOOL, args: { issue_number: 445 } }]);
+  const audit = await db.selectFrom('agent_tool_calls').select(['toolkit', 'tool', 'effect', 'outcome'])
+    .where('run_id', '=', r.runId).execute();
+  assert.deepEqual(audit, [{ toolkit: HUB, tool: READ_TOOL, effect: 'read', outcome: 'ok' }]);
+  await app.close();
+});

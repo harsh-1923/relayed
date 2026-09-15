@@ -59,7 +59,7 @@ async function server() {
   }));
   const { spaceId, chatId } = await createChannel(db, {
     workspaceId: wsp, name: `d-${ulid('x')}`, createdBy: me });
-  await addToSpace(db, spaceId, bob, me);
+  await addToSpace(db, spaceId, bob, me, ulid('msg'));
   return { app, delivered, chatId };
 }
 

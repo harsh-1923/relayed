@@ -52,11 +52,6 @@ export function SettingsAgents() {
                   {agent.agent?.description || 'No description'} · created by {nameOf(agent.ownerActorId)}
                 </p>
               </div>
-              {(agent.agent?.toolkits.length ?? 0) > 0 && (
-                <div className="flex gap-1">
-                  {agent.agent?.toolkits.map(t => <Badge key={t.toolkit} variant="secondary">{t.toolkit}</Badge>)}
-                </div>
-              )}
             </Link>
           </li>
         ))}

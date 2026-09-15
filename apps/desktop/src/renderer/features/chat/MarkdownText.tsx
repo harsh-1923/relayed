@@ -17,17 +17,27 @@
 //     one shows the whole address, with a copy button.
 //   - IMAGES are their description. The CSP allows no remote image, and a
 //     network fetch from message content is the tracking this app does not do.
+import { Children, Fragment, type ReactNode } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
+import { parseSlashCommand } from '../../../shared/slash-commands.ts';
 import { CopyButton } from './CopyButton';
 import './markdown.css';
 
 export function MarkdownText({
   text, className, onOpenLink,
 }: { text: string; className?: string; onOpenLink?: (url: string) => void }) {
+  const slashCommand = parseSlashCommand(text);
   const components: Components = {
+    p: ({ node, children }) => (
+      <p>
+        {slashCommand && node.position?.start.offset === 0
+          ? commandChip(children, `/${slashCommand.name}`)
+          : children}
+      </p>
+    ),
     a: ({ href, children }) => (
       isSemanticMention(href) ? (
         <span className="md-mention" data-mention-kind={href.startsWith('actor:') ? 'actor' : 'audience'}>
@@ -68,6 +78,20 @@ export function MarkdownText({
         {text}
       </Markdown>
     </div>
+  );
+}
+
+/** The wire and stored body stay ordinary Markdown; only its leading command token is decorated. */
+function commandChip(children: ReactNode, command: string): ReactNode {
+  const content = Children.toArray(children);
+  const first = content[0];
+  if (typeof first !== 'string' || !first.startsWith(command)) return children;
+  return (
+    <Fragment>
+      <span className="md-command">{command}</span>
+      {first.slice(command.length)}
+      {content.slice(1)}
+    </Fragment>
   );
 }
 

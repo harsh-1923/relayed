@@ -179,10 +179,10 @@ test('refuses a run whose invoker has gone inactive, without ever calling the ru
   }
 });
 
-test('defers a run once the invoker already has the max runs in flight', opts, async () => {
-  // A throwaway invoker, never used elsewhere: the three filler rows below are
-  // left `running` on purpose (nothing ever finishes them) and must not leak
-  // into any other test's busy-count.
+test('a person\'s runs already in flight — stuck ones included — never hold back their next mention', opts, async () => {
+  // A throwaway invoker, never used elsewhere: the filler rows below are left
+  // `running` on purpose, as a server restart leaves them until their lease
+  // expires, and must not leak into any other test.
   const busyInvoker = ulid('act');
   await db.insertInto('actors').values({
     id: busyInvoker, org_id: org, workspace_id: wsp, type: 'human',
@@ -193,34 +193,24 @@ test('defers a run once the invoker already has the max runs in flight', opts, a
   await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: busyInvoker, role: 'member' }).execute();
   const chatId = await roomFor(busyInvoker);
 
-  // Three already-running runs for `busyInvoker`, against three distinct
-  // triggers (the unique key is per trigger+agent+attempt).
-  for (let i = 0; i < 3; i++) {
-    const t = await send(db, { opId: ulid('op'), chatId, actorId: busyInvoker, messageId: ulid('msg'), body: `filler ${i}` });
+  // Five runs already `running` for this person, against distinct triggers
+  // (the unique key is per trigger+agent+attempt) — more than any cap there was.
+  for (let i = 0; i < 5; i++) {
+    const filler = await send(db, { opId: ulid('op'), chatId, actorId: busyInvoker, messageId: ulid('msg'), body: `filler ${i}` });
     await db.insertInto('agent_runs').values({
       id: ulid('run'), workspace_id: wsp, agent_actor_id: agent, invoker_actor_id: busyInvoker,
-      chat_id: chatId, trigger_message_id: t.ack.messageId, state: 'running',
+      chat_id: chatId, trigger_message_id: filler.ack.messageId, state: 'running',
     }).execute();
   }
-  const { runId } = await mention(chatId, `[Triage](actor:${agent}) one more`, busyInvoker);
+  const { runId, messageId } = await mention(chatId, `[Triage](actor:${agent}) one more`, busyInvoker);
 
-  await fakeRuntime('completed');   // must never be reached for this run
+  await fakeRuntime('completed');
   const dispatcher = startDispatcher(db, new Registry());
   try {
     dispatcher.wake();
-    await waitFor(async () => (await runState(runId)).defer_reason !== null);
-    const after_ = await runState(runId);
-    assert.equal(after_.state, 'queued', 'deferred, not refused — it may run once a slot frees up');
-    assert.equal(after_.defer_reason, 'invoker_busy');
-    assert.ok(after_.not_before && after_.not_before > new Date(), 'not retried immediately');
-
-    // A second poll, well before `not_before`: the claim query's own
-    // `not_before IS NULL OR not_before <= now()` must leave it alone.
-    dispatcher.wake();
-    await sleep(200);
-    const still = await runState(runId);
-    assert.equal(still.state, 'queued', 'not reclaimed before its own not_before');
-    assert.equal(still.defer_reason, 'invoker_busy', 'untouched — not re-admitted, not re-deferred');
+    await waitFor(async () => (await runState(runId)).state === 'completed');
+    assert.equal((await runState(runId)).defer_reason, null, 'admitted on its first claim, never deferred');
+    assert.equal(await replyBody(chatId, messageId), `answer for ${runId}`);
   } finally {
     dispatcher.stop();
   }
@@ -242,6 +232,26 @@ test('a lease that outlived its server is swept and posted as interrupted', opts
     await waitFor(async () => (await runState(runId)).state === 'interrupted');
     const body = await replyBody(chatId, messageId);
     assert.equal(body, 'I was interrupted by a restart — ask again.');
+  } finally {
+    dispatcher.stop();
+  }
+});
+
+test('a swept run whose notice cannot be written still leaves running, instead of failing every sweep', opts, async () => {
+  const chatId = await room();
+  const { runId, messageId } = await mention(chatId, `[Triage](actor:${agent}) status`);
+  // A reply id that already names a message — the collision a card sharing
+  // the reply id used to cause. The notice write fails on messages_pkey.
+  await db.updateTable('agent_runs').set({
+    state: 'running', reply_message_id: messageId,
+    started_at: new Date(Date.now() - 60_000), lease_until: new Date(Date.now() - 1000),
+  }).where('id', '=', runId).execute();
+
+  await fakeRuntime('completed');
+  const dispatcher = startDispatcher(db, new Registry());
+  try {
+    dispatcher.wake();
+    await waitFor(async () => (await runState(runId)).state === 'interrupted');
   } finally {
     dispatcher.stop();
   }

@@ -52,7 +52,7 @@
 | Question | Decision | § |
 |---|---|---|
 | What is an agent in the data model? | **An actor, like a person**, plus an `agents` row keyed by that actor id. Same handle namespace, same memberships, same authorship column. | 4 |
-| What does creating one write? | `actors` + `agents` + `agent_tools` + a workspace membership + a maintainer membership, **in one transaction**, announced with `recordActor`. | 4.3 |
+| What does creating one write? | `actors` + `agents` + a workspace membership + a maintainer membership, **in one transaction**, announced with `recordActor`. No tool list: a run finds its tools (§5.4). | 4.3 |
 | Who may create one? | **Any workspace member, with no approval flow.** Invokers are protected by permissions (§6.4), not by limiting who creates. | 4.4 |
 | Who may read its instructions? | **Everyone in the workspace.** Mentioning an agent is like mentioning a person in a public space: what it has been told is not a secret from the people it acts for. | 4.1 |
 | Who may edit one? | Its **maintainers** and workspace admins, through `can()`. Never a comparison against `owner_actor_id`. | 4.4 |
@@ -97,7 +97,7 @@
    ▼                                              INSERT messages                            │
  server, one transaction                          INSERT sync_events (message.created)       │ one
    INSERT actors (type='agent')                   INSERT agent_runs (state='queued')         │ transaction
-   INSERT agents, agent_tools                     COMMIT ────────────────────────────────────┘
+   INSERT agents                                  COMMIT ────────────────────────────────────┘
    INSERT memberships (workspace, agent)          │
    recordActor → actor.created                    ├─ fanout message.created → #eng members
    │                                              └─ wake the dispatcher
@@ -107,17 +107,18 @@
                                                   snapshot config, build context, mint grant
                                                        │  POST /run  (SSE)
                                                        ▼
-                                                apps/agent  pi loop, tools = show_ui + remote
-                                                       │  model calls LINEAR_CREATE_LINEAR_ISSUE
+                                                apps/agent  pi loop, tools = show_ui + find_tools + call_tool
+                                                       │  model calls find_tools(linear), then
+                                                       │  call_tool(LINEAR_CREATE_LINEAR_ISSUE)
                                                        │  POST /agent/tools  (Bearer grant)
                                                        ▼
                                                 server tool broker
                                                   grant valid? run running? Bob active?
-                                                  tool in snapshot? Bob allowed @triage on Linear?
+                                                  a real, enabled tool? Bob allowed @triage on Linear?
                                                   Bob has an active Linear connection?
                                                      ├─ no  → access card in the thread, Bob may act;
                                                      │        "connection_required" to the model
-                                                     └─ yes → Composio session (@triage × Bob).execute
+                                                     └─ yes → Bob's Composio session .execute
                                                               record agent_tool_calls; result back
                                                        │
                                                        ▼  done
@@ -187,15 +188,21 @@ one or opens the same editor and adds the result to that space.
 | **Description** | One line. Shown in mention autocomplete, on the profile and on access cards — it is how an invoker decides whether to trust it |
 | **Instructions** | The system prompt, as Markdown. Capped (32 KB) |
 | **Model** | A picker over the runtime's provider table. Blank means the runtime's fallback (`AGENT-RUNTIME.md`, models and providers §4). *Until the server knows that table (the plan's step 3), `provider/model` as text, checked for shape (D17)* |
-| **Tools** | Pick toolkits from the catalogue, then tools within each, grouped **Read · Write · Destructive**. Read tools are preselected, write tools are opt-in, destructive tools start off (§6.6). *Arrives with the connector store (D11)* |
 | **Spaces** | Optional. Adds the agent as a member now; it can be added anywhere later like a person |
+
+**No Tools field.** An agent is not given a list of tools: when it runs, it looks for
+the ones the request needs among the toolkits Relayed offers, and each person is
+asked for access the first time an agent needs theirs (§5.4, §7.4). Picking from
+GitHub's 894 tools while creating an agent was the friction this removes — and an
+agent created with instructions alone used to have no tools at all, so it could
+never even raise the card that gets it access (`WORKSPACE-AGENTS-IMPL.md`, D21).
 
 **Try it** opens a DM with the new agent (once DMs exist, D2). **Create** is disabled until the handle
 is free and at least the name and instructions are filled.
 
 **The profile** — what anyone in the workspace sees when they click `@triage`:
-name, handle, description, creator, maintainers, **the instructions, readable**,
-and **the tools with their effects**. An agent spends each invoker's authority,
+name, handle, description, creator, maintainers and **the instructions, readable**.
+An agent spends each invoker's authority,
 so the person spending it can always read what it has been told to do. There
 are no secret prompts: mentioning an agent is like mentioning a person in a
 public space, and nobody expects what that person was told to be hidden from the
@@ -235,7 +242,7 @@ CREATE TABLE agents (
   instructions    TEXT NOT NULL,
   model           TEXT,                     -- a provider-table key; NULL = the runtime's fallback
   thinking_level  TEXT,
-  -- Bumped on every change to instructions, model or tools. A run records the
+  -- Bumped on every change to instructions or model. A run records the
   -- value it started with, so "what was it told when it did that" has an answer.
   config_rev      INTEGER NOT NULL DEFAULT 1,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -243,28 +250,13 @@ CREATE TABLE agents (
 
   CONSTRAINT agent_instructions_size CHECK (octet_length(instructions) <= 32768)
 );
-
-CREATE TABLE agent_tools (
-  agent_actor_id  TEXT NOT NULL REFERENCES agents(actor_id) ON DELETE CASCADE,
-  toolkit         TEXT NOT NULL,           -- 'linear'
-  tool            TEXT NOT NULL,           -- 'LINEAR_CREATE_LINEAR_ISSUE'
-  effect          TEXT NOT NULL,           -- copied from the catalogue when added (§6.6)
-  -- Reserved for the first guardrail (§13). v1 writes 'never', and admitRun
-  -- refuses a run whose snapshot holds anything else until approvals exist.
-  approval        TEXT NOT NULL DEFAULT 'never',
-  PRIMARY KEY (agent_actor_id, tool),
-
-  CONSTRAINT agent_tool_effect   CHECK (effect IN ('read','write','destructive')),
-  CONSTRAINT agent_tool_approval CHECK (approval IN ('never','always'))
-);
 ```
 
-**One row per tool, never a wildcard.** "Everything in the GitHub toolkit" would
-grow silently whenever Composio adds a tool, and an agent would gain a
-destructive action nobody chose. This is the same reason `apps/agent` passes its
-tool palette explicitly rather than taking pi's default — so that a dependency
-release cannot add an eighth tool to a service whose whole security posture
-depends on the list (`AGENT-RUNTIME.md`, on the pi package §2).
+**No tool table.** Earlier versions kept `agent_tools`, one row per tool, never a
+wildcard, so an agent could not silently gain a destructive action nobody chose.
+That guard now lives where it runs on every call: each person's permission for an
+agent carries an effect ceiling, and a destructive call asks them again (§6.4). The
+table is dropped (`016_tool_discovery.sql`).
 
 **Creating writes, in one transaction:**
 
@@ -272,7 +264,7 @@ depends on the list (`AGENT-RUNTIME.md`, on the pi package §2).
    written without it exists on the server and on nobody's client, and renders
    as a monogram with no name for ever (`SYNC-FLOWS.md`, *Alice sends a message*,
    the actor-write rule §9.1);
-2. `agents` and `agent_tools`;
+2. `agents`;
 3. `memberships (workspace, <workspace id>, <agent>, member)` — the leading
    conjunct of every access check (`AUTHZ.md`, derivation §7);
 4. `memberships (agent, <agent>, <creator>, admin)` — §4.4;
@@ -397,7 +389,7 @@ CREATE TABLE agent_runs (
   config              JSONB,                   -- the definition this run used: instructions, model, tools, config_rev
   reply_message_id    TEXT,                    -- chosen BEFORE the reply is written, so a retry cannot post twice
   not_before          TIMESTAMPTZ,             -- a deferred run is not claimed again until then (§5.9, admitRun)
-  defer_reason        TEXT,                    -- closed set: runtime_busy | invoker_busy
+  defer_reason        TEXT,                    -- closed set: runtime_busy
   stopped_by          TEXT REFERENCES actors(id),
   lease_until         TIMESTAMPTZ,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -454,16 +446,20 @@ admitRun(run) — execution time, never compose time (DESIGN.md §6.4), the chec
   refuse  agent_inactive     agent not active
   refuse  not_a_member       agent no longer a member of the space, or cannot read the chat
   refuse  trigger_deleted    the message was deleted before the run started
-  defer   invoker_busy       3 runs already running for this invoker    ← one person cannot take the capacity
   admit   otherwise
+
+  No per-person cap: a person's runs already in flight never hold back their next mention.
+  The cap this replaced (3 running per invoker) counted a run left `running` by a server
+  restart until its lease expired — ten minutes in which every new mention from that person
+  queued behind requests nobody was working on.
 
   refuse → state='refused', refusal=<code>, and a one-line notice in the thread (§5.7)
   defer  → state stays 'queued', not_before=now()+5s, defer_reason=<code>
 
 prepare:
-  config   = snapshot of agents + agent_tools             → agent_runs.config
+  config   = snapshot of agents + the enabled toolkits      → agent_runs.config
   context  = the chat's recent messages BOTH the agent and the invoker may read (§5.6)
-  tools    = definitions for config.tools (§6.7)
+  tools    = find_tools and call_tool, for config.toolkits (§5.4)
   grant    = sign({ sub: invoker, act: { sub: agent }, run, chat, exp })   ← §5.5
   reply_message_id = ulid('msg')                          → written before the call
 
@@ -521,8 +517,8 @@ POST /run
   "model": "anthropic/claude-sonnet-5",
   "thinkingLevel": "medium",
   "palette": "none",                          // NEW
-  "tools": [ { "name": "LINEAR_CREATE_LINEAR_ISSUE",   // NEW
-               "description": "…", "parameters": { /* JSON Schema */ } } ],
+  "tools": [ { "name": "find_tools", … },          // NEW — the same two for every run
+             { "name": "call_tool",  … } ],
   "grant": "eyJ…"                             // NEW
 }
 ```
@@ -533,7 +529,7 @@ POST /run
 |---|---|
 | `runId` | The runtime currently mints its own. The server's id is the one on the run row, the grant and the reply; two ids for one run is the drift the runtime doc warns about |
 | `palette` | **`none` removes `bash`, `read`, `write`, `edit`, `grep`, `find` and `ls`.** A workspace agent's prompt is written by whoever mentions it, which is the exact trigger `AGENT-RUNTIME.md` §5 names. Removing the tools answers that trigger for these agents without a sandbox. The palette the coding agent in a published local room needs is that feature's problem (`LOCAL-ROOMS.md` §14) |
-| `tools` | Different per agent and per run. Registered as pi `customTools` whose `execute` calls the broker, passing pi's `toolCallId` and forwarding its abort signal. Named in pi's `tools` allowlist too, as `show_ui` already must be (`AGENT-RESPONSES.md`, pi on the service §5.4) |
+| `tools` | **Two, the same for every run** (`apps/server/src/agents/run-tools.ts`): `find_tools({ toolkit, use_case })`, where `toolkit` is an enum of the enabled toolkits, and `call_tool({ tool, arguments })`. Registered as pi `customTools` whose `execute` calls the broker, passing pi's `toolCallId` and forwarding its abort signal. Named in pi's `tools` allowlist too, as `show_ui` already must be (`AGENT-RESPONSES.md`, pi on the service §5.4). Why not the schemas themselves: all of GitHub's are ~459,000 tokens and Notion's ~92,000 (`spikes/composio-discovery/`). Why the model names the toolkit: Composio's search never answers "nothing fits" — asked to post in Slack with only GitHub enabled, it returns GitHub tools. The system prompt names the services and says never to use one in place of another |
 | `grant` | The only credential the runtime holds for a run, and it only works for that run (§5.5) |
 
 **The broker's address is runtime configuration, never a request field.** A
@@ -551,7 +547,7 @@ The runtime's custom tool does one thing:
 POST http://<server, internal>/agent/tools
 Authorization: Bearer <grant>
 { "runId": "run_01N1…", "toolCallId": "toolu_…",
-  "tool": "LINEAR_CREATE_LINEAR_ISSUE", "arguments": { … } }
+  "tool": "call_tool", "arguments": { "tool": "LINEAR_CREATE_LINEAR_ISSUE", "arguments": { … } } }
 ```
 
 The broker, in order, each failure a distinct result code:
@@ -563,15 +559,29 @@ The broker, in order, each failure a distinct result code:
 3  WHO                    invoker = run.invoker_actor_id                   ← from OUR row. Never from the body,
                           agent   = run.agent_actor_id                        never from the grant alone
 4  still allowed?         invoker active, agent active                     → invoker_inactive / agent_inactive
-5  tool in the snapshot?  body.tool ∈ run.config.tools                     → tool_not_allowed
+5  a real tool?          in toolkit_tools, in an enabled toolkit          → tool_not_allowed
+                          not deprecated; effect from the catalogue          → tool_deprecated
 6  claim the call         INSERT agent_tool_calls (outcome='pending')      → duplicate_call on a repeated tool_call_id
 7  permission?            agent_permissions(invoker, agent, toolkit)
                           covers the tool's effect                         → permission_required  + access card (§7.4)
 8  connection?            connections(invoker, toolkit).status = 'active'  → connection_required  + access card (§7.4)
-9  execute                the session for (agent, invoker, config_rev)     → ok | needs_reauth | failed | … (§6.7, §6.8)
+9  execute                the invoker's session (§6.7)                     → ok | needs_reauth | failed | … (§6.8)
                           Composio user_id = invoker
 10 record                 UPDATE agent_tool_calls SET outcome, duration    ← every outcome from step 6 on
 ```
+
+**`find_tools` goes through steps 1–4 and 7–8, then searches.** Access is checked
+before the search — at `read`, the least any tool needs — and a missing permission
+or connection raises the card there, at `write`, before the model has planned
+anything and before any write could have happened. With access, the broker calls
+Composio's session search and returns **its own shape**, `{ tools: [{ name,
+description, parameters }] }`, only for tools our catalogue lists in that toolkit,
+with schemas Composio did not include filled from `toolkit_tools`. The search
+response itself never reaches the model: it carries the person's whole provider
+profile, the Composio account id, and instructions to call tools the session does
+not have. A search is not a call and is not recorded in `agent_tool_calls`; the
+model may call a tool it never searched for, since step 5 checks every call on
+its own.
 
 **A call id executes at most once.** The row is claimed before anything else is
 decided, so a runtime that sends the same call twice — a retry after a dropped
@@ -667,7 +677,7 @@ agent, with the id it chose before the call:
 | `on_behalf_of_actor_id` | the invoker |
 | `delegation_id` | the run id |
 | `parent_id` | **the thread of the triggering message**: its thread root when the trigger is itself a thread reply, otherwise the trigger. The same in every kind of space, DMs included, so every answer can be found under the message that asked for it |
-| `parts` | markdown, `ui` from `show_ui`, and a `tool` part per remote call — name, effect, outcome and duration, never the arguments or the result (`AGENT-RESPONSES.md`, parts §3.1) |
+| `parts` | markdown, `ui` from `show_ui`, and a `tool` part per remote call that ran — its catalogue name, outcome and duration, never the arguments or the result (`AGENT-RESPONSES.md`, parts §3.1). Built from `agent_tool_calls`, not the runtime's list, which only knows `find_tools` and `call_tool`: a search gets no line, and neither does a call that stopped for access, since the card already says so |
 
 Then `agent_runs.state` moves to its terminal value in the same transaction as
 the message, guarded by `WHERE state = 'running'` — a run someone stopped keeps
@@ -750,11 +760,11 @@ somewhere else — the discipline `can()` already holds for authorization
 | Checkpoint | Called | Returns | v1 does | Later features land here |
 |---|---|---|---|---|
 | `invocationsFor(message)` | Inside `send`, in the transaction (§5.1) | the agents to run, each `{ agent }` | Mentions of member agents; every message in a DM with an agent | Continuing a thread the agent answered without a new mention; slash commands; **steering** a running run with a follow-up from its invoker instead of starting another |
-| `admitRun(run)` | At claim (§5.3) | `admit` \| `defer(reason, until)` \| `refuse(code)` | Execution-time checks; `invoker_busy`; `runtime_busy` | **One run at a time per agent per thread** — `defer('thread_busy')` while another run of that agent is `running` in the thread; workspace quotas and cost ceilings; agent rate limits (`DESIGN.md`, open questions §16 item 9) |
-| `beforeToolCall(run, call)` | Broker steps 4–8 (§5.5) | `execute` \| `stop(code, card?)` | Activity, snapshot, permission, connection | **Approval** for `write` and `destructive` tools (`agent_tools.approval`); a workspace allow-list of toolkits; per-toolkit rate limits |
+| `admitRun(run)` | At claim (§5.3) | `admit` \| `defer(reason, until)` \| `refuse(code)` | Execution-time checks; `runtime_busy` | **One run at a time per agent per thread** — `defer('thread_busy')` while another run of that agent is `running` in the thread; workspace quotas and cost ceilings; agent rate limits (`DESIGN.md`, open questions §16 item 9) |
+| `beforeToolCall(run, call)` | Broker steps 4–8 (§5.5) | `execute` \| `stop(code, card?)` | Activity, the catalogue, permission, connection | **Approval** for `write` and `destructive` tools (on `agent_permissions`); a workspace allow-list of toolkits; per-toolkit rate limits |
 | `afterToolCall(run, call, outcome)` | Broker step 10 | nothing | Record the call; `last_used_at`; mark `needs_reauth` | Durable result markers that make a retried run safe |
 | `deliverReply(run, reply)` | On `done` (§5.7) | `post(audience)` \| `suppress` | Post to the thread for the chat; suppress when cancelled (§5.8) | **Invoker-only replies with Share** (`DESIGN.md` §6.6), using `post({ listed: [invoker] })` and §8 as it stands |
-| `onRunEnd(run, outcome)` | After the terminal state commits | nothing | Notice (§5.7), `agent_activity ended` | Waking runs deferred as `thread_busy`; automatic retry; memory, under invariant 83 |
+| `onRunEnd(run, outcome)` | After the terminal state commits | nothing | Notice (§5.7), `agent_activity ended`; re-running a request whose cards were all resolved while it finished (§7.4) | Waking runs deferred as `thread_busy`; retrying a failed run; memory, under invariant 83 |
 
 **Why name them now, while each is a few lines.** The features in the right-hand
 column were all asked about while this design was written, and each is small
@@ -919,10 +929,11 @@ check is the only thing that does** (§5.5, step 7; invariant 82), so it is not
 an optimisation, a cache or a UI hint, and it runs on every call.
 
 **Covered** means a non-revoked row whose `effect` is at least the tool's.
-**Granted** by the access card (§7.4) or the connector store, at the highest effect among
-the agent's tools in that toolkit *at that moment*. **Asked again** when a
-maintainer later adds a tool with a higher effect — the row no longer covers it,
-so the next call raises the card. **Revoked** from the connector store at any
+**Granted** by the access card (§7.4) or the connector store, **up to `write`** — or
+`destructive` when the card being allowed was raised by a destructive call — and
+never lower than a grant the person already made. **Asked again** when the agent
+first calls a destructive tool: `write` does not cover it, so that call raises its
+own card, and an ordinary Allow leaves such a card open. **Revoked** from the connector store at any
 time. The connection itself is untouched; other agents keep their permission.
 
 `NO_AUTH` toolkits need neither a connection nor a permission: nothing of the
@@ -1086,8 +1097,8 @@ effect = effect_override
 ```
 
 **A deprecated tool** stays usable until Composio removes it (execution then
-returns `410`). The refresh marks it, the agent's profile warns its maintainers,
-and a run that calls it gets `tool_deprecated` rather than a generic failure.
+returns `410`). The refresh marks it; `find_tools` stops offering it, and a run
+that calls it anyway gets `tool_deprecated` rather than a generic failure.
 
 ### 6.7 Executing, through a Composio session
 
@@ -1101,38 +1112,37 @@ Composio offers two ways to run a tool from our own loop:
 | Cost | Composio's add-on for execution outside a session after the free tier | The path Composio prices as the default |
 | Calls per execution | Two — it fetches the definition first (read from the SDK source) | One |
 
-**Chosen: a session**, one per **(agent, invoker, `config_rev`)**, created — or
-found and reused — when the dispatcher prepares a run (§5.3), because the run's
-tool schemas come from it. Its id is stored beside those three keys.
-Composio asks for a new session per user or per "materially different tool
-policy" and warns that creating one per request leaves thousands behind; those
-three keys are exactly that.
+**Chosen: a session, one per person**, shared by every agent they invoke, and
+stored in `composio_sessions` keyed by the invoker. Composio asks for a new session
+per user or per "materially different tool policy" and warns that creating one
+per request leaves thousands behind. Tools are found at run time (§5.4), so
+nothing about a session depends on the agent; the one policy left is which
+toolkits the deployment offers, and the session is recreated when that set
+changes.
 
 ```ts
-const session = await composio.create(invokerActorId, {
-  toolkits: config.toolkits,                              // ['linear', 'github']
-  tools: { linear: { enable: ['LINEAR_CREATE_LINEAR_ISSUE', 'LINEAR_LIST_LINEAR_ISSUES'] } },
-  manageConnections: false,      // connecting is ours (§6.5), never a tool the model can call
-  sandbox: { enable: false },    // no remote workbench, no remote bash
-  preload: { tools: 'all' },     // so the session can hand back exactly its tools' schemas
-});
+POST /api/v3.1/tool_router/session
+{
+  user_id: invokerActorId,
+  toolkits: { enable: ['github', 'notion'] },          // every enabled toolkit — no tool list
+  connected_accounts: { github: ['ca_…'] },           // the person's active accounts, from connections
+  manage_connections: { enable: false },  // connecting is ours (§6.5), never a tool the model can call
+  workbench: { enable: false },           // no remote workbench, no remote bash
+  execute: { enable_multi_execute: false } // multi-execute runs tools on Composio's side, past the broker
+}
 ```
 
-The session is not pinned to a connected account. We allow one live connection
-per person per toolkit (§6.3), so there is only one to resolve — and a pin would
-point at a `ca_` id that a reconnect replaces.
+With those switches off, the session's own meta tools shrink to search and schema
+lookup, and the model is handed neither. `find_tools` uses the session's search
+(`POST …/session/:id/search`, about two seconds); `call_tool` uses its execute.
 
-**Schemas for the run** come from the session itself
-(`tools.getRawToolRouterSessionTools(sessionId)`), with Composio's meta tools
-(`COMPOSIO_SEARCH_TOOLS`, `COMPOSIO_MANAGE_CONNECTIONS`, …) filtered out before
-the runtime sees them. What the model is shown and what the session executes then
-come from one source, so a schema change between runs cannot become a mismatch
-within one. The broker still refuses any name not in the run's snapshot, meta
-tools included.
-
-**The tool cap.** Tool schemas are paid for in every turn's input. Until §12.1
-measures it, an agent may list **at most 30 tools**, and the editor says why when
-it refuses the thirty-first.
+**Pinned to the person's accounts, and re-pinned rather than recreated.** The
+discovery spike found an unpinned session executes normally for an active
+account — correcting an earlier check that said a pin was required — but the
+session is pinned anyway, from `connections`, so the account a call executes as
+is the one `agent_tool_calls.connection_id` records. When the person connects or
+reconnects a toolkit, `PATCH …/session/:id` moves the pin. Composio refuses to pin
+an account that belongs to a different `user_id`.
 
 ### 6.8 Errors, mapped to what the person can do
 
@@ -1141,10 +1151,11 @@ it refuses the thirty-first.
 | `successful: false` with the provider's `status_code` and message (a 200 from Composio) | `failed`, with the provider's message truncated to 1 KB — the model can often fix its own arguments | — |
 | Not found for this user, or `422` invalid account state | `needs_reauth` | Read the account's status; mark the connection; raise the card |
 | `403` the account lacks permission | `failed`, reason `provider_forbidden` — "Bob's Linear account cannot do that" | — |
-| `410` | `tool_deprecated` | Flag the agent's tool |
+| `410` | `tool_deprecated` | — |
 | `429` | `rate_limited` | Honour `Retry-After` once, within the run's time limit |
 | `502`, `503`, network | `provider_unavailable` | `composio.request{outcome}` |
-| `[Session Restriction]` | `refused` | **An alert, not a result**: our snapshot and the session disagree, which is a bug in the broker |
+| `ToolRouterV2_ToolNotFound` for a tool our catalogue still lists | `tool_deprecated` | — |
+| `[Session Restriction]` / `ToolRouterV2_ToolkitNotAllowed` | `refused` | **An alert, not a result**: our catalogue check and the session disagree, which is a bug in the broker |
 
 The model receives a closed code plus, only for `failed`, the provider's own
 message. The codes are what telemetry counts.
@@ -1221,6 +1232,7 @@ two different ones.
 | Account statuses; `user_id` no longer returned | [API: list connected accounts](https://docs.composio.dev/reference/api-reference/connected-accounts/getConnectedAccounts) |
 | Delete does not revoke; revoke endpoint | [API: revoke](https://docs.composio.dev/reference/api-reference/connected-accounts/postConnectedAccountsByNanoidRevoke), [changelog 2026-05-12](https://docs.composio.dev/docs/changelog/2026/05/12) |
 | Three webhook events; signature scheme | [Webhook events](https://docs.composio.dev/reference/api-reference/webhook-events), [subscribing](https://docs.composio.dev/docs/setting-up-triggers/subscribing-to-events) |
+| Session search, the meta-tool switches, pinning and re-pinning, and every execute error shape — **observed**, not read | [`spikes/composio-discovery/`](../spikes/composio-discovery/README.md) |
 | Sessions: config, allowlist enforcement, raw session tools, reuse | [Configuring sessions](https://docs.composio.dev/docs/configuring-sessions), [harness integration](https://docs.composio.dev/examples/harness-integration), [production readiness](https://docs.composio.dev/kb/guide/platform-production-readiness) |
 | Behaviour hints on tools | [Configuring sessions](https://docs.composio.dev/docs/configuring-sessions), [session tool policies](https://docs.composio.dev/kb/guide/platform-session-tool-policies) |
 | Execution errors and status codes | [Errors](https://docs.composio.dev/reference/errors), [API: execute tool](https://docs.composio.dev/reference/api-reference/tools/postToolsExecuteByToolSlug) |
@@ -1247,8 +1259,8 @@ it does not matter).
 - **Yours** — every connection you have, needs-reconnect first.
 - **Browse** — the enabled catalogue, searchable, by category.
 
-It is also reachable from three places that already know which toolkit they mean:
-an agent's profile, an access card, and the agent editor's tool picker.
+It is also reachable from the places that already know which toolkit they mean:
+an access card, and an agent's profile.
 
 ### 7.2 A toolkit, as a tile and as a page
 
@@ -1337,7 +1349,7 @@ else (below).
 | `state` | The actor (Alice) | Everyone else |
 |---|---|---|
 | `pending` | From her own `connections` and `agent_permissions`: **Connect Linear and allow @triage**, **Allow @triage to create issues in your Linear**, or **Reconnect Linear** (§6.4, §6.9) | "@triage is waiting for Alice to give it access to Linear" |
-| `resolved` | "Linear is ready" · **Run again** | "Alice gave @triage access to Linear" |
+| `resolved` | "Linear is ready. @triage is running again." | "Alice gave @triage access to Linear" |
 | `expired` | "This request expired" | "@triage didn't get access to Linear" |
 
 The public wording says **access**, never "connect" or "allow": it must not
@@ -1348,8 +1360,16 @@ her connecting and her allowing.
 |---|---|
 | Connect | The connect flow (§6.5), then allow, in one go |
 | Allow | `POST /access-requests/:id/allow` |
-| Run again | `POST /agent-runs/:runId/retry` — a new attempt of the same trigger (`attempt + 1`), for the invoker only, once the first attempt has finished |
 | Reconnect | §6.5 |
+
+**Resolving re-runs the request.** Nothing waits while a card is open — the person
+may connect hours later — so when a run's cards are all resolved, the same request
+runs again as the next attempt (`attempt + 1`), with no button to press. Whichever
+comes second does it: the card resolving, or the run that raised it finishing
+(`onRunEnd`). `UNIQUE (trigger_message_id, agent_actor_id, attempt)` makes two
+resolutions at once queue one re-run. A card has its **own** message id, never the
+run's reply id, because the model still answers after raising one ("I need access
+to your GitHub").
 
 **Only the actor acts, and the server is what says so.** Which buttons a client
 draws is presentation. `POST /access-requests/:id/allow` refuses unless the
@@ -1745,7 +1765,7 @@ gapped across the reply with a stale reply count.
 | The webhook is down or delivers twice | Reconciliation corrects the mirror within 15 minutes; `webhook-id` dedupes | Trusting the webhook as the only source |
 | Someone abandons the browser mid-connect | `connecting` becomes `failed` after ten minutes; Connect is offered again | A connection stuck "connecting" for ever |
 | The browser returns but the app has quit | Nothing completes; the account expires unfinished; Connect again | Completing without knowing who finished |
-| Our snapshot and the Composio session disagree | `refused`, and an alert | Silently executing whichever one allows it |
+| Our catalogue check and the Composio session disagree | `refused`, and an alert | Silently executing whichever one allows it |
 | A mention while the agent is not in the space | No run; the sender's client says so before sending | A run that is refused later with nobody told |
 | Two agents mentioned | Two runs, both answering in the trigger's thread | One run choosing which agent answers |
 | Two people mention the same agent in one thread | Two runs in parallel, each for its own invoker; each answer lands when done | Silently dropping or merging the second request |
@@ -1769,7 +1789,7 @@ A proposal to agree, per `OBSERVABILITY.md`, not a list to add. Service identity
 |---|---|
 | `agent.run{outcome}` | completed / failed / timeout / refused / cancelled / interrupted. Is the feature working at all — and `interrupted` against deploys says whether drains are working |
 | `agent.run.refused{refusal}` | Closed set. "Nobody's runs start" split into *agent not in space* against *invoker deactivated* — opposite fixes |
-| `agent.run.deferred{reason}` | `runtime_busy` against `invoker_busy`: whether the runtime needs capacity or one person is saturating their own limit. Later `thread_busy`, when that queue exists |
+| `agent.run.deferred{reason}` | `runtime_busy`: the runtime needs capacity. Later `thread_busy`, when that queue exists. No per-person reason (§5.3) |
 | `agent.run.queue_wait` | Time from commit to claim. Whether the dispatcher is keeping up, and the number that says when a poll interval stops being enough |
 | `agent.tool{effect, outcome}` | Which effects agents actually use, and whether failures are ours (`refused`, `permission_required`) or theirs (`failed`, `needs_reauth`) |
 | `composio.request{op, outcome}` + duration | A Composio outage against a bug in the broker. Without it both read as "tools fail" |
@@ -1792,9 +1812,10 @@ telemetry** — the no-message-body rule covers all of them.
 |---|---|---|
 | **Withheld events in the sync model** — ✅ **done, passed** | A new model of the engine as built (`spikes/visibility-model.mjs`): 99 checks including 400 random worlds, and 30 planted bugs, all caught. Results in `WORKSPACE-AGENTS-IMPL.md` §4.1.1; it also found and proved the fix for three gap-path bugs that predate this design (§4.4 there) | §8 — withholding holds; the per-actor stream is not needed |
 | **pi with no local tools** | Read from pi 0.85.1's types and its own docs (never run as the `spikes/agent-tools/` script this row once named — step 3 built `agent.ts`'s `remoteTool()` straight from the reading, since `tools` is always `[]` until steps 4/5 and nothing yet exercises it): `tools` is an allowlist ("when provided, only the listed tool names are enabled"), so the palette is `['show_ui', ...remote names]` with no built-ins; each `ToolDefinition.execute(toolCallId, params, signal, …)` receives the call id the broker keys on and an `AbortSignal` to hand to `fetch`; and pi's docs are explicit that a tool error is signalled by **throwing**, never by a return value — confirmed, not still open. **Still open:** `parameters` is typed as a TypeBox `TSchema` and Composio returns plain JSON Schema — does pi validate arguments in a way that needs wrapping (`Type.Unsafe`), and does cancelling a run actually abort an in-flight broker call? | §5.4: how remote tools are registered |
-| **Composio connect, with verification on** | From a script and a browser: Linear over OAuth and one API-key toolkit through `link()`. Does the hosted page really collect the key and a subdomain? Does the `SameSite=Lax` cookie survive provider → Composio → our verifier? Does `complete_auth` with a *different* actor fail the account as documented? What does `revoke` return for each? | §6.5 — if the cookie does not survive, the attempt has to be carried another way; if the hosted key form is inadequate, our own form and a redacted route |
+| **Composio connect** — 🟡 **run, partially passed** (`spikes/composio-connect/`) | GitHub over OAuth (swapped in for Linear — easier to get a test account for) and Exa for the API-key half, through `link()`. **Confirmed**, against the real SDK and API, no dashboard reading required: `connectedAccounts.link()` for a Composio-managed GitHub auth config reaches `ACTIVE` end to end, token redacted by the SDK; a `use_custom_auth`/`API_KEY` config for a toolkit with no shared org credential (Exa) needs zero fields at creation, and `link()` on it returns a hosted form's URL; `revoke` is REST-only exactly as documented (no SDK method) — `POST .../revoke` on an `ACTIVE` account returns `200 {"revoked_tokens":[...],"connected_account":{"status":"REVOKED"}}`, and on a non-`ACTIVE` one returns `409 ConnectedAccount_NonRevokableState` naming the state ("Only ACTIVE connections can be revoked"); `delete()` (SDK) then hard-removes the row, `get()` 404s after. **Not run — needs verification on, which needs a public URL**: whether the `SameSite=Lax` cookie survives provider → Composio → our verifier, and whether `complete_auth` with a different actor fails the account. A cloudflared tunnel was stood up to try this (a minimal stand-in verify server, `spikes/composio-connect/6-verify-server.mjs`), but **where the verifier URL is actually configured could not be found in the dashboard** — every specific navigation path this session tried to hand over (from search summaries, not from a page actually saying so) turned out to be unverifiable against Composio's real docs pages. Skipped rather than guessed at further; the tunnel and test server were torn down. **Found, not asked for**: with verification off (the project's current, default state), `waitForConnection()` reaches `ACTIVE` with **no call to `complete_auth` from us at all** — Composio finishes the account unilaterally once the provider's own redirect lands on Composio's callback. That gap is exactly what turning verification on closes; it is a project setting, not something a script proves on its own | §6.5 — the cookie/`complete_auth` half needs a reachable server, so it waits for a deploy or a tunnel; the hosted forms and `revoke` behaviour are settled |
 | **Composio sessions for our own loop** | Does `getRawToolRouterSessionTools` return exactly the enabled tools plus meta tools, as JSON Schema pi accepts? What does `session.execute` return for no connection, an `EXPIRED` account, a `403` and a provider rejection? | §6.7, §6.8 — the error table is partly inferred from the SDK source and must be replaced with observed values |
-| **Tool definitions, measured** | Tokens for the full GitHub and Gmail schemas, and for a curated ten | The per-agent tool cap in §6.7 |
+| **Tool definitions, measured** | Tokens for the full GitHub and Gmail schemas, and for a curated ten | *Superseded* by the discovery spike: GitHub ~459,000 tokens, Notion ~92,000 — no toolkit can be sent whole, so there is no cap to set |
+| **Composio discovery** — ✅ **done** (`spikes/composio-discovery/`) | Session search per person, connected and not; latency; every execute error; pinning and re-pinning; what the model would be sent | §5.4, §5.5, §6.7 — agents find their own tools (`WORKSPACE-AGENTS-IMPL.md` step 7) |
 
 ### 12.2 Steps — each usable by hand
 
@@ -1806,7 +1827,7 @@ A step that only ever ran under `node --test` has not been used.
 | 2 | **Creating agents.** Tables, the `agent` membership scope and actions, the directory summary, Settings → Agents, the editor and profile | An agent appears in autocomplete on every client, and a maintainer can edit it while another member cannot | — |
 | 3 | **Runs with no tools.** `agent_runs` in `applyOnce`; the dispatcher and the six checkpoints (§5.9) with their v1 bodies; the new `/run` fields with `palette: 'none'`; the reply as the agent with `on_behalf_of` and `delegation_id`; the notices, the working indicator and Stop; the runtime's model-call stall timeout | Mention `@triage` in a channel and in a DM: the answer arrives in the trigger's thread. Two people mention it in one thread: two answers. Stop one mid-run: "Stopped", no answer. Kill the server mid-run: `interrupted`, with a notice | Step 2; parts in the schema (`AGENT-RESPONSES.md` phase 3) |
 | 4 | **Connections and the connector store.** Catalogue sync, `connections`, OAuth connect and disconnect, then API-key toolkits; the `welcome` projection and push | Connect Linear from Settings, see it on a second device offline, disconnect it | Composio spike |
-| 5 | **The broker.** `/agent/tools`, permissions and their card, connection card, `agent_tool_calls` | Bob asks `@triage` to file a bug with nothing connected: one card in the thread — Bob sees Connect and Allow, everyone else sees `@triage` waiting for Bob. Bob allows, every client shows the card resolved, Run again, and the issue appears in **Bob's** Linear as Bob | Steps 3, 4; `message.updated` (built with step 1) |
+| 5 | **The broker.** `/agent/tools`, permissions and their card, connection card, `agent_tool_calls` | Bob asks `@triage` to file a bug with nothing connected: one card in the thread — Bob sees Connect and Allow, everyone else sees `@triage` waiting for Bob. Bob allows, every client shows the card resolved, the request runs again by itself, and the issue appears in **Bob's** Linear as Bob | Steps 3, 4; `message.updated` (built with step 1) |
 | 6 | **Reconnect.** `needs_reauth` from execution errors and Composio's own status | Revoke the app in Linear's settings; the next run asks Bob to reconnect instead of failing vaguely | Step 5 |
 
 **Step 5 is the milestone.** It is the sentence the whole feature was asked for:
@@ -1865,10 +1886,10 @@ purpose rather than rediscovered.
 | **Agent sessions that persist across turns** | Rebuilding context from the thread (§5.6) stops being enough — a follow-up needs the last run's tool results, not only its reply. Under **invariant 83**: a session belongs to one invoker, never to a thread |
 | **Agent memory** | An agent needs to learn across runs. Under **invariant 83**: nothing learned in a run for one invoker — least of all a result fetched with their connection — is recalled in a run for another |
 | **Approval flows for creating or publishing agents** | Decided against for v1: any member creates, usable at once (§4.4) |
-| **Approval before write or destructive tools** | The first run that writes something its invoker did not intend, or the first destructive tool enabled on any agent. The shape is reserved: `agent_tools.approval` and the one-person card from §8.8 |
+| **Approval before write or destructive tools** | The first run that writes something its invoker did not intend. Destructive calls already ask for their own permission (§6.4); approval per call would sit on `agent_permissions`, with the one-person card from §8.8 |
 | **Invoker-only replies, with a Share action** | Third-party content landing in rooms becomes a problem (`DESIGN.md` §6.6, item 2). §8 is most of the work |
-| **Pausing a run while someone connects, then resuming** | People object to asking twice. Needs results that survive the caller (`AGENT-RUNTIME.md`, out-of-band results) |
-| **Retrying runs, and making a repeated write harmless** | Runs dispatched through a real queue, or the first duplicate write. `agent_tool_calls` is keyed for it already |
+| **Pausing a run while someone connects, then resuming** | Resolving a card already re-runs the request (§7.4), so nobody asks twice. Resuming the same run instead needs results that survive the caller (`AGENT-RUNTIME.md`, out-of-band results) |
+| **Retrying a failed run, and making a repeated write harmless** | Runs dispatched through a real queue, or the first duplicate write. `agent_tool_calls` is keyed for it already |
 | **Several accounts per toolkit per person** | Someone has two GitHub accounts. Needs a picker on the card and on the run |
 | **A workspace allow-list of toolkits** | The first security review that asks for it. A table and one broker check |
 | **Disconnecting a person's accounts when they are deactivated** | Cheap, and recommended alongside the WorkOS poller's deactivation. v1 relies on the broker's per-call check, which stops use but leaves tokens live in Composio |
@@ -1877,7 +1898,8 @@ purpose rather than rediscovered.
 | **Agents invoking agents** | Never chained (`DESIGN.md` §6.4) |
 | **External agents calling our API** | A customer brings their own. That is where WorkOS M2M or Agent Registration decides (`DESIGN.md` §16) |
 | **Any use of restricted messages** — person-to-person or otherwise | Built and dormant (§8.1). Re-decide §8.9 for that use first |
-| **A tool-search meta-tool** | An agent needs more tools than the cap in §6.7 allows |
+| **Letting a creator restrict an agent's tools** | A creator needs an agent that must never, say, merge. Decided against for v1: agents are open, and each person's permission is the guard |
+| **Expiring untouched cards** | A card resolved weeks later re-runs a stale request. `access_requests.created_at` is when it was raised, which is all an age-based expiry needs |
 
 ---
 
@@ -1924,7 +1946,7 @@ Numbering continues from 73 — `DESIGN.md` §14 already holds 72 and 73 for sho
 
 1. **Per toolkit or per tool permissions** (§6.4). Per toolkit up to an effect is
    one card; per tool is precise and many cards.
-2. **The tool cap** (§6.7) — set from the measurement in §12.1, not from a guess.
+2. ~~**The tool cap**~~ — gone: agents find their own tools (§5.4).
 3. **Cost.** Composio bills per tool call. Does a workspace see its usage, and is
    there a per-workspace ceiling before the invoice says so?
 4. **Group DMs with an agent.** Does every message invoke, as in a one-to-one DM,

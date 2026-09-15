@@ -31,6 +31,7 @@ import {
   useMessageScrollerScrollable,
 } from '@/components/ui/message-scroller';
 import { ChatBubble } from '@/features/chat/ChatBubble';
+import { SystemMarker } from '@/features/chat/SystemMarker';
 import { MessageComposer } from '@/features/chat/composer/MessageComposer';
 import { Approvals } from '@/features/local-rooms/Approvals';
 import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
@@ -89,6 +90,14 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
               )}
 
               {(messages ?? []).map((message, index, allMessages) => {
+                // History, not authored conversation: no sender, no grouping,
+                // no bubble (SPACE-MEMBERSHIP-MARKERS.md). A direct
+                // `MessageScrollerContent` child, same as `ChatBubble`, so the
+                // scroller's anchoring and addressing still hold.
+                if (message.kind === 'system') {
+                  return <SystemMarker key={message.id} message={message} />;
+                }
+
                 const mine = message.authorId === me;
                 const previousMessage = allMessages[index - 1];
                 const nextMessage = allMessages[index + 1];
@@ -102,8 +111,12 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
                     <ChatBubble
                       message={message}
                       mine={mine}
-                      startsGroup={previousMessage?.authorId !== message.authorId}
-                      endsGroup={nextMessage?.authorId !== message.authorId}
+                      // A marker breaks a sender group on both sides — it is
+                      // never itself grouped, and neither is its neighbour.
+                      startsGroup={previousMessage?.authorId !== message.authorId
+                        || previousMessage?.kind === 'system'}
+                      endsGroup={nextMessage?.authorId !== message.authorId
+                        || nextMessage?.kind === 'system'}
                       waiting={approvals?.some(approval => approval.messageId === message.id) ?? false}
                     />
                     {/* Attached to the trigger, whose thread this is (§5.7). Gates

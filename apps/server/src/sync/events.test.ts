@@ -282,7 +282,7 @@ test('membership changes are recoverable by catch-up', opts, async () => {
   // learned this had happened while it was away: a membership is not in
   // `messages`, so `WHERE rev > ?` over message rows could never return it.
   const { spaceId } = await channel();
-  await addToSpace(db, spaceId, bob, me);
+  await addToSpace(db, spaceId, bob, me, ulid('msg'));
   await removeFromSpace(db, spaceId, bob, me);
   await joinSpace(db, spaceId, bob);
   await leaveSpace(db, spaceId, bob);
@@ -296,7 +296,7 @@ test('membership changes are recoverable by catch-up', opts, async () => {
 test('catch-up from a mid-stream cursor returns only what came after',
   opts, async () => {
     const { spaceId } = await channel();
-    await addToSpace(db, spaceId, bob, me);
+    await addToSpace(db, spaceId, bob, me, ulid('msg'));
     const events = await eventsSince(db, me, spaceStream(spaceId), 2);
     assert.deepEqual(events.map(event => event.rev), [3, 4],
       'strictly greater than the cursor — a client already holds its own rev');
@@ -380,7 +380,11 @@ test('a rolled back transaction leaves neither the effect nor the event',
     await assert.rejects(() => db.transaction().execute(async (trx) => {
       const allocated = await allocateStream(trx, spaceStream(spaceId));
       await appendEvent(trx, allocated, 'space.member_added',
-        { actor_id: bob, role: 'member' }, { kind: 'stream' });
+        { actor_id: bob, role: 'member', by_actor_id: me,
+          hydration: { space: { id: spaceId, kind: 'channel', name: null, slug: null,
+                                 visibility: null, membership_policy: 'open', lifecycle: 'active', rev: 1 },
+                       chats: [] } },
+        { kind: 'stream' });
       throw new Error('the effect failed after the event was written');
     }));
 

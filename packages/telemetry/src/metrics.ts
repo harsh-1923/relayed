@@ -161,7 +161,35 @@ export interface LabelValues {
   /** Why a claimed run did not start at all (`admitRun`, §5.3). */
   run_refusal: 'invoker_inactive' | 'agent_inactive' | 'not_a_member' | 'trigger_deleted';
   /** Why a run stays queued a little longer (`admitRun`, §5.3). */
-  run_defer_reason: 'invoker_busy' | 'runtime_busy';
+  run_defer_reason: 'runtime_busy';
+
+  // ── connections, through Composio (WORKSPACE-AGENTS.md §6, §11) ──────────
+  /** Every operation `composio.ts` exposes — the only file that calls Composio at all. */
+  composio_op: 'link' | 'complete_auth' | 'get_account' | 'list_accounts' | 'revoke'
+    | 'delete_account' | 'list_toolkits' | 'get_toolkit' | 'list_tools' | 'create_auth_config'
+    | 'create_session' | 'patch_session' | 'session_search' | 'session_execute';
+  /** Composio's own auth schemes (§6.5's table) — the toolkit's, at the moment a connection touches it. */
+  connect_scheme: 'OAUTH2' | 'OAUTH1' | 'DCR_OAUTH' | 'CIMD_OAUTH'
+    | 'API_KEY' | 'BEARER_TOKEN' | 'BASIC' | 'BASIC_WITH_JWT';
+  /**
+   * Where in the connect flow (§6.5) an outcome was recorded. Not `stage`:
+   * that label already has a fixed, unrelated set (the sync engine).
+   */
+  connect_stage: 'link' | 'start' | 'verify' | 'complete' | 'disconnect';
+
+  // ── the broker (WORKSPACE-AGENTS.md §5.5, §11) ───────────────────────────
+  /** The tool's effect, at the moment the audit row was claimed (agent_tools.effect at claim). */
+  tool_effect: 'read' | 'write' | 'destructive';
+  /**
+   * Every terminal state `agent_tool_calls.outcome` can hold, minus `pending`
+   * (that one is never terminal, so never counted). Every value from step 6 on
+   * (§5.5's own words) — never `run_not_running`, `invoker_inactive`,
+   * `agent_inactive` or `tool_not_allowed`, which stop before a tool's effect
+   * is even known and so have nothing to label this counter with.
+   */
+  tool_outcome: 'ok' | 'duplicate_call' | 'permission_required' | 'connection_required'
+    | 'needs_reauth' | 'failed' | 'refused' | 'tool_deprecated' | 'rate_limited'
+    | 'provider_forbidden' | 'provider_unavailable';
 }
 
 export type LabelName = keyof LabelValues;
@@ -215,7 +243,17 @@ export const labelValues = {
   parts_refusal: ['invalid', 'forbidden_kind', 'invalid_ui'],
   run_outcome: ['completed', 'failed', 'cancelled', 'timeout', 'refused', 'interrupted'],
   run_refusal: ['invoker_inactive', 'agent_inactive', 'not_a_member', 'trigger_deleted'],
-  run_defer_reason: ['invoker_busy', 'runtime_busy'],
+  run_defer_reason: ['runtime_busy'],
+  composio_op: ['link', 'complete_auth', 'get_account', 'list_accounts', 'revoke',
+                'delete_account', 'list_toolkits', 'get_toolkit', 'list_tools', 'create_auth_config',
+                'create_session', 'patch_session', 'session_search', 'session_execute'],
+  tool_effect: ['read', 'write', 'destructive'],
+  tool_outcome: ['ok', 'duplicate_call', 'permission_required', 'connection_required',
+                 'needs_reauth', 'failed', 'refused', 'tool_deprecated', 'rate_limited',
+                 'provider_forbidden', 'provider_unavailable'],
+  connect_scheme: ['OAUTH2', 'OAUTH1', 'DCR_OAUTH', 'CIMD_OAUTH',
+                   'API_KEY', 'BEARER_TOKEN', 'BASIC', 'BASIC_WITH_JWT'],
+  connect_stage: ['link', 'start', 'verify', 'complete', 'disconnect'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
 /** Union members not present in `labelValues`. `never` when the sets agree. */
@@ -600,15 +638,58 @@ export const metrics = {
   },
   'agent.run.deferred': {
     kind: 'counter', labels: ['run_defer_reason'],
-    doc: '`invoker_busy` against `runtime_busy`: whether one person is '
-       + 'saturating their own concurrency limit or the runtime needs more '
-       + 'capacity — opposite fixes, and this is the only place they are told apart.',
+    doc: 'A claimed run put back in the queue, by reason. Only `runtime_busy` '
+       + 'today: the runtime is at capacity. There is deliberately no per-person '
+       + 'reason — a person\'s runs in flight never hold back their next mention.',
   },
   'agent.run.queue_wait': {
     kind: 'histogram', unit: 'ms', labels: [],
     doc: 'Time from a run being created to being claimed. Answers whether the '
        + 'poll interval is still short enough, and rises before anyone notices '
        + 'a mention going unanswered for longer than they expect.',
+  },
+  'agent.dispatcher.sweep_error': {
+    kind: 'counter', labels: [],
+    doc: 'A run\'s expired-lease notice failed to write, so the run was moved '
+       + 'to `interrupted` with no notice in its thread rather than crashing the '
+       + 'sweep or failing again on the next one. Any count above zero is a '
+       + 'person who mentioned an agent and saw nothing come back — a bug in '
+       + 'the reply path, not an outage.',
+  },
+
+  'composio.request': {
+    kind: 'counter', labels: ['composio_op', 'result'],
+    doc: 'Every call `composio.ts` makes — the only file that imports the SDK '
+       + '(the boundary rule `agents/composio-only-here`). Answers whether a '
+       + 'failure spike belongs to one operation or to Composio generally, '
+       + 'and, paired with `composio.request.duration`, whether a slow '
+       + 'connector-store page is Composio or us.',
+  },
+  'composio.request.duration': {
+    kind: 'histogram', unit: 'ms', labels: ['composio_op'],
+    doc: 'How long one call to Composio took. The connector store and the '
+       + 'broker both wait on it synchronously, so this is latency a person '
+       + 'or a run feels directly.',
+  },
+  'connection.flow': {
+    kind: 'counter', labels: ['connect_scheme', 'connect_stage', 'result'],
+    doc: 'One outcome at one stage of connecting or disconnecting a toolkit '
+       + '(WORKSPACE-AGENTS.md §6.5, §6.10). Answers where people actually '
+       + 'drop out of the flow — Composio refusing the link, an expired or '
+       + 'reused start token, a missing verification cookie, a session-uri '
+       + 'mismatch at complete — which `composio.request` alone cannot show, '
+       + 'because most of those stages never call Composio at all.',
+  },
+
+  'agent.tool': {
+    kind: 'counter', labels: ['tool_effect', 'tool_outcome'],
+    doc: 'One tool call reached a terminal outcome (WORKSPACE-AGENTS.md §5.5, '
+       + 'step 10 — every outcome from step 6 on). Answers whether an agent is '
+       + 'actually able to use what it is configured for: a rising '
+       + '`permission_required`/`connection_required` share means people are '
+       + 'not finishing the access-card flow, and `refused` MUST be nearly '
+       + 'zero — it means our own tool snapshot and the session disagreed, '
+       + 'which is a bug in the broker, not a user problem.',
   },
 
   'genui.render_error': {

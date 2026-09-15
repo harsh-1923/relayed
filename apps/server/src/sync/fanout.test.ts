@@ -94,7 +94,7 @@ async function channel(visibility: 'public' | 'private' = 'public') {
   const made = await createChannel(db, {
     workspaceId: wsp, name: `c-${ulid('x')}`, visibility, createdBy: alice,
   });
-  await addToSpace(db, made.spaceId, bob, alice);
+  await addToSpace(db, made.spaceId, bob, alice, ulid('msg'));
   return made;
 }
 
@@ -217,8 +217,9 @@ test('an actor in the chat but REMOVED from the space receives nothing',
 
 test('a space event reaches that space, not the workspace', opts, async () => {
   const { spaceId } = await channel();
-  const event = await addToSpace(db, spaceId, carol, alice);
-  const audience = await audienceFor(db, event);
+  const result = await addToSpace(db, spaceId, carol, alice, ulid('msg'));
+  if (result.status !== 'added') throw new Error('expected the add to succeed');
+  const audience = await audienceFor(db, result.membershipEvent);
   assert.deepEqual(audience.sort(), [alice, bob, carol].sort());
 });
 
@@ -344,6 +345,7 @@ test('a fanout with nobody connected still reports its audience', opts, async ()
 /** A notice for `listed`, written the way the server's own writers will. */
 const notice = (chatId: string, authorId: string, listed: string[]) =>
   db.transaction().execute(trx => writeMessage(trx, {
+    kind: 'actor',
     chatId, messageId: ulid('msg'), authorId, body: 'a private notice', parentId: null,
     audience: { kind: 'listed', actors: listed },
   }));

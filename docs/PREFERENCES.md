@@ -19,6 +19,7 @@ to everything the engine knows.
 | Where do defaults live? | In code. **A missing row is the default** | 7 |
 | Keyboard shortcuts? | One `keybindings.<command id>` row per customized command, written through `prefs.set`, `prefs.clear` and the transactional `prefs.apply` | 8, 11; SHORTCUTS.md §9 |
 | How does the theme actually apply? | `nativeTheme.themeSource` in main for the window, `<Theme />` for the tokens — both from the stored value | 9 |
+| Does the sidebar survive a restart? | **Yes.** Desktop open state and last expanded width are separate account-local preferences | 10.2 |
 
 ---
 
@@ -201,6 +202,13 @@ between two copies of a vocabulary fails silently.
   tier: 'account', reach: 'local', fallback: 'system',
   parse: oneOf(['system', 'light', 'dark']),
 },
+'shell.sidebar.open': {
+  tier: 'account', reach: 'local', fallback: true, parse: boolean,
+},
+'shell.sidebar.width': {
+  tier: 'account', reach: 'local', fallback: 256,
+  parse: integerBetween(224, 320),
+},
 ```
 
 The catalogue owns four things per key: which database it lives in, how far it
@@ -329,7 +337,7 @@ the system theme, which is a correct-looking app rather than a broken one.
 
 ---
 
-## 10. Deferred, and what unblocks each
+## 10. What is deferred, and what has landed
 
 ### 10.1 Syncing a preference — blocked on a protocol event
 
@@ -351,12 +359,24 @@ merely unbuilt but undecided.
 
 **Unblocked by:** a protocol event and a merge rule. The storage is ready.
 
-### 10.2 The sidebar's own width — blocked on nothing
+### 10.2 The sidebar's open state and width — built
 
-`main.tsx` says the sidebar toggle "writes a cookie that nothing reads … so the
-toggle is deliberately session-only until there is somewhere honest to keep it."
-This is that somewhere. It is not done in the same change as the table only so
-that the first writer is one key, end to end, with its own test.
+Desktop collapse and width are two account-local preferences:
+`shell.sidebar.open` and `shell.sidebar.width`. They are separate because
+collapsing to zero must not erase the width to restore when the sidebar opens
+again. The width is an integer from 224px to 320px and defaults to 256px.
+
+`PersistentSidebarProvider` controls shadcn's desktop `open` value from the
+preference; its inherited cookie write remains unused and is not an authority.
+Mobile still opens a transient Sheet and never changes the desktop preference.
+
+`AppShell` keeps pointer movement off the React state path: `onResize` updates
+the title bar's CSS custom property and remembers the last non-zero width in a
+ref. The panel group's completed-layout callback writes that rounded width only
+after direct pointer or keyboard manipulation ends. Programmatic restoration,
+window resizing and initial mount never write. Both preferences therefore
+survive renderer reload and process restart without turning a drag into one
+SQLite write and live-query invalidation per pixel.
 
 ---
 

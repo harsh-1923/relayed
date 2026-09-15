@@ -556,6 +556,18 @@ Recorded here because it constrains the query contract, not the component:
   lookup. Built as the `space.get` / `local.space.get` read plus `mainChat()`
   in `shared/spaces.ts`, used by the space route rather than repeated per
   surface (§4.6).
+- **A row's `kind` is branched on before sender grouping, not after.**
+  `ReplicaMessage.kind` (`'actor' | 'system'`) is read in `ChatView.tsx`'s
+  render loop, ahead of computing `mine`/`startsGroup`/`endsGroup` — a system
+  row (`SPACE-MEMBERSHIP-MARKERS.md`) renders as `SystemMarker.tsx`, a direct
+  `MessageScrollerContent` child built on the existing `Marker`/`MarkerIcon`/
+  `MarkerContent` primitives, never through `ChatBubble`. It forces a group
+  break on both neighbouring actor messages, since `startsGroup`/`endsGroup`
+  are otherwise pure functions of adjacent `authorId`. The subject and
+  initiator are resolved locally from `useQuery('actors.list')` by id — the
+  same directory read every other name-drawing surface uses — falling back to
+  the event's stored compatibility body when either directory row has not
+  arrived yet, never blocking the render on it.
 
 ---
 
@@ -813,6 +825,33 @@ To add a command: a catalogue entry in `shared/shortcuts/catalogue.ts`, a
 (`SHORTCUTS.md` §12.1).
 
 ---
+
+### Channel and room creation
+
+The workspace sidebar keeps Channels and Rooms visible for members who may
+create them, even when their lists are empty. Each heading's plus button opens
+a name and public/private dialog. Creation needs an online session; names are
+trimmed and limited to 100 characters. The creator joins as admin and can use
+Add people after creation. Public does not auto-join the workspace.
+
+`spaces.create` goes through the utility process to `POST /spaces`, carrying the
+workspace where the dialog opened. The server compares it with the authenticated
+caller's workspace, checks `create_space`, and chooses the channel or room
+constructor. This avoids a workspace switch redirecting an in-flight create.
+Channels receive a `sole` chat; rooms receive a `default` chat. Channel slugs are
+left unset by this UI; names need not be unique.
+
+The response supplies only the created ids for navigation. The founding
+`space.member_added` event carries the topology snapshot into SQLite; the
+existing live queries repaint the directory and destination. No network read
+or optimistic replica insert is introduced. Shared room side-chat/panel creation
+remains outside this change; the new shared room opens its default chat.
+
+Observability reuses the server's HTTP status/duration logging and existing
+sync fanout and apply signals: they show whether the command was refused and
+whether committed topology reached the client. No creation counter or renderer
+log is added; these would duplicate existing signals and add ingest without
+answering a new debugging question. Names are not added to telemetry.
 
 ## 7. State machines
 
@@ -1527,10 +1566,12 @@ are referenced from four documents.
    `/` → `/w/:wsId` → shell → rail.
 
    The workspace sidebar is a pixel-constrained resizable panel on desktop:
-   256px initially, 224px minimum and 320px maximum. Dragging below the minimum
-   collapses it to zero; the separator, title-bar control and keyboard shortcut
-   (the `shell.sidebar.toggle` command, §6.4) all drive the same shadcn sidebar
-   state. Below the desktop breakpoint the
+   256px by default, 224px minimum and 320px maximum. Its open state and last
+   expanded width are separate account-local preferences, so both survive a
+   renderer reload or process restart and collapsing never erases the width to
+   restore. Dragging below the minimum collapses it to zero; the separator,
+   title-bar control and keyboard shortcut (the `shell.sidebar.toggle` command,
+   §6.4) all drive the same shadcn sidebar state. Below the desktop breakpoint the
    existing shadcn Sheet remains the sidebar and slides over the route, offset
    below the 40px window title bar.
 

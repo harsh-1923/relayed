@@ -170,6 +170,17 @@ export interface MessagesTable {
    * `writeMessage` / `updateMessage`, which derive `body` from it.
    */
   parts: unknown;
+  /**
+   * A system row is history the server wrote about a successful command, not
+   * authored content (docs/SPACE-MEMBERSHIP-MARKERS.md). `'actor'` for every
+   * message a person or agent wrote; `'system'` only ever written by the
+   * domain layer itself, never from a client op.
+   */
+  message_kind: Generated<'actor' | 'system'>;
+  /** NULL for `'actor'`; the kind of system row otherwise. */
+  system_kind: 'space.member_added' | null;
+  /** NULL for `'actor'`; who the system row is about otherwise (Alice, for "Alice was added by Bob"). */
+  subject_actor_id: string | null;
 }
 
 /** A run of an agent, from a mention to its reply (WORKSPACE-AGENTS.md §5.2). */
@@ -213,12 +224,125 @@ export interface AgentsTable {
 }
 
 /** One tool an agent may call. Never a wildcard (WORKSPACE-AGENTS.md §4.3). */
-export interface AgentToolsTable {
+/** What Relayed offers, deployment-wide (WORKSPACE-AGENTS.md §6.6). Refreshed daily from Composio's catalogue. */
+export interface ToolkitsTable {
+  slug: string;
+  name: string;
+  description: string;
+  logo_url: string | null;
+  categories: Generated<string[]>;
+  auth_scheme: string;
+  auth_config_id: string;
+  auth_managed_by: 'composio' | 'relayed';
+  auth_guide_url: string | null;
+  enabled: Generated<boolean>;
+  deprecated: Generated<boolean>;
+  refreshed_at: Timestamp;
+}
+
+/** One tool the catalogue knows about, and the effect derived from its hints (WORKSPACE-AGENTS.md §6.6). */
+export interface ToolkitToolsTable {
+  toolkit: string;
+  slug: string;
+  name: string;
+  description: string;
+  hints: Generated<string[]>;
+  effect_derived: 'read' | 'write' | 'destructive';
+  effect_override: 'read' | 'write' | 'destructive' | null;
+  important: Generated<boolean>;
+  deprecated: Generated<boolean>;
+  /** JSON Schema, exactly as Composio returns it (WORKSPACE-AGENTS.md §6.6, §6.7) — what `dispatcher.ts` hands the runtime as `RunTool.parameters`. */
+  input_schema: Generated<unknown>;
+}
+
+/** Our mirror of a connected account (WORKSPACE-AGENTS.md §6.3) — a mirror, never a second authority. */
+export interface ConnectionsTable {
+  id: string;
+  workspace_id: string;
+  actor_id: string;
+  toolkit: string;
+  composio_account_id: string | null;
+  status: 'connecting' | 'active' | 'needs_reauth' | 'failed' | 'disconnected';
+  status_reason: 'expired' | 'revoked_upstream' | 'scopes_changed' | 'failed' | null;
+  label: string | null;
+  created_at: Generated<Timestamp>;
+  connected_at: Timestamp | null;
+  last_used_at: Timestamp | null;
+  disconnected_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+}
+
+/** One connect attempt, from the loopback listener to completion (WORKSPACE-AGENTS.md §6.5). */
+export interface ConnectionAttemptsTable {
+  id: string;
+  connection_id: string;
+  actor_id: string;
+  start_token_hash: string;
+  redirect_url: string;
+  port: number;
+  state: string;
+  access_request_id: string | null;
+  expires_at: Timestamp;
+  consumed_at: Timestamp | null;
+}
+
+/** Which agents may spend which of a person's connections, and at what effect (WORKSPACE-AGENTS.md §6.4). */
+export interface AgentPermissionsTable {
+  invoker_actor_id: string;
   agent_actor_id: string;
+  toolkit: string;
+  effect: 'read' | 'write' | 'destructive';
+  granted_at: Generated<Timestamp>;
+  revoked_at: Timestamp | null;
+}
+
+/** Webhook idempotency (WORKSPACE-AGENTS.md §6.9, D8). */
+export interface ComposioWebhookDeliveriesTable {
+  webhook_id: string;
+  received_at: Generated<Timestamp>;
+}
+
+/** The audit trail, and the only table that tells the truth (WORKSPACE-AGENTS.md §5.5). */
+export interface AgentToolCallsTable {
+  run_id: string;
+  tool_call_id: string;
   toolkit: string;
   tool: string;
   effect: 'read' | 'write' | 'destructive';
-  approval: Generated<'never' | 'always'>;
+  connection_id: string | null;
+  outcome: 'pending' | 'ok' | 'duplicate_call' | 'permission_required' | 'connection_required'
+    | 'needs_reauth' | 'failed' | 'refused' | 'tool_deprecated' | 'rate_limited'
+    | 'provider_forbidden' | 'provider_unavailable';
+  error_code: string | null;
+  arguments: unknown;
+  duration_ms: number | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** One toolkit-per-run access card, once a maintainer's tool needs it (WORKSPACE-AGENTS.md §7.4). Not written until `access.ts` exists. */
+export interface AccessRequestsTable {
+  id: string;
+  run_id: string;
+  actor_id: string;
+  agent_actor_id: string;
+  toolkit: string;
+  effect: 'read' | 'write' | 'destructive';
+  message_id: string;
+  created_at: Generated<Timestamp>;
+  resolved_at: Timestamp | null;
+  expired_at: Timestamp | null;
+}
+
+/** The Composio session behind one (agent, invoker, config_rev) (WORKSPACE-AGENTS.md §6.7). */
+/** One Composio session per person (WORKSPACE-AGENTS-IMPL.md step 7, D24), shared by every agent they invoke. */
+export interface ComposioSessionsTable {
+  invoker_actor_id: string;
+  session_id: string;
+  /** The enabled toolkits it was created for — when that set changes, it is recreated. */
+  toolkits: string[];
+  /** toolkit -> composio_account_id, what it is pinned to now. */
+  connected_accounts: unknown;
+  created_at: Generated<Timestamp>;
 }
 
 /**
@@ -295,6 +419,14 @@ export interface DB {
   chat_read_state: ChatReadStateTable;
   sync_events: SyncEventsTable;
   agents: AgentsTable;
-  agent_tools: AgentToolsTable;
   agent_runs: AgentRunsTable;
+  toolkits: ToolkitsTable;
+  toolkit_tools: ToolkitToolsTable;
+  connections: ConnectionsTable;
+  connection_attempts: ConnectionAttemptsTable;
+  agent_permissions: AgentPermissionsTable;
+  composio_webhook_deliveries: ComposioWebhookDeliveriesTable;
+  agent_tool_calls: AgentToolCallsTable;
+  access_requests: AccessRequestsTable;
+  composio_sessions: ComposioSessionsTable;
 }

@@ -8,7 +8,9 @@
 // is also the window's title bar every screen needs it — including the ones
 // outside this shell (see ./TopBar.tsx).
 import { useEffect, useRef } from 'react';
-import { usePanelRef, type PanelSize } from 'react-resizable-panels';
+import {
+  usePanelRef, type Layout, type LayoutChangedMeta, type PanelSize,
+} from 'react-resizable-panels';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { useSession } from '../state';
 import { AppSidebar } from './sidebar/AppSidebar';
@@ -17,9 +19,9 @@ import {
   ResizableHandle, ResizablePanel, ResizablePanelGroup,
 } from '@/components/ui/resizable';
 import { SidebarInset, useSidebar } from '@/components/ui/sidebar';
+import { usePreference } from '@/lib/prefs';
 import { useQueryInvalidation } from '@/lib/query';
 
-const SIDEBAR_DEFAULT_WIDTH = 256;
 const SIDEBAR_MIN_WIDTH = 224;
 const SIDEBAR_MAX_WIDTH = 320;
 const SIDEBAR_CLICK_SLOP_PX = 4;
@@ -31,6 +33,9 @@ export function AppShell() {
   const location = useLocation();
   const sidebarPanelRef = usePanelRef();
   const sidebarPointerDownX = useRef<number | null>(null);
+  const sidebarOpenRef = useRef(open);
+  const sidebarWidth = usePreference('shell.sidebar.width');
+  const lastExpandedSidebarWidth = useRef(sidebarWidth.value);
   const isAccountSettings = location.pathname === '/settings'
     || location.pathname.startsWith('/settings/');
   const hasSidebar = isAccountSettings || state.workspaceId !== null;
@@ -59,14 +64,22 @@ export function AppShell() {
   // owns the title-bar button, keyboard shortcut, and mobile sheet, so these two
   // small bridges keep those controls aligned with drag-to-collapse.
   useEffect(() => {
+    sidebarOpenRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    lastExpandedSidebarWidth.current = sidebarWidth.value;
+  }, [sidebarWidth.value]);
+
+  useEffect(() => {
     if (isMobile || !hasSidebar) return;
 
     const sidebarPanel = sidebarPanelRef.current;
     if (!sidebarPanel) return;
 
-    if (open) sidebarPanel.expand();
+    if (open) sidebarPanel.resize(sidebarWidth.value);
     else sidebarPanel.collapse();
-  }, [hasSidebar, isMobile, open, sidebarPanelRef]);
+  }, [hasSidebar, isMobile, open, sidebarPanelRef, sidebarWidth.value]);
 
   function handleSidebarResize(panelSize: PanelSize) {
     document.documentElement.style.setProperty(
@@ -75,7 +88,25 @@ export function AppShell() {
     );
 
     const resizedOpen = panelSize.inPixels > 0;
-    if (resizedOpen !== open) setOpen(resizedOpen);
+    if (resizedOpen) {
+      lastExpandedSidebarWidth.current = Math.round(panelSize.inPixels);
+    }
+    if (resizedOpen !== sidebarOpenRef.current) {
+      sidebarOpenRef.current = resizedOpen;
+      setOpen(resizedOpen);
+    }
+  }
+
+  function handleSidebarLayoutChanged(
+    _completedLayout: Layout, meta: LayoutChangedMeta,
+  ) {
+    // The panel's onResize keeps the title bar aligned during the drag. Persist
+    // only after direct manipulation ends, never for mount, window resize or
+    // the imperative resize used to restore a preference.
+    if (!meta.isUserInteraction || !sidebarWidth.writable) return;
+
+    const nextWidth = lastExpandedSidebarWidth.current;
+    if (nextWidth !== sidebarWidth.value) sidebarWidth.set(nextWidth);
   }
 
   // Pointer Events do not guarantee that a drag suppresses the following
@@ -112,11 +143,12 @@ export function AppShell() {
       id="workspace-shell"
       orientation="horizontal"
       className="min-h-0 flex-1"
+      onLayoutChanged={handleSidebarLayoutChanged}
     >
       <ResizablePanel
         id="workspace-sidebar"
         panelRef={sidebarPanelRef}
-        defaultSize={SIDEBAR_DEFAULT_WIDTH}
+        defaultSize={sidebarWidth.value}
         minSize={SIDEBAR_MIN_WIDTH}
         maxSize={SIDEBAR_MAX_WIDTH}
         collapsedSize={0}

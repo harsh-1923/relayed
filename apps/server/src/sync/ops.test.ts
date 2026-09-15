@@ -70,7 +70,7 @@ after(async () => {
 /** A channel: `me` its admin, `bob` a member, `agent` joined. `outsider` is not in it. */
 async function room() {
   const made = await createChannel(db, { workspaceId: wsp, name: `r-${ulid('x')}`, createdBy: me });
-  await addToSpace(db, made.spaceId, bob, me);
+  await addToSpace(db, made.spaceId, bob, me, ulid('msg'));
   await joinSpace(db, made.spaceId, agent);
   return made;
 }
@@ -78,6 +78,7 @@ async function room() {
 const write = (input: { chatId: string; audience: MessageWrite['audience'];
                         parentId?: string | null; body?: string; authorId?: string }) =>
   db.transaction().execute(trx => writeMessage(trx, {
+    kind: 'actor',
     messageId: ulid('msg'), authorId: input.authorId ?? agent, parentId: input.parentId ?? null,
     chatId: input.chatId, audience: input.audience, body: input.body ?? 'a private notice',
   }));

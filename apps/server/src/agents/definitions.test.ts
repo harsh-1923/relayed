@@ -101,11 +101,14 @@ test('CREATE writes the five things of §4.3: actor, definition, two memberships
   }, 'the owner rides along, or every client refuses the row');
 });
 
-test('creating into spaces adds the agent to each, with its space event', opts, async () => {
+test('creating into spaces adds the agent to each, with its space event and its chat marker', opts, async () => {
   const { spaceId } = await createChannel(db, { workspaceId: wsp, name: `g-${ulid('x')}`, createdBy: alice });
   const { agentId, events } = await create({ spaceIds: [spaceId] });
   assert.ok((await spaceMembers(db, spaceId)).includes(agentId));
-  assert.deepEqual(events.map(e => [e.type, e.stream.kind]), [['actor.created', 'workspace'], ['space.member_added', 'space']]);
+  // The agent is a peer of a person here (SPACE-MEMBERSHIP-MARKERS.md): the
+  // same space.member_added, and the same chat marker.
+  assert.deepEqual(events.map(e => [e.type, e.stream.kind]),
+    [['actor.created', 'workspace'], ['space.member_added', 'space'], ['message.created', 'chat']]);
   const log = await eventsSince(db, alice, spaceStream(spaceId), 0);
   assert.equal(log.at(-1)?.type, 'space.member_added');
 });
@@ -285,7 +288,7 @@ test('ANY MEMBER reads the instructions; `you` says what they may do; another wo
   const { spaceId: privateSpace } = await createChannel(db, {
     workspaceId: wsp, name: `g-${ulid('x')}`, visibility: 'private', createdBy: alice });
   const { agentId } = await create({ spaceIds: [spaceId, privateSpace] });
-  await addToSpace(db, spaceId, bob, alice);
+  await addToSpace(db, spaceId, bob, alice, ulid('msg'));
 
   const bobs = await agentDefinition(db, bob, agentId);
   assert.equal(bobs?.instructions, 'File every bug in Linear.', 'no secret prompts (§4.1)');
@@ -301,27 +304,18 @@ test('ANY MEMBER reads the instructions; `you` says what they may do; another wo
 
 // ─── the rest of the system, meeting an agent ───────────────────────────────
 
-test('a DIRECTORY PAGE carries the summary, with each toolkit at its highest effect', opts, async () => {
+test('a DIRECTORY PAGE carries the summary, with no toolkits: agents find their own', opts, async () => {
   const { agentId } = await create();
-  await db.insertInto('agent_tools').values([
-    { agent_actor_id: agentId, toolkit: 'linear', tool: 'LINEAR_LIST_ISSUES', effect: 'read' },
-    { agent_actor_id: agentId, toolkit: 'linear', tool: 'LINEAR_CREATE_LINEAR_ISSUE', effect: 'write' },
-    { agent_actor_id: agentId, toolkit: 'github', tool: 'GITHUB_GET_REPO', effect: 'read' },
-  ]).execute();
-
   const rows = (await directoryPage(db, wsp, null, 1000)).rows;
   const row = rows.find(r => r.id === agentId);
   assert.equal(row?.ownerActorId, alice);
-  assert.deepEqual(row?.agent, {
-    description: 'Files and triages bugs', config_rev: 1,
-    toolkits: [{ toolkit: 'github', effect: 'read' }, { toolkit: 'linear', effect: 'write' }],
-  });
+  assert.deepEqual(row?.agent, { description: 'Files and triages bugs', config_rev: 1, toolkits: [] });
   assert.equal(rows.find(r => r.id === bob)?.agent, undefined, 'a person has none');
 });
 
 test('addToSpace takes an agent like anyone else: nothing there assumes a person', opts, async () => {
   const { spaceId } = await createChannel(db, { workspaceId: wsp, name: `g-${ulid('x')}`, createdBy: bob });
   const { agentId } = await create();
-  await addToSpace(db, spaceId, agentId, bob);
+  await addToSpace(db, spaceId, agentId, bob, ulid('msg'));
   assert.ok((await spaceMembers(db, spaceId)).includes(agentId));
 });

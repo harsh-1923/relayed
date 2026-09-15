@@ -513,6 +513,10 @@ test('A WORKSPACE MEMBERSHIP FROM WELCOME IS STORED', () => {
     { scope_type: 'space', scope_id: 'spc_eng', role: 'admin' },
     { scope_type: 'workspace', scope_id: 'wsp_1', role: 'owner' },
   ]);
+  assert.deepEqual(storage.grants('act_me'), [
+    ['space:spc_eng', 'admin'],
+    ['workspace:wsp_1', 'owner'],
+  ], 'the renderer receives every locally projected grant, not only the workspace row');
 
   // And the rest of the transaction survived, which is the half that made this
   // invisible: a partial welcome is not a smaller welcome, it is no welcome.
@@ -691,6 +695,77 @@ test('applying welcome is one transaction — a failure writes nothing', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// ── connections and agent permissions (WORKSPACE-AGENTS.md §6.3, §6.4) ──────
+
+test('welcome stores connections and agent permissions, every status included', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    connections: [
+      { id: 'con_gh', toolkit: 'github', status: 'active', statusReason: null, label: null },
+      { id: 'con_ex', toolkit: 'exa', status: 'disconnected', statusReason: null, label: null },
+    ],
+    agentPermissions: [
+      { agentActorId: 'act_triage', toolkit: 'github', effect: 'read', revoked: false },
+      { agentActorId: 'act_digest', toolkit: 'github', effect: 'write', revoked: true },
+    ],
+  }));
+
+  assert.deepEqual(storage.connections('act_me').map(c => [c.id, c.status]).toSorted(),
+    [['con_ex', 'disconnected'], ['con_gh', 'active']]);
+  assert.deepEqual(storage.agentPermissions('act_me').map(p => [p.agentActorId, p.effect, p.revoked]).toSorted(),
+    [['act_digest', 'write', true], ['act_triage', 'read', false]]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('connections and agent permissions are replaced wholesale by welcome, like memberships', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    connections: [{ id: 'con_gh', toolkit: 'github', status: 'active', statusReason: null, label: null }],
+    agentPermissions: [{ agentActorId: 'act_triage', toolkit: 'github', effect: 'read', revoked: false }],
+  }));
+
+  storage.applyWelcome(welcomePayload());   // neither carried this time
+
+  assert.deepEqual(storage.connections('act_me'), []);
+  assert.deepEqual(storage.agentPermissions('act_me'), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a connections push replaces one row by id, without touching another', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    connections: [
+      { id: 'con_gh', toolkit: 'github', status: 'connecting', statusReason: null, label: null },
+      { id: 'con_ex', toolkit: 'exa', status: 'active', statusReason: null, label: null },
+    ],
+  }));
+
+  storage.applyConnections('act_me',
+    [{ id: 'con_gh', toolkit: 'github', status: 'active', statusReason: null, label: null }]);
+
+  assert.deepEqual(storage.connections('act_me').map(c => [c.id, c.status]).toSorted(),
+    [['con_ex', 'active'], ['con_gh', 'active']]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('an agent_permissions push replaces one row, revoked included', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    agentPermissions: [{ agentActorId: 'act_triage', toolkit: 'github', effect: 'read', revoked: false }],
+  }));
+
+  storage.applyAgentPermissions('act_me',
+    [{ agentActorId: 'act_triage', toolkit: 'github', effect: 'read', revoked: true }]);
+
+  assert.deepEqual(storage.agentPermissions('act_me'),
+    [{ agentActorId: 'act_triage', toolkit: 'github', effect: 'read', revoked: true }]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
 // ── preferences (PREFERENCES.md §4) ─────────────────────────────────────────
 
 test('preferences read empty while signed out, rather than throwing', () => {
@@ -740,11 +815,19 @@ test('a preference outlives the process, which is the point of storing it', () =
   const first = new Storage(dir);
   first.openAccount(accountId);
   first.setPreference('appearance.theme', 'dark');
+  first.setPreference('shell.sidebar.open', false);
+  first.setPreference('shell.sidebar.width', 288);
   first.close();
 
   const second = new Storage(dir);
   second.boot();
-  assert.equal(second.preferences()[0]?.value, '"dark"');
+  assert.deepEqual(Object.fromEntries(second.preferences().map(preference => [
+    preference.key, JSON.parse(preference.value) as unknown,
+  ])), {
+    'appearance.theme': 'dark',
+    'shell.sidebar.open': false,
+    'shell.sidebar.width': 288,
+  });
 });
 
 test('Storage refuses a key the catalogue does not have', () => {
@@ -789,4 +872,25 @@ test('the chat read returns a synced message\'s parts, and null for a malformed 
 
   const parts = storage.messages('cht_1').map(m => [m.id, m.parts]);
   assert.deepEqual(parts, [['msg_1', [{ kind: 'markdown', text: 'hi' }]], ['msg_2', null], ['msg_3', null]]);
+});
+
+test('the chat read round-trips message_kind, system_kind, and subject_actor_id', () => {
+  // SPACE-MEMBERSHIP-MARKERS.md. A row from before this migration defaults to
+  // 'actor', so an existing replica's history still reads correctly.
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  const insert = storage.workspace.prepare(`
+    INSERT INTO messages (id, chat_id, parent_id, ord, rev, author_id, body, created_at,
+                          state, local_only, message_kind, system_kind, subject_actor_id)
+    VALUES (?, 'cht_1', NULL, ?, ?, ?, ?, 0, 'acked', 0, ?, ?, ?)`);
+  insert.run('msg_1', 1, 1, 'act_a', 'ordinary message', 'actor', null, null);
+  insert.run('msg_2', 2, 2, 'act_a', 'Bob was added by Alice',
+             'system', 'space.member_added', 'act_bob');
+
+  const rows = storage.messages('cht_1')
+    .map(m => [m.id, m.kind, m.systemKind, m.subjectActorId]);
+  assert.deepEqual(rows, [
+    ['msg_1', 'actor', null, null],
+    ['msg_2', 'system', 'space.member_added', 'act_bob'],
+  ]);
 });

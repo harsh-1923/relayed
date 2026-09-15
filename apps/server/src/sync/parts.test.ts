@@ -53,7 +53,7 @@ after(async () => {
 
 async function room() {
   const made = await createChannel(db, { workspaceId: wsp, name: `p-${ulid('x')}`, createdBy: person });
-  await addToSpace(db, made.spaceId, agent, person);
+  await addToSpace(db, made.spaceId, agent, person, ulid('msg'));
   return made;
 }
 
@@ -68,6 +68,7 @@ const derived = 'I ran the test 20 times.\n\ncatchup.test.ts is flaky: 3 of 20 r
 
 const write = (chatId: string, authorId: string, content: MessageContent) =>
   db.transaction().execute(trx => writeMessage(trx, {
+    kind: 'actor',
     chatId, messageId: ulid('msg'), authorId, parentId: null, audience: { kind: 'stream' }, ...content,
   }));
 

@@ -14,7 +14,8 @@
 // So: one route, no state, no auth, no JavaScript.
 import type { FastifyInstance } from 'fastify';
 
-const page = (title: string, body: string) => `<!doctype html>
+/** Shared with `connections.ts`, for the same reason: a browser tab mid-flow deserves this, not a JSON 4xx. */
+export const page = (title: string, body: string) => `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · Relayed</title>

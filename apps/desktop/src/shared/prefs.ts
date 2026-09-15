@@ -46,6 +46,15 @@ const oneOf = <const T extends string>(allowed: readonly T[]) =>
       ? (raw as T)
       : null;
 
+const boolean = (raw: unknown): boolean | null =>
+  typeof raw === 'boolean' ? raw : null;
+
+const integerBetween = (minimum: number, maximum: number) =>
+  (raw: unknown): number | null =>
+    typeof raw === 'number' && Number.isInteger(raw) && raw >= minimum && raw <= maximum
+      ? raw
+      : null;
+
 /**
  * Every preference this app has.
  *
@@ -72,6 +81,20 @@ export const PREFERENCES = {
     reach: 'local',
     fallback: 'system',
     parse: oneOf(['system', 'light', 'dark']),
+  },
+  /** Whether the desktop workspace sidebar is expanded. Mobile uses a transient sheet. */
+  'shell.sidebar.open': {
+    tier: 'account',
+    reach: 'local',
+    fallback: true,
+    parse: boolean,
+  },
+  /** The last expanded desktop width; collapse is stored separately so it cannot erase this. */
+  'shell.sidebar.width': {
+    tier: 'account',
+    reach: 'local',
+    fallback: 256,
+    parse: integerBetween(224, 320),
   },
 } as const satisfies Record<string, PreferenceSpec<unknown>>;
 

@@ -75,7 +75,30 @@ export const ReplyToUiPart = z.object({
 });
 export type ReplyToUiPart = z.infer<typeof ReplyToUiPart>;
 
-export const MessagePart = z.discriminatedUnion('kind', [MarkdownPart, ToolPart, UiPart, ReplyToUiPart]);
+/**
+ * The card a missing connection or permission raises (WORKSPACE-AGENTS.md
+ * §7.4). One kind covers all three states; which applies is read from the
+ * ACTOR's own `connections`/`agent_permissions` at render time — this part
+ * only ever carries the public, coarse `state`.
+ *
+ * A system part the model cannot write, and — unlike `tool`/`ui` — not even
+ * an agent may write one on the ordinary path (`SERVER_ONLY`, below):
+ * `broker.ts` is the only caller, through `writeMessage`'s `trustedParts`.
+ */
+export const AccessRequestPart = z.object({
+  kind: z.literal('access_request'),
+  request_id: z.string().min(1),
+  run_id: z.string().min(1),
+  /** The one person who may act (§7.4) — compared against the viewer's own actor, never trusted from anywhere else. */
+  actor_id: z.string().min(1),
+  agent_id: z.string().min(1),
+  toolkit: z.string().min(1),
+  effect: z.enum(['read', 'write', 'destructive']),
+  state: z.enum(['pending', 'resolved', 'expired']),
+});
+export type AccessRequestPart = z.infer<typeof AccessRequestPart>;
+
+export const MessagePart = z.discriminatedUnion('kind', [MarkdownPart, ToolPart, UiPart, ReplyToUiPart, AccessRequestPart]);
 export type MessagePart = z.infer<typeof MessagePart>;
 
 /** The strict reading: what a server accepts on write. */
@@ -97,10 +120,41 @@ export const PART_KINDS: ReadonlySet<string> = new Set(MessagePart.options.map(o
  */
 const AGENT_ONLY: ReadonlySet<string> = new Set(['tool', 'ui']);
 
+/**
+ * Structure ONLY the server may write — decided from its own state
+ * (`access_requests`), never a model's or a person's input. Refused for
+ * every author, agents included, on the ordinary write path: the one caller
+ * allowed to produce one (`broker.ts`) never goes through this check at all,
+ * because it writes through `writeMessage`'s `trustedParts` instead of
+ * untrusted `parts` (`sync/ops.ts`'s `contentOf`).
+ */
+const SERVER_ONLY: ReadonlySet<string> = new Set(['access_request']);
+
 /** The first kind in `parts` this author may not write, or `null` if all are allowed. */
 export function forbiddenPartKind(authorType: string, parts: readonly { kind: string }[]): string | null {
+  const serverOnly = parts.find(part => SERVER_ONLY.has(part.kind));
+  if (serverOnly) return serverOnly.kind;
   if (authorType === 'agent') return null;
   return parts.find(part => AGENT_ONLY.has(part.kind))?.kind ?? null;
+}
+
+/**
+ * The first kind in a STORED message's `parts` the renderer must not draw for
+ * this author, or `null` if all may be drawn.
+ *
+ * Not `forbiddenPartKind`, and the difference is the whole point: that one asks
+ * whether an author may WRITE a part on the ordinary path, and refuses an
+ * access card for everyone, agents included, because only the broker writes
+ * one. A card that reached a replica was written by the broker, as the agent
+ * (\`access.ts\`), so on an agent's message it is drawn. Reusing the write rule
+ * here drew every access card as its public sentence, for everyone — the
+ * person who could act on it included.
+ *
+ * On anyone but an agent, tool, ui and access-request parts are all a costume.
+ */
+export function undrawablePartKind(authorType: string, parts: readonly { kind: string }[]): string | null {
+  if (authorType === 'agent') return null;
+  return parts.find(part => AGENT_ONLY.has(part.kind) || SERVER_ONLY.has(part.kind))?.kind ?? null;
 }
 
 /** A part as a client holds it: a kind, possibly one this build has never heard of. */

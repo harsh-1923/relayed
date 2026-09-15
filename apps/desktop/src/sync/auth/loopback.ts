@@ -10,18 +10,23 @@
 // rather than a dev-only fallback — a divergence between dev and production auth
 // is exactly where bugs hide. WorkOS permits `http://127.0.0.1:*/…` for native
 // clients, and 127.0.0.1 is the one HTTP redirect allowed in production.
+//
+// GENERALISED for the connect flow (WORKSPACE-AGENTS.md §6.5, the plan's D9):
+// sign-in wants `/auth/callback?code=&state=`, connecting a toolkit wants
+// `/connected?session_uri=&state=`. `path` and `paramNames` are how the two
+// differ; SIGN-IN KEEPS ITS DEFAULTS, so `session.ts` did not have to change
+// at all — `paramNames` defaults to `['code']`, which is exactly the shape
+// `{ code, state }` the old, non-generic version always returned.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-const CALLBACK_PATH = '/auth/callback';
+const DEFAULT_PATH = '/auth/callback';
 
-export interface CallbackResult { code: string; state: string }
-
-export interface Listener {
+export interface Listener<P extends string = 'code'> {
   /** Redirect URI to hand the authorization server. */
   redirectUri: string;
   /** Resolves once a matching callback arrives; rejects on timeout or error. */
-  result: Promise<CallbackResult>;
+  result: Promise<{ state: string } & Record<P, string>>;
   close(): void;
 }
 
@@ -37,13 +42,27 @@ const page = (title: string, body: string) =>
  * resolves — it exists for the seconds between opening the browser and the
  * redirect landing.
  */
-export function listenForCallback(opts: { state: string; timeoutMs?: number }): Promise<Listener> {
+export function listenForCallback<P extends string = 'code'>(opts: {
+  /** Defaults to `/auth/callback`, sign-in's own path. */
+  path?: string;
+  /** Query params to capture besides `state`. Defaults to `['code']`. */
+  paramNames?: readonly P[];
+  state: string;
+  timeoutMs?: number;
+  /** What the browser sees on success. Defaults to sign-in's own wording. */
+  successPage?: { title: string; body: string };
+}): Promise<Listener<P>> {
+  const path = opts.path ?? DEFAULT_PATH;
+  const paramNames = opts.paramNames ?? (['code'] as unknown as readonly P[]);
   const timeoutMs = opts.timeoutMs ?? 5 * 60_000;
+  const success = opts.successPage
+    ?? { title: 'Signed in', body: 'You can close this window and return to Relayed.' };
 
   return new Promise((resolveListener, rejectListener) => {
-    let settle: (r: CallbackResult) => void;
+    type Result = { state: string } & Record<P, string>;
+    let settle: (r: Result) => void;
     let fail: (e: Error) => void;
-    const result = new Promise<CallbackResult>((res, rej) => { settle = res; fail = rej; });
+    const result = new Promise<Result>((res, rej) => { settle = res; fail = rej; });
     // A callback can arrive (or time out) before the caller awaits `result`.
     // Without a handler attached here that becomes an unhandled rejection,
     // which in Node terminates the process — so a forged state would crash the
@@ -53,35 +72,41 @@ export function listenForCallback(opts: { state: string; timeoutMs?: number }): 
 
     const server: Server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-      if (url.pathname !== CALLBACK_PATH) {
+      if (url.pathname !== path) {
         res.writeHead(404).end(); return;
       }
 
       const error = url.searchParams.get('error');
-      const code = url.searchParams.get('code');
       const state = url.searchParams.get('state');
 
-      // Verified BEFORE the code is used: a mismatched state means this
+      // Verified BEFORE any param is used: a mismatched state means this
       // redirect does not belong to the request we started.
       if (!error && state !== opts.state) {
         res.writeHead(400, { 'content-type': 'text/html' })
-           .end(page('Sign-in failed', 'State mismatch — this response did not match the request.'));
+           .end(page('Failed', 'State mismatch — this response did not match the request.'));
         fail(new Error('state mismatch'));
         close();
         return;
       }
 
-      if (error || !code) {
+      const params = {} as Record<P, string>;
+      let missing: string | null = null;
+      for (const name of paramNames) {
+        const value = url.searchParams.get(name);
+        if (value === null && !missing) missing = name;
+        else if (value !== null) params[name] = value;
+      }
+
+      if (error || missing) {
         res.writeHead(400, { 'content-type': 'text/html' })
-           .end(page('Sign-in failed', error ?? 'No authorization code was returned.'));
-        fail(new Error(error ?? 'no code in callback'));
+           .end(page('Failed', error ?? `No ${missing} was returned.`));
+        fail(new Error(error ?? `no ${missing} in callback`));
         close();
         return;
       }
 
-      res.writeHead(200, { 'content-type': 'text/html' })
-         .end(page('Signed in', 'You can close this window and return to Relayed.'));
-      settle({ code, state: state ?? '' });
+      res.writeHead(200, { 'content-type': 'text/html' }).end(page(success.title, success.body));
+      settle({ ...params, state: state ?? '' });
       close();
     });
 
@@ -115,7 +140,7 @@ export function listenForCallback(opts: { state: string; timeoutMs?: number }): 
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
       resolveListener({
-        redirectUri: `http://127.0.0.1:${port}${CALLBACK_PATH}`,
+        redirectUri: `http://127.0.0.1:${port}${path}`,
         result,
         close,
       });

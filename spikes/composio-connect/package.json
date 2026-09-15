@@ -1,0 +1,17 @@
+{
+  "name": "composio-connect-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Spikes for docs/WORKSPACE-AGENTS.md §4.1 (the Composio connect spike) — standalone, not a workspace member",
+  "scripts": {
+    "1-toolkits": "node --env-file-if-exists=../../.env 1-toolkits.mjs",
+    "2-oauth-link": "node --env-file-if-exists=../../.env 2-oauth-link.mjs",
+    "3-oauth-status": "node --env-file-if-exists=../../.env 3-oauth-status.mjs",
+    "4-apikey": "node --env-file-if-exists=../../.env 4-apikey.mjs",
+    "5-revoke": "node --env-file-if-exists=../../.env 5-revoke.mjs"
+  },
+  "dependencies": {
+    "@composio/core": "0.18.1"
+  }
+}

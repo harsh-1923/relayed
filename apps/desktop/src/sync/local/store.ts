@@ -515,6 +515,12 @@ export class LocalStore {
       state: String(row['state']),
       // A local room is one person and their Claude: nothing in it is restricted.
       visibleTo: null,
+      // A local room's messages are always someone's — Claude's or the
+      // person's — never a system row (SPACE-MEMBERSHIP-MARKERS.md applies
+      // only to synced spaces, which local rooms are not).
+      kind: 'actor',
+      systemKind: null,
+      subjectActorId: null,
     }));
   }
 

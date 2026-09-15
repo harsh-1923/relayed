@@ -727,6 +727,15 @@ in the product has to reproduce correctly for the rest of its life.
   advertised. A visible-but-locked chat leaks who is talking to whom, which is
   frequently more sensitive than what they are saying.
 
+**Creation from the desktop is built.** Channels and shared rooms are created
+through an online command with a name and visibility choice. Named constructors
+select `sole` for a channel and `default` for a room, then share the transaction
+that creates topology, the founder's admin membership and its ordered events.
+The founder's membership snapshot hydrates connected replicas; disconnected
+replicas discover it on reconnect. See the frontend document's **Channel and
+room creation** section for the UI contract. Shared room panels are still a
+separate, unbuilt surface.
+
 ### 7.3 Membership and access
 
 One membership table across both levels:
@@ -1087,6 +1096,54 @@ CREATE TABLE stream_state (
 counters. The branch is what this buys away: the apply loop is where a silent
 permanent hole comes from, and "which table holds this stream's frontier" is a
 question it should never have to ask.
+
+### 8.1a System messages
+
+A message is not always something a person or agent wrote. When Bob adds Alice
+to a space, the space's structural chat gains a durable row — "Alice was added
+by Bob" — that rides the same `ord`/`rev` machinery §8.1 describes, but is
+history the server recorded about its own successful command, not authored
+conversation (`SPACE-MEMBERSHIP-MARKERS.md`).
+
+This is a real chat message rather than a renderer's projection of the
+`space.member_added` topology event, deliberately: a space event has a space
+revision but no chat ordinal, so synthesising a row from it client-side would
+give different clients different chat order and bypass retention, backfill and
+read-cursor machinery that every other row goes through. The **space** stays
+the permission unit; the **chat** stays the ordered sync unit — this does not
+move that line, it is one more thing the sync unit carries.
+
+The discriminator is a real column, `messages.message_kind` (`'actor' |
+'system'`), never an inferred shape or a text match:
+
+```sql
+message_kind     TEXT NOT NULL DEFAULT 'actor',
+system_kind      TEXT,                      -- e.g. 'space.member_added'
+subject_actor_id TEXT REFERENCES actors(id) ON DELETE RESTRICT,
+
+CHECK (
+  (message_kind = 'actor' AND system_kind IS NULL AND subject_actor_id IS NULL)
+  OR
+  (message_kind = 'system' AND system_kind IS NOT NULL AND subject_actor_id IS NOT NULL)
+)
+```
+
+A system row's `author_id` is durable attribution — "the actor whose
+successful command caused this entry" — never "the actor who typed this
+sentence." It authorizes nothing: the write it accompanies (a membership
+change, so far) already passed its own permission check before either row
+exists, and the message is delivered only after both commit in the same
+transaction. `writeMessage` (the one function that inserts a message, §8.1)
+takes a discriminated `kind: 'actor' | 'system'` input rather than gaining a
+second insertion path — a system write skips authored-part validation,
+mentions, and the space activity-clock bump, none of which apply to
+history the server is recording about itself.
+
+System rows are excluded from unread and mention counts (§12) and carry no
+edit, delete, reply, or reaction affordances — a rule enforced server-side as
+each of those operations is built, keyed on the same column. They are ordered,
+retained, and backfilled exactly like any other row, and delivered to a
+reader who was gapped across one the same way any message is.
 
 ### 8.2 Threads
 
@@ -2053,6 +2110,11 @@ a `welcome` over 150 chats holding 60k messages with nothing read is 8 ms — as
 ONE query. The columns exist and are unwritten, so materialising is a change to
 one function rather than a migration, but nothing currently argues for it.
 
+A **system message** (below) is excluded from every one of these counts —
+`WHERE message_kind = 'actor'`, alongside the existing own-author and
+visibility exclusions. It occupies its ordinal like any other row; only the
+counters decide it is not unread (`SPACE-MEMBERSHIP-MARKERS.md`).
+
 ### Read state convergence
 
 `last_read_ord` is a **max register**, on the client and on the server. Applied
@@ -2167,8 +2229,15 @@ and the switch flows are in [`STORAGE.md`](STORAGE.md) §11–§12.
 #### Failure behavior
 
 - **Access token expired, refresh succeeds:** in-band `reauth` (§9.7). Invisible.
+  A reconnect refreshes before `hello` rather than presenting the token it holds:
+  a live socket is never closed for expiry, so after a server restart that token
+  is routinely stale, and presenting it parked the client refused for good.
+  Concurrent refreshes share one request — the server rotates refresh tokens,
+  so a second would be refused (`sync/auth/session.ts`, `ensureFresh`).
 - **Refresh fails (offline):** sync engine enters `unauthenticated`. Local reads
-  continue. Dismissible "reconnect to sync" banner. Retry on network return.
+  continue. Dismissible "reconnect to sync" banner. Retry on network return, and
+  on its own with backoff while refused (`sync/reauth.ts`) — stopping only when
+  the server refuses a token that is still valid, which waiting cannot fix.
 - **Refresh token expired or revoked:** same as above, but the banner offers
   re-authentication. **Never clear local data** — a token expiring is not a
   sign-out, and treating it as one is catastrophic, silent data loss.

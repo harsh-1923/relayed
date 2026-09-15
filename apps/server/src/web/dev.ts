@@ -68,6 +68,7 @@ export function devRoutes(deps: DevDeps) {
 
       try {
         const { ack, event } = await deps.db.transaction().execute(trx => writeMessage(trx, {
+          kind: 'actor',
           chatId, messageId: ulid('msg'), authorId, body,
           parentId: typeof parentId === 'string' ? parentId : null,
           audience: { kind: 'listed', actors: listed },
@@ -113,6 +114,7 @@ export function devRoutes(deps: DevDeps) {
         }
         try {
           const { ack, event } = await deps.db.transaction().execute(trx => writeMessage(trx, {
+            kind: 'actor',
             chatId, messageId: ulid('msg'), authorId,
             parentId: typeof parentId === 'string' ? parentId : null,
             audience: { kind: 'stream' }, parts,

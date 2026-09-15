@@ -1,0 +1,214 @@
+{
+  "user_not_connected": "act_01M234E35YT76C26NGX42D9SAZ",
+  "rows": [
+    {
+      "label": "a connected, unpinned session",
+      "tool_slug": "GITHUB_GET_THE_AUTHENTICATED_USER",
+      "status": 200,
+      "ms": 933,
+      "error": null,
+      "data_keys": [
+        "avatar_url",
+        "bio",
+        "blog",
+        "collaborators",
+        "company",
+        "created_at",
+        "disk_usage",
+        "email",
+        "events_url",
+        "followers",
+        "followers_url",
+        "following"
+      ],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "b connected, pinned, never searched",
+      "tool_slug": "GITHUB_GET_THE_AUTHENTICATED_USER",
+      "status": 200,
+      "ms": 817,
+      "error": null,
+      "data_keys": [
+        "avatar_url",
+        "bio",
+        "blog",
+        "collaborators",
+        "company",
+        "created_at",
+        "disk_usage",
+        "email",
+        "events_url",
+        "followers",
+        "followers_url",
+        "following"
+      ],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "c not connected",
+      "tool_slug": "GITHUB_GET_THE_AUTHENTICATED_USER",
+      "status": 400,
+      "ms": 353,
+      "error": {
+        "message": "No active connection found for toolkit(s) 'github' in this session.",
+        "code": 4302,
+        "slug": "ToolRouterV2_NoActiveConnection",
+        "status": 400,
+        "request_id": "7823755e-83db-4551-ab77-7458d259c29d",
+        "suggested_fix": ""
+      },
+      "data_keys": "undefined",
+      "top_level_keys": ["error"],
+      "raw_error": "No active connection found for toolkit(s) 'github' in this session.",
+      "body": {
+        "error": {
+          "message": "No active connection found for toolkit(s) 'github' in this session.",
+          "code": 4302,
+          "slug": "ToolRouterV2_NoActiveConnection",
+          "status": 400,
+          "request_id": "7823755e-83db-4551-ab77-7458d259c29d",
+          "suggested_fix": ""
+        }
+      }
+    },
+    {
+      "label": "d toolkit not enabled (hackernews)",
+      "tool_slug": "HACKERNEWS_GET_ITEM",
+      "status": 400,
+      "ms": 384,
+      "error": {
+        "message": "[Session Restriction] Toolkit 'hackernews' is not allowed for this session. You cannot execute tools from this toolkit.",
+        "code": 4324,
+        "slug": "ToolRouterV2_ToolkitNotAllowed",
+        "status": 400,
+        "request_id": "47585db9-6514-447c-bfd1-21061f4df9f6",
+        "suggested_fix": ""
+      },
+      "data_keys": "undefined",
+      "top_level_keys": ["error"],
+      "raw_error": "[Session Restriction] Toolkit 'hackernews' is not allowed for this session. You cannot execute tools from this toolkit.",
+      "body": {
+        "error": {
+          "message": "[Session Restriction] Toolkit 'hackernews' is not allowed for this session. You cannot execute tools from this toolkit.",
+          "code": 4324,
+          "slug": "ToolRouterV2_ToolkitNotAllowed",
+          "status": 400,
+          "request_id": "47585db9-6514-447c-bfd1-21061f4df9f6",
+          "suggested_fix": ""
+        }
+      }
+    },
+    {
+      "label": "e missing required argument",
+      "tool_slug": "GITHUB_GET_A_REPOSITORY",
+      "status": 200,
+      "ms": 2041,
+      "error": "Invalid request data provided\n- Following fields are missing: {'repo'}",
+      "data_keys": ["message", "status_code"],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "f made-up tool slug",
+      "tool_slug": "GITHUB_DO_SOMETHING_MADE_UP",
+      "status": 400,
+      "ms": 359,
+      "error": {
+        "message": "Tool GITHUB_DO_SOMETHING_MADE_UP not found",
+        "code": 4301,
+        "slug": "ToolRouterV2_ToolNotFound",
+        "status": 400,
+        "request_id": "3c522f1f-7b3a-4ed1-94ed-21616bf4b2d2",
+        "suggested_fix": ""
+      },
+      "data_keys": "undefined",
+      "top_level_keys": ["error"],
+      "raw_error": "Tool GITHUB_DO_SOMETHING_MADE_UP not found",
+      "body": {
+        "error": {
+          "message": "Tool GITHUB_DO_SOMETHING_MADE_UP not found",
+          "code": 4301,
+          "slug": "ToolRouterV2_ToolNotFound",
+          "status": 400,
+          "request_id": "3c522f1f-7b3a-4ed1-94ed-21616bf4b2d2",
+          "suggested_fix": ""
+        }
+      }
+    },
+    {
+      "label": "g provider 404",
+      "tool_slug": "GITHUB_GET_A_REPOSITORY",
+      "status": 200,
+      "ms": 801,
+      "error": "{\"message\":\"Not Found\",\"documentation_url\":\"https://docs.github.com/rest/repos/repos#get-a-repository\",\"status\":\"404\"}",
+      "data_keys": ["http_error", "message", "status_code"],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "h1 fresh unpinned, before patch",
+      "tool_slug": "GITHUB_GET_THE_AUTHENTICATED_USER",
+      "status": 200,
+      "ms": 767,
+      "error": null,
+      "data_keys": [
+        "avatar_url",
+        "bio",
+        "blog",
+        "collaborators",
+        "company",
+        "created_at",
+        "disk_usage",
+        "email",
+        "events_url",
+        "followers",
+        "followers_url",
+        "following"
+      ],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "h2 patch connected_accounts",
+      "status": 200,
+      "ms": 582,
+      "config_accounts": {
+        "github": ["ca_C2cx4zvcBlGM"]
+      }
+    },
+    {
+      "label": "h3 after patch",
+      "tool_slug": "GITHUB_GET_THE_AUTHENTICATED_USER",
+      "status": 200,
+      "ms": 753,
+      "error": null,
+      "data_keys": [
+        "avatar_url",
+        "bio",
+        "blog",
+        "collaborators",
+        "company",
+        "created_at",
+        "disk_usage",
+        "email",
+        "events_url",
+        "followers",
+        "followers_url",
+        "following"
+      ],
+      "top_level_keys": ["data", "error", "log_id"]
+    },
+    {
+      "label": "i1 patch someone else's account",
+      "status": 400,
+      "error": {
+        "error": {
+          "message": "Could not find connected account(s) ca_C2cx4zvcBlGM belonging to user \"act_01M234E35YT76C26NGX42D9SAZ\". Check that the IDs are correct and belong to the same user as this session.",
+          "code": 4306,
+          "slug": "ToolRouterV2_InvalidConnectedAccountIds",
+          "status": 400,
+          "request_id": "3ad1a789-a85f-457b-abaa-86065ab707b8",
+          "suggested_fix": ""
+        }
+      }
+    }
+  ]
+}

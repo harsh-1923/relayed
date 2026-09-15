@@ -11,6 +11,7 @@ import { useQuery } from '@/lib/query';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ChatView } from '@/features/chat/ChatView';
 import { SpaceHeader } from '@/features/chat/SpaceHeader';
+import { AddSpaceMember } from '@/features/chat/AddSpaceMember';
 import { RoomActivity } from '@/features/local-rooms/RoomActivity';
 import { PanelContainer } from '@/features/panels/PanelContainer';
 import { PanelMenu } from '@/features/panels/PanelMenu';
@@ -30,8 +31,8 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   const chat = space ? mainChat(space) : null;
 
   // Panels are a room's (DESIGN.md §7.1). Only a local room holds them today:
-  // the server writes no rooms yet, so a synced space has none to read, and the
-  // read is asked about nothing — one hook order in both scopes.
+  // shared rooms currently open only their default chat. Panel creation and
+  // storage remain local — one hook order in both scopes.
   const hasPanels = scope === 'local' && space?.kind === 'room';
   const { rows: panels, status: panelsStatus } = useQuery('local.panels.list', { spaceId: hasPanels ? spaceId : '' });
   const openPanels = useOpenPanels();
@@ -87,6 +88,7 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
             details={(
               <>
                 {scope === 'local' && <RoomActivity spaceId={spaceId} />}
+                {scope === 'workspace' && <AddSpaceMember spaceId={spaceId} />}
                 {hasPanels && <PanelMenu space={space} panels={panels ?? []} openPanels={openPanels} />}
               </>
             )}

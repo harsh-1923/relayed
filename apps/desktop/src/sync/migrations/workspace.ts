@@ -588,4 +588,61 @@ export const workspaceMigrations: readonly Migration[] = [
       }
     },
   },
+  {
+    version: 13,
+    name: 'space-membership-markers',
+    // No CHECK for the three-way shape, unlike the server's migration 014: a
+    // multi-column CHECK needs a table rebuild in SQLite, and this replica
+    // only ever receives a `system` row from a trusted `message.created`
+    // event — never from a local insert, since `messages.send` always writes
+    // `kind: 'actor'` — so there is no adversarial-input path here to guard
+    // against (SPACE-MEMBERSHIP-MARKERS.md).
+    up: `
+      ALTER TABLE messages ADD COLUMN message_kind TEXT NOT NULL DEFAULT 'actor';
+      ALTER TABLE messages ADD COLUMN system_kind TEXT;
+      ALTER TABLE messages ADD COLUMN subject_actor_id TEXT;
+    `,
+  },
+  {
+    version: 14,
+    name: 'connections',
+    // `actor_id` is kept on both tables even though today only the signed-in
+    // actor's own rows ever arrive (`welcome` and the two pushes are scoped
+    // that way server-side, WORKSPACE-AGENTS.md §6.3, §6.4) — the same choice
+    // `memberships` already made, for the same reason: a query shaped
+    // "this actor's rows" should not need a schema change if that ever widens.
+    up: `
+      -- A mirror of the server's own mirror of Composio (§6.3) — never a
+      -- second authority, replaced idempotently by id from \`welcome\` and
+      -- from every \`connections\` push, disconnected rows kept rather than
+      -- deleted so the connector store can still say what a toolkit was.
+      CREATE TABLE connections (
+        id             TEXT PRIMARY KEY,
+        actor_id       TEXT NOT NULL,
+        toolkit        TEXT NOT NULL,
+        status         TEXT NOT NULL,
+        status_reason  TEXT,
+        label          TEXT,
+        CHECK (status IN ('connecting','active','needs_reauth','failed','disconnected')),
+        CHECK (status_reason IS NULL
+               OR status_reason IN ('expired','revoked_upstream','scopes_changed','failed'))
+      );
+      CREATE INDEX connection_actor ON connections(actor_id);
+
+      -- Which agents this actor has allowed, and at what effect (§6.4).
+      -- Revoked rows are kept, not deleted, matching the server's own table:
+      -- reconnecting must not ask the person to re-allow an agent they
+      -- already did, and the connector store needs the history either way.
+      CREATE TABLE agent_permissions (
+        actor_id        TEXT NOT NULL,
+        agent_actor_id  TEXT NOT NULL,
+        toolkit         TEXT NOT NULL,
+        effect          TEXT NOT NULL,
+        revoked         INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (actor_id, agent_actor_id, toolkit),
+        CHECK (effect IN ('read','write','destructive'))
+      );
+      CREATE INDEX agent_permission_actor ON agent_permissions(actor_id) WHERE revoked = 0;
+    `,
+  },
 ];

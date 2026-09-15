@@ -276,3 +276,13 @@
     border-radius: 4px;
   }
 }
+
+& .md-command {
+  display: inline-block;
+  padding: 0 4px;
+  color: var(--primary-foreground);
+  font-weight: 600;
+  line-height: 1.5;
+  background: var(--primary);
+  border-radius: 4px;
+}

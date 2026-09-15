@@ -15,7 +15,7 @@ import { sql } from 'kysely';
 import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { attachSyncSocket, SYNC_PATH, type SyncSocket } from './socket.ts';
-import { createChannel, addToSpace } from './spaces.ts';
+import { createChannel, addToSpace, addMember } from './spaces.ts';
 import { send } from './ops.ts';
 import { createAgent } from '../agents/definitions.ts';
 import type { SessionClaims } from '../auth/tokens.ts';
@@ -470,7 +470,7 @@ test('welcome carries joined spaces, chats with counters, and own memberships',
     });
     // Joined FIRST, then posts. `can()` checks membership on the way in, so the
     // other order is a Forbidden rather than an unread message.
-    await addToSpace(db, space.spaceId, outsider, me);
+    await addToSpace(db, space.spaceId, outsider, me, ulid('msg'));
     await send(db, { opId: ulid('op'), chatId: space.chatId, actorId: outsider,
                      messageId: ulid('msg'), body: 'unread by me' });
 
@@ -1023,7 +1023,11 @@ test('an op is acked to the sender AND fanned out as an event', opts, async () =
   const space = await createChannel(db, {
     workspaceId: wsp, name: `op-${ulid('x')}`, createdBy: me,
   });
-  await addToSpace(db, space.spaceId, outsider, me);
+  // `addMember` directly, not `addToSpace`: this test asserts the sent
+  // message lands at ordinal 1, and going through `addToSpace` would put its
+  // marker there instead — a fixture concern unrelated to what this test
+  // covers (the ack/fanout path itself, exercised in `spaces.test.ts`).
+  await db.transaction().execute(trx => addMember(trx, space.spaceId, outsider, 'member', me));
 
   const author = await connect();
   author.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });

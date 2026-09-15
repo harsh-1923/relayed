@@ -45,6 +45,11 @@ function partText(part: MessagePart): string {
     case 'reply_to_ui':
       // Drawn as "Chose …"; the words the person sent are the markdown part beside it.
       return '';
+    case 'access_request':
+      // Never actually reached: the card's body is supplied directly by
+      // `access.ts` (`trustedBody`), never derived here — this part carries
+      // only ids, and a sentence needs names this file has no way to look up.
+      return '';
   }
 }
 

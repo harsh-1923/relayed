@@ -26,7 +26,8 @@ CREATE TABLE agent_runs (
   reply_message_id    TEXT,
   -- A deferred run is not claimed again until this moment (admitRun, §5.9).
   not_before          TIMESTAMPTZ,
-  -- Closed set: runtime_busy | invoker_busy | thread_busy (reserved).
+  -- Closed set: runtime_busy | thread_busy (reserved). invoker_busy was removed:
+  -- a person's runs in flight never hold back their next mention (checkpoints.ts).
   defer_reason        TEXT,
   stopped_by          TEXT REFERENCES actors(id),
   -- Set at claim to now() + the run timeout + slack. A sweep past this moment

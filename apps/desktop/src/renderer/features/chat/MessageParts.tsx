@@ -8,10 +8,11 @@
 // client. The whole message then falls back to `body`, which the writer derived
 // from all of its parts: drawing the parts we know and silently skipping the
 // rest would show a reply with a hole in it and no sign that anything is missing.
-import { forbiddenPartKind, PART_KINDS, type MessagePart, type StoredPart, type ToolPart } from '@relayed/protocol';
+import { undrawablePartKind, PART_KINDS, type MessagePart, type StoredPart, type ToolPart } from '@relayed/protocol';
 import { MarkdownText } from './MarkdownText';
 import { ToolCalls } from './ToolCard';
 import { UiBlock, type UiBlockHandlers } from './UiBlock/UiBlock';
+import { AccessCard } from '../agents/AccessCard';
 
 export function MessageParts({
   body, parts, authorType, streaming = false, ...handlers
@@ -26,7 +27,9 @@ export function MessageParts({
   // The server refuses these on a person's message; a replica that holds one
   // anyway got it from somewhere else, and drawing cards under a person's name
   // is exactly the costume that rule exists to stop (docs/AGENT-RESPONSES.md, rules for rooms).
-  if (!parts || parts.length === 0 || forbiddenPartKind(authorType, parts) !== null) {
+  // The DRAW rule, not the write rule: an access card is refused for every
+  // author on the write path, yet drawn on the agent message the broker wrote.
+  if (!parts || parts.length === 0 || undrawablePartKind(authorType, parts) !== null) {
     return <MarkdownText text={body} onOpenLink={handlers.onOpenLink} />;
   }
 
@@ -61,6 +64,8 @@ export function MessageParts({
                 Chose <span className="font-medium text-foreground">{part.label}</span>
               </p>
             );
+          case 'access_request':
+            return <AccessCard key={index} part={part} body={body} onOpenLink={handlers.onOpenLink} />;
         }
       })}
     </div>

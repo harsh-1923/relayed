@@ -9,7 +9,8 @@
 // source of truth, so adding a read here is what makes it enforceable
 // everywhere else. Nothing to remember.
 import type {
-  ClaudeCommand, ClaudeStatus, ComposerDraft, LocalRoom, LocalRoomSettings, PendingApproval, ReplicaActor, ReplicaMessage, Panel, PreferenceRow, Space,
+  AgentPermissionRow, ClaudeCommand, ClaudeStatus, ComposerDraft, ConnectionRow, LocalRoom, LocalRoomSettings,
+  PendingApproval, ReplicaActor, ReplicaMessage, Panel, PreferenceRow, Space,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -30,6 +31,8 @@ export interface Queries {
   'local.commands.list': { args: { chatId: string }; rows: ClaudeCommand[] };
   'drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
   'local.drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
+  'connections.list': { args: undefined; rows: ConnectionRow[] };
+  'agentPermissions.list': { args: undefined; rows: AgentPermissionRow[] };
 }
 
 export type QueryName = keyof Queries;
@@ -69,4 +72,6 @@ export const TOPICS: TopicsFor = {
   'local.commands.list': () => [topic.localCommands()],
   'drafts.get': ({ chatId }) => [topic.draft(chatId)],
   'local.drafts.get': ({ chatId }) => [topic.localDraft(chatId)],
+  'connections.list': () => [topic.connections()],
+  'agentPermissions.list': () => [topic.agentPermissions()],
 };

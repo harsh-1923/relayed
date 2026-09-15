@@ -536,7 +536,9 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
             description: d.description, instructions: d.instructions, model: d.model,
             thinking_level: d.thinkingLevel, config_rev: d.configRev, created_by: d.createdBy,
             created_at: d.createdAt, updated_at: d.updatedAt, maintainers: d.maintainers,
-            tools: d.tools, space_ids: d.spaceIds,
+            // Always empty since agents find their own tools (the plan's step 7);
+            // still sent because clients built before it require the field.
+            tools: [], space_ids: d.spaceIds,
             you: { edit: d.you.edit, manage_maintainers: d.you.manageMaintainers,
                    deactivate: d.you.deactivate },
           },
@@ -723,6 +725,12 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
         role: membership.role,
       })),
       streams: payload.streams,
+      connections: payload.connections.map(c => ({
+        id: c.id, toolkit: c.toolkit, status: c.status, status_reason: c.statusReason, label: c.label,
+      })),
+      agent_permissions: payload.agentPermissions.map(p => ({
+        agent_actor_id: p.agentActorId, toolkit: p.toolkit, effect: p.effect, revoked: p.revoked,
+      })),
     });
 
     // The two numbers §9.9's ceiling is made of, recorded together because

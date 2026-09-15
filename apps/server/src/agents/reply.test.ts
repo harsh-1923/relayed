@@ -62,11 +62,19 @@ async function setup(runState: 'running' | 'queued' | 'cancelled' = 'running'): 
 
 test('a completed run posts markdown and a tool part, on behalf of the invoker', opts, async () => {
   const run = await setup('running');
+  // What the broker recorded: one call that ran, and one that stopped for
+  // access. Only the first is a line in the reply — the card covers the second,
+  // and a search (never recorded) has none at all.
+  await db.insertInto('agent_tool_calls').values([
+    { run_id: run.id, tool_call_id: 'call_ran', toolkit: 'linear', tool: 'LINEAR_CREATE_ISSUE', effect: 'write', outcome: 'ok', duration_ms: 120 },
+    { run_id: run.id, tool_call_id: 'call_stopped', toolkit: 'linear', tool: 'LINEAR_DELETE_ISSUE', effect: 'destructive', outcome: 'permission_required', duration_ms: 0 },
+  ]).execute();
   const written = await deliverReply(db, run, {
     state: 'completed',
     result: {
       runId: run.id, status: 'completed', text: 'Done — filed as LIN-42.',
-      toolCalls: [{ name: 'LINEAR_CREATE_ISSUE', ok: true, ms: 120 }],
+      // The runtime's own list only knows the two names every run is given.
+      toolCalls: [{ name: 'find_tools', ok: true, ms: 900 }, { name: 'call_tool', ok: true, ms: 120 }],
       usage: { input: 10, output: 5, cacheRead: 0 }, turns: 1, provider: 'anthropic', durationMs: 500,
     },
   });
@@ -79,10 +87,12 @@ test('a completed run posts markdown and a tool part, on behalf of the invoker',
   assert.equal(row.on_behalf_of_actor_id, invoker);
   assert.equal(row.delegation_id, run.id);
   assert.equal(row.parent_id, run.replyParentId);
-  const parts = row.parts as unknown as { kind: string }[];
+  const parts = row.parts as unknown as { kind: string; name?: string; ok?: boolean; ms?: number }[];
   assert.equal(parts.length, 2);
   assert.equal(parts[0]?.kind, 'markdown');
-  assert.equal(parts[1]?.kind, 'tool');
+  assert.deepEqual({ kind: parts[1]?.kind, name: parts[1]?.name, ok: parts[1]?.ok, ms: parts[1]?.ms },
+    { kind: 'tool', name: 'LINEAR_CREATE_ISSUE', ok: true, ms: 120 },
+    'the tool that ran, from the audit — no find_tools, no call_tool, no line for the access stop');
 
   const after_ = await db.selectFrom('agent_runs').select('state').where('id', '=', run.id).executeTakeFirstOrThrow();
   assert.equal(after_.state, 'completed');

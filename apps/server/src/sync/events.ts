@@ -106,6 +106,15 @@ export interface MessageCreated {
    */
   on_behalf_of_actor_id?: string;
   delegation_id?: string;
+  /**
+   * Present only for a system row (SPACE-MEMBERSHIP-MARKERS.md) — history the
+   * server wrote about a successful command, not authored content. Absent
+   * means the ordinary `'actor'` kind, so an old client that ignores these
+   * three fields still renders every message it understood before they existed.
+   */
+  message_kind?: 'system';
+  system_kind?: 'space.member_added';
+  subject_actor_id?: string;
 }
 
 /**
@@ -169,7 +178,33 @@ export interface ChatCreated {
   name: string | null;
 }
 
-export interface SpaceMemberAdded { actor_id: string; role: 'member' | 'admin' }
+export interface SpaceMemberAdded {
+  actor_id: string;
+  role: 'member' | 'admin';
+  /**
+   * Who ran the command that produced this row. Audit/display attribution —
+   * the chat marker's real source is the `message.created` event this add also
+   * produces — never a second authorization path (SPACE-MEMBERSHIP-MARKERS.md).
+   */
+  by_actor_id: string;
+  /**
+   * The space's current shape, so the NAMED actor's own replica can render it
+   * without waiting for a reconnect. Every recipient receives the same
+   * payload; only the client whose own actor id matches `actor_id` applies it,
+   * everyone else uses this event purely as topology invalidation.
+   */
+  hydration: {
+    space: {
+      id: string; kind: string; name: string | null; slug: string | null;
+      visibility: string | null; membership_policy: string; lifecycle: string;
+      rev: number;
+    };
+    chats: {
+      id: string; space_id: string; kind: string; name: string | null;
+      head_ord: number; head_rev: number;
+    }[];
+  };
+}
 export interface SpaceMemberRemoved { actor_id: string }
 
 /**
@@ -204,7 +239,7 @@ export interface ActorChanged {
 export interface AgentSummary {
   description: string;
   config_rev: number;
-  /** Per toolkit, the highest effect among the agent's tools in it. */
+  /** Always empty since agents find their own tools (the plan's step 7); kept because older clients require it. */
   toolkits: { toolkit: string; effect: 'read' | 'write' | 'destructive' }[];
 }
 
