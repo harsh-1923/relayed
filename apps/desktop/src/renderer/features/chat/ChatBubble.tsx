@@ -1,4 +1,7 @@
+import { useNavigate } from 'react-router';
 import type { ReplicaMessage } from '../../../preload/api';
+import { useSession } from '@/app/state';
+import { spaceLinkTarget } from '../../../shared/spaces.ts';
 import { AlertCircle, ClockDefault } from '@relayed/icons';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
@@ -47,6 +50,15 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   const arriving = liveParts.length > 0;
   const parts = streaming && arriving ? [...(message.parts ?? []), ...liveParts] : message.parts;
   const unbubbled = !message.deleted && agentAuthored && (parts !== null || streaming);
+  const navigate = useNavigate();
+  const { state: session } = useSession();
+  // Only a link to a room in this workspace opens anything so far — the room an
+  // agent made. Where a web link opens, and which schemes may, is phase 6
+  // (docs/AGENT-RESPONSES.md, actions).
+  const openLink = (href: string): void => {
+    const spaceId = spaceLinkTarget(href);
+    if (spaceId && session.workspaceId) void navigate(`/w/${session.workspaceId}/s/${spaceId}`);
+  };
 
   return (
     <MessageScrollerItem
@@ -103,8 +115,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
             <BubbleContent className="select-text **:select-text">
               {message.deleted
                 ? <span className="italic opacity-60">Message deleted</span>
-                // Links do nothing yet: where one opens, and which schemes may,
-                // is phase 6 (docs/AGENT-RESPONSES.md, actions). Nor do Reply buttons.
+                // Reply buttons do nothing yet; see `openLink` for links.
                 : (
                   <>
                     <MessageParts
@@ -112,6 +123,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                       parts={parts}
                       authorType={message.authorType ?? 'human'}
                       streaming={streaming}
+                      onOpenLink={openLink}
                     />
                     {streaming && (
                       <span className="flex items-center gap-2 text-sm pt-6" role="status">

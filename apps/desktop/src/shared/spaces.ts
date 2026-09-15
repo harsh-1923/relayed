@@ -27,6 +27,15 @@ export interface Space {
   slug: string | null;
   /** Null for a DM or group DM, which are neither public nor private. */
   visibility: string | null;
+  /**
+   * Who created it, and whose request it was when an agent made it for
+   * someone. Null for a local room and for a space synced before either was
+   * carried. Neither grants anything.
+   */
+  createdByActorId: string | null;
+  onBehalfOfActorId: string | null;
+  /** Who a DM or group DM is between, you included. Null for every other kind. */
+  memberIds: string[] | null;
   chats: SpaceChat[];
 }
 
@@ -37,13 +46,34 @@ export interface Space {
 export const mainChat = (space: Pick<Space, 'chats'>): SpaceChat | null =>
   space.chats.find(chat => chat.kind === 'sole' || chat.kind === 'default') ?? null;
 
-/** What a space is called when it has no name of its own. */
-export function spaceName(row: { kind: string; name: string | null; slug: string | null }): string {
+/**
+ * The space a message link opens, or null. An agent links a room it made as
+ * `[name](space:spc_…)` — an app link rather than a web address, so the room
+ * opens in the app and the link means nothing anywhere else.
+ */
+export function spaceLinkTarget(href: string | undefined): string | null {
+  const match = href ? /^space:(spc_[A-Za-z0-9_-]+)$/.exec(href) : null;
+  return match?.[1] ?? null;
+}
+
+/**
+ * What a space is called when it has no name of its own. A DM or group DM is
+ * called by the other people in it — `otherNames`, from the directory, in the
+ * order they were given — and by its kind until the directory has them.
+ */
+export function spaceName(
+  row: { kind: string; name: string | null; slug: string | null },
+  otherNames: readonly string[] = [],
+): string {
   if (row.name) return row.name;
   if (row.slug) return row.slug;
-  // Deriving a DM's name from its members needs the member list, which the
-  // replica does not hold yet: it replicates only the caller's own memberships.
-  if (row.kind === 'dm') return 'Direct message';
-  if (row.kind === 'group_dm') return 'Group message';
+  if (row.kind === 'dm' || row.kind === 'group_dm') {
+    if (otherNames.length === 1) return otherNames[0]!;
+    if (otherNames.length > 1) return `${otherNames.slice(0, -1).join(', ')} and ${otherNames.at(-1)}`;
+    return row.kind === 'dm' ? 'Direct message' : 'Group message';
+  }
   return 'Untitled';
 }
+
+/** The most people in a group DM, you included — the server's limit, repeated so the picker can say so. */
+export const DM_MAX_MEMBERS = 9;

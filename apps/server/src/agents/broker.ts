@@ -2,9 +2,11 @@
 // custom tools post here once per call; this is the only thing on the other
 // end of them.
 //
-// A run has two tools (`run-tools.ts`, the plan's step 7): `find_tools`, which
-// searches one toolkit and asks for access if the person has not given it, and
-// `call_tool`, which runs one tool through the ten steps of §5.5.
+// A run's tools (`run-tools.ts`, the plan's step 7): `find_tools`, which
+// searches one toolkit and asks for access if the person has not given it,
+// `call_tool`, which runs one tool through the ten steps of §5.5, and the app's
+// own — `open_panel` and `create_room` — which act in Relayed and never reach
+// Composio.
 //
 // Steps 1-3 and 9 live here. Steps 4-8 and 10 are `checkpoints.ts`'s
 // `beforeToolCall`/`afterToolCall` — everything about whether a call may run,
@@ -22,8 +24,10 @@ import {
 } from './composio.ts';
 import { mapComposioError, mapExecuteResult } from './tool-errors.ts';
 import { raiseAccessRequest } from './access.ts';
-import { FIND_TOOLS, CALL_TOOL, OPEN_PANEL } from './run-tools.ts';
+import { FIND_TOOLS, CALL_TOOL, OPEN_PANEL, CREATE_ROOM } from './run-tools.ts';
 import { openRoomPanel, roomPanelUrl, NotARoomError, PrivateChatError, type UrlRefusal } from '../sync/panels.ts';
+import { createRoom, spaceNameFrom } from '../sync/spaces.ts';
+import { Forbidden } from '../authz/can.ts';
 
 /** Composio, as the broker uses it — injectable so a test never reaches the network. */
 export interface BrokerComposio {
@@ -104,6 +108,9 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
       }
       if (tool === OPEN_PANEL) {
         return reply.send(await openPanel(deps, { chatId: run.chat_id, invokerActorId, agentActorId, args }));
+      }
+      if (tool === CREATE_ROOM) {
+        return reply.send(await createRoomFor(deps, { chatId: run.chat_id, invokerActorId, agentActorId, args }));
       }
       if (tool !== CALL_TOOL) return reply.send({ result: 'tool_not_allowed' });
 
@@ -195,6 +202,52 @@ async function openPanel(
     return { result: 'ok', data: { opened: true, url: panel.payload.url, title: panel.title } };
   } catch (err) {
     if (err instanceof NotARoomError || err instanceof PrivateChatError) return { result: 'tool_not_allowed' };
+    throw err;
+  }
+}
+
+/**
+ * Make a room for the person who asked (`run-tools.ts`). The agent is its
+ * creator and the person joins as an admin; whether a room may be made at all
+ * is the person's permission. The workspace is the run's own chat's, and both
+ * identities are the grant's — nothing here is taken from the model's
+ * arguments but the name and visibility.
+ */
+async function createRoomFor(
+  deps: BrokerRouteDeps,
+  input: { chatId: string; invokerActorId: string; agentActorId: string; args: Record<string, unknown> },
+): Promise<BrokerReply> {
+  const [invoker, agent, chat] = await Promise.all([
+    deps.db.selectFrom('actors').select('state').where('id', '=', input.invokerActorId).executeTakeFirst(),
+    deps.db.selectFrom('actors').select('state').where('id', '=', input.agentActorId).executeTakeFirst(),
+    deps.db.selectFrom('chats').select('workspace_id').where('id', '=', input.chatId).executeTakeFirst(),
+  ]);
+  if (!invoker || invoker.state !== 'active') return { result: 'invoker_inactive' };
+  if (!agent || agent.state !== 'active') return { result: 'agent_inactive' };
+  if (!chat) return { result: 'run_not_running' };
+
+  const name = spaceNameFrom(input.args['name']);
+  if (!name) return { result: 'failed', message: `${CREATE_ROOM} needs a name of 1 to 100 characters.` };
+  const visibility = input.args['visibility'] === 'public' ? 'public' : 'private';
+
+  try {
+    const created = await createRoom(deps.db, {
+      workspaceId: chat.workspace_id, name, visibility,
+      createdBy: input.agentActorId, onBehalfOf: input.invokerActorId,
+    });
+    for (const event of created.events) await deps.deliver(event);
+    return {
+      result: 'ok',
+      data: {
+        space_id: created.spaceId, chat_id: created.chatId, name, visibility,
+        // An app link, not a web address: the desktop opens the room itself.
+        link: `[${name.replaceAll(/[[\]]/g, '')}](space:${created.spaceId})`,
+      },
+    };
+  } catch (err) {
+    if (err instanceof Forbidden) {
+      return { result: 'failed', message: 'The person who asked is not allowed to create rooms in this workspace.' };
+    }
     throw err;
   }
 }

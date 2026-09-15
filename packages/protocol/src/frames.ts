@@ -423,6 +423,11 @@ export const Welcome = z.object({
     visibility: z.string().nullable(),
     membership_policy: z.string(),
     lifecycle: z.string(),
+    /** Who created it, and whose request it was when an agent did. Absent from a server that predates them. */
+    created_by_actor_id: z.string().nullable().optional(),
+    on_behalf_of_actor_id: z.string().nullable().optional(),
+    /** Who a DM or group DM is between — what a client names it by. Null for every other kind; absent from an older server. */
+    member_ids: z.array(z.string()).nullable().optional(),
     rev: z.number().int().nonnegative(),
   })).optional(),
 

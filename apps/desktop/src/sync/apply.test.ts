@@ -589,6 +589,30 @@ test('a member_added naming the active actor hydrates the space, its chat, and t
   db.close();
 });
 
+test('a room an agent made for someone keeps who made it and for whom, and an older server\'s row still applies', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const added = memberAdded(1, 'act_me', 'admin');
+  const hydration = (added.payload as { hydration: { space: Record<string, unknown> } }).hydration;
+  hydration.space['created_by_actor_id'] = 'act_triage';
+  hydration.space['on_behalf_of_actor_id'] = 'act_me';
+  hydration.space['member_ids'] = ['act_me', 'act_bob'];
+
+  applyEvent(deps, space, added);
+  assert.deepEqual({ ...db.prepare('SELECT created_by_actor_id, on_behalf_of_actor_id FROM spaces WHERE id = ?').get('spc_new') },
+    { created_by_actor_id: 'act_triage', on_behalf_of_actor_id: 'act_me' });
+  assert.equal((db.prepare('SELECT member_ids FROM spaces WHERE id = ?').get('spc_new') as { member_ids: string }).member_ids,
+    '["act_me","act_bob"]', 'who a DM is between arrives with it');
+
+  const older = replica();
+  applyEvent({ db: older, effect: replicaEffect(undefined, () => 'act_me') }, space, memberAdded(1, 'act_me'));
+  assert.deepEqual({ ...older.prepare('SELECT created_by_actor_id, on_behalf_of_actor_id FROM spaces WHERE id = ?').get('spc_new') },
+    { created_by_actor_id: null, on_behalf_of_actor_id: null }, 'a hydration without the fields stores nulls');
+  db.close();
+  older.close();
+});
+
 test('a member_added for someone else stays topology invalidation only — nothing is written', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };

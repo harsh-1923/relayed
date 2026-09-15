@@ -708,7 +708,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       spaces: payload.spaces.map(space => ({
         id: space.id, kind: space.kind, name: space.name, slug: space.slug,
         visibility: space.visibility, membership_policy: space.membershipPolicy,
-        lifecycle: space.lifecycle, rev: space.rev,
+        lifecycle: space.lifecycle, created_by_actor_id: space.createdByActorId,
+        on_behalf_of_actor_id: space.onBehalfOfActorId, member_ids: space.memberIds, rev: space.rev,
       })),
       chats: payload.chats.map(chat => ({
         id: chat.chatId, space_id: chat.spaceId, kind: chat.kind, name: chat.name,
@@ -918,7 +919,9 @@ function onWire(snapshot: Snapshot): Record<string, unknown> {
         id: snapshot.space.id, kind: snapshot.space.kind, name: snapshot.space.name,
         slug: snapshot.space.slug, visibility: snapshot.space.visibility,
         membership_policy: snapshot.space.membershipPolicy,
-        lifecycle: snapshot.space.lifecycle, rev: snapshot.space.rev,
+        lifecycle: snapshot.space.lifecycle, created_by_actor_id: snapshot.space.createdByActorId,
+        on_behalf_of_actor_id: snapshot.space.onBehalfOfActorId, member_ids: snapshot.space.memberIds,
+        rev: snapshot.space.rev,
       },
       chats: snapshot.chats.map(chat => ({
         id: chat.id, space_id: chat.spaceId, kind: chat.kind, name: chat.name,

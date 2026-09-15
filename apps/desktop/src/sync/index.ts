@@ -21,7 +21,7 @@ import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
-  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSpace, type SpaceInput,
+  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSpace, openDm, type SpaceInput,
   stopAgentRun, type AgentInput,
   listToolkits, disconnectConnection,
   grantAgentPermission, revokeAgentPermission, allowAccessRequest,
@@ -372,7 +372,9 @@ const link = createLink({
       spaces: (body.spaces ?? []).map(space => ({
         id: space.id, kind: space.kind, name: space.name, slug: space.slug,
         visibility: space.visibility, membershipPolicy: space.membership_policy,
-        lifecycle: space.lifecycle, rev: space.rev,
+        lifecycle: space.lifecycle, createdByActorId: space.created_by_actor_id ?? null,
+        onBehalfOfActorId: space.on_behalf_of_actor_id ?? null, memberIds: space.member_ids ?? null,
+        rev: space.rev,
       })),
       chats: (body.chats ?? []).map(chat => ({
         id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
@@ -974,6 +976,13 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('Could not refresh your session. Reconnect or sign in again to create a channel or room.');
     return createSpace(token, input);
+  },
+  'dms.open': async (params) => {
+    const input = params as { workspaceId: string; actorIds: string[] };
+    if (input.workspaceId !== storage.workspaceId) throw new Error('Workspace changed. Start the conversation again.');
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('Could not refresh your session. Reconnect or sign in again to start a conversation.');
+    return openDm(token, input);
   },
   'spaces.addMember': async (params) => {
     const { spaceId, actorId } = params as { spaceId: string; actorId: string };

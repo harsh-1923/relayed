@@ -10,8 +10,9 @@
 // having a channel created around you repaints without a reload — the loop that
 // `chat.created` and `space.member_added` invalidate `spaces` for.
 //
-// Channels and rooms keep their creation controls even when empty. Other
-// sections appear only once there is a conversation to show.
+// Channels, rooms and direct messages keep their creation controls even when
+// empty — Direct messages' opens the new-message dialog, which starts a group
+// message too. Group messages appear only once there is one to show.
 //
 // Deliberately flat within a section. Every space is one destination; rooms
 // enter through their default chat and keep their other chats inside the room.
@@ -22,6 +23,7 @@ import { useSession } from '@/app/state';
 import { grantsOf } from '@/lib/ipc';
 import { CreateSpaceDialog } from './CreateSpaceDialog.tsx';
 import { SpaceDirectoryRow } from './SpaceDirectoryRow.tsx';
+import { NewMessageDialog } from '../dms/NewMessageDialog';
 import { useQuery } from '@/lib/query';
 import {
   SidebarGroup, SidebarGroupAction, SidebarGroupLabel, SidebarMenu,
@@ -45,6 +47,7 @@ export function SpaceDirectory() {
   const { rows: spaces, status, error } = useQuery('spaces.list');
   const { state } = useSession();
   const [creating, setCreating] = useState<{ kind: 'channel' | 'room'; workspaceId: string } | null>(null);
+  const [messaging, setMessaging] = useState<string | null>(null);
   const mayCreate = state.workspaceId !== null && can(grantsOf(state), 'create_space', workspaceTarget(state.workspaceId));
 
   if (status === 'loading') {
@@ -58,7 +61,8 @@ export function SpaceDirectory() {
       {SECTIONS.map(section => {
         const mine = (spaces ?? []).filter(space => space.kind === section.kind);
         const creatable = section.kind === 'channel' || section.kind === 'room';
-        if (mine.length === 0 && !(creatable && mayCreate)) return null;
+        const startable = section.kind === 'dm';
+        if (mine.length === 0 && !((creatable || startable) && mayCreate)) return null;
         return (
           <SidebarGroup key={section.kind}>
             <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
@@ -72,6 +76,16 @@ export function SpaceDirectory() {
                 <PlusDefault />
               </SidebarGroupAction>
             )}
+            {startable && mayCreate && (
+              <SidebarGroupAction
+                title={state.offline ? 'Starting a conversation needs a connection' : 'New message'}
+                aria-label="New message"
+                disabled={state.offline}
+                onClick={() => setMessaging(state.workspaceId)}
+              >
+                <PlusDefault />
+              </SidebarGroupAction>
+            )}
             {mine.length === 0 && <p className="px-2 py-1 text-xs text-muted-foreground">No {section.label.toLowerCase()} yet.</p>}
             <SidebarMenu className="space-y-0.5">
               {mine.map(space => (
@@ -81,6 +95,9 @@ export function SpaceDirectory() {
           </SidebarGroup>
         );
       })}
+      {messaging && messaging === state.workspaceId && (
+        <NewMessageDialog key={messaging} onClose={() => setMessaging(null)} />
+      )}
       {creating && creating.workspaceId === state.workspaceId && (
         <CreateSpaceDialog key={`${creating.workspaceId}:${creating.kind}`} {...creating} onClose={() => setCreating(null)} />
       )}

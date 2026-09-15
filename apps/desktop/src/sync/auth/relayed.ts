@@ -196,6 +196,12 @@ export const createSpace = (accessToken: string, input: SpaceInput) =>
     workspace_id: input.workspaceId, kind: input.kind, name: input.name, visibility: input.visibility,
   });
 
+/** Open the DM or group DM with these people, the caller always included (DESIGN.md §7.1). */
+export const openDm = (accessToken: string, input: { workspaceId: string; actorIds: string[] }) =>
+  request<{ space_id: string; chat_id: string; created: boolean }>('POST', '/dms', accessToken, {
+    workspace_id: input.workspaceId, actor_ids: input.actorIds,
+  });
+
 // `messageId` is the marker's client-generated id (SPACE-MEMBERSHIP-MARKERS.md):
 // every add produces a chat message alongside the membership, and this add
 // mints its id the same way any other send does — in the main process, since

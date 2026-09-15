@@ -490,7 +490,8 @@ const welcomePayload = (over: Partial<Parameters<Storage['applyWelcome']>[0]> = 
   actorId: 'act_me',
   spaces: [{
     id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering',
-    visibility: 'public', membershipPolicy: 'open', lifecycle: 'active', rev: 31,
+    visibility: 'public', membershipPolicy: 'open', lifecycle: 'active',
+    createdByActorId: null, onBehalfOfActorId: null, memberIds: null, rev: 31,
   }],
   chats: [{
     id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null,
@@ -541,6 +542,20 @@ test('A WORKSPACE MEMBERSHIP FROM WELCOME IS STORED', () => {
   assert.equal((db.prepare('SELECT COUNT(*) n FROM spaces').get() as { n: number }).n, 1);
   assert.equal((db.prepare('SELECT COUNT(*) n FROM chats').get() as { n: number }).n, 1);
   db.close();
+});
+
+test('welcome keeps who created a space and whose request it was, and space() returns both', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    spaces: [{
+      id: 'spc_eng', kind: 'room', name: 'HAR-21', slug: null, visibility: 'private',
+      membershipPolicy: 'invite', lifecycle: 'active',
+      createdByActorId: 'act_triage', onBehalfOfActorId: 'act_me', memberIds: null, rev: 3,
+    }],
+  }));
+  const space = storage.space('spc_eng');
+  assert.deepEqual([space?.createdByActorId, space?.onBehalfOfActorId], ['act_triage', 'act_me']);
 });
 
 test('AN UNKNOWN MEMBERSHIP SCOPE IS SKIPPED, NOT A ROLLED-BACK WELCOME', () => {
@@ -868,12 +883,44 @@ test('a space reads by id in the same shape the sidebar lists, and a DM is given
   const eng = storage.space('spc_eng');
   assert.deepEqual(eng, {
     id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering', visibility: 'public',
+    createdByActorId: null, onBehalfOfActorId: null, memberIds: null,
     chats: [{ id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null, unread: 0, mentions: 0 }],
   });
   assert.deepEqual(storage.spaces().find(space => space.id === 'spc_eng'), eng, 'one shape for the list and the single read');
   assert.equal(storage.space('spc_dm')?.name, 'Direct message');
   assert.equal(storage.space('spc_dm')?.visibility, null);
   assert.equal(storage.space('spc_missing'), null);
+});
+
+test('a DM is named by the other people in it, from the directory — and by its kind until the directory has them', () => {
+  const { storage } = seeded(root(), [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  storage.workspace.exec(`
+    INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility, membership_policy, member_ids, created_at, updated_at) VALUES
+      ('spc_dm',    'wsp_a', 'dm',       NULL, NULL, NULL, 'sealed', '["act_a","act_bob"]', 0, 0),
+      ('spc_group', 'wsp_a', 'group_dm', NULL, NULL, NULL, 'sealed', '["act_carol","act_a","act_bob","act_dave"]', 0, 0),
+      ('spc_new',   'wsp_a', 'dm',       NULL, NULL, NULL, 'sealed', '["act_a","act_unknown"]', 0, 0);
+    INSERT INTO actors (id, workspace_id, type, handle, display_name, state, updated_at) VALUES
+      ('act_a',     'wsp_a', 'human', 'me',    'Me',    'active', 0),
+      ('act_bob',   'wsp_a', 'human', 'bob',   'Bob',   'active', 0),
+      ('act_carol', 'wsp_a', 'human', 'carol', 'Carol', 'active', 0),
+      ('act_dave',  'wsp_a', 'human', 'dave',  'Dave',  'active', 0);
+  `);
+  assert.equal(storage.space('spc_dm')?.name, 'Bob', 'the other person, never yourself');
+  assert.equal(storage.space('spc_group')?.name, 'Carol, Bob and Dave');
+  assert.deepEqual(storage.space('spc_group')?.memberIds, ['act_carol', 'act_a', 'act_bob', 'act_dave']);
+  assert.equal(storage.space('spc_new')?.name, 'Direct message', 'someone the directory has not delivered yet');
+});
+
+test('welcome stores who a DM is between', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload({
+    spaces: [{
+      id: 'spc_eng', kind: 'dm', name: null, slug: null, visibility: null, membershipPolicy: 'sealed', lifecycle: 'active',
+      createdByActorId: 'act_me', onBehalfOfActorId: null, memberIds: ['act_bob', 'act_me'], rev: 2,
+    }],
+  }));
+  assert.deepEqual(storage.space('spc_eng')?.memberIds, ['act_bob', 'act_me']);
 });
 
 test('the chat read returns a synced message\'s parts, and null for a malformed or absent column', () => {

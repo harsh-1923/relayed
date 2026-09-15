@@ -8,7 +8,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { type Stream } from './events.ts';
-import { spaceMembers } from './spaces.ts';
+import { dmMembers, spaceMembers } from './spaces.ts';
 import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
 import { mentionPattern } from './mentions.ts';
@@ -317,7 +317,7 @@ async function snapshotOf(db: Kysely<DB>, readerId: string, stream: Stream): Pro
   const [space, chats, members] = await Promise.all([
     db.selectFrom('spaces')
       .select(['id', 'kind', 'name', 'slug', 'visibility', 'membership_policy',
-               'lifecycle', 'next_rev'])
+               'lifecycle', 'created_by_actor_id', 'on_behalf_of_actor_id', 'dm_key', 'next_rev'])
       .where('id', '=', stream.id).executeTakeFirst(),
     db.selectFrom('chats').select(['id', 'space_id', 'kind', 'name'])
       .where('space_id', '=', stream.id).execute(),
@@ -333,11 +333,13 @@ async function snapshotOf(db: Kysely<DB>, readerId: string, stream: Stream): Pro
       ? {
           id: space.id, kind: space.kind, name: space.name, slug: space.slug,
           visibility: space.visibility, membershipPolicy: space.membership_policy,
-          lifecycle: space.lifecycle, rev: space.next_rev,
+          lifecycle: space.lifecycle, createdByActorId: space.created_by_actor_id,
+          onBehalfOfActorId: space.on_behalf_of_actor_id, memberIds: dmMembers(space.dm_key), rev: space.next_rev,
         }
       : {
           id: stream.id, kind: 'channel', name: null, slug: null,
-          visibility: null, membershipPolicy: 'invite', lifecycle: 'archived', rev: 0,
+          visibility: null, membershipPolicy: 'invite', lifecycle: 'archived',
+          createdByActorId: null, onBehalfOfActorId: null, memberIds: null, rev: 0,
         },
     chats: chats.map(chat => ({
       id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
@@ -525,6 +527,11 @@ export interface WelcomeSpace {
   visibility: string | null;
   membershipPolicy: string;
   lifecycle: string;
+  /** Who created it, and whose request it was when an agent did. */
+  createdByActorId: string | null;
+  onBehalfOfActorId: string | null;
+  /** Who a DM or group DM is between. Null for every other kind. */
+  memberIds: string[] | null;
   rev: number;
 }
 
@@ -677,13 +684,14 @@ async function welcomeSpaces(db: Kysely<DB>, actorId: string): Promise<WelcomeSp
       .on('memberships.left_at', 'is', null))
     .select(['spaces.id', 'spaces.kind', 'spaces.name', 'spaces.slug',
              'spaces.visibility', 'spaces.membership_policy', 'spaces.lifecycle',
-             'spaces.next_rev'])
+             'spaces.created_by_actor_id', 'spaces.on_behalf_of_actor_id', 'spaces.dm_key', 'spaces.next_rev'])
     .execute();
 
   return rows.map(row => ({
     id: row.id, kind: row.kind, name: row.name, slug: row.slug,
     visibility: row.visibility, membershipPolicy: row.membership_policy,
-    lifecycle: row.lifecycle, rev: row.next_rev,
+    lifecycle: row.lifecycle, createdByActorId: row.created_by_actor_id,
+    onBehalfOfActorId: row.on_behalf_of_actor_id, memberIds: dmMembers(row.dm_key), rev: row.next_rev,
   }));
 }
 

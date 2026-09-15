@@ -100,7 +100,8 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
             details={(
               <>
                 {scope === 'local' && <RoomActivity spaceId={spaceId} />}
-                {scope === 'workspace' && <AddSpaceMember spaceId={spaceId} />}
+                {/* Nobody is added to a DM or group message: adding someone is a new conversation. */}
+                {scope === 'workspace' && space.kind !== 'dm' && space.kind !== 'group_dm' && <AddSpaceMember spaceId={spaceId} />}
                 {/* Everything about panels lives in their container; the header only opens it. */}
                 {hasPanels && !openPanels.containerOpen && <OpenPanelsButton />}
               </>

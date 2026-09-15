@@ -283,3 +283,114 @@ test('open_panel outside a room is not allowed', opts, async () => {
   assert.deepEqual(recorded.delivered, []);
   await app.close();
 });
+
+// ── create_room ─────────────────────────────────────────────────────────────
+
+type RoomAnswer = { result: string; message?: string; data?: { space_id: string; chat_id: string; link: string; visibility: string } };
+
+test('create_room makes a private room: the agent creates it, the person it was for joins as admin', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  const answer = await call(app, r, 'create_room', { name: '  HAR-21 agents act like humans  ' }) as RoomAnswer;
+  assert.equal(answer.result, 'ok');
+  const spaceId = answer.data!.space_id;
+  assert.equal(answer.data!.link, `[HAR-21 agents act like humans](space:${spaceId})`);
+
+  const space = await db.selectFrom('spaces')
+    .select(['kind', 'name', 'visibility', 'workspace_id', 'created_by_actor_id', 'on_behalf_of_actor_id'])
+    .where('id', '=', spaceId).executeTakeFirstOrThrow();
+  assert.deepEqual(space, {
+    kind: 'room', name: 'HAR-21 agents act like humans', visibility: 'private', workspace_id: wsp,
+    created_by_actor_id: triage, on_behalf_of_actor_id: alice,
+  });
+  const members = await db.selectFrom('memberships').select(['actor_id', 'role'])
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId).orderBy('actor_id').execute();
+  assert.deepEqual(members, [{ actor_id: triage, role: 'admin' }, { actor_id: alice, role: 'admin' }]
+    .sort((a, b) => a.actor_id.localeCompare(b.actor_id)));
+
+  // The person arrives on the ordinary add path: their own member_added, and the marker in the chat.
+  assert.deepEqual(recorded.delivered.map(event => event.type),
+    ['space.created', 'chat.created', 'space.member_added', 'space.member_added', 'message.created']);
+  const created = recorded.delivered[0]!.payload as { created_by_actor_id: string; on_behalf_of_actor_id: string };
+  assert.deepEqual([created.created_by_actor_id, created.on_behalf_of_actor_id], [triage, alice]);
+  const added = recorded.delivered[3]!.payload as { actor_id: string; by_actor_id: string; hydration: { space: { on_behalf_of_actor_id: string } } };
+  assert.deepEqual([added.actor_id, added.by_actor_id, added.hydration.space.on_behalf_of_actor_id], [alice, triage, alice]);
+  assert.deepEqual(recorded.executions, [], 'nothing of anyone\'s account is spent');
+  await app.close();
+});
+
+test('create_room makes a public room only when asked for one', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage);
+  const answer = await call(app, r, 'create_room', { name: 'Open room', visibility: 'public' }) as RoomAnswer;
+  assert.equal(answer.data?.visibility, 'public');
+  const oddly = await call(app, r, 'create_room', { name: 'Odd room', visibility: 'everyone' }) as RoomAnswer;
+  assert.equal(oddly.data?.visibility, 'private', 'anything but "public" is private');
+  await app.close();
+});
+
+test('create_room takes nothing but name and visibility from the model', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage);
+  const answer = await call(app, r, 'create_room', {
+    name: 'Forged', workspace_id: 'wsp_other', created_by: review, on_behalf_of: review, invoker_actor_id: review,
+  }) as RoomAnswer;
+  assert.equal(answer.result, 'ok');
+  const space = await db.selectFrom('spaces').select(['workspace_id', 'created_by_actor_id', 'on_behalf_of_actor_id'])
+    .where('id', '=', answer.data!.space_id).executeTakeFirstOrThrow();
+  assert.deepEqual(space, { workspace_id: wsp, created_by_actor_id: triage, on_behalf_of_actor_id: alice });
+  await app.close();
+});
+
+test('create_room spends the person\'s permission: when they may not create a space, nothing is written', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+  const before = await db.selectFrom('spaces').select('id').where('workspace_id', '=', wsp).execute();
+
+  await db.updateTable('memberships').set({ left_at: sql`now()` })
+    .where('scope_type', '=', 'workspace').where('scope_id', '=', wsp).where('actor_id', '=', alice).execute();
+  try {
+    const answer = await call(app, r, 'create_room', { name: 'Not allowed' }) as RoomAnswer;
+    assert.equal(answer.result, 'failed');
+    assert.match(answer.message ?? '', /not allowed to create rooms/);
+  } finally {
+    await db.updateTable('memberships').set({ left_at: null })
+      .where('scope_type', '=', 'workspace').where('scope_id', '=', wsp).where('actor_id', '=', alice).execute();
+  }
+  assert.equal((await db.selectFrom('spaces').select('id').where('workspace_id', '=', wsp).execute()).length, before.length);
+  assert.deepEqual(recorded.delivered, []);
+  await app.close();
+});
+
+test('create_room refuses a bad name, an inactive agent, and a run that is not running', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+
+  const unnamed = await call(app, r, 'create_room', { name: '   ' }) as RoomAnswer;
+  assert.equal(unnamed.result, 'failed');
+  assert.equal((await call(app, r, 'create_room', { name: 'x'.repeat(101) })).result, 'failed');
+
+  await db.updateTable('actors').set({ state: 'deactivated' }).where('id', '=', triage).execute();
+  try {
+    assert.equal((await call(app, r, 'create_room', { name: 'Agent gone' })).result, 'agent_inactive');
+  } finally {
+    await db.updateTable('actors').set({ state: 'active' }).where('id', '=', triage).execute();
+  }
+
+  await db.updateTable('agent_runs').set({ state: 'completed' }).where('id', '=', r.runId).execute();
+  assert.equal((await call(app, r, 'create_room', { name: 'Too late' })).result, 'run_not_running');
+  assert.deepEqual(recorded.delivered, []);
+  await app.close();
+});
+
+test('a room a person creates themselves is unchanged: no on_behalf_of, one admin', opts, async () => {
+  const made = await createRoom(db, { workspaceId: wsp, name: `p-${ulid('x')}`, createdBy: alice });
+  const space = await db.selectFrom('spaces').select(['created_by_actor_id', 'on_behalf_of_actor_id'])
+    .where('id', '=', made.spaceId).executeTakeFirstOrThrow();
+  assert.deepEqual(space, { created_by_actor_id: alice, on_behalf_of_actor_id: null });
+  const members = await db.selectFrom('memberships').select(['actor_id', 'role'])
+    .where('scope_type', '=', 'space').where('scope_id', '=', made.spaceId).execute();
+  assert.deepEqual(members, [{ actor_id: alice, role: 'admin' }]);
+  assert.deepEqual(made.events.map(event => event.type), ['space.created', 'chat.created', 'space.member_added']);
+});

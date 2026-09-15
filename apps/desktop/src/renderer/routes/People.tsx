@@ -7,13 +7,21 @@
 // screen. Before that existed this queried once on mount and re-ran only on a
 // workspace switch — so an actor arriving through an accepted invitation was
 // invisible until the window was reloaded, with no error and no spinner.
+import { can, workspace as workspaceTarget } from '@relayed/authz';
+import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
-import { blobSrc, initials } from '@/lib/ipc';
+import { blobSrc, grantsOf, initials } from '@/lib/ipc';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { useOpenDm } from '@/features/dms/useOpenDm';
 
 export function People() {
   const { rows: actors, status, error } = useQuery('actors.list');
+  const { state } = useSession();
+  const { open, opening, failure, offline } = useOpenDm();
+  const me = state.workspaces.find(row => row.workspaceId === state.workspaceId)?.actorId;
+  const mayMessage = state.workspaceId !== null && can(grantsOf(state), 'create_space', workspaceTarget(state.workspaceId));
 
   return (
     <div className="space-y-4">
@@ -43,6 +51,8 @@ export function People() {
         <p className="text-sm text-destructive">Could not refresh the directory: {error}</p>
       )}
 
+      {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
+
       {actors && actors.length > 0 && (
         <ul className="max-w-xl divide-y rounded-md border">
           {actors.map(actor => (
@@ -59,6 +69,14 @@ export function People() {
               </div>
               {actor.type === 'agent' && <Badge variant="outline">agent</Badge>}
               {actor.state !== 'active' && <Badge variant="secondary">{actor.state}</Badge>}
+              {/* Opens the DM already there, or starts one. */}
+              {mayMessage && actor.state === 'active' && actor.id !== me && (
+                <Button variant="outline" size="sm" disabled={opening || offline}
+                  title={offline ? 'Starting a conversation needs a connection' : undefined}
+                  onClick={() => { void open([actor.id]); }}>
+                  Message
+                </Button>
+              )}
             </li>
           ))}
         </ul>

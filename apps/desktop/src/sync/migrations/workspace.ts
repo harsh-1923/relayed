@@ -671,4 +671,26 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE INDEX panel_space ON panels(space_id, opened_at DESC);
     `,
   },
+  {
+    version: 16,
+    name: 'space_attribution',
+    // Whose request a space was made for, when an agent made it for someone:
+    // with `created_by_actor_id` (here since version 1, and now filled in),
+    // for drawing "created by @triage for Alice". Nullable, because rows
+    // already here predate it, and neither grants anything.
+    up: `
+      ALTER TABLE spaces ADD COLUMN on_behalf_of_actor_id TEXT;
+    `,
+  },
+  {
+    version: 17,
+    name: 'dm_members',
+    // Who a DM or group DM is between, as a JSON array of actor ids — what the
+    // sidebar names it by. Carried on the space row because this replica holds
+    // only its own memberships, never who else is in a space. NULL for every
+    // other kind.
+    up: `
+      ALTER TABLE spaces ADD COLUMN member_ids TEXT;
+    `,
+  },
 ];

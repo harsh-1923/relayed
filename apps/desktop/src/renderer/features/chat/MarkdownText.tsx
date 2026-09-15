@@ -23,6 +23,7 @@ import remarkGfm from 'remark-gfm';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
 import { parseSlashCommand } from '../../../shared/slash-commands.ts';
+import { spaceLinkTarget } from '../../../shared/spaces.ts';
 import { CopyButton } from './CopyButton';
 import './markdown.css';
 
@@ -43,6 +44,10 @@ export function MarkdownText({
         <span className="md-mention" data-mention-kind={href.startsWith('actor:') ? 'actor' : 'audience'}>
           @{children}
         </span>
+      ) :
+      // A room in this app: opens it, with no address to show on hover.
+      spaceLinkTarget(href) ? (
+        <button type="button" className="md-link" onClick={() => { if (href) onOpenLink?.(href); }}>{children}</button>
       ) :
       <HoverCard>
         <HoverCardTrigger
@@ -73,7 +78,7 @@ export function MarkdownText({
         remarkPlugins={[remarkGfm]}
         skipHtml
         components={components}
-        urlTransform={(url) => isSemanticMention(url) ? url : defaultUrlTransform(url)}
+        urlTransform={(url) => isSemanticMention(url) || spaceLinkTarget(url) ? url : defaultUrlTransform(url)}
       >
         {text}
       </Markdown>

@@ -68,6 +68,9 @@ interface SpaceMemberAddedHydration {
   space: {
     id: string; kind: string; name: string | null; slug: string | null;
     visibility: string | null; membership_policy: string; lifecycle: string;
+    /** Absent from a server that predates them. */
+    created_by_actor_id?: string | null; on_behalf_of_actor_id?: string | null;
+    member_ids?: string[] | null;
     rev: number;
   };
   chats: {
@@ -278,16 +281,22 @@ function spaceMemberAdded(
 
   db.prepare(`
     INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
-                        membership_policy, lifecycle, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        membership_policy, lifecycle, created_by_actor_id, on_behalf_of_actor_id,
+                        member_ids, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       kind = excluded.kind, name = excluded.name, slug = excluded.slug,
       visibility = excluded.visibility,
       membership_policy = excluded.membership_policy,
       lifecycle = excluded.lifecycle,
+      created_by_actor_id = excluded.created_by_actor_id,
+      on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
+      member_ids = excluded.member_ids,
       updated_at = excluded.updated_at
   `).run(space.id, stream.id, space.kind, space.name, space.slug,
-         space.visibility, space.membership_policy, space.lifecycle, now, now);
+         space.visibility, space.membership_policy, space.lifecycle,
+         space.created_by_actor_id ?? null, space.on_behalf_of_actor_id ?? null,
+         space.member_ids ? JSON.stringify(space.member_ids) : null, now, now);
 
   const chat = db.prepare(`
     INSERT INTO chats (id, workspace_id, space_id, kind, name, created_at, updated_at)

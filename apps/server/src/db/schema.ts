@@ -108,6 +108,10 @@ export interface SpacesTable {
   membership_policy: 'open' | 'invite' | 'sealed';
   lifecycle: Generated<'active' | 'dormant' | 'archived'>;
   created_by_actor_id: string | null;
+  /** The person whose request an agent created this for. NULL when a person created it themselves. */
+  on_behalf_of_actor_id: Generated<string | null>;
+  /** A DM's or group DM's founding participants, sorted and comma-joined. NULL for every other kind. */
+  dm_key: Generated<string | null>;
   last_activity_at: Generated<Timestamp>;
   /**
    * Revision counter for the `space:<id>` stream — renames, membership changes,

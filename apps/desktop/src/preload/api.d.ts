@@ -485,6 +485,15 @@ export interface RelayedApi {
     op: "spaces.create",
     params: { workspaceId: string; kind: 'channel' | 'room'; name: string; visibility: 'public' | 'private' },
   ): Promise<CommandAnswer<{ space_id: string; chat_id: string }>>;
+  /**
+   * Open the DM or group DM with these people — the one already there, or a new
+   * one. `actorIds` are the others; you are always in it. `created` is false
+   * when it already existed.
+   */
+  query(
+    op: "dms.open",
+    params: { workspaceId: string; actorIds: string[] },
+  ): Promise<CommandAnswer<{ space_id: string; chat_id: string; created: boolean }>>;
   query(
     op: "spaces.addMember",
     params: { spaceId: string; actorId: string },

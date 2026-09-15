@@ -266,6 +266,8 @@ export interface WelcomePayload {
   spaces: {
     id: string; kind: string; name: string | null; slug: string | null;
     visibility: string | null; membershipPolicy: string; lifecycle: string;
+    createdByActorId: string | null; onBehalfOfActorId: string | null;
+    memberIds: string[] | null;
     rev: number;
   }[];
   chats: {
@@ -654,18 +656,24 @@ export class Storage {
       const now = Date.now();
       const space = db.prepare(`
         INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
-                            membership_policy, lifecycle, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            membership_policy, lifecycle, created_by_actor_id, on_behalf_of_actor_id,
+                            member_ids, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           kind = excluded.kind, name = excluded.name, slug = excluded.slug,
           visibility = excluded.visibility,
           membership_policy = excluded.membership_policy,
           lifecycle = excluded.lifecycle,
+          created_by_actor_id = excluded.created_by_actor_id,
+          on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
+          member_ids = excluded.member_ids,
           updated_at = excluded.updated_at
       `);
       for (const row of payload.spaces) {
         space.run(row.id, workspaceId, row.kind, row.name, row.slug,
-                  row.visibility, row.membershipPolicy, row.lifecycle, now, now);
+                  row.visibility, row.membershipPolicy, row.lifecycle,
+                  row.createdByActorId, row.onBehalfOfActorId,
+                  row.memberIds ? JSON.stringify(row.memberIds) : null, now, now);
       }
 
       const chat = db.prepare(`
@@ -908,9 +916,31 @@ export class Storage {
 
   #readSpaces(spaceId: string | null): Space[] {
     const spaces = this.workspace.prepare(`
-      SELECT id, kind, name, slug, visibility
+      SELECT id, kind, name, slug, visibility, created_by_actor_id, on_behalf_of_actor_id, member_ids
         FROM spaces WHERE lifecycle = 'active' AND (?1 IS NULL OR id = ?1) ORDER BY name
-    `).all(spaceId) as { id: string; kind: string; name: string | null; slug: string | null; visibility: string | null }[];
+    `).all(spaceId) as {
+      id: string; kind: string; name: string | null; slug: string | null; visibility: string | null;
+      created_by_actor_id: string | null; on_behalf_of_actor_id: string | null; member_ids: string | null;
+    }[];
+
+    // A DM is named by the other people in it, from the directory this replica
+    // already holds: resolved here, at read, so a rename lands everywhere.
+    const me = this.workspaces().find(row => row.workspaceId === this.workspaceId)?.actorId ?? null;
+    const membersOf = (row: { member_ids: string | null }): string[] | null => {
+      if (!row.member_ids) return null;
+      try {
+        const parsed: unknown = JSON.parse(row.member_ids);
+        return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : null;
+      } catch { return null; }
+    };
+    const mentioned = [...new Set(spaces.flatMap(space => membersOf(space) ?? []))];
+    const names = new Map<string, string>();
+    if (mentioned.length > 0) {
+      const rows = this.workspace.prepare(
+        `SELECT id, display_name FROM actors WHERE id IN (${mentioned.map(() => '?').join(',')})`,
+      ).all(...mentioned) as { id: string; display_name: string }[];
+      for (const row of rows) names.set(row.id, row.display_name);
+    }
 
     const chats = this.workspace.prepare(`
       SELECT c.id, c.space_id, c.kind, c.name,
@@ -924,9 +954,14 @@ export class Storage {
     return spaces.map(space => ({
       id: space.id,
       kind: space.kind,
-      name: spaceName(space),
+      name: spaceName(space, (membersOf(space) ?? [])
+        .filter(id => id !== me)
+        .flatMap(id => names.get(id) ?? [])),
       slug: space.slug,
       visibility: space.visibility,
+      createdByActorId: space.created_by_actor_id,
+      onBehalfOfActorId: space.on_behalf_of_actor_id,
+      memberIds: membersOf(space),
       chats: chats
         .filter(chat => chat.space_id === space.id)
         .map((chat): SpaceChat => ({

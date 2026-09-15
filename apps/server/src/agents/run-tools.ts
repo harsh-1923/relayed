@@ -1,12 +1,15 @@
-// The two tools every workspace-agent run is given, instead of a list someone
-// picked (docs/WORKSPACE-AGENTS-IMPL.md, step 7, D21). The dispatcher offers
-// them; the broker answers them. Defined once here so the names the model is
-// told and the names the broker dispatches on cannot drift apart.
+// The tools a workspace-agent run is given (docs/WORKSPACE-AGENTS-IMPL.md,
+// step 7, D21): the two that reach external services through Composio, and the
+// app's own — acting in Relayed itself, answered by the broker without
+// Composio. The dispatcher offers them; the broker answers them. Defined once
+// here so the names the model is told and the names the broker dispatches on
+// cannot drift apart.
 import type { RunTool } from '@relayed/protocol';
 
 export const FIND_TOOLS = 'find_tools';
 export const CALL_TOOL = 'call_tool';
 export const OPEN_PANEL = 'open_panel';
+export const CREATE_ROOM = 'create_room';
 
 export interface OfferedToolkit { slug: string; name: string }
 
@@ -20,8 +23,33 @@ export function runTools(toolkits: readonly OfferedToolkit[], where: { inRoom: b
   return [
     ...(toolkits.length > 0 ? serviceTools(toolkits) : []),
     ...(where.inRoom ? [OPEN_PANEL_TOOL] : []),
+    CREATE_ROOM_TOOL,
   ];
 }
+
+/**
+ * Makes a room for the person who asked, with this agent in it (every run,
+ * wherever it is). The agent is the room's creator; the person joins as an
+ * admin beside it, and it is their permission that decides whether a room may
+ * be made at all.
+ */
+const CREATE_ROOM_TOOL: RunTool = {
+  name: CREATE_ROOM,
+  description: 'Create a new room in this workspace for the person who asked, with you and them in it. '
+    + 'Only when they explicitly ask for a room to be created or started — never on your own initiative. '
+    + 'Private unless they ask for a public one. Returns a link to the room: put it in your reply exactly as given.',
+  parameters: {
+    type: 'object',
+    required: ['name'],
+    properties: {
+      name: { type: 'string', description: 'The room name, short and specific — e.g. "HAR-21 agents act like humans".' },
+      visibility: {
+        type: 'string', enum: ['private', 'public'],
+        description: 'private (the default): only people added can see it. public: anyone in the workspace can find and join it. Use public only when the person asks for it.',
+      },
+    },
+  },
+};
 
 /**
  * Opens a page beside the chat for everyone in the room (PANELS.md). Only in a
@@ -87,8 +115,17 @@ function serviceTools(toolkits: readonly OfferedToolkit[]): RunTool[] {
 
 /** Appended to the agent's own instructions. Empty when nothing is offered. */
 export function toolsPrompt(toolkits: readonly OfferedToolkit[], where: { inRoom: boolean }): string {
-  return servicesPrompt(toolkits) + (where.inRoom ? ROOM_PROMPT : '');
+  return servicesPrompt(toolkits) + (where.inRoom ? ROOM_PROMPT : '') + CREATE_ROOM_PROMPT;
 }
+
+// Last, because a service may stop the run to ask the person for access — and
+// the request is then run again once they allow it. A room made before that
+// stop would be made a second time on the rerun; made after everything else,
+// it is only made by a run that got that far.
+const CREATE_ROOM_PROMPT = `\n\nIf the person asks you to create or start a room, use ${CREATE_ROOM}, and call it `
+  + 'LAST: do everything else the request needs first — reading from services, and anything else asked for — '
+  + `and only then create the room. Never create a room nobody asked for. Put the link ${CREATE_ROOM} returns in `
+  + 'your reply, exactly as given.';
 
 const ROOM_PROMPT = `\n\nThis chat is in a room, where people work on one thing together. When you create, `
   + `find or change something that lives on a web page — a ticket, a dashboard, a trace, a document — open that `

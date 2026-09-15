@@ -48,10 +48,11 @@ export const TOPICS: TopicsFor = {
   // a space topic is per-space and this read spans all of them, so it depends
   // on the coarse one. A chat arriving in a space I am in wakes it through
   // `spaces`, which is what `chat.created` invalidates alongside.
-  'spaces.list': () => [topic.spaces()],
+  // `actors` too: a DM is named by the people in it, read from the directory.
+  'spaces.list': () => [topic.spaces(), topic.actors()],
   // `spaces` as well as the space's own topic: a rename or a new chat arrives
   // on the space stream, which invalidates both.
-  'space.get': ({ spaceId }) => [topic.space(spaceId), topic.spaces()],
+  'space.get': ({ spaceId }) => [topic.space(spaceId), topic.spaces(), topic.actors()],
   // Only this chat's messages. `chatState` is NOT here: a read cursor moving
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.

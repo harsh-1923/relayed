@@ -172,6 +172,7 @@ export class LocalStore {
 
     return spaces.map(space => ({
       id: space.id, kind: space.kind, name: spaceName(space), slug: space.slug, visibility: space.visibility,
+      createdByActorId: null, onBehalfOfActorId: null, memberIds: null,
       // A local room has one reader, who is always caught up: nothing is unread.
       chats: chats.filter(chat => chat.space_id === space.id)
         .map(chat => ({ id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name, unread: 0, mentions: 0 })),

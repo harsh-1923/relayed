@@ -517,8 +517,10 @@ POST /run
   "model": "anthropic/claude-sonnet-5",
   "thinkingLevel": "medium",
   "palette": "none",                          // NEW
-  "tools": [ { "name": "find_tools", … },          // NEW — the same two for every run
-             { "name": "call_tool",  … } ],
+  "tools": [ { "name": "find_tools", … },          // NEW — when any toolkit is enabled
+             { "name": "call_tool",  … },
+             { "name": "open_panel", … },          // in a room, not from a private chat
+             { "name": "create_room", … } ],       // every run
   "grant": "eyJ…"                             // NEW
 }
 ```
@@ -529,7 +531,7 @@ POST /run
 |---|---|
 | `runId` | The runtime currently mints its own. The server's id is the one on the run row, the grant and the reply; two ids for one run is the drift the runtime doc warns about |
 | `palette` | **`none` removes `bash`, `read`, `write`, `edit`, `grep`, `find` and `ls`.** A workspace agent's prompt is written by whoever mentions it, which is the exact trigger `AGENT-RUNTIME.md` §5 names. Removing the tools answers that trigger for these agents without a sandbox. The palette the coding agent in a published local room needs is that feature's problem (`LOCAL-ROOMS.md` §14) |
-| `tools` | **Two, the same for every run** (`apps/server/src/agents/run-tools.ts`): `find_tools({ toolkit, use_case })`, where `toolkit` is an enum of the enabled toolkits, and `call_tool({ tool, arguments })`. Registered as pi `customTools` whose `execute` calls the broker, passing pi's `toolCallId` and forwarding its abort signal. Named in pi's `tools` allowlist too, as `show_ui` already must be (`AGENT-RESPONSES.md`, pi on the service §5.4). Why not the schemas themselves: all of GitHub's are ~459,000 tokens and Notion's ~92,000 (`spikes/composio-discovery/`). Why the model names the toolkit: Composio's search never answers "nothing fits" — asked to post in Slack with only GitHub enabled, it returns GitHub tools. The system prompt names the services and says never to use one in place of another |
+| `tools` | **Service tools and app tools** (`apps/server/src/agents/run-tools.ts`). The service tools reach external accounts through Composio, and every run gets them while any toolkit is enabled: `find_tools({ toolkit, use_case })`, where `toolkit` is an enum of the enabled toolkits, and `call_tool({ tool, arguments })`. The app tools act in Relayed itself and never reach Composio: `open_panel({ url, title? })`, offered in a room but not from a private chat (`PANELS.md`), and `create_room({ name, visibility? })`, offered to every run (§5.5). Registered as pi `customTools` whose `execute` calls the broker, passing pi's `toolCallId` and forwarding its abort signal. Named in pi's `tools` allowlist too, as `show_ui` already must be (`AGENT-RESPONSES.md`, pi on the service §5.4). Why not the schemas themselves: all of GitHub's are ~459,000 tokens and Notion's ~92,000 (`spikes/composio-discovery/`). Why the model names the toolkit: Composio's search never answers "nothing fits" — asked to post in Slack with only GitHub enabled, it returns GitHub tools. The system prompt names the services and says never to use one in place of another |
 | `grant` | The only credential the runtime holds for a run, and it only works for that run (§5.5) |
 
 **The broker's address is runtime configuration, never a request field.** A
@@ -582,6 +584,34 @@ profile, the Composio account id, and instructions to call tools the session doe
 not have. A search is not a call and is not recorded in `agent_tool_calls`; the
 model may call a tool it never searched for, since step 5 checks every call on
 its own.
+
+**The app tools go through steps 1–4, then act in Relayed.** No
+`agent_permissions` row, no connection and no card: nothing of anyone's
+third-party account is spent, and each writes what it did through the ordinary
+sync path, so it is attributed like any other change.
+
+- **`open_panel`** opens a page beside the chat for everyone in the room
+  (`PANELS.md`), recorded with the agent as `created_by_actor_id` and the
+  invoker as `on_behalf_of_actor_id`. Opening the same page again brings it
+  forward rather than adding a second.
+- **`create_room`** makes a room for the invoker, with the agent in it. The
+  workspace is the run's own chat's, and both identities come from step 3;
+  only `name` (the same rule the create-space route applies) and `visibility`
+  come from the model. The agent is the room's `created_by_actor_id` and its
+  founding admin. The invoker is `on_behalf_of_actor_id`, and joins as an admin
+  through the ordinary add — the same `space.member_added` and the same marker
+  (`SPACE-MEMBERSHIP-MARKERS.md`) — in the same transaction, so the room stays
+  manageable if the agent is later deactivated, and the invoker's devices learn
+  of it the way they learn of any add. **Private unless the invoker asks for a
+  public one.** The permission checked is **the invoker's own `create_space`**,
+  not the intersection `DESIGN.md` §6.4 states for Relayed resources: every
+  agent is a workspace member, so the agent's half would never refuse, and the
+  room is the invoker's. The result carries `[name](space:spc_…)`, which the
+  prompt says to put in the reply and the desktop opens as the room. **The
+  prompt says to create it last** — after anything the request needs from a
+  service — because a service can stop the run for access, and resolving that
+  card re-runs the whole request: a room made before the stop would be made
+  again. That is an instruction, not a guarantee (§13).
 
 **A call id executes at most once.** The row is claimed before anything else is
 decided, so a runtime that sends the same call twice — a retry after a dropped
@@ -1761,6 +1791,7 @@ gapped across the reply with a stale reply count.
 | An agent gains a destructive tool silently | No wildcards; tools are listed one by one, and a higher effect re-asks every invoker (§4.3, §6.4) |
 | A deactivated person's runs continue | Checked at claim and at every tool call (§5.3, §5.5) |
 | Other people's text steers a run | Labelled as context (§5.6). Reduced, not prevented; the approval guardrail is deferred by decision (§13) |
+| Text a run reads — a ticket, a page, another message — tells it to create rooms | `create_room` spends only the invoker's own `create_space`, which they could use themselves; its prompt says to create one only when asked, and a room is private by default. No hard cap per run, by decision (§13) |
 | Third-party content ends up in a room | Accepted etiquette, as `DESIGN.md` §6.6 already records. Deferred by decision |
 
 ---
@@ -1911,6 +1942,8 @@ purpose rather than rediscovered.
 | **External agents calling our API** | A customer brings their own. That is where WorkOS M2M or Agent Registration decides (`DESIGN.md` §16) |
 | **Any use of restricted messages** — person-to-person or otherwise | Built and dormant (§8.1). Re-decide §8.9 for that use first |
 | **Letting a creator restrict an agent's tools** | A creator needs an agent that must never, say, merge. Decided against for v1: agents are open, and each person's permission is the guard |
+| **A hard limit on rooms per run, and `create_room` safe to repeat** | Rooms nobody asked for, or a room made twice because a re-run (§7.4) repeated a request that had already made it. Today only the prompt holds both: create one only when asked, and last. A key on the triggering message and the agent, kept across attempts, makes a repeat return the room already made |
+| **An agent's own `create_space` checked too** | An agent that should not create spaces for anyone. Today the invoker's permission alone decides (§5.5) |
 | **Expiring untouched cards** | A card resolved weeks later re-runs a stale request. `access_requests.created_at` is when it was raised, which is all an age-based expiry needs |
 
 ---

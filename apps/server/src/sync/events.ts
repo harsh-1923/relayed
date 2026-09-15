@@ -161,6 +161,11 @@ export interface SpaceCreated {
   visibility: 'public' | 'private' | null;
   membership_policy: 'open' | 'invite' | 'sealed';
   lifecycle: 'active' | 'dormant' | 'archived';
+  /** Who created it, and — when an agent did it for someone — whose request it was. Neither grants anything. */
+  created_by_actor_id: string | null;
+  on_behalf_of_actor_id: string | null;
+  /** Who a DM or group DM is between — what a client names it by. Null for every other kind. */
+  member_ids: string[] | null;
 }
 
 /**
@@ -197,6 +202,8 @@ export interface SpaceMemberAdded {
     space: {
       id: string; kind: string; name: string | null; slug: string | null;
       visibility: string | null; membership_policy: string; lifecycle: string;
+      created_by_actor_id: string | null; on_behalf_of_actor_id: string | null;
+      member_ids: string[] | null;
       rev: number;
     };
     chats: {

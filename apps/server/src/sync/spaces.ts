@@ -30,14 +30,60 @@ export interface NewChannel {
   name: string;
   slug?: string | null;
   visibility?: 'public' | 'private';
+  /** The actor performing the creation: a person, or an agent a person asked. */
   createdBy: string;
+  /**
+   * The person an agent is creating this for. Their `create_space` permission
+   * is the one checked, they are recorded against the space, and they join it
+   * as an admin beside the agent — so the room stays theirs to manage if the
+   * agent is later deactivated. Absent when a person creates it themselves.
+   */
+  onBehalfOf?: string;
+}
+
+/** The most people in a group DM, the opener included. */
+export const DM_MAX_MEMBERS = 9;
+
+/** A DM's founding participants: the opener and whoever they chose, once each, sorted. */
+export const dmKey = (actorIds: readonly string[]): string => [...new Set(actorIds)].sort().join(',');
+
+/** Who a DM or group DM was opened between, from its key; null for every other kind. */
+export const dmMembers = (dmKey: string | null): string[] | null => (dmKey ? dmKey.split(',') : null);
+
+/** A DM was asked for with nobody else in it, or with more people than a group DM holds. */
+export class InvalidDmMembersError extends Error {
+  readonly reason: 'nobody' | 'too_many';
+  constructor(reason: 'nobody' | 'too_many') {
+    super(reason === 'nobody' ? 'a conversation needs someone else in it' : `a group DM holds at most ${DM_MAX_MEMBERS} people`);
+    this.name = 'InvalidDmMembersError';
+    this.reason = reason;
+  }
+}
+
+export interface OpenedDm extends CreatedSpace {
+  /** False when the conversation already existed and was only opened. */
+  created: boolean;
+}
+
+/** The longest name a space may have. */
+const SPACE_NAME_MAX = 100;
+
+/**
+ * A space name as given, trimmed — or null when it cannot be one. The single
+ * rule, shared by the create route and an agent's `create_room`, so the two
+ * cannot accept different names.
+ */
+export function spaceNameFrom(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  return name && name.length <= SPACE_NAME_MAX ? name : null;
 }
 
 export interface CreatedSpace {
   spaceId: string;
   chatId: string;
   /**
-   * The three events creation produced, in revision order, for the caller to
+   * The events creation produced, in revision order, for the caller to
    * deliver. Returned rather than delivered here for the same reason `send`
    * returns its own: nothing in this file knows a socket exists, and fanning
    * out inside the transaction would publish a space that a rollback un-created.
@@ -98,9 +144,11 @@ export async function createRoom(db: Kysely<DB>, input: Omit<NewChannel, 'slug'>
 async function createNamedSpace(
   db: Kysely<DB>, input: NewChannel, kind: 'channel' | 'room', chatKind: 'sole' | 'default',
 ): Promise<CreatedSpace> {
-  const grants = await loadGrants(db, input.createdBy);
-  // Through can(), never a role comparison here. Membership alone suffices for
-  // this action today; if that ever needs a role, it changes in one file.
+  // The authority spent is the requester's: an agent creating a room for Alice
+  // may because Alice may. Through can(), never a role comparison here.
+  // Membership alone suffices for this action today; if that ever needs a
+  // role, it changes in one file.
+  const grants = await loadGrants(db, input.onBehalfOf ?? input.createdBy);
   if (!can(grants, 'create_space', workspaceTarget(input.workspaceId))) {
     throw new Forbidden('create_space', workspaceTarget(input.workspaceId));
   }
@@ -131,6 +179,7 @@ async function createNamedSpace(
         // stays explicit either way (DESIGN.md §7.2).
         membership_policy: membershipPolicy,
         created_by_actor_id: input.createdBy,
+        on_behalf_of_actor_id: input.onBehalfOf ?? null,
       }).execute();
 
       await trx.insertInto('chats').values({
@@ -159,6 +208,8 @@ async function createNamedSpace(
           id: spaceId, kind, name: input.name,
           slug: input.slug ?? null, visibility,
           membership_policy: membershipPolicy, lifecycle: 'active',
+          created_by_actor_id: input.createdBy, on_behalf_of_actor_id: input.onBehalfOf ?? null,
+          member_ids: null,
         }, { kind: 'stream' }));
 
       events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)),
@@ -170,6 +221,15 @@ async function createNamedSpace(
         actor_id: input.createdBy, role: 'admin', by_actor_id: input.createdBy,
         hydration: await hydrationSnapshot(trx, spaceId, founding.rev),
       }, { kind: 'stream' }));
+
+      // The person it was made for joins the way anyone added to a room does —
+      // the same membership event and the same marker in the chat ("Alice was
+      // added by Triage") — so their devices learn of it on the ordinary add
+      // path, with nothing special to receive.
+      if (input.onBehalfOf && input.onBehalfOf !== input.createdBy) {
+        const added = await addMemberWithMarker(trx, spaceId, input.onBehalfOf, 'admin', input.createdBy, ulid('msg'));
+        if (added.status === 'added') events.push(added.membershipEvent, added.messageEvent);
+      }
     });
   } catch (err) {
     if (isConstraint(err, 'space_slug')) throw new SlugTakenError(input.slug ?? '');
@@ -177,6 +237,117 @@ async function createNamedSpace(
   }
 
   return { spaceId, chatId, events };
+}
+
+/**
+ * Open the DM or group DM between the opener and these people: the one that
+ * already exists, or a new one (DESIGN.md §7.1).
+ *
+ * One other person is a `dm`; two to eight are a `group_dm`. A conversation is
+ * identified by its founding participants (`spaces.dm_key`), so asking again
+ * for the same people — in any order, by any of them — opens the same one.
+ * Opening one you have left brings you back into it; nobody else who left is
+ * brought back by your opening it.
+ *
+ * Everyone joins as `member`: a DM has no admin, and nobody is added to one
+ * later (`sealed`). Each participant gets their own `space.member_added` with
+ * the hydration, so every one of their devices learns of it the way it learns
+ * of any space it is put in. No marker: nobody was "added by" anyone.
+ */
+export async function openDm(
+  db: Kysely<DB>, input: { workspaceId: string; openedBy: string; withActorIds: readonly string[] },
+): Promise<OpenedDm> {
+  const participants = [...new Set([input.openedBy, ...input.withActorIds])];
+  if (participants.length < 2) throw new InvalidDmMembersError('nobody');
+  if (participants.length > DM_MAX_MEMBERS) throw new InvalidDmMembersError('too_many');
+
+  const grants = await loadGrants(db, input.openedBy);
+  if (!can(grants, 'create_space', workspaceTarget(input.workspaceId))) {
+    throw new Forbidden('create_space', workspaceTarget(input.workspaceId));
+  }
+  const workspace = await db.selectFrom('workspaces').select('org_id')
+    .where('id', '=', input.workspaceId).executeTakeFirst();
+  if (!workspace) throw new UnknownWorkspaceError(input.workspaceId);
+
+  // Everyone in it must be someone this workspace can reach today.
+  const reachable = new Set((await db.selectFrom('actors')
+    .innerJoin('memberships', join => join
+      .on('memberships.scope_type', '=', 'workspace')
+      .on('memberships.scope_id', '=', input.workspaceId)
+      .onRef('memberships.actor_id', '=', 'actors.id')
+      .on('memberships.left_at', 'is', null))
+    .select('actors.id')
+    .where('actors.id', 'in', participants)
+    .where('actors.state', '=', 'active')
+    .execute()).map(row => row.id));
+  const unreachable = participants.find(id => !reachable.has(id));
+  if (unreachable) throw new SpaceMemberUnavailableError(unreachable);
+
+  const key = dmKey(participants);
+  const existing = await findDm(db, input.workspaceId, key);
+  if (existing) return reopenDm(db, existing, input.openedBy);
+
+  const kind = participants.length === 2 ? 'dm' : 'group_dm';
+  const spaceId = ulid('spc');
+  const chatId = ulid('cht');
+  const events: AppendedEvent[] = [];
+  try {
+    await db.transaction().execute(async (trx) => {
+      await trx.insertInto('spaces').values({
+        id: spaceId, org_id: workspace.org_id, workspace_id: input.workspaceId,
+        kind, name: null, slug: null, topic: null, visibility: null,
+        membership_policy: 'sealed', created_by_actor_id: input.openedBy, dm_key: key,
+      }).execute();
+      await trx.insertInto('chats').values({
+        id: chatId, workspace_id: input.workspaceId, space_id: spaceId,
+        kind: 'sole', name: null, created_by_actor_id: input.openedBy,
+      }).execute();
+      await trx.insertInto('memberships')
+        .values(participants.map(actorId => ({ scope_type: 'space', scope_id: spaceId, actor_id: actorId, role: 'member' as const })))
+        .execute();
+
+      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)), 'space.created', {
+        id: spaceId, kind, name: null, slug: null, visibility: null,
+        membership_policy: 'sealed', lifecycle: 'active',
+        created_by_actor_id: input.openedBy, on_behalf_of_actor_id: null, member_ids: dmMembers(key),
+      }, { kind: 'stream' }));
+      events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(spaceId)), 'chat.created',
+        { id: chatId, space_id: spaceId, kind: 'sole', name: null }, { kind: 'stream' }));
+      // The opener first, so their own device has the conversation before anyone else's.
+      for (const actorId of [input.openedBy, ...participants.filter(id => id !== input.openedBy)]) {
+        const allocated = await allocateStream(trx, spaceStream(spaceId));
+        events.push(await appendEvent(trx, allocated, 'space.member_added', {
+          actor_id: actorId, role: 'member', by_actor_id: input.openedBy,
+          hydration: await hydrationSnapshot(trx, spaceId, allocated.rev),
+        }, { kind: 'stream' }));
+      }
+    });
+  } catch (err) {
+    // Somebody opened the same conversation a moment ago: open theirs.
+    if (isConstraint(err, 'space_dm_members')) {
+      const raced = await findDm(db, input.workspaceId, key);
+      if (raced) return reopenDm(db, raced, input.openedBy);
+    }
+    throw err;
+  }
+  return { spaceId, chatId, events, created: true };
+}
+
+async function findDm(db: Kysely<DB>, workspaceId: string, key: string): Promise<{ spaceId: string; chatId: string } | null> {
+  const row = await db.selectFrom('spaces')
+    .innerJoin('chats', join => join.onRef('chats.space_id', '=', 'spaces.id').on('chats.kind', '=', 'sole'))
+    .select(['spaces.id as spaceId', 'chats.id as chatId'])
+    .where('spaces.workspace_id', '=', workspaceId).where('spaces.dm_key', '=', key)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
+/** An existing conversation, opened: the opener comes back into it if they had left, and nothing else changes. */
+async function reopenDm(
+  db: Kysely<DB>, dm: { spaceId: string; chatId: string }, openedBy: string,
+): Promise<OpenedDm> {
+  const rejoined = await db.transaction().execute(trx => addMember(trx, dm.spaceId, openedBy, 'member', openedBy));
+  return { ...dm, events: rejoined.status === 'added' ? [rejoined.event] : [], created: false };
 }
 
 /**
@@ -443,7 +614,8 @@ async function hydrationSnapshot(
   trx: Transaction<DB>, spaceId: string, spaceRev: number,
 ): Promise<SpaceMemberAdded['hydration']> {
   const space = await trx.selectFrom('spaces')
-    .select(['id', 'kind', 'name', 'slug', 'visibility', 'membership_policy', 'lifecycle'])
+    .select(['id', 'kind', 'name', 'slug', 'visibility', 'membership_policy', 'lifecycle',
+             'created_by_actor_id', 'on_behalf_of_actor_id', 'dm_key'])
     .where('id', '=', spaceId).executeTakeFirstOrThrow();
   const chats = await trx.selectFrom('chats')
     .select(['id', 'space_id', 'kind', 'name', 'next_ord', 'next_rev'])
@@ -454,8 +626,9 @@ async function hydrationSnapshot(
   // already working beside — the same set `welcome` would give them.
   const panels = space.kind === 'room' ? await roomPanels(trx, [spaceId]) : [];
 
+  const { dm_key: key, ...row } = space;
   return {
-    space: { ...space, rev: spaceRev },
+    space: { ...row, member_ids: dmMembers(key), rev: spaceRev },
     chats: chats.map(chat => ({
       id: chat.id, space_id: chat.space_id, kind: chat.kind, name: chat.name,
       head_ord: chat.next_ord, head_rev: chat.next_rev,

@@ -1315,6 +1315,81 @@ observability is part of the feature):
 
 ---
 
+## 11a. Agents create rooms — `create_room`
+
+> **Built 2026-09-15.** **Checked:** server 419 tests, 8 of them new
+> (`broker.test.ts` 6, `run-tools.test.ts` 2), with the one failure
+> `find_tools refuses a toolkit that is not enabled` failing identically before
+> this change; desktop 574, 3 new; protocol 30. Migration 018 applied to the
+> development database. **Not checked:** a live run — a person asking an agent
+> for a room, the room appearing on their devices, and its link opening it.
+
+**Why.** Someone working with an agent asks it to start a room for the work —
+"make a room for HAR-21" — and today it can only tell them to make one.
+
+**The decisions** (the dev's, recorded in `WORKSPACE-AGENTS.md` §5.5):
+
+- An app tool, offered to **every** run, not tied to any toolkit or to where the run is.
+- The agent is the room's creator and founding admin; the person is `on_behalf_of` and joins as admin.
+- **The person's `create_space` alone** decides — not the intersection (`DESIGN.md` §6.4 records the exception).
+- **Private** unless the person asks for public.
+- The person joins through the ordinary add: the same event and marker, no new delivery path.
+- **Called last**, by the prompt, so an access card's re-run cannot find a room already made. No hard cap and no idempotency key yet (`WORKSPACE-AGENTS.md` §13).
+- The reply carries a room link, `[name](space:spc_…)`, which opens the room.
+
+### Schema
+
+Server migration 018: `spaces.on_behalf_of_actor_id`, nullable, `REFERENCES actors(id) ON DELETE SET NULL`.
+Replica version 16 adds the same column; `spaces.created_by_actor_id` was
+already in the replica and is now filled in.
+
+### Server
+
+| File | Change |
+|---|---|
+| `sync/spaces.ts` | `NewChannel.onBehalfOf`: authorization reads that actor's grants; the space row, `space.created` and the join hydration carry both attributions; the person is added with `addMemberWithMarker(…, 'admin', agent, ulid('msg'))` inside the creating transaction. `spaceNameFrom()` is the one name rule |
+| `sync/routes.ts` | `POST /spaces` uses `spaceNameFrom()` rather than its own check |
+| `sync/feed.ts`, `sync/socket.ts`, `sync/events.ts` | `welcome` spaces, the space gap snapshot, `SpaceCreated` and the hydration type carry `created_by_actor_id` and `on_behalf_of_actor_id` |
+| `agents/run-tools.ts` | `CREATE_ROOM` and its tool, in every run's list; the prompt: only when asked, last, put the link in the reply |
+| `agents/broker.ts` | `createRoomFor`: steps 1–4, the name, visibility defaulting to private, `createRoom` with the run chat's workspace, delivers every event, returns `{ space_id, chat_id, name, visibility, link }`; a `Forbidden` is a `failed` result saying the person may not create rooms |
+
+### Protocol
+
+`welcome` spaces gain `created_by_actor_id` and `on_behalf_of_actor_id`, nullable
+and optional, so a client meeting an older server parses it.
+
+### Client
+
+| File | Change |
+|---|---|
+| `sync/migrations/workspace.ts` | Version 16 |
+| `sync/effects.ts`, `sync/storage.ts`, `sync/index.ts` | The hydration upsert and `welcome` write both attributions; `Space` exposes `createdByActorId` and `onBehalfOfActorId` (null for local rooms) |
+| `shared/spaces.ts` | `spaceLinkTarget()`: the space id a `space:spc_…` link names, or null |
+| `renderer/features/chat/MarkdownText.tsx`, `ChatBubble.tsx` | A `space:` link survives the URL transform and draws as a link; clicking it opens `/w/:ws/s/:space`. Other links in a bubble still do nothing |
+
+### Tests
+
+| Test | Proves |
+|---|---|
+| `create_room` is offered with no toolkits and outside a room; the prompt says only when asked, and last | Every run has it |
+| A private room: agent `created_by` and admin, person `on_behalf_of` and admin; events `space.created`, `chat.created`, `space.member_added` ×2, the marker; both attributions on the event and the hydration | Creation, membership and delivery |
+| Public only when `visibility` is `public` | The default |
+| `workspace_id`, `created_by` and `on_behalf_of` in the arguments change nothing | Identities come from the run |
+| A person without `create_space` gets `failed`, and nothing is written or delivered | The person's permission, atomically |
+| An empty or over-long name, a deactivated agent and a finished run are refused | Steps 1–4 and the name rule |
+| A room a person creates is unchanged: `on_behalf_of` null, one admin, three events | No regression |
+| The replica keeps both attributions from a hydration and from `welcome`, and stores nulls from an older server | Replica |
+| `spaceLinkTarget` accepts only `space:spc_…` | The link |
+
+### By hand
+
+1. `@triage make a room for HAR-21`: the reply links the room, and it is in the sidebar, private, with Triage and you as admins, and "Harsh was added by Triage" in it.
+2. The link opens the room.
+3. On a second device signed in as the same person, the room appears without a reconnect.
+4. `@triage read HAR-21 in Linear and make a room for it`, with Linear not yet allowed: the card is raised and no room exists until the re-run after Allow — then exactly one.
+
+---
+
 ## 12. Cross-cutting
 
 ### 12.1 Module layout
@@ -1333,7 +1408,9 @@ apps/server/src/agents/
   catalogue.ts  connections.ts  permissions.ts  webhook.ts
   reconcile.ts  label.ts                                               step 4
   broker.ts  sessions.ts  tool-errors.ts  access.ts                    step 5; find_tools, call_tool,
-                                                                       one session per person, re-runs: step 7
+                                                                       one session per person, re-runs: step 7;
+                                                                       open_panel, create_room (§11a)
+  run-tools.ts          the tools a run is offered, and their prompt   step 7, §11a
 ```
 
 ### 12.2 Migrations
@@ -1348,13 +1425,15 @@ apps/server/src/agents/
 | 014 | `broker` | 5 |
 | 015 | `tool_schemas` — `toolkit_tools.input_schema`, from the catalogue | 5 |
 | 016 | `tool_discovery` — drops `agent_tools`; `composio_sessions` per person | 7 |
+| 017 | `panels` — a room's shared panels (`PANELS.md`) | `open_panel` |
+| 018 | `space_on_behalf_of` — `spaces.on_behalf_of_actor_id` | `create_room` (§11a) |
 
 Steps that run in parallel must renumber on merge rather than share a number.
 Every CHECK added gets one test per constraint, against Postgres
 (`AGENTS.md`, rule 2).
 
 Replica migrations in `apps/desktop/src/sync/migrations/workspace.ts`:
-version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4). Step 7 needs none: `agent_summaries.toolkits` stays until the wire field goes.
+version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4), 15 (room panels), 16 (`space_attribution`: `spaces.on_behalf_of_actor_id`, §11a). Step 7 needs none: `agent_summaries.toolkits` stays until the wire field goes.
 
 ### 12.3 Telemetry by step
 

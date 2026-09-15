@@ -10,7 +10,10 @@ import { caller as bearerCaller, type Caller } from '../auth/caller.ts';
 import { Forbidden } from '../authz/can.ts';
 import type { AppendedEvent } from './events.ts';
 import type { FanoutResult } from './fanout.ts';
-import { createChannel, createRoom, UnknownWorkspaceError, addToSpace, SealedSpaceError, SpaceMemberUnavailableError } from './spaces.ts';
+import {
+  createChannel, createRoom, spaceNameFrom, UnknownWorkspaceError, addToSpace, SealedSpaceError, SpaceMemberUnavailableError,
+  openDm, InvalidDmMembersError, DM_MAX_MEMBERS,
+} from './spaces.ts';
 
 export interface SpaceRouteDeps {
   db: Kysely<DB>;
@@ -49,7 +52,8 @@ export function spaceRoutes(deps: SpaceRouteDeps) {
         if (kind !== 'channel' && kind !== 'room') {
           return reply.code(400).send({ error: 'invalid', field: 'kind' });
         }
-        if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) {
+        const spaceName = spaceNameFrom(name);
+        if (!spaceName) {
           return reply.code(400).send({ error: 'invalid', field: 'name' });
         }
         if (visibility !== 'public' && visibility !== 'private') {
@@ -58,11 +62,46 @@ export function spaceRoutes(deps: SpaceRouteDeps) {
         try {
           const create = kind === 'channel' ? createChannel : createRoom;
           const result = await create(deps.db, {
-            workspaceId: me.workspaceId, createdBy: me.actorId, name: name.trim(), visibility,
+            workspaceId: me.workspaceId, createdBy: me.actorId, name: spaceName, visibility,
           });
           for (const event of result.events) await deps.deliver(event);
           return reply.code(201).send({ space_id: result.spaceId, chat_id: result.chatId });
         } catch (error) {
+          if (error instanceof UnknownWorkspaceError) {
+            return reply.code(404).send({ error: 'workspace_unavailable' });
+          }
+          return refusal(reply, error);
+        }
+      },
+    );
+
+    /**
+     * Open the DM or group DM with these people — the one already there, or a
+     * new one (DESIGN.md §7.1). `actor_ids` are the others; the caller is always
+     * in it. 201 when it was made, 200 when it already existed.
+     */
+    app.post<{ Body: { workspace_id?: unknown; actor_ids?: unknown } }>(
+      '/dms', async (req, reply) => {
+        const me = await who(req.headers.authorization);
+        if (!me) return reply.code(401).send({ error: 'unauthenticated' });
+        if (req.body?.workspace_id !== me.workspaceId) {
+          return reply.code(403).send({ error: 'forbidden', action: 'create_space' });
+        }
+        const actorIds = req.body?.actor_ids;
+        if (!Array.isArray(actorIds) || actorIds.some(id => typeof id !== 'string' || id.length === 0)) {
+          return reply.code(400).send({ error: 'invalid', field: 'actor_ids' });
+        }
+        try {
+          const opened = await openDm(deps.db, {
+            workspaceId: me.workspaceId, openedBy: me.actorId, withActorIds: actorIds as string[],
+          });
+          for (const event of opened.events) await deps.deliver(event);
+          return reply.code(opened.created ? 201 : 200)
+            .send({ space_id: opened.spaceId, chat_id: opened.chatId, created: opened.created });
+        } catch (error) {
+          if (error instanceof InvalidDmMembersError) {
+            return reply.code(400).send({ error: 'invalid', field: 'actor_ids', reason: error.reason, max: DM_MAX_MEMBERS });
+          }
           if (error instanceof UnknownWorkspaceError) {
             return reply.code(404).send({ error: 'workspace_unavailable' });
           }

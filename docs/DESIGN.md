@@ -535,6 +535,18 @@ speaks, which makes audit logs legible to anyone who has seen it before:
 boundary: "Alice invoked @docs-agent in Room R" is explicable in one sentence,
 which matters — consent UX that users do not understand is consent theater.
 
+**Attribution keeps both identities on what an agent writes.** The acting actor
+is the author or creator — `messages.author_id`, `spaces.created_by_actor_id`,
+`panels.created_by_actor_id` — always the agent; `on_behalf_of_actor_id` records
+whose authority was spent. Neither column grants anything.
+
+**One recorded exception to the intersection: an agent creating a room.**
+`create_room` (`WORKSPACE-AGENTS.md` §5.5) checks only the invoker's
+`create_space`. Creation has no existing resource for the agent to be a member
+of — the member-list argument above is about reaching rooms that already exist —
+every agent is a workspace member, and the room is made for the invoker, who
+joins it as an admin beside the agent.
+
 **No delegation chaining.** An agent may not delegate to another agent. `act`
 claims nest, so it is representable, but chained delegation is where security
 models go to die. Revisit when agent-to-agent work is designed.
@@ -683,6 +695,33 @@ varies by `kind`.
 adding someone creates a *new* conversation rather than mutating the existing
 one. And "closing" a DM turns out to be exactly `dormant`, which the lifecycle
 already provides.
+
+#### Opening a DM
+
+A DM or group DM is **identified by who is in it**. `POST /dms` with the other
+people opens the conversation already there, or creates it (`openDm`,
+`apps/server/src/sync/spaces.ts`):
+
+- One other person is a `dm`; two to eight others are a `group_dm` — at most
+  nine people, the opener included. Any active member of the workspace may be
+  in one, agents included.
+- `spaces.dm_key` holds the founding participants' actor ids, sorted and
+  comma-joined, with a unique index on `(workspace_id, dm_key)`. The same people
+  in any order, asked for by any of them, give the same key and the same
+  conversation, and two people opening it at the same moment land in one: the
+  losing insert hits the index and opens the winner's.
+- The key is the **founding** set. Nobody is added to a sealed conversation, so
+  it never grows; opening one you left brings you back, and brings back nobody
+  else who left.
+- Creation writes the space, its `sole` chat, a `member` row for everyone, and
+  a `space.member_added` with hydration **for each person** — so every one of
+  their devices learns of it the way it learns of any space it is put in. No
+  admin, and no marker: nobody was "added by" anyone.
+- The space row carries `member_ids` on `space.created`, the hydration,
+  `welcome` and the gap snapshot, because a replica holds only its own
+  memberships. The desktop names a DM by the other people in it, from its
+  directory ("Bob", "Carol, Bob and Dave"), and by its kind until the directory
+  has them.
 
 #### What this deliberately does *not* do
 
@@ -1247,7 +1286,9 @@ CREATE TABLE spaces (
   visibility          TEXT,           -- 'public'|'private'; NULL for dm/group_dm
   membership_policy   TEXT NOT NULL,  -- 'open'|'invite'|'sealed'
   lifecycle           TEXT NOT NULL,  -- 'active'|'dormant'|'archived' (§7.5)
-  created_by_actor_id TEXT,
+  created_by_actor_id TEXT,           -- the actor that created it; an agent, when a person asked one
+  on_behalf_of_actor_id TEXT,         -- that person, when an agent created it for them; else NULL (§6.4)
+  dm_key              TEXT,           -- dm/group_dm: founding participants, sorted; unique per workspace (§7.1)
   last_activity_at    INTEGER NOT NULL,   -- drives auto-dormancy
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL,   -- LWW clock for name/topic
