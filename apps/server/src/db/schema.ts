@@ -334,6 +334,23 @@ export interface AccessRequestsTable {
 }
 
 /** The Composio session behind one (agent, invoker, config_rev) (WORKSPACE-AGENTS.md §6.7). */
+/** A room's shared panel (PANELS.md §3.2): a surface everyone in the room works beside. */
+export interface PanelsTable {
+  id: string;
+  workspace_id: string;
+  space_id: string;
+  type: 'chat' | 'web' | 'diff' | 'file' | 'attachment';
+  chat_id: string | null;
+  payload: Generated<unknown>;
+  title: string | null;
+  opened_from_chat_id: string | null;
+  created_by_actor_id: string | null;
+  on_behalf_of_actor_id: string | null;
+  created_at: Generated<Timestamp>;
+  opened_at: Generated<Timestamp>;
+  removed_at: Timestamp | null;
+}
+
 /** One Composio session per person (WORKSPACE-AGENTS-IMPL.md step 7, D24), shared by every agent they invoke. */
 export interface ComposioSessionsTable {
   invoker_actor_id: string;
@@ -429,4 +446,5 @@ export interface DB {
   agent_tool_calls: AgentToolCallsTable;
   access_requests: AccessRequestsTable;
   composio_sessions: ComposioSessionsTable;
+  panels: PanelsTable;
 }

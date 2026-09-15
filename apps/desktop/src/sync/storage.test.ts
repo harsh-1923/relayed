@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Storage, type Membership, type DirectoryRow } from './storage.ts';
 import { accountMigrations } from './migrations/account.ts';
 import { workspaceMigrations } from './migrations/workspace.ts';
+import { replicaEffect } from './effects.ts';
 
 const root = () => mkdtempSync(join(tmpdir(), 'relayed-storage-'));
 
@@ -893,4 +894,62 @@ test('the chat read round-trips message_kind, system_kind, and subject_actor_id'
     ['msg_1', 'actor', null, null],
     ['msg_2', 'system', 'space.member_added', 'act_bob'],
   ]);
+});
+
+// ─── A synced room's shared panels (PANELS.md) ──────────────────────────────
+
+const panelRow = (id: string, over: Partial<{ opened_at: string; title: string | null; space_id: string }> = {}) => ({
+  id, space_id: over.space_id ?? 'spc_eng', type: 'web', payload: { url: `https://linear.app/acme/issue/${id}` },
+  title: over.title === undefined ? id : over.title, opened_from_chat_id: 'cht_eng', created_by_actor_id: 'act_triage',
+  on_behalf_of_actor_id: 'act_me', created_at: '2026-09-15T10:00:00.000Z', opened_at: over.opened_at ?? '2026-09-15T10:00:00.000Z',
+});
+
+test('welcome replaces the room panels wholesale, and the room reads them in the local rooms\' own shape', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome({ ...welcomePayload(), panels: [panelRow('LIN-1'), panelRow('LIN-2')] });
+  assert.deepEqual(storage.panels('spc_eng').map(panel => [panel.id, panel.scope, panel.createdByActorId, panel.onBehalfOfActorId]), [
+    ['LIN-1', 'shared', 'act_triage', 'act_me'],
+    ['LIN-2', 'shared', 'act_triage', 'act_me'],
+  ]);
+  assert.deepEqual(storage.panels('spc_eng')[0]?.payload, { url: 'https://linear.app/acme/issue/LIN-1' });
+
+  // A panel absent from the next welcome is one the room no longer has.
+  storage.applyWelcome({ ...welcomePayload(), panels: [panelRow('LIN-2')] });
+  assert.deepEqual(storage.panels('spc_eng').map(panel => panel.id), ['LIN-2']);
+});
+
+test('panel.opened upserts, and an older copy never moves a panel back in time', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload());
+  const effect = replicaEffect();
+  const space = { kind: 'space' as const, id: 'spc_eng' };
+
+  const topics = effect(storage.workspace, space, { rev: 5, type: 'panel.opened', payload: panelRow('LIN-9', { opened_at: '2026-09-15T10:05:00.000Z' }) });
+  assert.ok(topics.includes('space:spc_eng:panels'));
+  effect(storage.workspace, space, { rev: 6, type: 'panel.opened', payload: panelRow('LIN-9', { opened_at: '2026-09-15T10:01:00.000Z', title: 'renamed' }) });
+
+  const [panel] = storage.panels('spc_eng');
+  assert.equal(panel?.title, 'renamed');
+  assert.equal(panel?.openedAt, Date.parse('2026-09-15T10:05:00.000Z'), 'opened_at only ever moves forward');
+});
+
+test('someone added to a room gets its panels with the room', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  storage.applyWelcome(welcomePayload());
+  const effect = replicaEffect(undefined, () => 'act_me');
+  effect(storage.workspace, { kind: 'space', id: 'spc_rca' }, {
+    rev: 3, type: 'space.member_added',
+    payload: {
+      actor_id: 'act_me', role: 'member', by_actor_id: 'act_alice',
+      hydration: {
+        space: { id: 'spc_rca', kind: 'room', name: 'rca', slug: null, visibility: 'public', membership_policy: 'open', lifecycle: 'active', rev: 3 },
+        chats: [{ id: 'cht_rca', space_id: 'spc_rca', kind: 'default', name: null, head_ord: 4, head_rev: 9 }],
+        panels: [panelRow('LIN-42', { space_id: 'spc_rca' })],
+      },
+    },
+  });
+  assert.deepEqual(storage.panels('spc_rca').map(panel => panel.id), ['LIN-42']);
 });

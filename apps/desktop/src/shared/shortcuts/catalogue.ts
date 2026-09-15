@@ -79,10 +79,11 @@ export const COMMANDS = {
     description: 'Show or hide the panel container in a room.',
     category: 'View',
     layer: 'route',
-    // Option changes KeyboardEvent.key on macOS, so this command deliberately
-    // follows the labelled physical B key. It is not offered elsewhere until
-    // the supported-platform shortcut matrix has been exercised by hand.
-    defaultBindings: { mac: ['Mod+Alt+B'], windows: [], linux: [] },
+    // Follows the labelled physical B key, so a keyboard layout cannot move
+    // it. Mac only until the supported-platform shortcut matrix has been
+    // exercised by hand. Shift rather than Option: Mod+B is the sidebar, and
+    // Mod+Shift+B reads as its right-hand twin.
+    defaultBindings: { mac: ['Mod+Shift+B'], windows: [], linux: [] },
     configurable: false,
     inputPolicy: 'allow-editable',
     repeat: 'ignore',

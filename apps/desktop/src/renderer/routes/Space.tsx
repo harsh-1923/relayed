@@ -5,7 +5,7 @@
 // chats and pages are panels, and which panels are open is view state in the
 // query (`?p=`, PANELS.md §8), so there is no chat in the path to disagree with
 // the space, and stripping the query still lands in the right place.
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useParams } from 'react-router';
 import { useQuery } from '@/lib/query';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -14,10 +14,12 @@ import { SpaceHeader } from '@/features/chat/SpaceHeader';
 import { AddSpaceMember } from '@/features/chat/AddSpaceMember';
 import { RoomActivity } from '@/features/local-rooms/RoomActivity';
 import { PanelContainer } from '@/features/panels/PanelContainer';
-import { PanelMenu } from '@/features/panels/PanelMenu';
 import { useOpenPanels } from '@/features/panels/useOpenPanels';
+import { useRoomPanelArrivals } from '@/features/panels/useRoomPanelArrivals';
 import { call } from '@/lib/ipc';
-import { useCommandHandler } from '@/lib/commands/CommandProvider';
+import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
+import { Button } from '@/components/ui/button';
+import { SidebarRightOpen } from '@relayed/icons';
 import { mainChat, type SpaceScope } from '../../shared/spaces.ts';
 import { panelContainerToggle, resolveOpenPanels } from '../../shared/panels.ts';
 
@@ -30,19 +32,29 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   const space = rows?.[0] ?? null;
   const chat = space ? mainChat(space) : null;
 
-  // Panels are a room's (DESIGN.md §7.1). Only a local room holds them today:
-  // shared rooms currently open only their default chat. Panel creation and
-  // storage remain local — one hook order in both scopes.
-  const hasPanels = scope === 'local' && space?.kind === 'room';
-  const { rows: panels, status: panelsStatus } = useQuery('local.panels.list', { spaceId: hasPanels ? spaceId : '' });
+  // Panels are a room's (DESIGN.md §7.1), in either scope. A local room holds
+  // them all on this device. A synced room has the room's shared panels — what
+  // an agent opened for everyone — and any page opened here on this device
+  // alone. Both reads run in both scopes, so the hook order never changes.
+  const hasPanels = space?.kind === 'room';
+  const { rows: devicePanels, status: devicePanelsStatus } = useQuery('local.panels.list', { spaceId: hasPanels ? spaceId : '' });
+  const { rows: roomPanels, status: roomPanelsStatus } = useQuery('panels.list', { spaceId: hasPanels && scope === 'workspace' ? spaceId : '' });
+  const panels = useMemo(
+    () => (scope === 'workspace' ? [...(roomPanels ?? []), ...(devicePanels ?? [])] : (devicePanels ?? [])),
+    [scope, roomPanels, devicePanels],
+  );
+  const panelsStatus = scope === 'workspace' && roomPanelsStatus === 'loading' ? 'loading' : devicePanelsStatus;
   const openPanels = useOpenPanels();
-  const open = resolveOpenPanels(openPanels.ids, panels ?? []);
+  const open = resolveOpenPanels(openPanels.ids, panels);
+  useRoomPanelArrivals({
+    enabled: hasPanels && scope === 'workspace', ready: panelsStatus !== 'loading', spaceId, panels, openPanels,
+  });
 
   useCommandHandler('room.panels.toggle', {
     layer: 'route',
     enabled: hasPanels && panelsStatus !== 'loading',
     run: () => {
-      const action = panelContainerToggle(openPanels.containerOpen, panels ?? []);
+      const action = panelContainerToggle(openPanels.containerOpen, panels);
       if (action.kind === 'close') {
         openPanels.closeContainer();
         return;
@@ -89,7 +101,8 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
               <>
                 {scope === 'local' && <RoomActivity spaceId={spaceId} />}
                 {scope === 'workspace' && <AddSpaceMember spaceId={spaceId} />}
-                {hasPanels && <PanelMenu space={space} panels={panels ?? []} openPanels={openPanels} />}
+                {/* Everything about panels lives in their container; the header only opens it. */}
+                {hasPanels && !openPanels.containerOpen && <OpenPanelsButton />}
               </>
             )}
           />
@@ -101,10 +114,26 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
         <>
           <ResizableHandle />
           <ResizablePanel id="panels" defaultSize="42%" minSize={320} className="min-h-0 min-w-0">
-            <PanelContainer tabs={open} space={space} scope={scope} openPanels={openPanels} />
+            <PanelContainer tabs={open} panels={panels} space={space} scope={scope} openPanels={openPanels} />
           </ResizablePanel>
         </>
       )}
     </ResizablePanelGroup>
+  );
+}
+
+/** Opens the room's panels — the same command as its shortcut, so the two cannot differ. */
+function OpenPanelsButton() {
+  const toggle = useCommand('room.panels.toggle');
+  return (
+    <Button
+      variant="ghost" size="xs"
+      title={toggle.shortcutLabel ? `Open panels (${toggle.shortcutLabel})` : 'Open panels'}
+      aria-keyshortcuts={toggle.ariaKeyShortcuts}
+      onClick={() => toggle.execute()}
+    >
+      <SidebarRightOpen />
+      <span>Open panels</span>
+    </Button>
   );
 }

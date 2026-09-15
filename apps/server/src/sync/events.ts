@@ -203,9 +203,33 @@ export interface SpaceMemberAdded {
       id: string; space_id: string; kind: string; name: string | null;
       head_ord: number; head_rev: number;
     }[];
+    /** The room's open panels, so a newly added member sees what everyone is working beside. Absent for a space with none. */
+    panels?: PanelOpened[];
   };
 }
 export interface SpaceMemberRemoved { actor_id: string }
+
+/**
+ * A panel opened in a room, for everyone in it (PANELS.md) — or an existing one
+ * opened again, which moves `opened_at` forward rather than adding a second.
+ * The complete row either way, so applying it is one upsert and a client that
+ * missed an earlier event is corrected by this one.
+ *
+ * On the SPACE stream, whose audience is every room member: a room's shared
+ * panels are the room's, not any one chat's.
+ */
+export interface PanelOpened {
+  id: string;
+  space_id: string;
+  type: 'web';
+  payload: { url: string };
+  title: string | null;
+  opened_from_chat_id: string | null;
+  created_by_actor_id: string | null;
+  on_behalf_of_actor_id: string | null;
+  created_at: string;
+  opened_at: string;
+}
 
 /**
  * One directory row. Deactivation is an `actor.updated` carrying
@@ -261,6 +285,7 @@ interface EventCatalogue {
   'space.member_added': { stream: SpaceStream; payload: SpaceMemberAdded };
   'space.member_removed': { stream: SpaceStream; payload: SpaceMemberRemoved };
   'chat.created': { stream: SpaceStream; payload: ChatCreated };
+  'panel.opened': { stream: SpaceStream; payload: PanelOpened };
 
   'actor.created': { stream: WorkspaceStream; payload: ActorChanged };
   'actor.updated': { stream: WorkspaceStream; payload: ActorChanged };
@@ -308,6 +333,7 @@ const TOUCHES: { [T in EventType]: (payload: PayloadOf<T>) => string[] } = {
   'space.member_added': () => [],
   'space.member_removed': () => [],
   'chat.created': () => [],
+  'panel.opened': () => [],
   'actor.created': () => [],
   'actor.updated': () => [],
 };

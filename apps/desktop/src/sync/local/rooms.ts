@@ -13,6 +13,7 @@ import { isEffortLevel, isRoomMode, type ApprovalDecision, type RoomMode, type R
 import type { RunnerLink } from '../runner.ts';
 import { isContentPanelType } from '../../shared/panels.ts';
 import type { LocalStore } from './store.ts';
+import { metaPatch, type MetaReport } from './panel-meta.ts';
 
 export interface LocalRoomsDeps {
   /** The account's store, or null when no account is open. */
@@ -22,6 +23,8 @@ export interface LocalRoomsDeps {
   /** Push the live text of a reply to every window. Dropped when none is attached. */
   stream: (data: AgentStream) => void;
   pickFolder: () => Promise<string | null>;
+  /** Keep bytes in the account's blob store under their sha256. Absent, icons are not kept. */
+  putBlob?: (id: string, bytes: Uint8Array) => void;
   /** The person's first message in a room was stored. Naming the room is titles.ts's business. */
   onFirstMessage?: (spaceId: string, text: string) => void;
 }
@@ -79,6 +82,28 @@ export function createLocalRooms(deps: LocalRoomsDeps) {
     'local.panels.list': (params: unknown) => {
       const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
       return spaceId ? deps.store()?.panels(spaceId) ?? [] : [];
+    },
+
+    /** What this device learned about a room's panels by showing them — any panel, shared or local. */
+    'local.panels.meta': (params: unknown) => {
+      const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+      return spaceId ? deps.store()?.panelMeta(spaceId) ?? [] : [];
+    },
+
+    /**
+     * A panel on screen reporting its page's title and icon. Wakes the room's
+     * readers only when something actually changed: a page reports on every
+     * navigation, and most navigations keep both.
+     */
+    'local.panels.reportMeta': (params: unknown) => {
+      const given = (params ?? {}) as { panelId?: unknown; spaceId?: unknown } & MetaReport;
+      if (typeof given.panelId !== 'string' || typeof given.spaceId !== 'string') throw new Error('panelId and spaceId required');
+      const store = required();
+      const putBlob = deps.putBlob;
+      const patch = metaPatch(putBlob ? given : { pageTitle: given.pageTitle }, (id, bytes) => putBlob?.(id, bytes));
+      if (Object.keys(patch).length === 0) return null;
+      if (store.mergePanelMeta(given.panelId, given.spaceId, patch)) deps.invalidate([topic.localPanels(given.spaceId)]);
+      return null;
     },
 
     /**

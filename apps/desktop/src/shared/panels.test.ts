@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activePanelId, closePanelTab, formatPanelParam, panelContainerToggle, parsePanelParam, resolveOpenPanels,
+  activePanelId, closePanelTab, formatPanelParam, panelArrivals, panelContainerToggle, parsePanelParam, resolveOpenPanels, seenPanels,
 } from './panels.ts';
 
 const panels = [
@@ -43,4 +43,56 @@ test('toggling the container closes an open view, reopens the newest panel, or o
   assert.deepEqual(panelContainerToggle(true, panels), { kind: 'close' });
   assert.deepEqual(panelContainerToggle(false, panels), { kind: 'open', panelId: 'pnl_web' });
   assert.deepEqual(panelContainerToggle(false, []), { kind: 'open', panelId: null });
+});
+
+// ─── A synced room's shared panels arriving (panelArrivals) ─────────────────
+
+const shared = (id: string, openedAt: number) => ({ id, openedAt, scope: 'shared' as const });
+const closed = { containerOpen: false, ids: [], active: null };
+
+test('arriving in a room with nothing open shows the most recently opened panel', () => {
+  const panels = [shared('pnl_ticket', 100), shared('pnl_grafana', 300), shared('pnl_doc', 200)];
+  assert.deepEqual(panelArrivals({ seen: null, panels, open: closed, dismissed: new Set() }),
+    { ids: ['pnl_grafana'], active: 'pnl_grafana' });
+});
+
+test('arriving shows nothing when the link already says what is open, or the room has no panels', () => {
+  const panels = [shared('pnl_ticket', 100)];
+  assert.equal(panelArrivals({ seen: null, panels, open: { containerOpen: true, ids: [], active: null }, dismissed: new Set() }), null);
+  assert.equal(panelArrivals({ seen: null, panels: [], open: closed, dismissed: new Set() }), null);
+  assert.equal(panelArrivals({ seen: null, panels: [{ id: 'pnl_mine', openedAt: 500, scope: 'local' }], open: closed, dismissed: new Set() }), null,
+    'a page only on this device is not the room\'s');
+});
+
+test('a panel this person closed is not shown again on arriving — the next most recent is', () => {
+  const panels = [shared('pnl_ticket', 100), shared('pnl_grafana', 300)];
+  assert.deepEqual(panelArrivals({ seen: null, panels, open: closed, dismissed: new Set(['pnl_grafana']) }),
+    { ids: ['pnl_ticket'], active: 'pnl_ticket' });
+});
+
+test('a panel opened while here opens the side and is shown, when nothing was open', () => {
+  const before = [shared('pnl_ticket', 100)];
+  const after = [...before, shared('pnl_grafana', 300)];
+  assert.deepEqual(panelArrivals({ seen: seenPanels(before), panels: after, open: closed, dismissed: new Set() }),
+    { ids: ['pnl_grafana'], active: 'pnl_grafana' });
+});
+
+test('someone reading another tab keeps reading it; the new panel waits beside it', () => {
+  const before = [shared('pnl_ticket', 100), shared('pnl_doc', 150)];
+  const after = [...before, shared('pnl_grafana', 300)];
+  const open = { containerOpen: true, ids: ['pnl_ticket', 'pnl_doc'], active: 'pnl_ticket' };
+  assert.deepEqual(panelArrivals({ seen: seenPanels(before), panels: after, open, dismissed: new Set() }),
+    { ids: ['pnl_ticket', 'pnl_doc', 'pnl_grafana'], active: 'pnl_ticket' });
+});
+
+test('the same page opened again is new, even for someone who closed it', () => {
+  const before = [shared('pnl_ticket', 100)];
+  const after = [shared('pnl_ticket', 400)];
+  assert.deepEqual(panelArrivals({ seen: seenPanels(before), panels: after, open: closed, dismissed: new Set(['pnl_ticket']) }),
+    { ids: ['pnl_ticket'], active: 'pnl_ticket' });
+});
+
+test('nothing new, nothing moves', () => {
+  const panels = [shared('pnl_ticket', 100)];
+  assert.equal(panelArrivals({ seen: seenPanels(panels), panels, open: closed, dismissed: new Set() }), null);
 });

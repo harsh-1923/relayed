@@ -8,7 +8,8 @@ import { sql } from 'kysely';
 import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { env } from '../env.ts';
-import { createChannel, joinSpace } from '../sync/spaces.ts';
+import { createChannel, createRoom, joinSpace } from '../sync/spaces.ts';
+import type { AppendedEvent } from '../sync/events.ts';
 import { send } from '../sync/ops.ts';
 import { signGrant } from './grant.ts';
 import { brokerRoutes, type BrokerComposio } from './broker.ts';
@@ -75,10 +76,10 @@ after(async () => {
   await pool.end();
 });
 
-interface Recorded { searches: string[]; executions: { tool: string; args: Record<string, unknown> }[] }
+interface Recorded { searches: string[]; executions: { tool: string; args: Record<string, unknown> }[]; delivered: AppendedEvent[] }
 
 async function server(searchResult: SearchResult = { toolSlugs: [], schemas: {} }) {
-  const recorded: Recorded = { searches: [], executions: [] };
+  const recorded: Recorded = { searches: [], executions: [], delivered: [] };
   const composio: BrokerComposio = {
     session: async () => 'trs_test',
     search: async (_sessionId, useCase) => { recorded.searches.push(useCase); return searchResult; },
@@ -86,14 +87,16 @@ async function server(searchResult: SearchResult = { toolSlugs: [], schemas: {} 
   };
   const app = Fastify();
   await app.register(brokerRoutes({
-    db, composio, deliver: async () => ({ audience: 0, delivered: 0, dropped: 0, withheld: 0 }),
+    db, composio,
+    deliver: async (event) => { recorded.delivered.push(event); return { audience: 0, delivered: 0, dropped: 0, withheld: 0 }; },
   }));
   return { app, recorded };
 }
 
-/** A running run of `agent`, invoked by Alice, and its grant. */
-async function run(agent: string) {
-  const made = await createChannel(db, { workspaceId: wsp, name: `b-${ulid('x')}`, createdBy: alice });
+/** A running run of `agent`, invoked by Alice in a new channel — or a room — and its grant. */
+async function run(agent: string, where: 'channel' | 'room' = 'channel') {
+  const create = where === 'room' ? createRoom : createChannel;
+  const made = await create(db, { workspaceId: wsp, name: `b-${ulid('x')}`, createdBy: alice });
   await joinSpace(db, made.spaceId, agent);
   const triggered = await send(db, {
     opId: ulid('op'), chatId: made.chatId, actorId: alice, messageId: ulid('msg'),
@@ -103,7 +106,7 @@ async function run(agent: string) {
   assert.ok(runId, 'the mention must have started a run');
   await db.updateTable('agent_runs').set({ state: 'running' }).where('id', '=', runId).execute();
   const grant = await signGrant({ invokerActorId: alice, agentActorId: agent, runId, chatId: made.chatId });
-  return { runId, grant };
+  return { runId, grant, chatId: made.chatId, spaceId: made.spaceId };
 }
 
 const call = (app: Awaited<ReturnType<typeof server>>['app'], r: { runId: string; grant: string }, tool: string, args: unknown) =>
@@ -242,5 +245,41 @@ test('call_tool runs a tool the model never searched for, and records it', opts,
   const audit = await db.selectFrom('agent_tool_calls').select(['toolkit', 'tool', 'effect', 'outcome'])
     .where('run_id', '=', r.runId).execute();
   assert.deepEqual(audit, [{ toolkit: HUB, tool: READ_TOOL, effect: 'read', outcome: 'ok' }]);
+  await app.close();
+});
+
+test('open_panel in a room opens the page for the room and delivers it to everyone', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage, 'room');
+
+  const answer = await call(app, r, 'open_panel', { url: 'https://linear.app/acme/issue/LIN-42', title: 'LIN-42' });
+  assert.equal(answer.result, 'ok');
+  const panels = await db.selectFrom('panels').select(['space_id', 'title', 'created_by_actor_id', 'on_behalf_of_actor_id'])
+    .where('space_id', '=', r.spaceId).execute();
+  assert.deepEqual(panels, [{ space_id: r.spaceId, title: 'LIN-42', created_by_actor_id: triage, on_behalf_of_actor_id: alice }]);
+  assert.deepEqual(recorded.delivered.map(event => event.type), ['panel.opened']);
+  assert.deepEqual(recorded.executions, [], 'nothing of anyone\'s account is spent');
+  await app.close();
+});
+
+test('open_panel refuses a page that is not public https, saying why, and writes nothing', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage, 'room');
+
+  const local = await call(app, r, 'open_panel', { url: 'https://localhost:5173' }) as { result: string; message?: string };
+  assert.equal(local.result, 'failed');
+  assert.match(local.message ?? '', /local or private/);
+  const insecure = await call(app, r, 'open_panel', { url: 'http://linear.app/acme' }) as { result: string; message?: string };
+  assert.match(insecure.message ?? '', /https/);
+  assert.equal((await db.selectFrom('panels').select('id').where('space_id', '=', r.spaceId).execute()).length, 0);
+  assert.deepEqual(recorded.delivered, []);
+  await app.close();
+});
+
+test('open_panel outside a room is not allowed', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage, 'channel');
+  assert.equal((await call(app, r, 'open_panel', { url: 'https://linear.app/acme' })).result, 'tool_not_allowed');
+  assert.deepEqual(recorded.delivered, []);
   await app.close();
 });

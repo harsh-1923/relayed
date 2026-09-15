@@ -492,7 +492,7 @@ the spaces and chats it already carries — subject to the same size ceiling
   `LOCAL-ROOMS.md` first proposed existed because the URL had to say which table an id was in;
   with one table (and ids that already say `pnl_`), the row says its type.
 - **An empty `?p=` keeps the container open with no tabs.** This is the first-use
-  state reached by **Toggle room panels** (`Command+Option+B` on macOS): it
+  state reached by **Toggle room panels** (`Command+Shift+B` on macOS): it
   offers a side chat and a local web page without creating either one merely
   because the container was opened. Omitting `?p` closes the container.
 - **A bare chat id** (`?p=cht_P3`) resolves to that chat's panel, and the URL is
@@ -590,7 +590,7 @@ still written so the transcript shows *why* a panel appeared.
   it. It also makes a side chat (named, public or private) and opens a web page
   (a bare address is taken as `http` for localhost, `https` otherwise). It
   appears only in a local room: a synced space has no panels to read yet.
-- **Toggle room panels** is a route command. `Command+Option+B` opens the most
+- **Toggle room panels** is a route command. `Command+Shift+B` opens the most
   recently created configured panel, or the empty chooser when the room has
   none; invoking it while the container is open closes the whole container.
   The command is active in editable controls because its complete modifier
@@ -619,7 +619,8 @@ it, so the container and the main chat keep working.
 ### 10.3 Web pages
 
 A web panel is `features/panels/WebPanel.tsx`: a toolbar (back, forward, reload
-or stop, and an editable address) over a **`<webview>`** that fills the panel.
+with a spinner while the page is loading, and an editable address) over a
+**`<webview>`** that fills the panel.
 When a load fails, a message with **Try again** is drawn over it.
 
 **The address bar** shows where the page is, and takes the person anywhere:
@@ -741,7 +742,7 @@ one:
   container rather than a strip of side-by-side panels. `?p=` parsing,
   resolution and tab closing are tested in `shared/panels.test.ts`. The
   container also has a no-tabs chooser, and the route command toggles it with
-  `Command+Option+B` on macOS.
+  `Command+Shift+B` on macOS.
 - **Step 4, done** for local rooms. Local web panels are stored, opened from the
   Panels menu, shared into a local room, removed and swept, and **drawn** as a
   `<webview>` with back, forward and reload (§10.3). The attach check is proven

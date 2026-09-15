@@ -74,6 +74,8 @@ interface SpaceMemberAddedHydration {
     id: string; space_id: string; kind: string; name: string | null;
     head_ord: number; head_rev: number;
   }[];
+  /** The room's open panels — absent from a server that predates them, and for a space with none. */
+  panels?: PanelRow[];
 }
 
 interface SpaceMemberAdded {
@@ -82,6 +84,48 @@ interface SpaceMemberAdded {
   by_actor_id?: string;
   /** Present on every delivery; only applied when `actor_id` is the active replica actor. */
   hydration?: SpaceMemberAddedHydration;
+}
+
+/**
+ * One shared panel as the wire carries it — in `panel.opened`, in `welcome`,
+ * and in a newly added member's hydration (PANELS.md).
+ */
+export interface PanelRow {
+  id: string;
+  space_id: string;
+  type: string;
+  payload: Record<string, unknown>;
+  title: string | null;
+  opened_from_chat_id: string | null;
+  created_by_actor_id: string | null;
+  on_behalf_of_actor_id: string | null;
+  created_at: string;
+  opened_at: string;
+}
+
+/**
+ * Write one shared panel, replacing the row by id. Every way a panel arrives
+ * goes through here, so a panel opened live, one delivered in `welcome` and one
+ * that came with joining the room cannot be stored three different ways.
+ */
+export function storePanel(db: DatabaseSync, row: PanelRow): void {
+  const millis = (value: string): number => {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? Date.now() : parsed;
+  };
+  db.prepare(`
+    INSERT INTO panels (id, space_id, type, chat_id, payload, title, opened_from_chat_id,
+                        created_by_actor_id, on_behalf_of_actor_id, created_at, opened_at)
+    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      type = excluded.type, payload = excluded.payload, title = excluded.title,
+      opened_from_chat_id = excluded.opened_from_chat_id,
+      created_by_actor_id = excluded.created_by_actor_id,
+      on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
+      opened_at = MAX(panels.opened_at, excluded.opened_at)
+  `).run(row.id, row.space_id, row.type, JSON.stringify(row.payload ?? {}), row.title,
+         row.opened_from_chat_id, row.created_by_actor_id, row.on_behalf_of_actor_id,
+         millis(row.created_at), millis(row.opened_at));
 }
 
 /** Parts as the replica stores them: JSON, or NULL for a message that is its body. */
@@ -129,6 +173,13 @@ export function replicaEffect(
       case 'space.created':
       case 'chat.created':
         return [topic.space(stream.id), topic.spaces()];
+
+      // A page opened for everyone in a room, or brought forward (PANELS.md).
+      case 'panel.opened': {
+        const row = event.payload as PanelRow;
+        storePanel(db, { ...row, space_id: stream.id });
+        return [topic.panels(stream.id)];
+      }
 
       // The directory, on the one workspace-wide stream. Steady state is one
       // event and one row — not a re-send of 1,600 of them, which is the entire
@@ -261,6 +312,7 @@ function spaceMemberAdded(
     chatState.run(c.id, c.head_ord);
     chatCursor.run(c.id, c.head_rev);
   }
+  for (const panel of body.hydration.panels ?? []) storePanel(db, { ...panel, space_id: stream.id });
 
   db.prepare(`
     INSERT INTO memberships (scope_type, scope_id, actor_id, role, joined_at, left_at)
@@ -269,7 +321,7 @@ function spaceMemberAdded(
       role = excluded.role, left_at = NULL
   `).run(space.id, activeActorId, body.role, now);
 
-  return [topic.space(stream.id), topic.spaces()];
+  return [topic.space(stream.id), topic.spaces(), topic.panels(stream.id)];
 }
 
 function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): string[] {

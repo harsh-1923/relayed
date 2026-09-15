@@ -259,4 +259,34 @@ export const localMigrations: readonly Migration[] = [
           FROM chats WHERE kind IN ('public','private');
     `,
   },
+  {
+    version: 7,
+    name: 'panel-meta',
+    // What this device learned about a panel by showing it (PANELS.md): a web
+    // page's title and icon today, whatever a later panel type reads from its
+    // content tomorrow.
+    up: `
+      -- Its own table, keyed by panel id, and NOT a column on either panels
+      -- table. A synced room's panels live in the workspace replica, and
+      -- \`welcome\` deletes and rewrites every row there on each connect, so a
+      -- column on it would lose the icon at every reconnect. Here it covers
+      -- shared, local-room and device-only panels alike, and survives a local
+      -- panel being shared because sharing keeps its id.
+      --
+      -- Never synced. It is what this person's own session saw, and a page
+      -- behind their login may title itself with things the room cannot see.
+      CREATE TABLE panel_meta (
+        panel_id   TEXT    PRIMARY KEY,
+        -- For listing and for waking the room's readers; a replica panel's
+        -- space is in another file, so it cannot be joined for.
+        space_id   TEXT    NOT NULL,
+        -- A JSON object, so a new field needs no migration. Unknown keys are
+        -- kept on write (json_patch) and ignored on read.
+        meta       TEXT    NOT NULL DEFAULT '{}',
+        updated_at INTEGER NOT NULL,
+        CHECK (json_valid(meta) AND json_type(meta) = 'object')
+      );
+      CREATE INDEX panel_meta_space ON panel_meta(space_id);
+    `,
+  },
 ];

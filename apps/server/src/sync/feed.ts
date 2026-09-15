@@ -13,7 +13,8 @@ import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
 import { mentionPattern } from './mentions.ts';
 import { agentSummaries } from '../agents/summary.ts';
-import type { AgentSummary } from './events.ts';
+import type { AgentSummary, PanelOpened } from './events.ts';
+import { roomPanels } from './panels.ts';
 
 /**
  * How far behind a client may be before catch-up becomes a gap marker.
@@ -570,6 +571,8 @@ export interface WelcomePayload {
   streams: WelcomeStream[];
   connections: WelcomeConnection[];
   agentPermissions: WelcomeAgentPermission[];
+  /** The open panels of every room this actor has joined — what a person arriving is shown beside the chat (PANELS.md). */
+  panels: PanelOpened[];
 }
 
 
@@ -621,8 +624,12 @@ export async function welcome(
       .where('id', '=', workspaceId).executeTakeFirst(),
   ]);
 
+  // One more statement, and still a constant: every joined room's panels at
+  // once, never one read per room.
+  const panels = await roomPanels(db, spaces.filter(space => space.kind === 'room').map(space => space.id));
+
   return {
-    spaces, chats, memberships, connections, agentPermissions,
+    spaces, chats, memberships, connections, agentPermissions, panels,
     // Only the workspace stream. There is no actor cursor: an actor is a
     // delivery address rather than an ordered stream, so there is nothing to
     // be behind on (docs/SYNC-FLOWS.md §5). Space cursors ride on the space

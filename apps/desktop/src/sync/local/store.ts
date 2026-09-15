@@ -18,7 +18,7 @@ import { DEFAULT_ROOM_MODE, type EffortLevel, type PendingApproval, type RoomMod
 import type { ReplicaMessage } from '../storage.ts';
 import type { LocalRoom, LocalRoomSettings } from '../../shared/local-rooms.ts';
 import { spaceName, type Space } from '../../shared/spaces.ts';
-import type { ContentPanelType, Panel } from '../../shared/panels.ts';
+import type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../../shared/panels.ts';
 import { DEFAULT_ROOM_TITLE, type TitleTurn } from './titles.ts';
 
 /** The two actors every local room holds (migrations/local.ts). */
@@ -391,6 +391,7 @@ export class LocalStore {
    * tombstoned (§5.4). A chat panel is refused: it goes when its chat does.
    */
   removePanel(panelId: string, now = Date.now()): void {
+    this.db.prepare('DELETE FROM panel_meta WHERE panel_id = ?').run(panelId);
     if (this.db.prepare('DELETE FROM local_panels WHERE id = ?').run(panelId).changes > 0) return;
     const row = this.db.prepare('SELECT type FROM panels WHERE id = ? AND removed_at IS NULL').get(panelId) as { type: string } | undefined;
     if (!row) throw new Error(`no panel ${panelId}`);
@@ -415,7 +416,37 @@ export class LocalStore {
       if (open.has(id)) continue;
       removed += Number(remove.run(id).changes);
     }
+    // A synced room's panel ids are not known here, so only rows no panel in
+    // this file claims AND that were not seen for as long are let go.
+    this.db.prepare(`
+      DELETE FROM panel_meta
+       WHERE panel_id NOT IN (SELECT id FROM panels) AND panel_id NOT IN (SELECT id FROM local_panels)
+         AND updated_at < ?
+    `).run(now - maxAgeMs);
     return removed;
+  }
+
+  /** What this device learned about the room's panels by showing them. */
+  panelMeta(spaceId: string): PanelMetaRow[] {
+    const rows = this.db.prepare('SELECT panel_id, meta FROM panel_meta WHERE space_id = ?')
+      .all(spaceId) as { panel_id: string; meta: string }[];
+    return rows.map(row => ({ panelId: row.panel_id, meta: readMeta(row.meta) }));
+  }
+
+  /**
+   * Merge fields into a panel's meta, keeping any this build does not know.
+   * Returns whether anything changed, so an unchanged page wakes nobody.
+   */
+  mergePanelMeta(panelId: string, spaceId: string, patch: PanelMeta, now = Date.now()): boolean {
+    const json = JSON.stringify(patch);
+    const before = this.db.prepare('SELECT meta FROM panel_meta WHERE panel_id = ?').get(panelId) as { meta: string } | undefined;
+    this.db.prepare(`
+      INSERT INTO panel_meta (panel_id, space_id, meta, updated_at) VALUES (?, ?, json(?), ?)
+      ON CONFLICT(panel_id) DO UPDATE SET
+        meta = json_patch(panel_meta.meta, excluded.meta), space_id = excluded.space_id, updated_at = excluded.updated_at
+    `).run(panelId, spaceId, json, now);
+    const after = this.db.prepare('SELECT meta FROM panel_meta WHERE panel_id = ?').get(panelId) as { meta: string };
+    return before?.meta !== after.meta;
   }
 
   // ── approvals (§8.5) ─────────────────────────────────────────────────────
@@ -631,6 +662,17 @@ type PanelRow = {
   title: string | null; opened_from_chat_id: string | null; created_at: number;
 };
 
+function readMeta(text: string): PanelMeta {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return {}; }
+  if (!parsed || typeof parsed !== 'object') return {};
+  const { pageTitle, iconBlob } = parsed as Record<string, unknown>;
+  return {
+    ...(typeof pageTitle === 'string' ? { pageTitle } : {}),
+    ...(typeof iconBlob === 'string' && /^[0-9a-f]{64}$/.test(iconBlob) ? { iconBlob } : {}),
+  };
+}
+
 function toPanel(row: PanelRow, scope: Panel['scope']): Panel {
   let payload: Record<string, unknown> = {};
   try {
@@ -640,6 +682,7 @@ function toPanel(row: PanelRow, scope: Panel['scope']): Panel {
   return {
     id: row.id, spaceId: row.space_id, type: row.type, chatId: row.chat_id, payload,
     title: row.title, openedFromChatId: row.opened_from_chat_id, scope, createdAt: row.created_at,
+    openedAt: row.created_at, createdByActorId: null, onBehalfOfActorId: null,
   };
 }
 

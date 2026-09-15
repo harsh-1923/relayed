@@ -4,7 +4,7 @@ import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-
 import type { AgentActivity } from '../shared/agent-activity.ts';
 import type { Space } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
-import type { ContentPanelType, Panel } from '../shared/panels.ts';
+import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
 
 export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
@@ -12,7 +12,7 @@ export type {
 export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 export type { AgentActivity } from '../shared/agent-activity.ts';
 export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
-export type { ContentPanelType, Panel } from '../shared/panels.ts';
+export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
 
 export interface DbInfo {
   open: boolean;
@@ -319,6 +319,8 @@ export interface RelayedApi {
   query(op: "spaces.list"): Promise<Space[]>;
   /** One space and its chats: one row, or none when this replica does not hold it. */
   query(op: "space.get", params: { spaceId: string }): Promise<Space[]>;
+  /** One synced room's shared panels (PANELS.md). */
+  query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
   query(op: "prefs.list"): Promise<PreferenceRow[]>;
   /** The person's own Claude Code, as one row (LOCAL-ROOMS.md §3.2). Probes once, then answers from memory. */
   query(op: "claude.status"): Promise<ClaudeStatus[]>;
@@ -351,6 +353,10 @@ export interface RelayedApi {
   query(op: "local.panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** Open a content panel on this device only. Opening the same thing again returns the same panel. */
   query(op: "local.panels.open", params: { spaceId: string; workspaceId?: string | null; type: ContentPanelType; payload: Record<string, unknown>; title?: string | null; openedFromChatId?: string | null }): Promise<{ id: string }>;
+  /** What this device learned about a room's panels by showing them: page titles and icons. */
+  query(op: "local.panels.meta", params: { spaceId: string }): Promise<PanelMetaRow[]>;
+  /** A panel on screen reporting its page. `icon` is a small raster `data:` URL; anything else is ignored. */
+  query(op: "local.panels.reportMeta", params: { panelId: string; spaceId: string; pageTitle?: string; icon?: string }): Promise<null>;
   query(op: "local.panels.touch", params: { panelId: string }): Promise<null>;
   /** Share a local panel into its local room. One-way. */
   query(op: "local.panels.share", params: { panelId: string }): Promise<null>;

@@ -629,7 +629,7 @@ This is the first useful set, not a claim that every action deserves a key.
 |---|---|---|---|---|
 | Open search — `app.search.open` | `Mod+K` | `Mod+K` | Allowed in editable focus; application layer | Yes |
 | Toggle sidebar — `shell.sidebar.toggle` | `Mod+B` | `Mod+B` | Denied in editable focus; shell layer | No |
-| Toggle room panels — `room.panels.toggle` | `Mod+Alt+B` | — | Allowed in editable focus while a room route is mounted; physical-key match | No |
+| Toggle room panels — `room.panels.toggle` | `Mod+Shift+B` | — | Allowed in editable focus while a room route is mounted; physical-key match | No |
 | Navigate back — `navigation.back` | `Mod+[` | `Alt+ArrowLeft` | Denied in editable focus; route layer | No |
 | Navigate forward — `navigation.forward` | `Mod+]` | `Alt+ArrowRight` | Denied in editable focus; route layer | No |
 | Open settings — `app.settings.open` | `Mod+,` | `Mod+,` | Allowed in editable focus; application layer | Yes |

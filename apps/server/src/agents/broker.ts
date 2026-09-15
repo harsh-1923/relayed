@@ -22,7 +22,8 @@ import {
 } from './composio.ts';
 import { mapComposioError, mapExecuteResult } from './tool-errors.ts';
 import { raiseAccessRequest } from './access.ts';
-import { FIND_TOOLS, CALL_TOOL } from './run-tools.ts';
+import { FIND_TOOLS, CALL_TOOL, OPEN_PANEL } from './run-tools.ts';
+import { openRoomPanel, roomPanelUrl, NotARoomError, PrivateChatError, type UrlRefusal } from '../sync/panels.ts';
 
 /** Composio, as the broker uses it — injectable so a test never reaches the network. */
 export interface BrokerComposio {
@@ -89,7 +90,7 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
       }
 
       // step 2: load the run — must still be running.
-      const run = await deps.db.selectFrom('agent_runs').select('state')
+      const run = await deps.db.selectFrom('agent_runs').select(['state', 'chat_id'])
         .where('id', '=', runId).executeTakeFirst();
       if (!run || run.state !== 'running') return reply.send({ result: 'run_not_running' });
 
@@ -100,6 +101,9 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
 
       if (tool === FIND_TOOLS) {
         return reply.send(await findTools(deps, composio, { runId, invokerActorId, agentActorId, args }));
+      }
+      if (tool === OPEN_PANEL) {
+        return reply.send(await openPanel(deps, { chatId: run.chat_id, invokerActorId, agentActorId, args }));
       }
       if (tool !== CALL_TOOL) return reply.send({ result: 'tool_not_allowed' });
 
@@ -152,6 +156,48 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
 }
 
 type BrokerReply = { result: string; data?: unknown; message?: string };
+
+const URL_REFUSALS: Record<UrlRefusal, string> = {
+  not_a_url: 'That is not a URL.',
+  not_https: 'Only https pages can be opened for the room.',
+  private_address: 'That address is local or private, so it would not open the same page for everyone — it cannot be opened for the room.',
+  credentials: 'A URL carrying a username or password cannot be opened for the room.',
+  too_long: 'That URL is too long to open.',
+};
+
+/**
+ * Open a page beside the chat for everyone in the room (PANELS.md). Nothing of
+ * the invoker's account is spent, so there is no permission or connection
+ * check — only that the run's people are still active, that the page is one
+ * every member's app may safely load, and that the chat belongs to a room.
+ */
+async function openPanel(
+  deps: BrokerRouteDeps,
+  input: { chatId: string; invokerActorId: string; agentActorId: string; args: Record<string, unknown> },
+): Promise<BrokerReply> {
+  const [invoker, agent] = await Promise.all([
+    deps.db.selectFrom('actors').select('state').where('id', '=', input.invokerActorId).executeTakeFirst(),
+    deps.db.selectFrom('actors').select('state').where('id', '=', input.agentActorId).executeTakeFirst(),
+  ]);
+  if (!invoker || invoker.state !== 'active') return { result: 'invoker_inactive' };
+  if (!agent || agent.state !== 'active') return { result: 'agent_inactive' };
+
+  const checked = roomPanelUrl(typeof input.args['url'] === 'string' ? input.args['url'] : '');
+  if (!checked.ok) return { result: 'failed', message: URL_REFUSALS[checked.reason] };
+  const rawTitle = typeof input.args['title'] === 'string' ? input.args['title'].trim() : '';
+
+  try {
+    const { panel, event } = await openRoomPanel(deps.db, {
+      chatId: input.chatId, url: checked.url, title: rawTitle ? rawTitle.slice(0, 80) : null,
+      createdBy: input.agentActorId, onBehalfOf: input.invokerActorId,
+    });
+    await deps.deliver(event);
+    return { result: 'ok', data: { opened: true, url: panel.payload.url, title: panel.title } };
+  } catch (err) {
+    if (err instanceof NotARoomError || err instanceof PrivateChatError) return { result: 'tool_not_allowed' };
+    throw err;
+  }
+}
 
 /**
  * Search one toolkit for the tools a task needs (step 7).

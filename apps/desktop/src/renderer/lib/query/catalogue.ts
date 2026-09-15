@@ -10,7 +10,7 @@
 // everywhere else. Nothing to remember.
 import type {
   AgentPermissionRow, ClaudeCommand, ClaudeStatus, ComposerDraft, ConnectionRow, LocalRoom, LocalRoomSettings,
-  PendingApproval, ReplicaActor, ReplicaMessage, Panel, PreferenceRow, Space,
+  PendingApproval, ReplicaActor, ReplicaMessage, Panel, PanelMetaRow, PreferenceRow, Space,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -26,6 +26,8 @@ export interface Queries {
   'local.space.get': { args: { spaceId: string }; rows: Space[] };
   'local.rooms.get': { args: { spaceId: string }; rows: LocalRoomSettings[] };
   'local.panels.list': { args: { spaceId: string }; rows: Panel[] };
+  'local.panels.meta': { args: { spaceId: string }; rows: PanelMetaRow[] };
+  'panels.list': { args: { spaceId: string }; rows: Panel[] };
   'local.messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'local.approvals.list': { args: { chatId: string }; rows: PendingApproval[] };
   'local.commands.list': { args: { chatId: string }; rows: ClaudeCommand[] };
@@ -67,6 +69,9 @@ export const TOPICS: TopicsFor = {
   'local.space.get': () => [topic.localRooms()],
   'local.rooms.get': () => [topic.localRooms()],
   'local.panels.list': ({ spaceId }) => [topic.localPanels(spaceId)],
+  'local.panels.meta': ({ spaceId }) => [topic.localPanels(spaceId)],
+  // `spaces` as well: `welcome` replaces every room's panels and wakes only that.
+  'panels.list': ({ spaceId }) => [topic.panels(spaceId), topic.spaces()],
   'local.messages.list': ({ chatId }) => [topic.localMessages(chatId)],
   'local.approvals.list': ({ chatId }) => [topic.localApprovals(chatId)],
   'local.commands.list': () => [topic.localCommands()],

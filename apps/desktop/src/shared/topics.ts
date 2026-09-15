@@ -44,6 +44,8 @@ export const topic = {
   chatState: (chatId: string): string => `chat:${chatId}:state`,
   /** One space: its name, its chats, who is in it. */
   space: (spaceId: string): string => `space:${spaceId}`,
+  /** One synced room's shared panels (PANELS.md). */
+  panels: (spaceId: string): string => `space:${spaceId}:panels`,
   /** The sidebar's own list of spaces. Woken by a join or a leave. */
   spaces: (): string => 'spaces',
   /** Everything a person has chosen. What `prefs.list` reads. */

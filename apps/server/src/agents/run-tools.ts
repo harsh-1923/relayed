@@ -6,6 +6,7 @@ import type { RunTool } from '@relayed/protocol';
 
 export const FIND_TOOLS = 'find_tools';
 export const CALL_TOOL = 'call_tool';
+export const OPEN_PANEL = 'open_panel';
 
 export interface OfferedToolkit { slug: string; name: string }
 
@@ -15,8 +16,35 @@ export interface OfferedToolkit { slug: string; name: string }
  * fits" — asked to post in Slack with only GitHub enabled, it returns GitHub
  * tools — so the choice of service cannot be left to the search.
  */
-export function runTools(toolkits: readonly OfferedToolkit[]): RunTool[] {
-  if (toolkits.length === 0) return [];
+export function runTools(toolkits: readonly OfferedToolkit[], where: { inRoom: boolean }): RunTool[] {
+  return [
+    ...(toolkits.length > 0 ? serviceTools(toolkits) : []),
+    ...(where.inRoom ? [OPEN_PANEL_TOOL] : []),
+  ];
+}
+
+/**
+ * Opens a page beside the chat for everyone in the room (PANELS.md). Only in a
+ * room: a room is where people gather to get one thing done, and the page the
+ * work happens on — the ticket, the dashboard, the document — is what they
+ * want in front of them, not a link in a reply.
+ */
+const OPEN_PANEL_TOOL: RunTool = {
+  name: OPEN_PANEL,
+  description: 'Open a web page beside the chat for everyone in this room: a ticket, a dashboard, a document, '
+    + 'a trace — the page the work is happening on. Use it for pages the people here will want to look at '
+    + 'or work in, not for every link. https only. Opening a page the room already has brings it forward.',
+  parameters: {
+    type: 'object',
+    required: ['url'],
+    properties: {
+      url: { type: 'string', description: 'The page, as an https URL — from a tool result or the conversation.' },
+      title: { type: 'string', description: 'A short tab title, e.g. "LIN-42" or "Checkout errors".' },
+    },
+  },
+};
+
+function serviceTools(toolkits: readonly OfferedToolkit[]): RunTool[] {
   return [
     {
       name: FIND_TOOLS,
@@ -58,7 +86,16 @@ export function runTools(toolkits: readonly OfferedToolkit[]): RunTool[] {
 }
 
 /** Appended to the agent's own instructions. Empty when nothing is offered. */
-export function toolsPrompt(toolkits: readonly OfferedToolkit[]): string {
+export function toolsPrompt(toolkits: readonly OfferedToolkit[], where: { inRoom: boolean }): string {
+  return servicesPrompt(toolkits) + (where.inRoom ? ROOM_PROMPT : '');
+}
+
+const ROOM_PROMPT = `\n\nThis chat is in a room, where people work on one thing together. When you create, `
+  + `find or change something that lives on a web page — a ticket, a dashboard, a trace, a document — open that `
+  + `page with ${OPEN_PANEL} so everyone in the room sees it beside the conversation. Open only the pages the `
+  + 'work is about, and say in your reply what you opened.';
+
+function servicesPrompt(toolkits: readonly OfferedToolkit[]): string {
   if (toolkits.length === 0) return '';
   return `\n\nYou can use these services on behalf of the person who asked: `
     + `${toolkits.map(toolkit => toolkit.name).join(', ')}. To use one, call ${FIND_TOOLS} for that service, `

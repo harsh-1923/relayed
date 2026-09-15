@@ -23,6 +23,8 @@ import { isKeybindingKey, isPreferenceKey, isWritablePreferenceKey, specOf, type
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
 import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
+import type { Panel } from '../shared/panels.ts';
+import { storePanel, type PanelRow } from './effects.ts';
 
 /**
  * Two subjects in one row — the workspace, and me in it — so every field says
@@ -266,6 +268,8 @@ export interface WelcomePayload {
   /** Optional, like the wire frame's own fields: absent and empty mean the same thing. */
   connections?: ConnectionRow[];
   agentPermissions?: AgentPermissionRow[];
+  /** Every joined room's open panels, complete (PANELS.md). */
+  panels?: PanelRow[];
 }
 
 /** One connected account, in the client's own shape (WORKSPACE-AGENTS.md §6.3). */
@@ -744,6 +748,11 @@ export class Storage {
         permission.run(payload.actorId, row.agentActorId, row.toolkit, row.effect, row.revoked ? 1 : 0);
       }
 
+      // Complete, like the two above: a panel absent from `welcome` is one no
+      // room this actor is in still has.
+      db.exec('DELETE FROM panels');
+      for (const row of payload.panels ?? []) storePanel(db, row);
+
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -790,6 +799,32 @@ export class Storage {
   }
 
   /** This actor's grants to agents, revoked included — the connector store and the agent profile both need to tell "never allowed" from "allowed, then revoked" (§7.4). */
+  /** One synced room's shared panels, in the shape a local room's panels already have (PANELS.md). */
+  panels(spaceId: string): Panel[] {
+    const rows = this.workspace.prepare(`
+      SELECT id, space_id, type, chat_id, payload, title, opened_from_chat_id,
+             created_by_actor_id, on_behalf_of_actor_id, created_at, opened_at
+        FROM panels WHERE space_id = ? ORDER BY created_at, id
+    `).all(spaceId) as {
+      id: string; space_id: string; type: string; chat_id: string | null; payload: string; title: string | null;
+      opened_from_chat_id: string | null; created_by_actor_id: string | null; on_behalf_of_actor_id: string | null;
+      created_at: number; opened_at: number;
+    }[];
+    return rows.map(row => {
+      let payload: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(row.payload);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+      } catch { /* drawn as empty, never dropped */ }
+      return {
+        id: row.id, spaceId: row.space_id, type: row.type, chatId: row.chat_id, payload, title: row.title,
+        openedFromChatId: row.opened_from_chat_id, scope: 'shared' as const,
+        createdAt: row.created_at, openedAt: row.opened_at,
+        createdByActorId: row.created_by_actor_id, onBehalfOfActorId: row.on_behalf_of_actor_id,
+      };
+    });
+  }
+
   agentPermissions(actorId: string): AgentPermissionRow[] {
     const rows = this.workspace.prepare(`
       SELECT agent_actor_id, toolkit, effect, revoked FROM agent_permissions WHERE actor_id = ? ORDER BY toolkit

@@ -23,6 +23,7 @@ import {
 } from './events.ts';
 import { writeMessage } from './ops.ts';
 import { ulid } from '../db/ulid.ts';
+import { roomPanels } from './panels.ts';
 
 export interface NewChannel {
   workspaceId: string;
@@ -449,12 +450,17 @@ async function hydrationSnapshot(
     .where('space_id', '=', spaceId).where('kind', 'in', ['sole', 'default', 'public'])
     .execute();
 
+  // A room's panels come too, so someone added mid-way sees what everyone is
+  // already working beside — the same set `welcome` would give them.
+  const panels = space.kind === 'room' ? await roomPanels(trx, [spaceId]) : [];
+
   return {
     space: { ...space, rev: spaceRev },
     chats: chats.map(chat => ({
       id: chat.id, space_id: chat.space_id, kind: chat.kind, name: chat.name,
       head_ord: chat.next_ord, head_rev: chat.next_rev,
     })),
+    ...(panels.length > 0 ? { panels } : {}),
   };
 }
 

@@ -23,7 +23,29 @@ export interface Panel {
   /** `local`: only on this device, and shareable. `shared`: everyone entitled to it has it. */
   scope: 'local' | 'shared';
   createdAt: number;
+  /**
+   * When the room last opened it — moved forward when the same page is opened
+   * again. A synced room's panel only; a local one carries its `createdAt`.
+   */
+  openedAt: number;
+  /** Who opened it, and for whom: an agent and the person it acted for. Null for a panel opened on this device. */
+  createdByActorId: string | null;
+  onBehalfOfActorId: string | null;
 }
+
+/**
+ * What this device learned about a panel by showing it — never synced. Every
+ * field optional: an absent one draws the fallback, and fields a newer build
+ * wrote are left alone.
+ */
+export interface PanelMeta {
+  /** The page's own `<title>`, as last seen. */
+  pageTitle?: string;
+  /** A sha256 in the account's blob store, served as `relayed-blob://`. */
+  iconBlob?: string;
+}
+
+export interface PanelMetaRow { panelId: string; meta: PanelMeta }
 
 /**
  * Parse `?p=`. Ids in order, duplicates and blanks dropped. Resolving each to a
@@ -81,4 +103,52 @@ export function panelContainerToggle(
 ): { kind: 'close' } | { kind: 'open'; panelId: string | null } {
   if (containerOpen) return { kind: 'close' };
   return { kind: 'open', panelId: panels.at(-1)?.id ?? null };
+}
+
+/** When each shared panel was last opened, as a room view last saw them. */
+export type SeenPanels = ReadonlyMap<string, number>;
+
+export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope'>[]): Map<string, number> =>
+  new Map(panels.filter(panel => panel.scope === 'shared').map(panel => [panel.id, panel.openedAt]));
+
+/**
+ * What a synced room's tabs become as its shared panels change (PANELS.md) —
+ * or null when nothing should move.
+ *
+ * - **Arriving in the room** (`seen` is null) with nothing open: the most
+ *   recently opened panel is shown, unless this person closed it earlier. The
+ *   room looks like what everyone is working beside.
+ * - **A panel opened while here** — new, or opened again: it becomes a tab for
+ *   everyone present. It is shown only if nothing else was: someone reading
+ *   another tab keeps reading it, and the new one waits beside it.
+ *
+ * Closing is never undone by arriving again: `dismissed` is what this person
+ * closed in this room, kept only for as long as the app runs. Opening the page
+ * again in the room is new, though, and shows it once more.
+ */
+export function panelArrivals(input: {
+  seen: SeenPanels | null;
+  panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope'>[];
+  open: { containerOpen: boolean; ids: readonly string[]; active: string | null };
+  dismissed: ReadonlySet<string>;
+}): { ids: string[]; active: string | null } | null {
+  const shared = input.panels.filter(panel => panel.scope === 'shared');
+
+  if (input.seen === null) {
+    if (input.open.containerOpen) return null;
+    const latest = shared.filter(panel => !input.dismissed.has(panel.id))
+      .reduce<typeof shared[number] | null>((best, panel) => (!best || panel.openedAt > best.openedAt ? panel : best), null);
+    return latest ? { ids: [latest.id], active: latest.id } : null;
+  }
+
+  const seen = input.seen;
+  const arrived = shared
+    .filter(panel => !seen.has(panel.id) || panel.openedAt > (seen.get(panel.id) ?? 0))
+    .sort((a, b) => a.openedAt - b.openedAt);
+  if (arrived.length === 0) return null;
+
+  const ids = [...input.open.ids];
+  for (const panel of arrived) if (!ids.includes(panel.id)) ids.push(panel.id);
+  const lookingAtSomething = input.open.containerOpen && input.open.active !== null && input.open.ids.includes(input.open.active);
+  return { ids, active: lookingAtSomething ? input.open.active : arrived.at(-1)!.id };
 }

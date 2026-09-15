@@ -10,9 +10,10 @@
 // sight rather than hiding them. Parked, not `visibility: hidden`: t3code found
 // Electron can leave a macOS webview blank for good after that.
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowRight, Globe, Refresh, StopSmall } from '@relayed/icons';
+import { AlertTriangle, ArrowLeft, ArrowRight, Globe, Refresh, Spinner } from '@relayed/icons';
 import type { Panel } from '../../../preload/api';
 import { useSession } from '@/app/state';
+import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { addressFromTyped, isWebUrl, webPanelPartition } from '../../../shared/web-panels.ts';
@@ -24,11 +25,11 @@ interface WebviewElement extends HTMLElement {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  stop(): void;
   loadURL(url: string): Promise<void>;
   getURL(): string;
   getTitle(): string;
   isLoading(): boolean;
+  executeJavaScript(code: string): Promise<unknown>;
 }
 
 interface DidFailLoad extends Event {
@@ -46,6 +47,35 @@ interface PageState {
   /** Why the page could not be shown, and the address that failed; null while it is fine. */
   failure: { reason: string; url: string } | null;
 }
+
+/**
+ * Read a page's icon from inside the page, as a `data:` URL.
+ *
+ * Inside, because that is where the icon is reachable: the page's own session
+ * and cookies, and the cache it just loaded it into — so an icon behind a
+ * login, or on a page opened offline from cache, still resolves. The renderer
+ * could not fetch it itself (its CSP allows no remote images, on purpose). An
+ * icon on another origin that does not allow CORS fails here, and the tab keeps
+ * the globe. Whatever comes back is the page's to say, so sync checks it.
+ */
+const readIconScript = (href: string): string => `(async () => {
+  const href = ${JSON.stringify(href)};
+  if (href.startsWith('data:')) return href;
+  const response = await fetch(href);
+  if (!response.ok) return null;
+  let blob = await response.blob();
+  if (blob.size === 0 || blob.size > ${256 * 1024}) return null;
+  if (!blob.type.startsWith('image/')) blob = new Blob([blob], { type: 'image/x-icon' });
+  return await new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
+})().catch(() => null)`;
+
+interface FaviconUpdated extends Event { favicons: string[] }
+interface TitleUpdated extends Event { title: string }
 
 /** Chromium's "aborted": a load replaced by another, which is not a failure anyone should see. */
 const ERR_ABORTED = -3;
@@ -91,20 +121,38 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
       setPage(previous => ({ ...previous, failure: { reason: 'The page stopped responding.', url: previous.url } }));
     };
 
+    // What this device learned about the page, kept with the panel so its tab
+    // draws the title and icon before the page loads again (PANELS.md).
+    const report = (fields: { pageTitle?: string; icon?: string }): void => {
+      void call(api => api.query('local.panels.reportMeta', { panelId: panel.id, spaceId: panel.spaceId, ...fields }));
+    };
+    const onTitle = (event: Event): void => { report({ pageTitle: (event as TitleUpdated).title }); };
+    const onFavicon = (event: Event): void => {
+      const href = (event as FaviconUpdated).favicons.find(candidate => !/\.svg(?:$|[?#])/i.test(candidate));
+      if (!href) return;
+      void element.executeJavaScript(readIconScript(href))
+        .then(icon => { if (typeof icon === 'string') report({ icon }); })
+        .catch(() => { /* the page went away mid-read; the next load reports again */ });
+    };
+
     const updates = ['did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'];
     element.addEventListener('dom-ready', onReady);
     element.addEventListener('did-start-loading', onStart);
     element.addEventListener('did-fail-load', onFail);
     element.addEventListener('render-process-gone', onGone);
+    element.addEventListener('page-title-updated', onTitle);
+    element.addEventListener('page-favicon-updated', onFavicon);
     for (const name of updates) element.addEventListener(name, read);
     return () => {
       element.removeEventListener('dom-ready', onReady);
       element.removeEventListener('did-start-loading', onStart);
       element.removeEventListener('did-fail-load', onFail);
       element.removeEventListener('render-process-gone', onGone);
+      element.removeEventListener('page-title-updated', onTitle);
+      element.removeEventListener('page-favicon-updated', onFavicon);
       for (const name of updates) element.removeEventListener(name, read);
     };
-  }, [session.accountId, drawable]);
+  }, [session.accountId, drawable, panel.id, panel.spaceId]);
 
   const element = (): WebviewElement | null => view.current as WebviewElement | null;
   /** Throws synchronously before `dom-ready`, and rejects on a failed load, which `did-fail-load` already shows. */
@@ -112,6 +160,7 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
     try { void element()?.loadURL(address).catch(() => {}); } catch { /* not attached yet */ }
   };
   const retry = (): void => {
+    setPage(previous => ({ ...previous, loading: true, failure: null }));
     const failed = page.failure;
     if (failed) load(failed.url);
     else element()?.reload();
@@ -131,8 +180,10 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
           <ArrowRight />
         </Button>
         {page.loading ? (
-          <Button variant="ghost" size="icon-xs" aria-label="Stop loading" title="Stop loading" disabled={!drawable} onClick={() => element()?.stop()}>
-            <StopSmall />
+          <Button variant="ghost" size="icon-xs" aria-label="Loading" title="Loading" disabled>
+            <span className="flex animate-spin" aria-hidden="true">
+              <Spinner />
+            </span>
           </Button>
         ) : (
           <Button variant="ghost" size="icon-xs" aria-label="Reload" title="Reload" disabled={!drawable} onClick={retry}>

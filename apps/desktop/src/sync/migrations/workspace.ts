@@ -645,4 +645,30 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE INDEX agent_permission_actor ON agent_permissions(actor_id) WHERE revoked = 0;
     `,
   },
+  {
+    version: 15,
+    name: 'room_panels',
+    // A room's shared panels (PANELS.md §3.2), as the server holds them. No CHECK
+    // on `type`, unlike the server: a newer server may send a type this build
+    // cannot draw, and the row is kept and drawn as a placeholder rather than
+    // refused (§3.3). The server's CHECK is the authority on what exists.
+    up: `
+      CREATE TABLE panels (
+        id                     TEXT PRIMARY KEY,
+        space_id               TEXT NOT NULL,
+        type                   TEXT NOT NULL,
+        chat_id                TEXT,
+        payload                TEXT NOT NULL DEFAULT '{}',
+        title                  TEXT,
+        opened_from_chat_id    TEXT,
+        created_by_actor_id    TEXT,
+        on_behalf_of_actor_id  TEXT,
+        created_at             INTEGER NOT NULL,
+        -- Moved forward when the room opens the page again; what someone
+        -- entering the room is shown is the highest of these.
+        opened_at              INTEGER NOT NULL
+      );
+      CREATE INDEX panel_space ON panels(space_id, opened_at DESC);
+    `,
+  },
 ];

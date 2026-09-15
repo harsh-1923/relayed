@@ -379,6 +379,25 @@ export type ConnectionsPush = z.infer<typeof ConnectionsPush>;
 export const AgentPermissionsPush = z.object({ rows: z.array(AgentPermissionRow) });
 export type AgentPermissionsPush = z.infer<typeof AgentPermissionsPush>;
 
+/**
+ * A room's shared panel (PANELS.md), as `welcome`, `panel.opened` and a newly
+ * added member's hydration all carry it. `type` stays a string: a newer server
+ * may send a type this client keeps without knowing how to draw (§3.3).
+ */
+export const PanelRow = z.object({
+  id: z.string(),
+  space_id: z.string(),
+  type: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+  title: z.string().nullable(),
+  opened_from_chat_id: z.string().nullable(),
+  created_by_actor_id: z.string().nullable(),
+  on_behalf_of_actor_id: z.string().nullable(),
+  created_at: z.string(),
+  opened_at: z.string(),
+});
+export type PanelRow = z.infer<typeof PanelRow>;
+
 export const Welcome = z.object({
   protocol: z.number().int(),
   now: z.number().int(),
@@ -458,6 +477,11 @@ export const Welcome = z.object({
   connections: z.array(ConnectionRow).optional(),
   /** The CALLER's own grants to agents (WORKSPACE-AGENTS.md §6.4) — revoked rows included, for the same reason. */
   agent_permissions: z.array(AgentPermissionRow).optional(),
+  /**
+   * The open panels of every room the caller has joined, complete: a panel
+   * absent here is one the room no longer has.
+   */
+  panels: z.array(PanelRow).optional(),
 });
 export type Welcome = z.infer<typeof Welcome>;
 

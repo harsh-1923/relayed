@@ -21,6 +21,7 @@ import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
 import { OfflineSwitch } from '@/features/dev/OfflineSwitch';
 import { CommandInspector } from '@/features/dev/CommandInspector';
+import { RouteStrip } from '@/features/dev/RouteStrip';
 import { Button } from '@/components/ui/button';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
@@ -119,6 +120,7 @@ export function TopBar() {
             does, the whole span is what you grab to move the window. */}
         <div className="min-w-0 flex-1" />
 
+        <RouteStrip />
         <CommandInspector />
         <OfflineSwitch />
       </div>

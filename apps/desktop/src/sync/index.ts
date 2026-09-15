@@ -389,6 +389,7 @@ const link = createLink({
       agentPermissions: (body.agent_permissions ?? []).map(p => ({
         agentActorId: p.agent_actor_id, toolkit: p.toolkit, effect: p.effect, revoked: p.revoked,
       })),
+      panels: body.panels ?? [],
     });
     // Every badge in the sidebar is correct as of this line, with the message
     // table still empty. Waking the surfaces is what makes that visible.
@@ -545,6 +546,7 @@ const localRooms = createLocalRooms({
   store: localStore,
   runner,
   invalidate: topics => invalidate(topics),
+  putBlob: (id, bytes) => { if (!storage.hasBlob(id)) storage.putBlob(id, bytes); },
   // Fired and forgotten: the seed is written before this returns, the generated title whenever it arrives.
   onFirstMessage: (spaceId, text) => { void roomTitles.onFirstMessage(spaceId, text); },
   // Live text, straight to every window. Not an invalidation: nothing was written.
@@ -628,6 +630,11 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   },
 
   /** One space and its chats. An array, as every read is: one row, or none. */
+  /** One synced room's shared panels, from the replica (PANELS.md). */
+  'panels.list': (params) => {
+    const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+    return spaceId && storage.hasWorkspace ? storage.panels(spaceId) : [];
+  },
   'space.get': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     const space = spaceId && storage.hasWorkspace ? storage.space(spaceId) : null;

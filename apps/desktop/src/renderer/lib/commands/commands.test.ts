@@ -126,11 +126,11 @@ test('allow-editable still runs from a text field', () => {
   assert.equal(decide(press('k', { metaKey: true, editable: true }), 'mac', macIndex, withSearchAndSidebar()).kind, 'run');
 });
 
-test('the room-panel shortcut follows the labelled B key when Option changes the produced character', () => {
+test('the room-panel shortcut is Command+Shift+B, on the labelled B key, even while typing', () => {
   const registry = registryOf();
   registry.register('room.panels.toggle', handler({ layer: 'route' }));
-  const decision = decide(press('∫', {
-    code: 'KeyB', metaKey: true, altKey: true, altGraph: true, editable: true,
+  const decision = decide(press('B', {
+    code: 'KeyB', metaKey: true, shiftKey: true, editable: true,
   }), 'mac', macIndex, registry);
   assert.equal(decision.kind, 'run');
   assert.equal(decision.id, 'room.panels.toggle');
