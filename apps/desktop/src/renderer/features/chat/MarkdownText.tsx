@@ -33,7 +33,7 @@ export function MarkdownText({
   const components: Components = {
     p: ({ node, children }) => (
       <p>
-        {slashCommand && node.position?.start.offset === 0
+        {slashCommand && node?.position?.start.offset === 0
           ? commandChip(children, `/${slashCommand.name}`)
           : children}
       </p>

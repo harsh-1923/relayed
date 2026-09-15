@@ -83,6 +83,8 @@ export const topic = {
   pref: (key: string): string => `prefs:${key}`,
   /** The signed-in actor's own connected accounts (WORKSPACE-AGENTS.md §6.3) — the connector store's Yours list. */
   connections: (): string => 'connections',
+  /** Toolkit marks held on this device, woken as the connector store's downloads land. */
+  toolkitLogos: (): string => 'toolkit_logos',
   /** The signed-in actor's own grants to agents (WORKSPACE-AGENTS.md §6.4). */
   agentPermissions: (): string => 'agent_permissions',
 } as const;

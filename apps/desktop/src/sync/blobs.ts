@@ -9,11 +9,17 @@
 // `webSecurity` stays on and no filesystem path reaches the DOM.
 import { createHash } from 'node:crypto';
 import { emit, count } from '@relayed/telemetry';
-import type { Storage } from './storage.ts';
+import type { ToolkitSummary } from './auth/relayed.ts';
+import type { CachedImageMediaType, Storage } from './storage.ts';
 
 /** An avatar that will not fit in a cache line is not an avatar. */
 const MAX_BYTES = 2 * 1024 * 1024;
 const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']);
+const TOOLKIT_LOGO_TYPES = new Set<CachedImageMediaType>([
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif',
+  'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml',
+]);
+const TOOLKIT_LOGO_CONCURRENCY = 8;
 
 /**
  * Fetch every image this account needs and record it against its workspace.
@@ -113,4 +119,123 @@ async function fetchBlob(storage: Storage, url: string): Promise<string | null> 
   const id = createHash('sha256').update(buf).digest('hex');
   if (!storage.hasBlob(id)) storage.putBlob(id, buf);
   return id;
+}
+
+/** A toolkit's mark as this account holds it — the renderer never receives the remote URL. */
+export interface ToolkitLogo {
+  slug: string;
+  logoBlob: string;
+  logoMediaType: CachedImageMediaType;
+}
+
+/** The URLs a toolkit's mark may come from, in the order they are tried. */
+function logoCandidates(slug: string, reportedUrl: string | null): string[] {
+  // Composio maintains this endpoint specifically for toolkit marks. The API's
+  // reported URL stays first so custom toolkit branding wins; the canonical
+  // endpoint repairs catalogue rows whose historical third-party URL is dead.
+  const canonicalUrl = `https://logos.composio.dev/api/${encodeURIComponent(slug)}`;
+  return [...new Set([reportedUrl, canonicalUrl].filter((url): url is string => Boolean(url)))];
+}
+
+/**
+ * The marks already on disk, read without touching the network. Never throws:
+ * a logo is decoration, and a cache that cannot be read is initials, not a
+ * catalogue that fails to load.
+ */
+export function heldToolkitLogos(
+  storage: Storage,
+  toolkits: readonly Pick<ToolkitSummary, 'slug' | 'logoUrl'>[],
+): ToolkitLogo[] {
+  const held: ToolkitLogo[] = [];
+  for (const toolkit of toolkits) {
+    try {
+      for (const sourceUrl of logoCandidates(toolkit.slug, toolkit.logoUrl)) {
+        const asset = storage.cachedAsset(sourceUrl, 'toolkit_logo');
+        if (asset) { held.push({ slug: toolkit.slug, logoBlob: asset.blobId, logoMediaType: asset.mediaType }); break; }
+      }
+    } catch { /* unreadable cache: this toolkit shows initials */ }
+  }
+  return held;
+}
+
+/**
+ * Download the marks not yet held, in the background of a catalogue read — the
+ * list is already on screen, and each mark appears when it lands. Returns how
+ * many were newly stored, so the caller wakes readers only when something
+ * changed. Never throws, per toolkit: one bad logo costs only itself.
+ */
+export async function cacheToolkitLogos(
+  storage: Storage,
+  toolkits: readonly Pick<ToolkitSummary, 'slug' | 'logoUrl'>[],
+  request: typeof fetch = fetch,
+): Promise<number> {
+  let stored = 0;
+  for (let index = 0; index < toolkits.length; index += TOOLKIT_LOGO_CONCURRENCY) {
+    const batch = toolkits.slice(index, index + TOOLKIT_LOGO_CONCURRENCY);
+    const results = await Promise.all(batch.map(async toolkit => {
+      try {
+        return await resolveToolkitLogo(storage, toolkit.slug, toolkit.logoUrl, request);
+      } catch {
+        return null;
+      }
+    }));
+    stored += results.filter(result => result?.fetched).length;
+  }
+  return stored;
+}
+
+async function resolveToolkitLogo(
+  storage: Storage,
+  slug: string,
+  reportedUrl: string | null,
+  request: typeof fetch,
+): Promise<{ blobId: string; mediaType: CachedImageMediaType; fetched: boolean } | null> {
+  for (const sourceUrl of logoCandidates(slug, reportedUrl)) {
+    const held = storage.cachedAsset(sourceUrl, 'toolkit_logo');
+    if (held) {
+      if (reportedUrl && sourceUrl !== reportedUrl) {
+        storage.linkCachedAsset(reportedUrl, 'toolkit_logo', held.blobId, held.mediaType);
+      }
+      return { ...held, fetched: false };
+    }
+
+    const fetched = await fetchToolkitLogo(sourceUrl, request);
+    if (!fetched) continue;
+    const blobId = createHash('sha256').update(fetched.bytes).digest('hex');
+    storage.putCachedAsset(sourceUrl, 'toolkit_logo', blobId, fetched.mediaType, fetched.bytes);
+    if (reportedUrl && sourceUrl !== reportedUrl) {
+      storage.linkCachedAsset(reportedUrl, 'toolkit_logo', blobId, fetched.mediaType);
+    }
+    return { blobId, mediaType: fetched.mediaType, fetched: true };
+  }
+  return null;
+}
+
+async function fetchToolkitLogo(
+  sourceUrl: string,
+  request: typeof fetch,
+): Promise<{ bytes: Uint8Array; mediaType: CachedImageMediaType } | null> {
+  let parsed: URL;
+  try { parsed = new URL(sourceUrl); } catch { return null; }
+  if (parsed.protocol !== 'https:') return null;
+
+  try {
+    const response = await request(sourceUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return null;
+    const mediaType = (response.headers.get('content-type') ?? '')
+      .split(';')[0]!.trim().toLowerCase() as CachedImageMediaType;
+    if (!TOOLKIT_LOGO_TYPES.has(mediaType)) return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_BYTES) return null;
+    if (mediaType === 'image/svg+xml') {
+      const opening = new TextDecoder().decode(bytes.subarray(0, 1024));
+      if (!/<svg(?:\s|>)/i.test(opening)) return null;
+    }
+    return { bytes, mediaType };
+  } catch {
+    return null;
+  }
 }

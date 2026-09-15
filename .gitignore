@@ -47,3 +47,6 @@ schema.sql
 # A read-only dump of this Mac's local databases, including the text of local
 # chats. Generated on request; never committed.
 /local-db-report.md
+
+# Composio spike debug dumps; may hold the API key
+spikes/composio-connect/.last-request*.json

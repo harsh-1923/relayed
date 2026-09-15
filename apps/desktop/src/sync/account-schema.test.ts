@@ -33,6 +33,7 @@ test('the preferences table arrives, and auto_vacuum survives the migration', ()
   const names = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as
     { name: string }[]).map(r => r.name);
   assert.ok(names.includes('preferences'));
+  assert.ok(names.includes('cached_assets'));
   // Invariant 11: the pragma is silently ignored if anything materialises the
   // header first, and the symptom appears months later on somebody else's disk.
   const row = db.prepare('SELECT * FROM pragma_auto_vacuum()').get() as Record<string, number>;
@@ -54,7 +55,7 @@ test('an EXISTING version 1 account upgrades, keeping its workspaces', () => {
 
   const second = openDatabase(file);
   assert.deepEqual(migrate(second, accountMigrations),
-                   { from: 1, to: 2, applied: ['2:preferences'] });
+                   { from: 1, to: 3, applied: ['2:preferences', '3:cached-assets'] });
   const kept = (second.prepare('SELECT name FROM workspaces').all() as { name: string }[])
     .map(r => ({ ...r }));
   assert.deepEqual(kept, [{ name: 'Acme' }]);
@@ -62,6 +63,20 @@ test('an EXISTING version 1 account upgrades, keeping its workspaces', () => {
   writePreference(second, 'appearance.theme', 'dark');
   assert.equal(readPreferences(second).length, 1);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test('cached assets accept only named classes, sha256 ids and image media types', () => {
+  const db = account();
+  const insert = (kind: string | null, blobId: string, mediaType: string) => db.prepare(`
+    INSERT INTO cached_assets (source_url, kind, blob_id, media_type, cached_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(`https://logos.test/${String(kind)}-${String(mediaType)}`, kind, blobId, mediaType, 1);
+
+  insert('toolkit_logo', 'a'.repeat(64), 'image/svg+xml');
+  assert.throws(() => insert('avatar', 'b'.repeat(64), 'image/png'), /kind/);
+  assert.throws(() => insert('toolkit_logo', '../outside', 'image/png'), /blob_id/);
+  assert.throws(() => insert('toolkit_logo', 'c'.repeat(64), 'text/html'), /media_type/);
+  assert.throws(() => insert(null, 'd'.repeat(64), 'image/png'), /NOT NULL/);
 });
 
 // ── the constraints ─────────────────────────────────────────────────────────

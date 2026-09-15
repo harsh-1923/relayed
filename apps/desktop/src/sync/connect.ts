@@ -12,7 +12,7 @@
 // worth holding after it settles.
 import { randomBytes } from 'node:crypto';
 import { listenForCallback } from './auth/loopback.ts';
-import { startConnection, completeConnection } from './auth/relayed.ts';
+import { startConnection, completeConnection, failConnection } from './auth/relayed.ts';
 
 export type ConnectResult =
   | { ok: true; connectionId: string; status: string }
@@ -42,11 +42,16 @@ export async function connect(
     successPage: { title: 'Connected', body: 'You can close this tab and return to Relayed.' },
   });
   const port = Number(new URL(listener.redirectUri).port);
+  // Set once a row exists to fail, so anything after that point — the browser
+  // never redirecting back, a network drop mid-`complete` — has somewhere to
+  // report it, rather than leaving the row at "connecting" for good (§6.5).
+  let connectionId: string | undefined;
 
   try {
     const started = await startConnection(accessToken,
       { toolkit, port, state, ...(accessRequestId ? { accessRequestId } : {}) });
     if (!started.ok) return { ok: false, reason: started.error };
+    connectionId = started.connection_id;
 
     // AFTER the browser opens, not before — the same ordering sign-in holds,
     // for the same reason: a listener that is not actually live yet must
@@ -55,9 +60,16 @@ export async function connect(
     const { session_uri: sessionUri } = await listener.result;
 
     const completed = await completeConnection(accessToken, started.connection_id, sessionUri);
-    if (!completed.ok) return { ok: false, reason: completed.error };
+    if (!completed.ok) {
+      // Most refusals already left the row 'failed' themselves; the rest
+      // (a mismatched account, say) have not, and this call is a no-op on the
+      // ones that have — `/fail` never overwrites anything but 'connecting'.
+      await failConnection(accessToken, connectionId).catch(() => {});
+      return { ok: false, reason: completed.error };
+    }
     return { ok: true, connectionId: completed.connection_id, status: completed.status };
   } catch (e) {
+    if (connectionId) await failConnection(accessToken, connectionId).catch(() => {});
     return { ok: false, reason: e instanceof Error ? e.message : 'connect failed' };
   } finally {
     listener.close();

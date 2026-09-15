@@ -5,6 +5,8 @@ import type { AgentActivity } from '../shared/agent-activity.ts';
 import type { Space } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
+import type { ImageMediaType } from '../shared/blobs.ts';
+import type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
@@ -13,6 +15,7 @@ export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-
 export type { AgentActivity } from '../shared/agent-activity.ts';
 export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
+export type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export interface DbInfo {
   open: boolean;
@@ -132,12 +135,18 @@ export interface AgentPermissionRow {
   revoked: boolean;
 }
 
-/** One offered toolkit (§7.1) — online-only, not replicated. */
+/** A toolkit's mark as this account holds it: a content address, never the remote URL. */
+export interface ToolkitLogo {
+  slug: string;
+  logoBlob: string;
+  logoMediaType: ImageMediaType;
+}
+
+/** One offered toolkit (§7.1) — online-only, not replicated. Its mark is `toolkits.logos`. */
 export interface ToolkitSummary {
   slug: string;
   name: string;
   description: string;
-  logoUrl: string | null;
   categories: string[];
   authScheme: string;
   deprecated: boolean;
@@ -357,6 +366,13 @@ export interface RelayedApi {
   query(op: "local.panels.meta", params: { spaceId: string }): Promise<PanelMetaRow[]>;
   /** A panel on screen reporting its page. `icon` is a small raster `data:` URL; anything else is ignored. */
   query(op: "local.panels.reportMeta", params: { panelId: string; spaceId: string; pageTitle?: string; icon?: string }): Promise<null>;
+  /** Browsers on this Mac that web panels can import signed-in sessions from. */
+  query(op: "browserImport.sources"): Promise<BrowserImportSource[]>;
+  /** Copy one browser profile's cookies into this account's web panels. Never rejects for an expected failure. */
+  query(op: "browserImport.run", params: { sourceId: BrowserImportSourceId; directory: string }): Promise<BrowserImportResult>;
+  /** Sign web panels out of every site. */
+  query(op: "browserImport.clear"): Promise<null>;
+  query(op: "browserImport.openFullDiskAccess"): Promise<null>;
   query(op: "local.panels.touch", params: { panelId: string }): Promise<null>;
   /** Share a local panel into its local room. One-way. */
   query(op: "local.panels.share", params: { panelId: string }): Promise<null>;
@@ -500,6 +516,8 @@ export interface RelayedApi {
   query(op: "agentPermissions.list"): Promise<AgentPermissionRow[]>;
   /** The offered catalogue, online-only (§7.1). Empty, with `offline: true`, when there is no connection — the same shape `invite.list` uses. */
   query(op: "toolkits.list"): Promise<{ toolkits: ToolkitSummary[]; offline: boolean }>;
+  /** Marks for the last catalogue read that are already on disk. Grows as background downloads land. */
+  query(op: "toolkits.logos"): Promise<ToolkitLogo[]>;
   /**
    * Listens, asks the server to start a connection, opens the result in the
    * system browser, and resolves once the account is ACTIVE (§6.5). Slow —

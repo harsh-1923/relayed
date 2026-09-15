@@ -563,6 +563,7 @@ Two tiers, and the split is forced by the switcher.
 | Class | Location | Why |
 |---|---|---|
 | **Avatars** | `accounts/<acc>/blobs/<2-char>/<id>` | the rail draws one per workspace, including the ones you are not in |
+| Connector logos | `accounts/<acc>/blobs/<2-char>/<id>` | the catalogue is shared across workspaces; duplicating marks per replica adds no isolation |
 | Message attachments | `accounts/<acc>/workspaces/<wsp>/blobs/…` | eviction follows message eviction (§13.6), which is per-workspace |
 
 DESIGN.md §13.3 predates this document and says `userData/blobs/`. Per-workspace
@@ -593,6 +594,19 @@ The handler is the one place a renderer names something path-shaped, so:
 Content-addressing is load-bearing beyond deduplication: the same human in two
 workspaces yields one file, and the id cannot be chosen by whatever produced the
 URL.
+
+`account.db.cached_assets` maps a remote catalogue source URL and closed asset
+kind to the sha256 and validated image media type actually held. It is metadata,
+not bytes. A row whose file has gone missing is a cache miss and is repaired by
+the next online catalogue read.
+
+The media type travels only as a closed local URL suffix so the protocol handler
+can label extensionless files. This matters for connector marks because
+Composio's logo CDN always returns SVG. The renderer receives the content hash
+and media type, never the remote URL, and embeds it only through `<img>`; secure
+static SVG image mode disables script and external resource loads. The response
+also carries a sandboxed, deny-by-default CSP, so direct navigation to the same
+typed URL cannot turn those bytes into an active document.
 
 ### 14.1 Three subjects can have an image
 

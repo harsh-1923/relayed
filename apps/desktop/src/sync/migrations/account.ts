@@ -144,4 +144,29 @@ export const accountMigrations: readonly Migration[] = [
       -- rows.
     `,
   },
+  {
+    version: 3,
+    name: 'cached-assets',
+    up: `
+      -- Remote catalogue metadata is useful only while online. Keep the bytes
+      -- account-local, like avatars, and retain only the source-to-content
+      -- address needed to avoid fetching the same immutable logo each time the
+      -- connector store opens (STORAGE.md, blob placement §14).
+      CREATE TABLE cached_assets (
+        source_url  TEXT    NOT NULL,
+        kind        TEXT    NOT NULL,
+        blob_id     TEXT    NOT NULL,
+        media_type  TEXT    NOT NULL,
+        cached_at   INTEGER NOT NULL,
+
+        PRIMARY KEY (source_url, kind),
+        CHECK (kind IN ('toolkit_logo')),
+        CHECK (length(blob_id) = 64 AND blob_id NOT GLOB '*[^0-9a-f]*'),
+        CHECK (media_type IN (
+          'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif',
+          'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml'
+        ))
+      );
+    `,
+  },
 ];

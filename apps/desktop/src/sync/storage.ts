@@ -24,6 +24,7 @@ import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
 import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
 import type { Panel } from '../shared/panels.ts';
+import type { ImageMediaType } from '../shared/blobs.ts';
 import { storePanel, type PanelRow } from './effects.ts';
 
 /**
@@ -85,6 +86,14 @@ export interface ReplicaAgentSummary {
   description: string;
   configRev: number;
   toolkits: { toolkit: string; effect: string }[];
+}
+
+export type CachedAssetKind = 'toolkit_logo';
+export type CachedImageMediaType = ImageMediaType;
+
+export interface CachedAsset {
+  blobId: string;
+  mediaType: CachedImageMediaType;
 }
 
 /**
@@ -1097,6 +1106,58 @@ export class Storage {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, bytes, { mode: 0o600 });
     histogram('blob.bytes', bytes.byteLength, { kind });
+  }
+
+  /**
+   * A catalogue asset is account-tier because it is independent of whichever
+   * workspace replica is open. It deliberately does not add a new blob metric
+   * label: a missing optional logo has a normal fallback, while actual serving
+   * failures already hit `blob.serve` (OBSERVABILITY.md, blob markers §7).
+   */
+  putCachedAsset(
+    sourceUrl: string,
+    kind: CachedAssetKind,
+    blobId: string,
+    mediaType: CachedImageMediaType,
+    bytes: Uint8Array,
+  ): void {
+    const acc = this.#accountId;
+    if (!acc) throw new Error('no account is open');
+    const file = p.accountBlob(this.root, acc, blobId);
+    mkdirSync(dirname(file), { recursive: true });
+    if (!existsSync(file)) {
+      if (bytes.byteLength === 0) throw new Error('cached asset bytes are empty');
+      writeFileSync(file, bytes, { mode: 0o600 });
+    }
+    this.linkCachedAsset(sourceUrl, kind, blobId, mediaType);
+  }
+
+  /** Link another stable source URL to bytes already held in this account. */
+  linkCachedAsset(
+    sourceUrl: string,
+    kind: CachedAssetKind,
+    blobId: string,
+    mediaType: CachedImageMediaType,
+  ): void {
+    if (!this.hasBlob(blobId)) throw new Error('cached asset blob is not held');
+    this.account.prepare(`
+      INSERT INTO cached_assets (source_url, kind, blob_id, media_type, cached_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (source_url, kind) DO UPDATE SET
+        blob_id = excluded.blob_id,
+        media_type = excluded.media_type,
+        cached_at = excluded.cached_at
+    `).run(sourceUrl, kind, blobId, mediaType, Date.now());
+  }
+
+  /** A mapping is usable only while its content-addressed bytes still exist. */
+  cachedAsset(sourceUrl: string, kind: CachedAssetKind): CachedAsset | null {
+    const row = this.account.prepare(`
+      SELECT blob_id, media_type FROM cached_assets
+      WHERE source_url = ? AND kind = ?
+    `).get(sourceUrl, kind) as { blob_id: string; media_type: CachedImageMediaType } | undefined;
+    if (!row || !this.hasBlob(row.blob_id)) return null;
+    return { blobId: row.blob_id, mediaType: row.media_type };
   }
 
   /** `which` names the subject, so the two images cannot be crossed. */

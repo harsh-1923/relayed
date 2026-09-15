@@ -13,11 +13,11 @@ import {
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, openBrowser, pickFolder, setBlobAccount, setMenuShortcuts, setThemeSource } from './main-bridge.ts';
+import { vault as bridgeVault, browserImport, openBrowser, pickFolder, setBlobAccount, setMenuShortcuts, setThemeSource } from './main-bridge.ts';
 import { KEYBINDING_PREFIX } from '../shared/prefs.ts';
 import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts';
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
-import { prefetchAvatars } from './blobs.ts';
+import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
@@ -580,6 +580,26 @@ async function probeClaude(): Promise<ClaudeStatus> {
 
 // ── handlers ────────────────────────────────────────────────────────────────
 
+/**
+ * The slugs and logo sources of the last catalogue read, for `toolkits.logos`.
+ * Memory only: the catalogue is online-only (WORKSPACE-AGENTS.md §7.1), and
+ * the bytes it points at are what persist.
+ */
+let lastCatalogue: { slug: string; logoUrl: string | null }[] = [];
+/** One download pass at a time; reopening the store while one runs does not start another. */
+let logoPass: Promise<void> | null = null;
+
+function fetchMissingLogos(): void {
+  if (logoPass) return;
+  const held = new Set(heldToolkitLogos(storage, lastCatalogue).map(logo => logo.slug));
+  const missing = lastCatalogue.filter(toolkit => !held.has(toolkit.slug));
+  if (missing.length === 0) return;
+  logoPass = cacheToolkitLogos(storage, missing)
+    .then(stored => { if (stored > 0) invalidate([topic.toolkitLogos()]); })
+    .catch(() => { /* a mark that fails to download is initials */ })
+    .finally(() => { logoPass = null; });
+}
+
 const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>> = {
   ping: () => ({ pong: true, at: Date.now() }),
   'app.state': () => view(),
@@ -650,6 +670,16 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
 
   /** Probe again — after the person installs Claude Code or signs in, say. */
   'claude.refresh': async () => { await probeClaude(); return null; },
+
+  // ── browser import (PANELS.md) — main does the work; only a person in settings starts it
+  'browserImport.sources': () => browserImport.sources(),
+  'browserImport.run': (params) => {
+    const { sourceId, directory } = (params ?? {}) as { sourceId?: unknown; directory?: unknown };
+    if (typeof sourceId !== 'string' || typeof directory !== 'string') throw new Error('sourceId and directory required');
+    return browserImport.run(sourceId, directory);
+  },
+  'browserImport.clear': () => browserImport.clear(),
+  'browserImport.openFullDiskAccess': () => browserImport.openFullDiskAccess(),
 
   // ── local rooms (LOCAL-ROOMS.md §7–§8) ─────────────────────────────────
   ...localRooms.handlers,
@@ -1003,8 +1033,17 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   'toolkits.list': async () => {
     const token = await session.ensureFresh();
     if (!token) return { toolkits: [], offline: true };
-    return { ...(await listToolkits(token)), offline: false };
+    const catalogue = await listToolkits(token);
+    lastCatalogue = catalogue.toolkits.map(({ slug, logoUrl }) => ({ slug, logoUrl }));
+    // The list goes back now; marks are `toolkits.logos`, which reads only
+    // what is on disk and wakes as each download lands.
+    invalidate([topic.toolkitLogos()]);
+    fetchMissingLogos();
+    // Without `logoUrl`: the renderer never holds a remote image address.
+    return { toolkits: catalogue.toolkits.map(({ logoUrl: _remote, ...toolkit }) => toolkit), offline: false };
   },
+  /** The catalogue's marks this account already holds. Local only, so it answers offline too. */
+  'toolkits.logos': () => (storage.accountId ? heldToolkitLogos(storage, lastCatalogue) : []),
   /**
    * Listens, asks the server to start a connection, opens the result in the
    * system browser, and resolves once the account is ACTIVE (§6.5) — slow,

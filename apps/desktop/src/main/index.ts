@@ -2,7 +2,7 @@
 // handshake. Deliberately thin — it does NOT own the database or the socket
 // (DESIGN.md §5).
 import {
-  app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, shell, utilityProcess,
+  app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, session, shell, utilityProcess,
   MessageChannelMain,
 } from 'electron';
 import { dirname, join } from 'node:path';
@@ -12,6 +12,9 @@ import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
 import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
 import { guardWebPanels } from './web-panels';
+import { clearSignIns, importCookies, listSources } from './browser-import';
+import { isBrowserImportSourceId } from '../shared/browser-import.ts';
+import { webPanelPartition } from '../shared/web-panels.ts';
 import {
   buildMenuTemplate, defaultMenuItems, parseMenuItems, shouldIgnoreMenuShortcut, type NativeMenuItem,
 } from './menu';
@@ -406,6 +409,7 @@ app.whenReady().then(() => {
     const msg = m as {
       type?: string; rid?: number; token?: string; url?: string;
       accountId?: string; workspaceId?: string; source?: string; items?: unknown;
+      sourceId?: unknown; directory?: unknown;
     };
     const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
     // A vault slot is per (account, workspace) — STORAGE.md §9.
@@ -464,6 +468,31 @@ app.whenReady().then(() => {
           .catch(() => reply(null));
         break;
       }
+      // Signing web panels in from a browser on this Mac (browser-import/).
+      // Always into the open account's panel session — the one guardWebPanels
+      // lets a page attach to — so an import can never land in another's.
+      case 'browserImport:sources':
+        reply(listSources());
+        break;
+      case 'browserImport:run': {
+        const pages = panelAccountId ? session.fromPartition(webPanelPartition(panelAccountId)) : null;
+        if (!isBrowserImportSourceId(msg.sourceId) || typeof msg.directory !== 'string') {
+          reply({ ok: false, reason: 'unknownSource' });
+          break;
+        }
+        void importCookies({ sourceId: msg.sourceId, directory: msg.directory }, pages).then(reply);
+        break;
+      }
+      case 'browserImport:clear': {
+        const pages = panelAccountId ? session.fromPartition(webPanelPartition(panelAccountId)) : null;
+        void clearSignIns(pages).then(() => reply(null), () => reply(null));
+        break;
+      }
+      // Full Disk Access cannot be asked for; the person grants it, so open the pane where they do.
+      case 'browserImport:fullDiskAccess':
+        void shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+        reply(null);
+        break;
       case 'browser:open':
         // The SYSTEM browser, never a BrowserWindow — Google and Microsoft
         // refuse OAuth in embedded webviews (PHASE-1-IDENTITY.md §2).

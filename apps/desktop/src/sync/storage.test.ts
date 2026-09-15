@@ -301,6 +301,23 @@ test('blobs are content-addressed, sharded, and account-tier', () => {
   assert.equal(storage.workspaceRow('wsp_a')?.workspaceAvatarBlob, null);
 });
 
+test('catalogue assets map a remote URL to held account-tier bytes', () => {
+  const dir = root();
+  const { storage, accountId } = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
+  const sourceUrl = 'https://logos.composio.dev/api/github';
+  const blobId = 'd'.repeat(64);
+  const bytes = new TextEncoder().encode('<svg/>');
+
+  assert.equal(storage.cachedAsset(sourceUrl, 'toolkit_logo'), null);
+  storage.putCachedAsset(sourceUrl, 'toolkit_logo', blobId, 'image/svg+xml', bytes);
+  assert.deepEqual(storage.cachedAsset(sourceUrl, 'toolkit_logo'), {
+    blobId,
+    mediaType: 'image/svg+xml',
+  });
+  assert.equal(readFileSync(
+    join(dir, 'accounts', accountId, 'blobs', 'dd', blobId), 'utf8'), '<svg/>');
+});
+
 test('a membership refresh keeps each blob unless ITS source URL changed', () => {
   const dir = root();
   const both = (actor: string, workspace: string) => member({

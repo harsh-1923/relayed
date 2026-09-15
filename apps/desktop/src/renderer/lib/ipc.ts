@@ -9,6 +9,7 @@
 // session once; it is not rediscovered by keeping the check in one place.
 import type { AppState, RelayedApi } from '../../preload/api';
 import type { Grants, Role } from '@relayed/authz';
+import { localBlobUrl, type ImageMediaType } from '../../shared/blobs.ts';
 
 /**
  * The bridge, or undefined when the renderer runs standalone — `pnpm ui` opens
@@ -33,8 +34,10 @@ export async function call<T>(fn: (api: RelayedApi) => Promise<T>): Promise<T | 
  * the DOM (DESIGN.md §13.3). Absent until the prefetch lands, which is what the
  * initials fallback is for.
  */
-export const blobSrc = (id: string | null | undefined): string | undefined =>
-  id ? `relayed-blob://${id}` : undefined;
+export const blobSrc = (
+  id: string | null | undefined,
+  mediaType?: ImageMediaType | null,
+): string | undefined => id ? localBlobUrl(id, mediaType) : undefined;
 
 /**
  * The client's mirror of the server's evaluator — the SAME function, from

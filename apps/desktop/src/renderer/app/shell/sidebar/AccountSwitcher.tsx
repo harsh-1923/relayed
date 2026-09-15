@@ -48,7 +48,7 @@ export function AccountSwitcher() {
               </AvatarFallback>
             </Avatar>
             <div className="grid min-w-0 flex-1 text-left leading-tight">
-              <span className="truncate text-sm font-normal text-muted-foreground">{me.actorDisplayName}</span>
+              <span className="min-w-0 truncate text-sm font-normal text-muted-foreground">{me.actorDisplayName}</span>
               {/*<span className="truncate text-xs text-muted-foreground">@{me.actorHandle}</span>*/}
             </div>
             <ChevronSortVertical className="size-4 shrink-0 opacity-50" />

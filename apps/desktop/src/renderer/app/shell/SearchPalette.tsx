@@ -6,7 +6,7 @@
 // it up. Mounted beside the top bar, its lifetime is the window's.
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { UserTwo } from '@relayed/icons';
+import { PluginAddonPuzzle, UserTwo } from '@relayed/icons';
 import { useSession } from '../state';
 import {
   Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput,
@@ -21,6 +21,7 @@ import { useCommandHandler } from '@/lib/commands/CommandProvider';
  */
 export const destinationsFor = (wsId: string | null) => wsId === null ? [] : [
   { label: 'People', icon: UserTwo, to: `/w/${wsId}/people` },
+  { label: 'Connectors', icon: PluginAddonPuzzle, to: `/w/${wsId}/connectors` },
 ];
 
 export function SearchPalette() {

@@ -23,12 +23,13 @@ import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
 import { SettingsAgents } from '@/routes/SettingsAgents';
-import { SettingsConnectors } from '@/routes/SettingsConnectors';
+import { Connectors } from '@/routes/Connectors';
 import { SettingsAgentEditor } from '@/routes/SettingsAgentEditor';
 import { AgentProfile } from '@/features/agents/AgentProfile';
 import { Account } from '@/routes/Account';
 import { AccountSettings } from '@/routes/AccountSettings';
 import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
+import { AccountSettingsBrowsers } from '@/routes/AccountSettingsBrowsers';
 import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
 import { AccountSettingsAgent } from '@/routes/AccountSettingsAgent';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
@@ -69,6 +70,7 @@ export function Router() {
           <Route path="agent" element={<AccountSettingsAgent />} />
           <Route path="notifications" element={<AccountSettingsNotifications />} />
           <Route path="shortcuts" element={<AccountSettingsShortcuts />} />
+          <Route path="browsers" element={<AccountSettingsBrowsers />} />
           <Route path="advanced" element={<AccountSettingsAdvanced />} />
         </Route>
 
@@ -78,12 +80,13 @@ export function Router() {
           <Route index element={<Page><WorkspaceHome /></Page>} />
           <Route path="s/:spaceId" element={<Space />} />
           <Route path="people" element={<Page><People /></Page>} />
+          <Route path="connectors" element={<Page><Connectors /></Page>} />
           <Route path="settings" element={<Page><Settings /></Page>}>
             <Route index element={<Navigate to="members" replace />} />
             <Route path="members" element={<SettingsMembers />} />
             <Route path="profile" element={<SettingsProfile />} />
             <Route path="agents" element={<SettingsAgents />} />
-            <Route path="connectors" element={<SettingsConnectors />} />
+            <Route path="connectors" element={<Navigate to="../../connectors" replace />} />
             <Route path="agents/new" element={<SettingsAgentEditor />} />
             <Route path="agents/:agentId" element={<AgentProfile />} />
             <Route path="agents/:agentId/edit" element={<SettingsAgentEditor />} />

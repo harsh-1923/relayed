@@ -329,6 +329,38 @@ export function connectionRoutes(deps: ConnectionRouteDeps) {
         return reply.send({ connection_id: conn.id, status: 'active' });
       });
 
+    /**
+     * The desktop's own admission that a connect attempt did not finish — the
+     * browser closed, the loopback listener timed out, or the state check
+     * failed — none of which ever reaches `/complete`. Without this a row sits
+     * at `connecting` forever: nothing else ever revisits it, so the connector
+     * store would show "Connecting…" for good on a browser tab the person
+     * already closed. Same shape as `/complete`'s own failure branch, because
+     * it is the same fact reaching the row from a different door.
+     */
+    app.post<{ Params: { id: string } }>('/connections/:id/fail', async (req, reply) => {
+      const me = await who(req.headers.authorization);
+      if (!me) return unauthenticated(reply);
+
+      const conn = await deps.db.selectFrom('connections')
+        .select(['id', 'actor_id', 'status', 'toolkit'])
+        .where('id', '=', req.params.id)
+        .executeTakeFirst();
+      if (!conn) return notFound(reply);
+      if (conn.actor_id !== me.actorId) return forbidden(reply);
+      // Idempotent, and never overwrites an outcome that already landed —
+      // a slow local timeout firing after Composio's redirect already
+      // completed the row must not un-succeed it.
+      if (conn.status !== 'connecting') return reply.send({ connection_id: conn.id, status: conn.status });
+
+      await deps.db.updateTable('connections')
+        .set({ status: 'failed', status_reason: 'failed', updated_at: sql`now()` })
+        .where('id', '=', conn.id).execute();
+      pushConnection(deps.registry, me.workspaceId, me.actorId,
+        { id: conn.id, toolkit: conn.toolkit, status: 'failed', status_reason: 'failed', label: null });
+      return reply.send({ connection_id: conn.id, status: 'failed' });
+    });
+
     // ─── disconnecting (§6.10) ──────────────────────────────────────────────
 
     app.delete<{ Params: { id: string } }>('/connections/:id', async (req, reply) => {

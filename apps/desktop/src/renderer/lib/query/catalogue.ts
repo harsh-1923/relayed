@@ -10,7 +10,7 @@
 // everywhere else. Nothing to remember.
 import type {
   AgentPermissionRow, ClaudeCommand, ClaudeStatus, ComposerDraft, ConnectionRow, LocalRoom, LocalRoomSettings,
-  PendingApproval, ReplicaActor, ReplicaMessage, Panel, PanelMetaRow, PreferenceRow, Space,
+  PendingApproval, ReplicaActor, ReplicaMessage, Panel, ToolkitLogo, PanelMetaRow, PreferenceRow, Space,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -34,6 +34,7 @@ export interface Queries {
   'drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
   'local.drafts.get': { args: { chatId: string }; rows: ComposerDraft[] };
   'connections.list': { args: undefined; rows: ConnectionRow[] };
+  'toolkits.logos': { args: undefined; rows: ToolkitLogo[] };
   'agentPermissions.list': { args: undefined; rows: AgentPermissionRow[] };
 }
 
@@ -78,5 +79,6 @@ export const TOPICS: TopicsFor = {
   'drafts.get': ({ chatId }) => [topic.draft(chatId)],
   'local.drafts.get': ({ chatId }) => [topic.localDraft(chatId)],
   'connections.list': () => [topic.connections()],
+  'toolkits.logos': () => [topic.toolkitLogos()],
   'agentPermissions.list': () => [topic.agentPermissions()],
 };

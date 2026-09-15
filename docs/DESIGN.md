@@ -2306,7 +2306,7 @@ capable, whatever the message table says.
 slow vacuum and backup, and make eviction expensive. Layout, in two tiers:
 
 ```
-accounts/<acc>/blobs/<2-char>/<id>                  avatars
+accounts/<acc>/blobs/<2-char>/<id>                  avatars, connector logos
 accounts/<acc>/workspaces/<wsp>/blobs/<2-char>/<id> attachments
 ```
 
@@ -2317,14 +2317,17 @@ whatever produced the URL.
 
 Avatars sit at the **account** tier, not the workspace tier, because the
 switcher rail draws one for workspaces you are not currently in and the handler
-resolves only within what is active. Attachments stay per workspace, where
-eviction follows the messages. See [`STORAGE.md`](STORAGE.md) §14.
+resolves only within what is active. Connector logos sit there too: the
+catalogue is deployment-wide, so copying the same mark into every workspace
+replica would add no isolation. Attachments stay per workspace, where eviction
+follows the messages. See [`STORAGE.md`](STORAGE.md) §14.
 
 **Prefetch policy, in priority order:**
 
 | Class | Policy | Rationale |
 |---|---|---|
 | Avatars | **All, eagerly, always.** `pinned = 1`. | Tiny, and their absence is the most visible offline failure. |
+| Connector logos | Eagerly when the online catalogue is read; account-cached by source URL and content hash | Tiny and shared across workspaces. A missing mark falls back to initials rather than failing the catalogue. |
 | Image thumbnails in synced chats | Eagerly, capped by total bytes | Makes scrollback look correct offline. |
 | Full-size images, files | On demand; cached after first view | Unbounded otherwise. |
 
@@ -2341,6 +2344,13 @@ The handler must be scoped, because it is the one place a renderer names
 something path-shaped: ids match `^[0-9a-f]{64}$` and nothing else, which makes
 traversal impossible rather than guarded against, and resolution is confined to
 the active account, pushed from the sync process rather than derived in main.
+
+Content-addressed files have no extension. An optional closed image suffix on
+the local URL supplies the response MIME type; this is required for Composio's
+SVG-only logo CDN. The renderer uses SVG only through an `<img>` element, where
+the browser's secure static image mode disables script and external resources.
+The response also carries a sandboxed, deny-by-default CSP so direct navigation
+to the typed local URL cannot turn the same bytes into an active document.
 
 **No remote fallback.** The obvious chain is local → remote → placeholder, and
 the middle leg is a mistake: fetching from the handler puts a network call back
@@ -2365,7 +2375,9 @@ the outbox drainer — it is not a flat queue. Large uploads need resumability
 (chunked, with an offset checkpoint). Budget real time for this.
 
 **Eviction:** blobs whose message was evicted are deleted, plus an LRU cap on
-total blob bytes. `pinned = 1` (avatars) is never evicted.
+total blob bytes. `pinned = 1` (avatars) is never evicted. Connector logos are
+disposable cache: their mapping is ignored if its content-addressed file is
+absent, and the next online catalogue read repairs it.
 
 ### 13.4 Search
 

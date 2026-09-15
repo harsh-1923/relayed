@@ -911,8 +911,8 @@ This step can run in parallel with steps 1–3.
 | **New** `apps/desktop/src/sync/connect.ts` | `connections.connect(toolkit, accessRequestId?)`: listen, `POST /connections`, open `start_url` in the system browser, receive the loopback redirect, check `state`, `POST …/complete`. Never a `BrowserWindow` (`PHASE-1-IDENTITY.md`, the desktop auth flow §6) |
 | **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 13: `connections` and `agent_permissions` projections |
 | **Changes** `apps/desktop/src/sync/storage.ts`, `sync/link.ts` | Apply both from `welcome` and from their push frames; invalidate their topics |
-| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/settings/connectors` and `…/connectors/:toolkit` |
-| **New** `apps/desktop/src/renderer/routes/SettingsConnectors.tsx`, `features/connectors/ToolkitPage.tsx` | Yours and Browse ([§7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([§7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
+| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/connectors` and `…/connectors/:toolkit` |
+| **New** `apps/desktop/src/renderer/routes/Connectors.tsx`, `features/connectors/ToolkitPage.tsx` | Yours and Browse ([where the connector store lives, §7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([a toolkit as a tile and a page, §7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
 | **Changes** `apps/desktop/src/renderer/routes/SettingsAgentEditor.tsx` | The Tools section: toolkits, then tools grouped by effect; read tools preselected; destructive off; the 30-tool cap with its reason (D11) |
 
 ### Boundary rules
@@ -940,8 +940,8 @@ are what prove the real service behaves as the fake assumes.
 
 ### By hand
 
-The proposal's step 4:
-1. Connect Linear from Settings.
+The proposal's connections and connector-store step (step 4):
+1. Connect Linear from the Connectors page.
 2. See it on a second device while offline.
 3. Disconnect it, and see Linear's authorised apps list drop Relayed.
 

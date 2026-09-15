@@ -62,7 +62,7 @@ export function WorkspaceSwitcher() {
             )}
           >
             <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              <span className="truncate">{current.name}</span>
+              <span className="min-w-0 flex-1 truncate">{current.name}</span>
               <ChevronDown className="size-4 shrink-0 opacity-50" />
             </div>
             {elsewhere > 0 && (

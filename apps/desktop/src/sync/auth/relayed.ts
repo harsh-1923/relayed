@@ -242,6 +242,15 @@ export const completeConnection = (accessToken: string, connectionId: string, se
   request<{ connection_id: string; status: string }>('POST',
     `/connections/${encodeURIComponent(connectionId)}/complete`, accessToken, { session_uri: sessionUri });
 
+/**
+ * Tell the server a connect attempt did not finish, so the row does not sit
+ * at "connecting" forever (§6.5). Best effort: called from a `catch`, where a
+ * second failure has nowhere left to go.
+ */
+export const failConnection = (accessToken: string, connectionId: string) =>
+  request<{ connection_id: string; status: string }>('POST',
+    `/connections/${encodeURIComponent(connectionId)}/fail`, accessToken);
+
 /** Revoke then delete, best effort either way (§6.10). */
 export const disconnectConnection = (accessToken: string, connectionId: string) =>
   request<{ connection_id: string; status: string; revoked: boolean }>('DELETE',

@@ -1,6 +1,8 @@
 // Request/response over the parentPort to the main process, for the few
 // capabilities a utilityProcess does not have: safeStorage (verified absent)
 // and shell.openExternal.
+import type { BrowserImportResult, BrowserImportSource } from '../shared/browser-import.ts';
+
 let seq = 0;
 const waiting = new Map<number, (v: unknown) => void>();
 
@@ -35,6 +37,14 @@ export const vault = {
 };
 
 export const openBrowser = (url: string) => callMain<void>('browser:open', { url });
+
+/** Browsers on this Mac whose signed-in sessions web panels can import. Main reads their files and the Keychain. */
+export const browserImport = {
+  sources: () => callMain<BrowserImportSource[]>('browserImport:sources'),
+  run: (sourceId: string, directory: string) => callMain<BrowserImportResult>('browserImport:run', { sourceId, directory }),
+  clear: () => callMain<null>('browserImport:clear'),
+  openFullDiskAccess: () => callMain<null>('browserImport:fullDiskAccess'),
+};
 
 /** Ask the person to choose a folder. `dialog` is a main-process API. Null when they cancel. */
 export const pickFolder = () => callMain<string | null>('dialog:folder');
