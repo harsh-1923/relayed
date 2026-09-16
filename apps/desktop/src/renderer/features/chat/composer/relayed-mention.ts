@@ -3,8 +3,10 @@ import { Node, type MarkdownToken } from '@tiptap/core';
 /**
  * A durable semantic atom inside canonical Relayed Markdown.
  *
- * Three kinds, one node: `actor` and `audience` are written `@name`, a
- * `space` is written `#name` — the room reference people expect from Slack.
+ * Four kinds, one node: `actor` and `audience` are written `@name`, a
+ * `space` is written `#name` — the room reference people expect from Slack —
+ * and `actor-ref` is a person named without notifying them (an agent writes
+ * those; see the server's `agents/people.ts`).
  * They share a node because they share the thing that matters: an id that
  * survives a rename, carried in the body rather than resolved at read time.
  */
@@ -31,10 +33,10 @@ export const RelayedMention = Node.create({
     name: 'relayedMention',
     level: 'inline',
     start(source: string) {
-      return source.search(/\[[^\]\n]+\]\((?:actor|audience|space):[^)\s]+\)/);
+      return source.search(/\[[^\]\n]+\]\((?:actor|actor-ref|audience|space):[^)\s]+\)/);
     },
     tokenize(source: string) {
-      const match = /^\[([^\]\n]+)\]\((actor|audience|space):([^)\s]+)\)/.exec(source);
+      const match = /^\[([^\]\n]+)\]\((actor|actor-ref|audience|space):([^)\s]+)\)/.exec(source);
       if (!match) return undefined;
       return {
         type: 'relayedMention', raw: match[0],
@@ -50,7 +52,9 @@ export const RelayedMention = Node.create({
   renderMarkdown(node) {
     const label = String(node.attrs?.['label'] ?? '').replaceAll(']', '\\]');
     const given = node.attrs?.['kind'];
-    const kind = given === 'audience' || given === 'space' ? given : 'actor';
+    // A reference stays a reference: written back as a mention, an edit would
+    // start notifying someone the original did not.
+    const kind = given === 'audience' || given === 'space' || given === 'actor-ref' ? given : 'actor';
     return `[${label}](${kind}:${String(node.attrs?.['id'] ?? '')})`;
   },
 });

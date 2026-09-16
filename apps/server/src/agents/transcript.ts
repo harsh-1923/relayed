@@ -7,6 +7,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { visibleToBoth } from '../sync/visibility.ts';
+import { personLabel } from './people.ts';
 
 /** The text budget `prompt` is capped to, per §5.6. */
 export const SIZE_LIMIT_BYTES = 24 * 1024;
@@ -37,10 +38,11 @@ function stripOwnMention(body: string, agentActorId: string): string {
     .trim();
 }
 
+/** The author, with the id the agent links them by (`people.ts`). */
 function label(row: Row, agentActorId: string, isTrigger: boolean): string {
-  const who = row.author_id === agentActorId ? `${row.author_display_name} (@${row.author_handle}, you)`
-    : row.author_type === 'agent' ? `${row.author_display_name} (@${row.author_handle}, agent)`
-    : `${row.author_display_name} (@${row.author_handle})`;
+  const author = { id: row.author_id, displayName: row.author_display_name, handle: row.author_handle };
+  const who = personLabel(author, row.author_id === agentActorId ? 'you'
+    : row.author_type === 'agent' ? 'agent' : undefined);
   return isTrigger ? `${who}, request` : who;
 }
 

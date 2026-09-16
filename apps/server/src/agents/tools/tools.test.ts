@@ -24,7 +24,7 @@ test('the prompt says to create a room only when asked, and last', () => {
 
 test('the prompt says where people\'s ids are, to message only who was asked for, and last', () => {
   const prompt = toolsPrompt([], { inRoom: false, ...anyone });
-  assert.match(prompt, /\[Name\]\(actor:act_…\)/);
+  assert.match(prompt, /carry their actor id \(act_…\)/);
   assert.match(prompt, /Never message or add anyone the person did not ask for/);
   assert.match(prompt, /Do these LAST/);
 });

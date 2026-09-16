@@ -44,8 +44,8 @@ export function MarkdownText({
     ),
     a: ({ href, children }) => (
       isSemanticMention(href) ? (
-        href.startsWith('actor:')
-          ? <ActorMention actorId={href.slice('actor:'.length)}>{children}</ActorMention>
+        actorLinkId(href)
+          ? <ActorMention actorId={actorLinkId(href) ?? ''}>{children}</ActorMention>
           : <span className="md-mention" data-mention-kind="audience">@{children}</span>
       ) :
       // A room in this app: opens it, with no address to show on hover. Drawn
@@ -132,7 +132,16 @@ function commandChip(children: ReactNode, command: string): ReactNode {
 }
 
 const isSemanticMention = (href: string | undefined): href is string =>
-  Boolean(href && (/^actor:act_[A-Za-z0-9_-]+$/.test(href) || /^audience:(here|chat|channel|room)$/.test(href)));
+  Boolean(href && (actorLinkId(href) !== null || /^audience:(here|chat|channel|room)$/.test(href)));
+
+/**
+ * The actor a link names: a mention (`actor:`) or a reference (`actor-ref:`),
+ * drawn alike — the difference is only whether it notified anyone, which the
+ * server decided when it was sent (`sync/mentions.ts`).
+ */
+function actorLinkId(href: string): string | null {
+  return /^actor(?:-ref)?:(act_[A-Za-z0-9_-]+)$/.exec(href)?.[1] ?? null;
+}
 
 /** A bare URL, autolinked by GFM: its text is the address itself. */
 const isBareUrl = (children: React.ReactNode, href: string): boolean =>

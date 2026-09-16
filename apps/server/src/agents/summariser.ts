@@ -27,6 +27,7 @@ import { visibleTo } from '../sync/visibility.ts';
 import { writeDocumentRevision, BODY_LIMIT_BYTES } from '../sync/documents.ts';
 import { callRuntime } from './runtime-client.ts';
 import { SIZE_LIMIT_BYTES } from './transcript.ts';
+import { PEOPLE_PROMPT, personLabel } from './people.ts';
 
 /** How long a claim is held. A lease in the past means the server that took it is gone (§4.4). */
 const LEASE_SEC = 120;
@@ -220,7 +221,7 @@ async function readMessages(
 
   const rows = await db.selectFrom('messages as m')
     .innerJoin('actors as a', 'a.id', 'm.author_id')
-    .select(['m.id', 'm.chat_id', 'm.ord', 'm.body', 'm.created_at',
+    .select(['m.id', 'm.chat_id', 'm.ord', 'm.body', 'm.created_at', 'm.author_id',
              'a.display_name as author_name', 'a.handle as author_handle'])
     .where('m.chat_id', 'in', chatIds)
     .where('m.deleted', '=', false)
@@ -236,7 +237,7 @@ async function readMessages(
 
   return rows.reverse().map(row => ({
     chatId: row.chat_id, ord: Number(row.ord),
-    text: `${row.author_name} (@${row.author_handle}): ${row.body}`,
+    text: `${personLabel({ id: row.author_id, displayName: row.author_name, handle: row.author_handle })}: ${row.body}`,
   }));
 }
 
@@ -287,6 +288,11 @@ const RULES = [
   '- Prefer dropping a section to padding it. A short true summary beats a full one.',
   '- Markdown, no top-level heading, no preamble, no sign-off. Output the summary and nothing else.',
   `- Keep it under ${Math.floor(BODY_LIMIT_BYTES / 1024)} KB — short enough to read in under a minute.`,
+  '',
+  PEOPLE_PROMPT,
+  // A summary is read, not sent: it names people and never pings them. The
+  // model still writes the link itself (see the note in `people.ts`).
+  'In the summary, only ever refer to people — never mention them.',
 ].join('\n');
 
 function buildPrompt(input: { previous: string; lines: readonly Line[]; rebuild: boolean }): string {

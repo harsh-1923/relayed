@@ -25,6 +25,13 @@ test('actor mentions retain the durable actor id through Markdown', () => {
   });
 });
 
+test('a reference to an actor stays a reference, never becoming a mention', () => {
+  const result = roundTrip('Ask [Harsh](actor-ref:act_01ABC) about it.');
+  assert.equal(result.body, 'Ask [Harsh](actor-ref:act_01ABC) about it.');
+  const mention = result.json.content?.[0]?.content?.[1] as { type?: string; attrs?: Record<string, unknown> } | undefined;
+  assert.equal(mention?.attrs?.['kind'], 'actor-ref');
+});
+
 test('audience mentions stay semantically separate from actors', () => {
   const result = roundTrip('[here](audience:here) please read this.');
   assert.equal(result.body, '[here](audience:here) please read this.');

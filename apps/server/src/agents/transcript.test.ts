@@ -73,6 +73,8 @@ test('a top-level trigger reads the chat\'s recent messages, ending at itself', 
   assert.ok(lines[1]?.includes('second'));
   assert.ok(lines[2]?.endsWith(', request: can you help'), 'the trigger is labelled a request, and its own mention is stripped');
   assert.ok(!lines.every(l => l.includes(c.id)), 'sanity: labels are names, not ids');
+  assert.ok(lines[0]?.includes(`, ${invoker}): first`),
+    'every author carries the actor id an agent links them by');
 });
 
 test('a thread-reply trigger reads only its own thread, not the rest of the channel', opts, async () => {

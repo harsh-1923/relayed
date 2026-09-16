@@ -17,6 +17,7 @@ import type { Document } from '../../../preload/api';
 import { isEmptyDocument, webAddress } from '../../../shared/documents.ts';
 import { useActor } from '@/lib/actors';
 import { ActorAvatar } from '@/components/ActorAvatar';
+import { DocumentMention } from '@/features/chat/composer/ComposerMention';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -36,6 +37,8 @@ import './document.css';
 const extensions = [
   StarterKit.configure({ horizontalRule: false, link: { openOnClick: false } }),
   Markdown.configure({ markedOptions: { gfm: true, breaks: false } }),
+  // People as chips — the summary refers to them by link (`agents/people.ts`).
+  DocumentMention,
 ];
 
 export function DocPanel({ document, spaceId, onOpenPanel }: {

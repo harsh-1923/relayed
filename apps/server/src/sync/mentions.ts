@@ -6,6 +6,10 @@
 // Messages use a canonical Markdown application link whose target is the
 // actor id: `[label](actor:act_…)`. The label is a human-readable fallback
 // only; identity and mention counting depend on the durable target.
+//
+// `[label](actor-ref:act_…)` is a REFERENCE — drawn the same, and deliberately
+// NOT a mention: neither pattern below matches it, so it moves no badge and
+// starts no run. Agents choose between the two themselves (`agents/people.ts`).
 
 /** The SQL `LIKE` pattern for one actor's mention, in a stored body. */
 export const mentionPattern = (actorId: string): string => `%](actor:${actorId})%`;

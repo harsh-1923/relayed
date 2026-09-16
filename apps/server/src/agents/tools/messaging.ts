@@ -206,14 +206,14 @@ export const ADD_TO_ROOM = 'add_to_room';
 
 const PEOPLE = {
   type: 'array', items: { type: 'string' },
-  description: 'Actor ids, e.g. "act_01M2…" — from a mention in the conversation, which is written [Name](actor:act_…).',
+  description: 'Actor ids, e.g. "act_01M2…" — as the conversation labels people, Name (@handle, act_…), or from a link to them.',
 };
 
 /**
  * Last in the offered list, for the same reason a room is: a stop for access
  * re-runs the whole request, and a message already sent would be sent again.
  */
-const MESSAGING_PROMPT = `\n\nPeople in this conversation are written [Name](actor:act_…); use that id to reach them. `
+const MESSAGING_PROMPT = `\n\nPeople in this conversation carry their actor id (act_…); use that id to reach them. `
   + `When the person asks you to message someone, use ${SEND_DM} — a direct message for one person, one group message `
   + `only when they ask for a group. To post in a room or channel, use ${POST_MESSAGE}; to add people to one, `
   + `${ADD_TO_ROOM}. Do these LAST, after everything else the request needs. Never message or add anyone the person `
