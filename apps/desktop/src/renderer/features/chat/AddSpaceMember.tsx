@@ -1,6 +1,7 @@
 // Add a workspace actor to the open space.
 //
-// Candidates come from the local directory, never a network read. The client
+// Candidates come from the local directory, never a network read, less the
+// space's members once this device holds its list. The client
 // hides the affordance with the shared evaluator; the server still decides the
 // command authoritatively when a candidate is selected.
 import { useState } from 'react';
@@ -8,6 +9,7 @@ import { can, space as spaceTarget } from '@relayed/authz';
 import { UserPlus } from '@relayed/icons';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
+import { useSpaceMembers } from '@/lib/space-members';
 import { call, grantsOf } from '@/lib/ipc';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,6 +21,7 @@ import { ActorAvatar } from '@/components/ActorAvatar';
 export function AddSpaceMember({ spaceId }: { spaceId: string }) {
   const { state } = useSession();
   const { rows: actors } = useQuery('actors.list');
+  const roster = useSpaceMembers(spaceId);
   const [open, setOpen] = useState(false);
   const [busyActorId, setBusyActorId] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -30,8 +33,9 @@ export function AddSpaceMember({ spaceId }: { spaceId: string }) {
 
   if (!mayAdd) return null;
 
+  const members = new Set(roster.members.map(member => member.actorId));
   const candidates = (actors ?? []).filter(actor =>
-    actor.state === 'active' && actor.id !== workspace?.actorId);
+    actor.state === 'active' && actor.id !== workspace?.actorId && !members.has(actor.id));
 
   async function add(actorId: string) {
     setBusyActorId(actorId);
@@ -105,11 +109,13 @@ export function AddSpaceMember({ spaceId }: { spaceId: string }) {
               ))}
             </CommandGroup>
           </CommandList>
-          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
-            People already in the space may appear here; adding them again makes no change.
-          </p>
+          {roster.state !== 'complete' && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              People already in the space may appear here until its members have loaded; adding them again makes no change.
+            </p>
+          )}
         </Command>
-      </CommandDialog>
+    </CommandDialog>
     </>
   );
 }

@@ -12,6 +12,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { ChatView } from '@/features/chat/ChatView';
 import { SpaceHeader } from '@/features/chat/SpaceHeader';
 import { AddSpaceMember } from '@/features/chat/AddSpaceMember';
+import { SpaceMembers } from '@/features/chat/SpaceMembers';
 import { RoomActivity } from '@/features/local-rooms/RoomActivity';
 import { PanelContainer } from '@/features/panels/PanelContainer';
 import { useOpenPanels } from '@/features/panels/useOpenPanels';
@@ -153,6 +154,8 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
             details={(
               <>
                 {scope === 'local' && <RoomActivity spaceId={spaceId} />}
+                {/* A DM is between the people its name already says. */}
+                {scope === 'workspace' && space.kind !== 'dm' && <SpaceMembers spaceId={spaceId} />}
                 {/* Nobody is added to a DM or group message: adding someone is a new conversation. */}
                 {scope === 'workspace' && space.kind !== 'dm' && space.kind !== 'group_dm' && <AddSpaceMember spaceId={spaceId} />}
                 {/* Everything about panels lives in their container; the header only opens it. */}
