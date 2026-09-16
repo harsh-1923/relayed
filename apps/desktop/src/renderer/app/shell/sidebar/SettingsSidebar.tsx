@@ -76,7 +76,7 @@ export function SettingsSidebar({ inline = false }: { inline?: boolean }) {
                   isActive={pathname === item.to}
                 >
                   <item.icon className="text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  <span>{item.label}</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}

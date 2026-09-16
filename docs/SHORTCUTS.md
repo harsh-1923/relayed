@@ -282,22 +282,20 @@ Home:
 ```text
 apps/desktop/src/renderer/lib/commands/
   CommandProvider.tsx  provider, the one keydown listener, useCommandHandler, useCommand,
-                       useCommandBindings, useCommandInspector
+                       useCommandBindings
   Shortcut.tsx         a command's or a chord's keys, with its ARIA label
   registry.ts          handlers per command, layer precedence, execution outcomes
   dispatch.ts          the dispatch algorithm as a pure decision, and the binding index
   editable.ts          editable-focus classification over the composed path
   commands.test.ts
 apps/desktop/src/renderer/app/Commands.tsx   mounts the provider with the session's platform
-apps/desktop/src/renderer/features/dev/CommandInspector.tsx   development builds only
 ```
 
 Built. The provider takes an `overrides` prop — decoded `keybindings.<id>`
-values, empty until persistent overrides land — and layers the inspector's
-session-only remaps over it. The resolved list is the single state the keyboard
-index, `useCommand` labels, `Shortcut` and the settings page all read. The registry and
-the decision have no React or DOM, so their rules run under `node --test`; the
-listener itself is proven against trusted key events by
+values, empty until persistent overrides land. The resolved list is the single
+state the keyboard index, `useCommand` labels, `Shortcut` and the settings page
+all read. The registry and the decision have no React or DOM, so their rules run
+under `node --test`; the listener itself is proven against trusted key events by
 `spikes/hotkeys` (`npm run test:bus`), which mounts this provider rather than a
 prototype.
 
@@ -947,7 +945,7 @@ something twice.
 menu items' effective bindings over `shortcuts:menu` (validated on arrival)
 wherever it applies the theme — boot, account adoption, sign-out — and after any
 keybinding `prefs.set`, `prefs.clear` or `prefs.apply`. Main starts from the
-defaults. The development inspector's session-only remaps do not reach the menu.
+defaults.
 
 **Role chords are reserved.** A binding on a chord a kept role owns — reload,
 zoom, developer tools, full screen, hide others, paste and match style, besides

@@ -85,14 +85,16 @@ function DocBody({ document, actors, spaceId, onOpenPanel }: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex shrink-0 flex-wrap items-baseline gap-x-2 border-b border-border/60 px-5 py-3">
-        <h2 className="text-sm font-medium">{document.title ?? 'Document'}</h2>
-        {/* Honest about its own staleness: who wrote this, and when. */}
-        <p className="text-xs text-muted-foreground">
-          {empty ? 'Not written yet' : `Updated ${when(document.updatedAt)}`}
-          {author && !empty && <> by {author.type === 'agent' ? `@${author.handle}` : author.displayName}</>}
-        </p>
-        <Refresh spaceId={spaceId} />
+      <header className="shrink-0 border-b border-border/60 px-12 py-3">
+        <div className="mx-auto flex w-full max-w-[80ch] flex-wrap items-baseline gap-x-2">
+          <h2 className="text-sm font-medium">{document.title ?? 'Document'}</h2>
+          {/* Honest about its own staleness: who wrote this, and when. */}
+          <p className="text-xs text-muted-foreground">
+            {empty ? 'Not written yet' : `Updated ${when(document.updatedAt)}`}
+            {author && !empty && <> by {author.type === 'agent' ? `@${author.handle}` : author.displayName}</>}
+          </p>
+          <Refresh spaceId={spaceId} />
+        </div>
       </header>
 
       {empty
@@ -102,7 +104,7 @@ function DocBody({ document, actors, spaceId, onOpenPanel }: {
           </Waiting>
         )
         : (
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="min-h-0 flex-1 overflow-y-auto px-12 py-10">
             {/* The canvas disables selection globally; Tiptap owns the rendered
                 descendants, so restore it through the whole read-only body. */}
             <EditorContent

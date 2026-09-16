@@ -9,7 +9,6 @@ import {
   CommandProvider,
   useCommand,
   useCommandHandler,
-  useCommandInspector,
 } from '../../apps/desktop/src/renderer/lib/commands/CommandProvider.tsx';
 import { Shortcut } from '../../apps/desktop/src/renderer/lib/commands/Shortcut.tsx';
 import { useShortcutRecorder } from '../../apps/desktop/src/renderer/lib/commands/use-shortcut-recorder.ts';
@@ -81,9 +80,7 @@ function Editor() {
   return <EditorContent editor={editor} />;
 }
 
-function Remapper() {
-  const { setSessionOverride } = useCommandInspector();
-  window.bus.remap = (id, raw) => setSessionOverride(id, raw);
+function ShortcutLabel() {
   return (
     <span id="shortcut">
       <Shortcut command="app.search.open" />
@@ -132,7 +129,7 @@ function Surface() {
       <SidebarHandler enabled={scene.sidebarEnabled} />
       <NavigationHandlers canBack={scene.canBack !== false} />
       <SearchButton />
-      <Remapper />
+      <ShortcutLabel />
       {scene.recorder === false ? null : <Recorder />}
       <input id="text" type="text" />
       <Editor />
@@ -142,14 +139,27 @@ function Surface() {
 
 let root = null;
 
+function Harness({ platform }) {
+  const [overrides, setOverrides] = useState(new Map());
+  window.bus.remap = (id, raw) => setOverrides(current => {
+    const next = new Map(current);
+    if (raw === undefined) next.delete(id);
+    else next.set(id, raw);
+    return next;
+  });
+  return (
+    <CommandProvider platform={platform} overrides={overrides}>
+      <Surface />
+    </CommandProvider>
+  );
+}
+
 window.bus = {
   mount(platform) {
     root = createRoot(document.getElementById('root'));
     root.render(
       <StrictMode>
-        <CommandProvider platform={platform}>
-          <Surface />
-        </CommandProvider>
+        <Harness platform={platform} />
       </StrictMode>,
     );
   },

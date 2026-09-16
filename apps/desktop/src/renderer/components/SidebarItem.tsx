@@ -1,8 +1,6 @@
 import type { ComponentProps, ComponentType } from 'react';
 import { NavLink } from 'react-router';
-import {
-  SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem,
-} from '@/components/ui/sidebar';
+import { SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 
 interface SidebarItemProps {
@@ -35,20 +33,16 @@ export function SidebarItem({
           'hover:text-(--sidebar-item-foreground)!',
           'data-active:bg-(--sidebar-item-background)!',
           'data-active:text-(--sidebar-item-foreground)!',
-          // Keep the unread badge in its own right-hand lane instead of letting
-          // a long label run underneath the absolutely positioned badge.
-          badge > 0 && 'pr-9',
         )}
       >
         <Icon className="size-4 shrink-0" />
         <span className={cn('min-w-0 flex-1 truncate', labelClassName)}>{label}</span>
+        {badge > 0 && (
+          <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-md bg-destructive px-1 text-xs font-medium text-white tabular-nums select-none group-data-[collapsible=icon]:hidden">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
       </SidebarMenuButton>
-
-      {badge > 0 && (
-        <SidebarMenuBadge className="bg-destructive text-white">
-          {badge > 99 ? '99+' : badge}
-        </SidebarMenuBadge>
-      )}
     </SidebarMenuItem>
   );
 }

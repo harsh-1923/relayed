@@ -5,7 +5,7 @@
 // Feature code registers handlers with `useCommandHandler` and invokes with
 // `useCommand`; it never adds a document keydown listener of its own.
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore,
+  createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import { definitionOf, type CommandId, type CommandLayer } from '../../../shared/shortcuts/catalogue.ts';
@@ -22,7 +22,6 @@ interface CommandBus {
   /** Catalogue order. The one state matching, labels, ARIA and settings all read. */
   readonly effective: readonly EffectiveBinding[];
   readonly bindings: ReadonlyMap<CommandId, EffectiveBinding>;
-  readonly setSessionOverride: (id: CommandId, raw: unknown) => void;
 }
 
 const Ctx = createContext<CommandBus | null>(null);
@@ -43,21 +42,9 @@ export function CommandProvider({
 }) {
   const registry = useMemo(() => new CommandRegistry({ onAmbiguous: reportAmbiguous }), []);
   const platform = platformOf(hostPlatform);
-  // Unsaved remaps from the development inspector. Held here, above every
-  // consumer, so a remap is one state change rather than a second authority.
-  // `undefined` removes the session value and falls back to `overrides`.
-  const [sessionOverrides, setSessionOverrides] = useState<ReadonlyMap<string, unknown>>(new Map());
-  const setSessionOverride = useCallback((id: CommandId, raw: unknown) => {
-    setSessionOverrides(current => {
-      const next = new Map(current);
-      if (raw === undefined) next.delete(id);
-      else next.set(id, raw);
-      return next;
-    });
-  }, []);
   const effective = useMemo(
-    () => resolveBindings(new Map([...(overrides ?? []), ...sessionOverrides]), platform),
-    [overrides, sessionOverrides, platform],
+    () => resolveBindings(overrides ?? new Map(), platform),
+    [overrides, platform],
   );
   const index = useMemo(() => buildIndex(effective), [effective]);
   const bus = useMemo<CommandBus>(() => ({
@@ -65,8 +52,7 @@ export function CommandProvider({
     platform,
     effective,
     bindings: new Map(effective.map(binding => [binding.id, binding])),
-    setSessionOverride,
-  }), [registry, platform, effective, setSessionOverride]);
+  }), [registry, platform, effective]);
 
   useEffect(() => {
     // Bubble phase on purpose: an editor, overlay or the shortcut recorder that
@@ -155,24 +141,6 @@ export function useCommandHandler(id: CommandId, { layer, enabled = true, run }:
 export function useCommandBindings(): { platform: Platform; effective: readonly EffectiveBinding[] } {
   const { platform, effective } = useBus();
   return { platform, effective };
-}
-
-export interface InspectedCommand {
-  readonly binding: EffectiveBinding;
-  readonly handlers: readonly { layer: CommandLayer; enabled: boolean; owner: string }[];
-}
-
-/** Development inspector state: bindings, mounted handlers, and a session-only remap. */
-export function useCommandInspector() {
-  const { registry, platform, effective, setSessionOverride } = useBus();
-  const version = useSyncExternalStore(registry.subscribe, registry.getVersion);
-  const commands = useMemo<InspectedCommand[]>(
-    () => effective.map(binding => ({ binding, handlers: registry.handlersOf(binding.id) })),
-    // `version` is the registry's signal that a handler mounted, unmounted or toggled.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [registry, effective, version],
-  );
-  return { platform, commands, setSessionOverride };
 }
 
 export interface CommandState {

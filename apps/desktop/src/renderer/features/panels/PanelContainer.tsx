@@ -6,7 +6,7 @@
 // dropped: a newer version wrote it (§3.3). A body that throws is caught here,
 // so one broken panel does not take the container or the chat with it.
 import { Component, useState, type ComponentType, type ReactNode } from 'react';
-import { ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, PlusDefault, UploadUp } from '@relayed/icons';
+import { ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, Notebook, PlusDefault, UploadUp } from '@relayed/icons';
 import type { Panel, PanelMeta, Space, SpaceScope } from '../../../preload/api';
 import { Button } from '@/components/ui/button';
 import { ChatView } from '@/features/chat/ChatView';
@@ -18,6 +18,7 @@ import { WebPanel } from './WebPanel';
 import { PanelCreationDialog, type PanelCreationKind } from './PanelCreationDialog';
 import { DocPanel } from '../documents/DocPanel';
 import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
+import './panels.css';
 
 interface PanelBodyProps {
   panel: Panel; space: Space; scope: SpaceScope;
@@ -156,14 +157,18 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
 /** The new-panel tab itself: always the one shown while it is open. */
 function NewPanelTab({ onClose }: { onClose: () => void }) {
   return (
-    <div className="group/tab flex h-7 max-w-48 min-w-0 shrink-0 items-center gap-1.5 rounded-md bg-muted/50 pr-1 pl-2 text-xs text-foreground">
+    <div data-selected="true" className="panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md pr-1 pl-2 text-xs text-foreground transition-colors">
       <span role="tab" aria-selected className="flex min-w-0 flex-1 items-center gap-1.5">
         <PlusDefault className="size-3.5 shrink-0" />
         <span className="truncate">New panel</span>
       </span>
+      <span
+        aria-hidden
+        className="panel-tab__fade pointer-events-none absolute inset-y-0 right-0 z-[1] w-3 group-hover/tab:w-8 group-focus-within/tab:w-8"
+      />
       <button
         type="button" aria-label="Close new panel" onClick={onClose}
-        className="flex size-4 shrink-0 items-center justify-center rounded-sm opacity-70 hover:bg-muted"
+        className="pointer-events-none absolute top-1/2 right-1 z-10 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-opacity duration-150 group-hover/tab:pointer-events-auto group-hover/tab:opacity-90 focus-visible:pointer-events-auto focus-visible:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <MultipleCrossCancelDefault className="size-3" />
       </button>
@@ -263,11 +268,12 @@ function PanelTab({ panel, space, meta, attribution, selected, onSelect, onClose
 
   return (
     <div
+      data-selected={selected}
       className={cn(
-        'group/tab flex h-7 max-w-48 min-w-0 shrink-0 items-center gap-1.5 rounded-md pr-1 pl-2 text-sm transition-colors',
+        'panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md pr-1 pl-2 text-sm transition-colors',
         selected
-          ? 'bg-muted/50 text-foreground'
-          : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+          ? 'text-foreground'
+          : 'text-muted-foreground hover:text-foreground focus-within:text-foreground',
       )}
     >
       <button
@@ -285,17 +291,20 @@ function PanelTab({ panel, space, meta, attribution, selected, onSelect, onClose
       {/* The room's own panel has no close: it is created with the room and
           nobody can lose it (DOCUMENTS.md §8.1). */}
       {!isStructuralPanel(panel) && (
-        <button
-          type="button"
-          aria-label={`Close ${title}`}
-          onClick={onClose}
-          className={cn(
-            'flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted',
-            selected ? 'opacity-70' : 'opacity-0 group-hover/tab:opacity-70',
-          )}
-        >
-          <MultipleCrossCancelDefault className="size-3" />
-        </button>
+        <>
+          <span
+            aria-hidden
+            className="panel-tab__fade pointer-events-none absolute inset-y-0 right-0 z-[1] w-3 group-hover/tab:w-8 group-focus-within/tab:w-8"
+          />
+          <button
+            type="button"
+            aria-label={`Close ${title}`}
+            onClick={onClose}
+            className="pointer-events-none absolute top-1/2 right-1 z-10 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 transition-opacity duration-150 group-hover/tab:pointer-events-auto group-hover/tab:opacity-90 focus-visible:pointer-events-auto focus-visible:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          >
+            <MultipleCrossCancelDefault className="size-3" />
+          </button>
+        </>
       )}
     </div>
   );
@@ -314,6 +323,7 @@ function PanelIcon({ panel, chatKind, meta, className }: {
     const Icon = chatKind === 'private' ? LockClose : ChatDefault;
     return <Icon className={cn('shrink-0', className)} />;
   }
+  if (panel.type === 'doc') return <Notebook className={cn('shrink-0', className)} />;
   const src = blobSrc(meta.iconBlob);
   if (!src || broken === src) return <Globe className={cn('shrink-0', className)} />;
   return <img src={src} alt="" draggable={false} onError={() => setBroken(src)} className={cn('shrink-0 rounded-[3px] object-contain', className)} />;

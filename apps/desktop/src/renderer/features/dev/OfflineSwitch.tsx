@@ -22,7 +22,6 @@ import { WifiOff, WifiOn } from '@relayed/icons';
 import { useSession } from '@/app/state';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 
 export function OfflineSwitch() {
@@ -55,39 +54,8 @@ export function OfflineSwitch() {
                           : 'text-muted-foreground hover:text-foreground')}
       >
         {off ? <WifiOff className="size-3.5" /> : <WifiOn className="size-3.5" />}
-        {off ? 'Offline' : 'Online'}
+        {off && 'Offline'}
       </Button>
-
-      <Popover>
-        <PopoverTrigger
-          render={
-            <Button variant="ghost" size="icon"
-                    aria-label="What offline does"
-                    className="size-7 text-muted-foreground hover:text-foreground" />
-          }
-        >
-          ?
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-80 text-xs text-muted-foreground">
-          <p className="pb-2">
-            {off
-              ? 'Every outbound call from the sync engine fails. Everything served '
-                + 'from the replica still works.'
-              : 'Cuts the network for the sync engine only — the dev server, the '
-                + 'collector and this window keep running.'}
-          </p>
-          <ol className="list-decimal space-y-1 pl-4">
-            <li>Switch workspaces from the switcher — the URL changes and the replica
-                opens without a token (STORAGE.md §12.2).</li>
-            <li>Reload the window — hash routing lands you back on the same route,
-                rendered from disk (R3).</li>
-            <li>Open <span className="font-mono">/people</span> — the directory
-                answers from the replica.</li>
-            <li>Sign-in needs the network, so it fails while this is on. That is
-                correct, and this control is why it is recoverable.</li>
-          </ol>
-        </PopoverContent>
-      </Popover>
     </div>
   );
 }

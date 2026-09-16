@@ -9,14 +9,32 @@
  * only thing a person does here is read. */
 
 .document .document-content {
+  --md-space: 14px;
+  --md-space-small: 8px;
+  --md-space-large: 20px;
+
+  max-width: 80ch;
+  margin-inline: auto;
   outline: none;
   font-size: 16px;
   line-height: 26px;
   color: var(--foreground);
 }
 
-.document .document-content > * + * {
-  margin-top: 0.75rem;
+.document .document-content > :first-child {
+  margin-top: 0;
+}
+
+.document .document-content > :last-child {
+  margin-bottom: 0;
+}
+
+.document .document-content p {
+  margin: 0;
+}
+
+.document .document-content p + p {
+  margin-top: var(--md-space);
 }
 
 .document .document-content h1,
@@ -28,26 +46,44 @@
 
 .document .document-content h1 {
   font-size: 24px;
+  margin: calc(var(--md-space) * 3) 0 var(--md-space);
 }
 .document .document-content h2 {
   font-size: 20px;
+  margin: calc(var(--md-space) * 2) 0 var(--md-space);
 }
 .document .document-content h3 {
   font-size: 18px;
+  margin: calc(var(--md-space) * 1.5) 0 var(--md-space-small);
 }
 .document .document-content :is(h4, h5, h6) {
   font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
+  margin: var(--md-space-large) 0 var(--md-space-small);
 }
 
-/* More space above a heading than below it: the gap belongs to the section it
-   opens, which is what makes sections legible without rules between them. */
-.document .document-content :is(h1, h2, h3) + * {
-  margin-top: 0.375rem;
+.document .document-content hr {
+  height: 0.5px;
+  margin: var(--md-space-large) 0;
+  background: var(--border);
+  border: none;
 }
-.document .document-content * + :is(h1, h2, h3) {
-  margin-top: 1.25rem;
+
+/* The same semantic rhythm as message Markdown: a list stays close to the
+   sentence that introduces it, while substantial blocks form a new thought. */
+.document .document-content :is(p + :is(ul, ol), :is(ul, ol) + p) {
+  margin-top: var(--md-space-small);
+}
+
+.document
+  .document-content
+  :is(
+    :is(pre, table, blockquote) + :is(p, ul, ol),
+    :is(p, ul, ol) + :is(pre, table, blockquote),
+    :is(pre, table, blockquote) + :is(pre, table, blockquote)
+  ) {
+  margin-top: var(--md-space-large);
 }
 
 .document .document-content :is(ul, ol) {
@@ -61,11 +97,16 @@
 }
 
 .document .document-content li + li {
-  margin-top: 0.25rem;
+  margin-top: var(--md-space-small);
 }
 
 .document .document-content li > p {
   margin: 0;
+}
+
+.document .document-content li > :is(ul, ol),
+.document .document-content li > p + p {
+  margin-top: var(--md-space-small);
 }
 
 .document .document-content a {

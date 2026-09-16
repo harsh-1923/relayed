@@ -20,7 +20,6 @@ import { useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
 import { OfflineSwitch } from '@/features/dev/OfflineSwitch';
-import { CommandInspector } from '@/features/dev/CommandInspector';
 import { RouteStrip } from '@/features/dev/RouteStrip';
 import { Button } from '@/components/ui/button';
 import { useSidebar } from '@/components/ui/sidebar';
@@ -121,7 +120,6 @@ export function TopBar() {
         <div className="min-w-0 flex-1" />
 
         <RouteStrip />
-        <CommandInspector />
         <OfflineSwitch />
       </div>
     </header>

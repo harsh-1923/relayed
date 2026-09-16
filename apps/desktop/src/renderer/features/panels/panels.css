@@ -1,0 +1,19 @@
+.panel-tab {
+  --panel-tab-surface: var(--background);
+}
+
+.panel-tab[data-selected="true"],
+.panel-tab:hover,
+.panel-tab:focus-within {
+  --panel-tab-surface: color-mix(in oklab, var(--muted) 50%, var(--background));
+  background-color: var(--panel-tab-surface);
+}
+
+.panel-tab__fade {
+  background: linear-gradient(to left, var(--panel-tab-surface), transparent);
+}
+
+.panel-tab:hover .panel-tab__fade,
+.panel-tab:focus-within .panel-tab__fade {
+  background: linear-gradient(to left, var(--panel-tab-surface) 0 65%, transparent 100%);
+}

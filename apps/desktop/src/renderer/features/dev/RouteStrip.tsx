@@ -18,10 +18,10 @@ export function RouteStrip() {
   return (
     <div
       title={full}
-      className="w-full no-drag mr-2 flex h-6 min-w-0 items-center gap-1.5 overflow-hidden rounded-md border border-dashed border-border px-2 font-mono text-[11px] text-muted-foreground select-text"
+      className="w-full no-drag mr-2 flex h-6 min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 font-mono text-[11px] text-muted-foreground select-text"
     >
       <span className="shrink-0 rounded-sm bg-muted px-1 text-[10px] tracking-wide uppercase">route</span>
-      <span className="truncate text-foreground">{pathname}</span>
+      <span className="truncate text-muted-foreground">{pathname}</span>
       {query.map(([key, value]) => (
         <span key={key} className="shrink-0">
           <span className="text-muted-foreground">{key}</span>

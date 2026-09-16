@@ -10,14 +10,13 @@ import StarterKit from '@tiptap/starter-kit';
 import {
   CommandProvider,
   useCommandBindings,
-  useCommandInspector,
 } from '../../apps/desktop/src/renderer/lib/commands/CommandProvider.tsx';
 import { ComposerSuggestions } from '../../apps/desktop/src/renderer/features/chat/composer/composer-suggestions.ts';
 import { isSendKey } from '../../apps/desktop/src/renderer/features/chat/composer/send-key.ts';
 
 const sent = [];
 
-function Composer() {
+function Composer({ remap }) {
   const [trigger, setTrigger] = useState(null);
   const suggestions = useMemo(
     () =>
@@ -34,12 +33,11 @@ function Composer() {
     content: '',
   });
   const { platform, effective } = useCommandBindings();
-  const { setSessionOverride } = useCommandInspector();
   const hotkeys = effective.find(binding => binding.id === 'composer.message.send')?.hotkeys ?? [];
   window.composer = {
     editor,
     trigger,
-    remap: raw => setSessionOverride('composer.message.send', raw),
+    remap,
   };
   if (!editor) return null;
   return (
@@ -63,13 +61,26 @@ function Composer() {
   );
 }
 
+function Harness() {
+  const [overrides, setOverrides] = useState(new Map());
+  const remap = raw => setOverrides(current => {
+    const next = new Map(current);
+    if (raw === undefined) next.delete('composer.message.send');
+    else next.set('composer.message.send', raw);
+    return next;
+  });
+  return (
+    <CommandProvider platform="darwin" overrides={overrides}>
+      <Composer remap={remap} />
+    </CommandProvider>
+  );
+}
+
 window.spike = {
   mount: () =>
     createRoot(document.getElementById('root')).render(
       <StrictMode>
-        <CommandProvider platform="darwin">
-          <Composer />
-        </CommandProvider>
+        <Harness />
       </StrictMode>,
     ),
   take() {

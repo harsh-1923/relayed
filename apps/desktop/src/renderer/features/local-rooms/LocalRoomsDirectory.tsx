@@ -65,9 +65,9 @@ export function LocalRoomsDirectory() {
               className="group/folder h-9 gap-2.5 px-2 text-[15px] text-(--sidebar-item-foreground)
                          hover:bg-(--sidebar-item-background)! hover:text-(--sidebar-item-foreground)!"
             >
-              <FolderDefault className="size-4 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-              <ChevronRight className="ml-auto size-3.5 shrink-0 opacity-60 transition-transform group-data-[panel-open]/folder:rotate-90" />
+              <FolderDefault className="size-4" />
+              <span className="truncate">{folder.name}</span>
+              <ChevronRight className="ml-auto size-3.5 opacity-60 transition-transform group-data-[panel-open]/folder:rotate-90" />
             </CollapsibleTrigger>
             <CollapsibleContent>
               <SidebarMenuSub>
