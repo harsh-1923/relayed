@@ -43,7 +43,7 @@ const members = (db: DatabaseSync, id: string): string[] =>
   readRoster(db, id).members.map(member => `${member.actorId}:${member.role}`);
 
 const event = (db: DatabaseSync, id: string, rev: number, type: string, payload: unknown) =>
-  applyEvent({ db, effect: replicaEffect(undefined, () => 'act_me') },
+  applyEvent({ db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') },
     { kind: 'space', id } as Stream, { rev, type, payload });
 
 test('rooms and group messages are owed at once, a channel only while it is small, a DM never', () => {

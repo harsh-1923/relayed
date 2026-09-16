@@ -1028,7 +1028,7 @@ test('someone added to a room gets its panels with the room', () => {
   const dir = root();
   const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
   storage.applyWelcome(welcomePayload());
-  const effect = replicaEffect(undefined, () => 'act_me');
+  const effect = replicaEffect(undefined, () => 'act_me', () => 'wsp_1');
   effect(storage.workspace, { kind: 'space', id: 'spc_rca' }, {
     rev: 3, type: 'space.member_added',
     payload: {

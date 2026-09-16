@@ -189,10 +189,16 @@ export const partsColumn = (parts: unknown): string | null =>
  * getter closure, the same convention `LinkDeps.workspaceId` already uses.
  * Optional and additive: every existing call site with zero or one argument
  * keeps working, and simply never hydrates (SPACE-MEMBERSHIP-MARKERS.md).
+ *
+ * `workspaceId` is read the same way, and hydration needs it as well: a space
+ * event's stream is the SPACE, so the workspace a hydrated row belongs to is
+ * not on the event. Without it there is no correct row to write, and the event
+ * stays topology invalidation.
  */
 export function replicaEffect(
   onUnknown?: (type: string) => void,
   activeActorId?: () => string | null,
+  workspaceId?: () => string | null,
 ): Effect {
   return (db: DatabaseSync, stream: Stream, event: Envelope): string[] => {
     switch (event.type) {
@@ -213,7 +219,7 @@ export function replicaEffect(
       // hydrates the space itself when it names the active actor, so a newly
       // added member sees it without reconnecting.
       case 'space.member_added':
-        return spaceMemberAdded(db, stream, event, activeActorId?.() ?? null);
+        return spaceMemberAdded(db, stream, event, activeActorId?.() ?? null, workspaceId?.() ?? null);
       case 'space.member_removed': {
         const { actor_id: removed } = event.payload as { actor_id: string };
         applyMemberEvent(db, stream.id, { removed });
@@ -322,13 +328,14 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
  */
 function spaceMemberAdded(
   db: DatabaseSync, stream: Stream, event: Envelope, activeActorId: string | null,
+  workspaceId: string | null,
 ): string[] {
   const body = event.payload as SpaceMemberAdded;
   // Everyone's copy of the list, the added actor's own included: a list held
   // or loading takes the change, and one never fetched is untouched.
   applyMemberEvent(db, stream.id, { added: { actorId: body.actor_id, role: body.role } });
 
-  if (body.actor_id !== activeActorId || !body.hydration) {
+  if (body.actor_id !== activeActorId || !body.hydration || !workspaceId) {
     return [topic.space(stream.id), topic.spaces(), topic.spaceMembers(stream.id)];
   }
   const { space, chats } = body.hydration;
@@ -349,7 +356,7 @@ function spaceMemberAdded(
       member_ids = excluded.member_ids,
       member_count = COALESCE(excluded.member_count, spaces.member_count),
       updated_at = excluded.updated_at
-  `).run(space.id, stream.id, space.kind, space.name, space.slug,
+  `).run(space.id, workspaceId, space.kind, space.name, space.slug,
          space.visibility, space.membership_policy, space.lifecycle,
          space.created_by_actor_id ?? null, space.on_behalf_of_actor_id ?? null,
          space.member_ids ? JSON.stringify(space.member_ids) : null, space.member_count ?? null, now, now);
@@ -373,7 +380,7 @@ function spaceMemberAdded(
       server_head_rev = MAX(stream_state.server_head_rev, excluded.server_head_rev)
   `);
   for (const c of chats) {
-    chat.run(c.id, stream.id, c.space_id, c.kind, c.name, now, now);
+    chat.run(c.id, workspaceId, c.space_id, c.kind, c.name, now, now);
     chatState.run(c.id, c.head_ord);
     chatCursor.run(c.id, c.head_rev);
   }

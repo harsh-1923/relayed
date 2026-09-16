@@ -557,7 +557,7 @@ const memberAdded = (rev: number, actorId: string, role = 'member'): Envelope =>
 test('a member_added naming the active actor hydrates the space, its chat, and the membership', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };
-  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
 
   applyEvent(deps, space, memberAdded(1, 'act_me', 'admin'));
 
@@ -592,7 +592,7 @@ test('a member_added naming the active actor hydrates the space, its chat, and t
 test('a room an agent made for someone keeps who made it and for whom, and an older server\'s row still applies', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };
-  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
   const added = memberAdded(1, 'act_me', 'admin');
   const hydration = (added.payload as { hydration: { space: Record<string, unknown> } }).hydration;
   hydration.space['created_by_actor_id'] = 'act_triage';
@@ -606,7 +606,7 @@ test('a room an agent made for someone keeps who made it and for whom, and an ol
     '["act_me","act_bob"]', 'who a DM is between arrives with it');
 
   const older = replica();
-  applyEvent({ db: older, effect: replicaEffect(undefined, () => 'act_me') }, space, memberAdded(1, 'act_me'));
+  applyEvent({ db: older, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') }, space, memberAdded(1, 'act_me'));
   assert.deepEqual({ ...older.prepare('SELECT created_by_actor_id, on_behalf_of_actor_id FROM spaces WHERE id = ?').get('spc_new') },
     { created_by_actor_id: null, on_behalf_of_actor_id: null }, 'a hydration without the fields stores nulls');
   db.close();
@@ -631,7 +631,7 @@ const summaryOf = (db: DatabaseSync) =>
 test('a document is stored, and an older revision NEVER replaces a newer one', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };
-  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
 
   const first = applyEvent(deps, space, documentUpdated(1, 'first'));
   assert.deepEqual(first.topics, ['space:spc_new:documents']);
@@ -650,7 +650,7 @@ test('a document is stored, and an older revision NEVER replaces a newer one', (
 test('a document arrives with the room somebody is added to', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };
-  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
   const added = memberAdded(1, 'act_me', 'admin');
   const hydration = (added.payload as { hydration: Record<string, unknown> }).hydration;
   hydration['documents'] = [(documentUpdated(4, 'from the hydration').payload)];
@@ -660,10 +660,32 @@ test('a document arrives with the room somebody is added to', () => {
   db.close();
 });
 
+test('a hydrated space and its chats belong to the workspace, not to the space stream they arrived on', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  applyEvent({ db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') }, space, memberAdded(1, 'act_me'));
+
+  assert.equal((db.prepare('SELECT workspace_id FROM spaces WHERE id = ?').get('spc_new') as
+    { workspace_id: string } | undefined)?.workspace_id, 'wsp_1');
+  assert.equal((db.prepare('SELECT workspace_id FROM chats WHERE id = ?').get('cht_new') as
+    { workspace_id: string } | undefined)?.workspace_id, 'wsp_1');
+  db.close();
+});
+
+test('with no workspace to write it under, a member_added naming the active actor hydrates nothing', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const result = applyEvent({ db, effect: replicaEffect(undefined, () => 'act_me') }, space, memberAdded(1, 'act_me'));
+
+  assert.deepEqual(result.topics, ['space:spc_new', 'spaces', 'space:spc_new:members']);
+  assert.equal(db.prepare('SELECT id FROM spaces WHERE id = ?').get('spc_new'), undefined);
+  db.close();
+});
+
 test('a member_added for someone else stays topology invalidation only — nothing is written', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };
-  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
 
   const result = applyEvent(deps, space, memberAdded(1, 'act_someone_else'));
 
@@ -693,7 +715,7 @@ for (const kind of ['channel', 'room'] as const) {
     const db = replica();
     try {
       const stream: Stream = { kind: 'space', id: 'spc_created' };
-      const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+      const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
       const chatKind = kind === 'channel' ? 'sole' : 'default';
       applyEvent(deps, stream, { rev: 1, type: 'space.created', payload: { id: stream.id, kind } });
       applyEvent(deps, stream, { rev: 2, type: 'chat.created', payload: { id: 'cht_created', kind: chatKind } });

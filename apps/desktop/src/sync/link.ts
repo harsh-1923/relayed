@@ -173,7 +173,7 @@ export function createLink(deps: LinkDeps): Link {
   }
 
   const effect = deps.effect ?? replicaEffect(type =>
-    note('sync.event.unknown', { type, stream: 'chat', rev: 0 }), deps.actorId);
+    note('sync.event.unknown', { type, stream: 'chat', rev: 0 }), deps.actorId, deps.workspaceId);
 
   /**
    * The sends currently in flight, as spans.
