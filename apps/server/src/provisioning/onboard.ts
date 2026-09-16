@@ -19,6 +19,7 @@ import type { DB } from '../db/schema.ts';
 import { createChannel, addToSpace } from '../sync/spaces.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { ulid } from '../db/ulid.ts';
+import { provisionSystemAgents } from './system-agents.ts';
 
 /** The channel every workspace starts with. */
 const DEFAULT_CHANNEL = 'general';
@@ -35,14 +36,21 @@ const DEFAULT_CHANNEL = 'general';
 export async function seedWorkspace(
   db: Kysely<DB>, workspaceId: string, actorId: string,
 ): Promise<AppendedEvent[]> {
+  // Before the channel, and outside its existence check — that check is about
+  // the CHANNEL, and it would silently skip provisioning for any workspace that
+  // has one. Idempotent in its own right, so re-running costs a query.
+  // Workspaces that predate the system agents get them from the backfill
+  // (`scripts/backfill-system-agents.ts`).
+  const agents = await provisionSystemAgents(db, workspaceId);
+
   const existing = await db.selectFrom('spaces').select('id')
     .where('workspace_id', '=', workspaceId).limit(1).executeTakeFirst();
-  if (existing) return [];
+  if (existing) return agents;
 
   const channel = await createChannel(db, {
     workspaceId, name: DEFAULT_CHANNEL, createdBy: actorId,
   });
-  return channel.events;
+  return [...agents, ...channel.events];
 }
 
 /**

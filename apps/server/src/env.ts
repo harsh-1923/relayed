@@ -57,4 +57,13 @@ export const env = {
   publicUrl: process.env['RELAYED_PUBLIC_URL'] ?? null,
   /** Signs the `relayed_connect` cookie (§6.5). A separate secret from every other signing key here, on the same reasoning as `AGENT_GRANT_SECRET`. */
   connectCookieSecret: process.env['CONNECT_COOKIE_SECRET'] ?? null,
+
+  // ── the room summariser (DOCUMENTS.md §4.4) ───────────────────────────────
+  /**
+   * New readable messages before a room's summary is refreshed. An env value
+   * rather than a constant because it is the one number worth retuning against
+   * a real deployment's rooms — too high and the panel is stale through a
+   * working session, too low and it burns budget saying the same thing.
+   */
+  summaryThreshold: Number(process.env['SUMMARY_THRESHOLD'] ?? 15),
 } as const;

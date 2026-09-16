@@ -1,6 +1,13 @@
 import { Node, type MarkdownToken } from '@tiptap/core';
 
-/** A durable semantic atom inside canonical Relayed Markdown. */
+/**
+ * A durable semantic atom inside canonical Relayed Markdown.
+ *
+ * Three kinds, one node: `actor` and `audience` are written `@name`, a
+ * `space` is written `#name` — the room reference people expect from Slack.
+ * They share a node because they share the thing that matters: an id that
+ * survives a rename, carried in the body rather than resolved at read time.
+ */
 export const RelayedMention = Node.create({
   name: 'relayedMention',
   group: 'inline',
@@ -16,18 +23,18 @@ export const RelayedMention = Node.create({
       'data-relayed-mention': node.attrs['kind'],
       'data-id': node.attrs['id'],
       class: 'composer-mention',
-    }, `@${node.attrs['label']}`];
+    }, `${sigil(node.attrs['kind'])}${node.attrs['label']}`];
   },
-  renderText({ node }) { return `@${node.attrs['label']}`; },
+  renderText({ node }) { return `${sigil(node.attrs['kind'])}${node.attrs['label']}`; },
   markdownTokenName: 'relayedMention',
   markdownTokenizer: {
     name: 'relayedMention',
     level: 'inline',
     start(source: string) {
-      return source.search(/\[[^\]\n]+\]\((?:actor|audience):[^)\s]+\)/);
+      return source.search(/\[[^\]\n]+\]\((?:actor|audience|space):[^)\s]+\)/);
     },
     tokenize(source: string) {
-      const match = /^\[([^\]\n]+)\]\((actor|audience):([^)\s]+)\)/.exec(source);
+      const match = /^\[([^\]\n]+)\]\((actor|audience|space):([^)\s]+)\)/.exec(source);
       if (!match) return undefined;
       return {
         type: 'relayedMention', raw: match[0],
@@ -42,7 +49,11 @@ export const RelayedMention = Node.create({
   },
   renderMarkdown(node) {
     const label = String(node.attrs?.['label'] ?? '').replaceAll(']', '\\]');
-    const kind = node.attrs?.['kind'] === 'audience' ? 'audience' : 'actor';
+    const given = node.attrs?.['kind'];
+    const kind = given === 'audience' || given === 'space' ? given : 'actor';
     return `[${label}](${kind}:${String(node.attrs?.['id'] ?? '')})`;
   },
 });
+
+/** What a mention is written with: a room is `#`, a person or an audience is `@`. */
+const sigil = (kind: unknown): string => (kind === 'space' ? '#' : '@');

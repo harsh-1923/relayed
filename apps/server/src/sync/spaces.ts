@@ -25,6 +25,7 @@ import { writeMessage } from './ops.ts';
 import { ulid } from '../db/ulid.ts';
 import { roomPanels } from './panels.ts';
 import { createRoomSummary, spaceDocuments } from './documents.ts';
+import { systemAgentId, ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
 
 export interface NewChannel {
   workspaceId: string;
@@ -235,6 +236,11 @@ async function createNamedSpace(
       if (input.onBehalfOf && input.onBehalfOf !== input.createdBy) {
         const added = await addMemberWithMarker(trx, spaceId, input.onBehalfOf, 'admin', input.createdBy, ulid('msg'));
         if (added.status === 'added') events.push(added.membershipEvent, added.messageEvent);
+      }
+
+      if (kind === 'room') {
+        const joined = await addRoomkeeper(trx, input.workspaceId, spaceId);
+        if (joined) events.push(joined);
       }
     });
   } catch (err) {
@@ -606,6 +612,28 @@ export async function addMember(
     hydration: await hydrationSnapshot(trx, spaceId, allocated.rev),
   }, { kind: 'stream' });
   return { status: 'added', event };
+}
+
+/**
+ * Put Roomkeeping in a room — membership and its event, and NO chat marker
+ * (docs/DOCUMENTS.md §9).
+ *
+ * "Relay Roomkeeping was added by Alice" at the top of every room in the
+ * workspace would be both noise and a lie: nobody added it, the room came with
+ * it, the same way it came with its default chat and its summary panel. So this
+ * calls `addMember` rather than `addMemberWithMarker`.
+ *
+ * `by` is Roomkeeping itself, because there is no one else it could honestly
+ * be. Returns null for a workspace provisioned before this shipped: that room
+ * simply has nobody writing its summary until the backfill runs.
+ */
+export async function addRoomkeeper(
+  trx: Transaction<DB>, workspaceId: string, spaceId: string,
+): Promise<AppendedEvent | null> {
+  const roomkeeperId = await systemAgentId(trx, workspaceId, ROOMKEEPER_HANDLE);
+  if (!roomkeeperId) return null;
+  const added = await addMember(trx, spaceId, roomkeeperId, 'member', roomkeeperId);
+  return added.status === 'added' ? added.event : null;
 }
 
 /**

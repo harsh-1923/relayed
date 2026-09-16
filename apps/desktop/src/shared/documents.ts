@@ -41,3 +41,22 @@ export function documentIdOfPanel(panel: { type: string; payload: Record<string,
  * the tab strip, and never closed. A room's summary is the only one today.
  */
 export const isStructuralPanel = (panel: { type: string }): boolean => panel.type === 'doc';
+
+/**
+ * A web address a document's link may open, or null.
+ *
+ * http(s) ONLY, decided by parsing rather than by prefix. A summary is written
+ * by a model out of what people typed, so `javascript:`, `file:` and every
+ * other scheme arrive here as ordinary text and must not become something
+ * clickable. The app's own link forms — `actor:`, `space:`, `message:` — are
+ * not rendered yet and deliberately return null: inert, rather than wrong.
+ */
+export function webAddress(href: string | null | undefined): string | null {
+  if (!href) return null;
+  try {
+    const url = new URL(href);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
+}

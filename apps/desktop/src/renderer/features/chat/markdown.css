@@ -275,6 +275,16 @@
     background: color-mix(in srgb, var(--primary) 12%, transparent);
     border-radius: 4px;
   }
+
+  /* A room mention is a mention that goes somewhere: same shape, and the
+     pointer is what says it can be clicked. */
+  & .md-mention-button {
+    cursor: pointer;
+  }
+
+  & .md-mention-button:hover {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+  }
 }
 
 & .md-command {

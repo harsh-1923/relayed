@@ -10,6 +10,7 @@
     "keygen": "node src/auth/keygen.ts",
     "enable-toolkit": "node --env-file-if-exists=../../.env scripts/enable-toolkit.ts",
     "backfill-room-summaries": "node --env-file-if-exists=../../.env scripts/backfill-room-summaries.ts",
+    "backfill-system-agents": "node --env-file-if-exists=../../.env scripts/backfill-system-agents.ts",
     "test": "node --env-file-if-exists=../../.env --test src/",
     "typecheck": "tsc --noEmit"
   },

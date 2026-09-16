@@ -657,6 +657,23 @@ export const metrics = {
        + 'the reply path, not an outage.',
   },
 
+  // ── the room summariser (DOCUMENTS.md §4) ────────────────────────────────
+  'summary.refresh': {
+    kind: 'counter', labels: ['result'],
+    doc: 'One pass of the room summariser finished. `error` covers both a '
+       + 'runtime that failed and one that answered with nothing usable — both '
+       + 'leave the previous summary standing and both drive the same backoff, '
+       + 'so the panel goes stale silently. A rising error rate is the only '
+       + 'signal anyone gets that summaries have stopped.',
+  },
+  'summary.refresh.messages': {
+    kind: 'histogram', unit: 'count', labels: [],
+    doc: 'How many readable messages one refresh was given. Answers whether '
+       + 'the threshold is tuned: a distribution sitting far above it means '
+       + 'rooms are outrunning the loop, and one sitting at it means refreshes '
+       + 'are firing on the smallest batch that qualifies.',
+  },
+
   'composio.request': {
     kind: 'counter', labels: ['composio_op', 'result'],
     doc: 'Every call `composio.ts` makes — the only file that imports the SDK '

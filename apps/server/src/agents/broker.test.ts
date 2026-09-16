@@ -9,6 +9,8 @@ import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { env } from '../env.ts';
 import { createChannel, createRoom, joinSpace } from '../sync/spaces.ts';
+import { provisionSystemAgents, systemAgentId, ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
+import { writeDocumentRevision } from '../sync/documents.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { send } from '../sync/ops.ts';
 import { signGrant } from './grant.ts';
@@ -24,6 +26,7 @@ const wsp = ulid('wsp');
 const alice = ulid('act');
 const triage = ulid('act');
 const review = ulid('act');
+let roomkeeper = '';
 
 // Toolkits of this file's own, so nothing depends on what the dev catalogue holds.
 const suffix = ulid('t').slice(-8).toLowerCase();
@@ -60,6 +63,11 @@ before(async () => {
     toolkit, slug, name: slug, description: `does ${slug}`, effect_derived: effect, effect_override: null,
     deprecated, input_schema: sql`${JSON.stringify(CATALOGUE_SCHEMA)}::jsonb`,
   });
+  // Relay and Roomkeeping, as every workspace has them: `write_room_summary`
+  // is offered by WHO is running, so the fixture needs the real actor.
+  await provisionSystemAgents(db, wsp);
+  roomkeeper = (await systemAgentId(db, wsp, ROOMKEEPER_HANDLE)) ?? '';
+
   await db.insertInto('toolkit_tools').values([
     tool(HUB, READ_TOOL, 'read'), tool(HUB, WRITE_TOOL, 'write'), tool(HUB, DESTRUCTIVE_TOOL, 'destructive'),
     tool(HUB, DEPRECATED_TOOL, 'read', true), tool(OFF, OFF_TOOL, 'read'),
@@ -305,13 +313,17 @@ test('create_room makes a private room: the agent creates it, the person it was 
     kind: 'room', name: 'HAR-21 agents act like humans', visibility: 'private', workspace_id: wsp,
     created_by_actor_id: triage, on_behalf_of_actor_id: alice,
   });
+  // The two this test is about. A room also gets Roomkeeping (DOCUMENTS.md §9),
+  // and asserting the whole list would fail whenever a room gains something
+  // structural — which is a fact about rooms, not about create_room.
   const members = await db.selectFrom('memberships').select(['actor_id', 'role'])
-    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId).orderBy('actor_id').execute();
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId)
+    .where('actor_id', 'in', [triage, alice]).orderBy('actor_id').execute();
   assert.deepEqual(members, [{ actor_id: triage, role: 'admin' }, { actor_id: alice, role: 'admin' }]
     .sort((a, b) => a.actor_id.localeCompare(b.actor_id)));
 
   // The person arrives on the ordinary add path: their own member_added, and the marker in the chat.
-  assert.deepEqual(recorded.delivered.map(event => event.type),
+  assert.deepEqual(recorded.delivered.map(event => event.type).slice(0, 5),
     ['space.created', 'chat.created', 'space.member_added', 'space.member_added', 'message.created']);
   const created = recorded.delivered[0]!.payload as { created_by_actor_id: string; on_behalf_of_actor_id: string };
   assert.deepEqual([created.created_by_actor_id, created.on_behalf_of_actor_id], [triage, alice]);
@@ -391,9 +403,13 @@ test('a room a person creates themselves is unchanged: no on_behalf_of, one admi
     .where('id', '=', made.spaceId).executeTakeFirstOrThrow();
   assert.deepEqual(space, { created_by_actor_id: alice, on_behalf_of_actor_id: null });
   const members = await db.selectFrom('memberships').select(['actor_id', 'role'])
-    .where('scope_type', '=', 'space').where('scope_id', '=', made.spaceId).execute();
+    .where('scope_type', '=', 'space').where('scope_id', '=', made.spaceId)
+    .where('actor_id', '=', alice).execute();
   assert.deepEqual(members, [{ actor_id: alice, role: 'admin' }]);
-  assert.deepEqual(made.events.map(event => event.type), ['space.created', 'chat.created', 'space.member_added']);
+  // Roomkeeping's join is a fourth event; the three this test names are the ones
+  // a person creating a room for themselves produces.
+  assert.deepEqual(made.events.map(event => event.type).slice(0, 3),
+    ['space.created', 'chat.created', 'space.member_added']);
 });
 
 // ── send_dm, post_message, add_to_room ─────────────────────────────────────
@@ -543,5 +559,138 @@ test('an agent\'s message where the person who asked is not a member starts nobo
   assert.equal(posted.result, 'ok', 'the agent may post there — it is a member');
   assert.equal((await db.selectFrom('agent_runs').select('id').where('trigger_message_id', '=', posted.data!['message_id'] as string).execute()).length, 0,
     'but Alice cannot read it, so no run is started for her');
+  await app.close();
+});
+
+// ── write_room_summary (DOCUMENTS.md §4.8) ──────────────────────────────────
+
+const summaryOfSpace = (spaceId: string) => db.selectFrom('documents')
+  .select(['body', 'rev', 'updated_by_actor_id', 'covered_through'])
+  .where('space_id', '=', spaceId).where('kind', '=', 'room_summary').executeTakeFirstOrThrow();
+
+test('write_room_summary replaces the room summary and tells the room', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(roomkeeper, 'room');
+  await db.updateTable('documents').set({ covered_through: sql`'{"cht_x": 7}'::jsonb` })
+    .where('space_id', '=', r.spaceId).execute();
+
+  const answer = await call(app, r, 'write_room_summary', { body: '**Now.** LIN-42 is the work.' });
+  assert.equal(answer.result, 'ok');
+
+  const document = await summaryOfSpace(r.spaceId);
+  assert.equal(document.body, '**Now.** LIN-42 is the work.');
+  assert.equal(document.rev, 1);
+  // The AGENT wrote it, not the person who asked — the run records them.
+  assert.equal(document.updated_by_actor_id, roomkeeper);
+  // A request is not a pass over the messages, so the watermark stands (§4.8).
+  assert.deepEqual(document.covered_through, { cht_x: 7 });
+  assert.deepEqual(recorded.delivered.map(event => event.type), ['document.updated']);
+  await app.close();
+});
+
+test('write_room_summary is refused for any other agent, and outside a room', opts, async () => {
+  const { app, recorded } = await server();
+
+  // Triage is in the same room and asks for the same tool.
+  const other = await run(triage, 'room');
+  assert.equal((await call(app, other, 'write_room_summary', { body: 'mine now' })).result, 'tool_not_allowed');
+  assert.equal((await summaryOfSpace(other.spaceId)).rev, 0, 'nothing written');
+
+  // Roomkeeping itself, in a channel: there is no summary to write.
+  const channel = await run(roomkeeper, 'channel');
+  assert.equal((await call(app, channel, 'write_room_summary', { body: 'hello' })).result, 'tool_not_allowed');
+
+  assert.deepEqual(recorded.delivered, []);
+  await app.close();
+});
+
+test('write_room_summary refuses an empty body rather than blanking the panel', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(roomkeeper, 'room');
+  await call(app, r, 'write_room_summary', { body: 'Something true.' });
+
+  const answer = await call(app, r, 'write_room_summary', { body: '   ' }) as { result: string; message?: string };
+  assert.equal(answer.result, 'failed');
+  assert.match(answer.message ?? '', /complete new summary/);
+  assert.equal((await summaryOfSpace(r.spaceId)).body, 'Something true.');
+  assert.deepEqual(recorded.delivered.map(event => event.type), ['document.updated'], 'only the first write');
+  await app.close();
+});
+
+
+// ── read_room_summary (DOCUMENTS.md §4, the cross-room read) ────────────────
+
+/** A room Alice is in, with a summary, that `agent` may or may not be a member of. */
+async function roomWithSummary(body: string, joinedBy: readonly string[]) {
+  const made = await createRoom(db, { workspaceId: wsp, name: `r-${ulid('x')}`, createdBy: alice });
+  for (const actorId of joinedBy) await joinSpace(db, made.spaceId, actorId).catch(() => { /* already in */ });
+  const document = await db.selectFrom('documents').select('id')
+    .where('space_id', '=', made.spaceId).where('kind', '=', 'room_summary').executeTakeFirstOrThrow();
+  await writeDocumentRevision(db, { documentId: document.id, body, authorActorId: roomkeeper });
+  return made;
+}
+
+test('read_room_summary with no space_id reads the room the run is in', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage, 'room');
+  const document = await db.selectFrom('documents').select('id')
+    .where('space_id', '=', r.spaceId).where('kind', '=', 'room_summary').executeTakeFirstOrThrow();
+  await writeDocumentRevision(db, { documentId: document.id, body: '**Now.** The rollback is done.', authorActorId: roomkeeper });
+
+  const answer = await call(app, r, 'read_room_summary', {}) as
+    { result: string; data?: { space_id: string; summary: string | null } };
+  assert.equal(answer.result, 'ok');
+  assert.equal(answer.data?.space_id, r.spaceId);
+  assert.equal(answer.data?.summary, '**Now.** The rollback is done.');
+  await app.close();
+});
+
+test('another room reads only when BOTH the agent and the person are in it', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage, 'room');
+
+  // Alice and the agent are both in it: readable.
+  const shared = await roomWithSummary('**Now.** Shared work.', [triage]);
+  const ok = await call(app, r, 'read_room_summary', { space_id: shared.spaceId }) as
+    { result: string; data?: { summary: string | null } };
+  assert.equal(ok.result, 'ok');
+  assert.equal(ok.data?.summary, '**Now.** Shared work.');
+
+  // Alice is in it, the agent is not: refused. The agent's own membership is
+  // half the intersection, and half is not enough.
+  const hers = await roomWithSummary('**Now.** Something private to Alice.', []);
+  const refused = await call(app, r, 'read_room_summary', { space_id: hers.spaceId }) as
+    { result: string; message?: string };
+  assert.equal(refused.result, 'failed');
+  assert.match(refused.message ?? '', /not one both of you can see/);
+  await app.close();
+});
+
+test('a room the person is not in is refused, and says nothing about it', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage, 'room');
+  // Somebody else's room: the agent is in it, Alice — who asked — is not.
+  const theirs = await person('Bob');
+  const bobs = await createRoom(db, { workspaceId: wsp, name: `b-${ulid('x')}`, createdBy: theirs });
+  await joinSpace(db, bobs.spaceId, triage).catch(() => { /* already in */ });
+
+  const answer = await call(app, r, 'read_room_summary', { space_id: bobs.spaceId }) as
+    { result: string; message?: string };
+  assert.equal(answer.result, 'failed');
+  // The SAME answer a non-existent room gets: telling them apart would say
+  // whether a room the asker may not know about exists.
+  const nowhere = await call(app, r, 'read_room_summary', { space_id: 'spc_nothing' }) as { message?: string };
+  assert.equal(answer.message, nowhere.message);
+  await app.close();
+});
+
+test('a room with nothing written says so rather than returning an empty summary', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage, 'room');
+  const answer = await call(app, r, 'read_room_summary', {}) as
+    { result: string; data?: { summary: string | null; note?: string } };
+  assert.equal(answer.result, 'ok');
+  assert.equal(answer.data?.summary, null);
+  assert.match(answer.data?.note ?? '', /no summary yet/);
   await app.close();
 });

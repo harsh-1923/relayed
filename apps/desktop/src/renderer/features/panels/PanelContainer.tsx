@@ -19,19 +19,31 @@ import { PanelCreationDialog, type PanelCreationKind } from './PanelCreationDial
 import { DocPanel } from '../documents/DocPanel';
 import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
 
-interface PanelBodyProps { panel: Panel; space: Space; scope: SpaceScope }
+interface PanelBodyProps {
+  panel: Panel; space: Space; scope: SpaceScope;
+  /** Put a panel this body opened into the tab strip and show it — creating one only makes the row. */
+  onOpenPanel: (panelId: string) => void;
+}
 
 /** Bodies drawn only while their tab is shown. A `web` panel is not here: its page stays mounted while its tab is open. */
 const PANEL_BODIES: Partial<Record<string, ComponentType<PanelBodyProps>>> = {
   chat: ({ panel, space, scope }) => (panel.chatId ? <ChatView spaceId={space.id} chatId={panel.chatId} scope={scope} /> : null),
-  doc: ({ panel, space }) => <DocumentBody panel={panel} spaceId={space.id} />,
+  doc: ({ panel, space, onOpenPanel }) => <DocumentBody panel={panel} spaceId={space.id} onOpenPanel={onOpenPanel} />,
 };
 
 /** The document this panel is a window onto, from the space's own documents. */
-function DocumentBody({ panel, spaceId }: { panel: Panel; spaceId: string }) {
+function DocumentBody({ panel, spaceId, onOpenPanel }: {
+  panel: Panel; spaceId: string; onOpenPanel: (panelId: string) => void;
+}) {
   const { rows: documents } = useQuery('documents.list', { spaceId });
   const documentId = documentIdOfPanel(panel);
-  return <DocPanel spaceId={spaceId} document={documents?.find(row => row.id === documentId) ?? null} />;
+  return (
+    <DocPanel
+      spaceId={spaceId}
+      document={documents?.find(row => row.id === documentId) ?? null}
+      onOpenPanel={onOpenPanel}
+    />
+  );
 }
 
 export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
@@ -124,7 +136,7 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
         {/* Keyed, so a tab switch starts the next panel fresh rather than reusing the last one's state. */}
         {shown && Body && shown.type !== 'web' && (
           <PanelBoundary key={shown.id}>
-            <Body panel={shown} space={space} scope={scope} />
+            <Body panel={shown} space={space} scope={scope} onOpenPanel={openPanels.open} />
           </PanelBoundary>
         )}
         {/* Every open page stays mounted, in tab order, and the ones not shown are parked:

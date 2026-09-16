@@ -4,10 +4,14 @@
 // needs a live, authoritative permission check and commits immediately. The
 // resulting space event is still the one thing that updates clients.
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
+import { can, space as spaceTarget } from '@relayed/authz';
 import type { DB } from '../db/schema.ts';
 import { caller as bearerCaller, type Caller } from '../auth/caller.ts';
-import { Forbidden } from '../authz/can.ts';
+import { loadGrants, Forbidden } from '../authz/can.ts';
+import { spacePlacement } from './placement.ts';
+import { refreshSummary, summaryOf } from '../agents/summariser.ts';
+import type { Registry } from './registry.ts';
 import type { AppendedEvent } from './events.ts';
 import type { FanoutResult } from './fanout.ts';
 import {
@@ -18,6 +22,8 @@ import {
 export interface SpaceRouteDeps {
   db: Kysely<DB>;
   deliver: (event: AppendedEvent) => Promise<FanoutResult>;
+  /** For the summary refresh, which fans out its own revision. Absent in route tests that never ask for one. */
+  registry?: Registry;
   /** Injected so route tests need no signing key. */
   caller?: (authorization: string | undefined) => Promise<Caller | null>;
 }
@@ -139,6 +145,53 @@ export function spaceRoutes(deps: SpaceRouteDeps) {
         } catch (error) {
           return refusal(reply, error);
         }
+      },
+    );
+
+    /**
+     * Refresh this room's summary now (DOCUMENTS.md §4.4).
+     *
+     * A command rather than a nudge to the loop: somebody pressed a button and
+     * is watching the panel, so this does the pass and answers with what
+     * happened. It overrules the message-count threshold — that is the whole
+     * point of the button — and nothing else. Membership is checked the way
+     * every read is, the lease still holds (a refresh already running IS the
+     * refresh they asked for), and the floor is enforced here as the rate
+     * limit, so the button cannot be leant on.
+     */
+    app.post<{ Params: { id: string } }>(
+      '/spaces/:id/summary/refresh', async (req, reply) => {
+        const me = await who(req.headers.authorization);
+        if (!me) return reply.code(401).send({ error: 'unauthenticated' });
+        const grants = await loadGrants(deps.db, me.actorId);
+        const placement = await spacePlacement(deps.db, req.params.id);
+        if (!can(grants, 'read', spaceTarget(req.params.id), placement)) {
+          return reply.code(404).send({ error: 'not_found' });
+        }
+        const due = await summaryOf(deps.db, req.params.id);
+        if (!due) {
+          // The room may well have a summary and no one to write it — a
+          // workspace provisioned before the Relay agents shipped and not yet
+          // backfilled, or a room Roomkeeping was removed from. Saying
+          // "not found" there would be a lie about a panel the person is
+          // looking at.
+          const document = await deps.db.selectFrom('documents').select('id')
+            .where('space_id', '=', req.params.id).where('kind', '=', 'room_summary')
+            .executeTakeFirst();
+          return document
+            ? reply.code(409).send({ error: 'no_summariser' })
+            : reply.code(404).send({ error: 'not_found' });
+        }
+
+        const fresh = await deps.db.selectFrom('documents').select('id')
+          .where('id', '=', due.documentId)
+          .where(sql<boolean>`updated_at > now() - interval '60 seconds'`)
+          .executeTakeFirst();
+        if (fresh) return reply.code(429).send({ error: 'too_soon' });
+
+        // `refreshSummary` fans out its own event, so nothing is delivered here.
+        const outcome = await refreshSummary(deps.db, deps.registry ?? null, due);
+        return reply.send({ space_id: req.params.id, outcome });
       },
     );
   };

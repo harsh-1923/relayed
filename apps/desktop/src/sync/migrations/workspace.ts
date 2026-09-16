@@ -719,4 +719,47 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE INDEX document_space ON documents(space_id);
     `,
   },
+  {
+    version: 19,
+    name: 'system_agents',
+    // An agent with NO owner is now a real thing: Relay is the root of the
+    // system agents' ownership chain and has none (DOCUMENTS.md §9.1).
+    //
+    // THIS WAS A LIVENESS BUG, not a tidy-up. Version 1's CHECK refused such a
+    // row, so `actor.created` for Relay threw inside `applyCatchup`, the
+    // workspace cursor never advanced, and the client asked for the same range
+    // for ever — thousands of times a second. A replica CHECK that can refuse
+    // what the server legitimately sent is exactly that failure by
+    // construction, which is why `panels` and `documents` carry none.
+    //
+    // So the rule goes rather than widening: the server's `actor_owner` is the
+    // authority on which actors may lack an owner, and this file's job is to
+    // hold what it is sent. A CHECK on `type` and `state` stays — those are
+    // closed vocabularies this build renders by name, and a rebuild is the
+    // only way to change a CHECK in SQLite anyway.
+    up: `
+      CREATE TABLE actors_new (
+        id             TEXT PRIMARY KEY,
+        workspace_id   TEXT NOT NULL,
+        type           TEXT NOT NULL,
+        handle         TEXT NOT NULL,
+        display_name   TEXT NOT NULL,
+        avatar_url     TEXT,
+        avatar_blob    TEXT,
+        -- Who operates this agent, or NULL: a person, or an agent the app
+        -- provisioned and nobody owns.
+        owner_actor_id TEXT,
+        state          TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL,
+
+        CHECK (type IN ('human','agent')),
+        CHECK (state IN ('invited','active','suspended','deactivated'))
+      );
+      INSERT INTO actors_new SELECT id, workspace_id, type, handle, display_name,
+             avatar_url, avatar_blob, owner_actor_id, state, updated_at FROM actors;
+      DROP TABLE actors;
+      ALTER TABLE actors_new RENAME TO actors;
+      CREATE UNIQUE INDEX actor_handle ON actors(workspace_id, handle);
+    `,
+  },
 ];

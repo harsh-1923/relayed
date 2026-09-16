@@ -210,6 +210,14 @@ export const addSpaceMember = (accessToken: string, spaceId: string, actorId: st
   request<{ space_id: string; actor_id: string; message_id: string }>('POST',
     `/spaces/${encodeURIComponent(spaceId)}/members`, accessToken,
     { actor_id: actorId, message_id: messageId });
+/**
+ * Refresh a room's summary now (DOCUMENTS.md §4.4). `too_soon` is the rate
+ * limit answering, not a failure — the panel says so rather than retrying.
+ */
+export const refreshRoomSummary = (accessToken: string, spaceId: string) =>
+  request<{ space_id: string; outcome: string }>('POST',
+    `/spaces/${encodeURIComponent(spaceId)}/summary/refresh`, accessToken, {});
+
 /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
 export const stopAgentRun = (accessToken: string, runId: string) =>
   request<{ run_id: string; state: string }>('POST',

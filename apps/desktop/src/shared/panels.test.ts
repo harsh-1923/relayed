@@ -47,7 +47,9 @@ test('toggling the container closes an open view, reopens the newest panel, or o
 
 // ─── A synced room's shared panels arriving (panelArrivals) ─────────────────
 
-const shared = (id: string, openedAt: number) => ({ id, openedAt, scope: 'shared' as const });
+const shared = (id: string, openedAt: number) => ({ id, openedAt, scope: 'shared' as const, type: 'web' });
+/** The room's own summary panel: structural, and so never an arrival. */
+const summaryPanel = (id: string, openedAt: number) => ({ id, openedAt, scope: 'shared' as const, type: 'doc' });
 const closed = { containerOpen: false, ids: [], active: null };
 
 test('arriving in a room with nothing open shows the most recently opened panel', () => {
@@ -60,7 +62,7 @@ test('arriving shows nothing when the link already says what is open, or the roo
   const panels = [shared('pnl_ticket', 100)];
   assert.equal(panelArrivals({ seen: null, panels, open: { containerOpen: true, ids: [], active: null }, dismissed: new Set() }), null);
   assert.equal(panelArrivals({ seen: null, panels: [], open: closed, dismissed: new Set() }), null);
-  assert.equal(panelArrivals({ seen: null, panels: [{ id: 'pnl_mine', openedAt: 500, scope: 'local' }], open: closed, dismissed: new Set() }), null,
+  assert.equal(panelArrivals({ seen: null, panels: [{ id: 'pnl_mine', openedAt: 500, scope: 'local', type: 'web' }], open: closed, dismissed: new Set() }), null,
     'a page only on this device is not the room\'s');
 });
 
@@ -95,4 +97,31 @@ test('the same page opened again is new, even for someone who closed it', () => 
 test('nothing new, nothing moves', () => {
   const panels = [shared('pnl_ticket', 100)];
   assert.equal(panelArrivals({ seen: seenPanels(panels), panels, open: closed, dismissed: new Set() }), null);
+});
+
+test('a room\'s summary is never an arrival, so closing the panels keeps them closed', () => {
+  // THE BUG THIS GUARDS. The summary is always a tab and is never in `?p=`, so
+  // the arrivals path could never record it as dismissed — and every time
+  // somebody closed the container, this reopened it for the summary.
+  const summary = summaryPanel('pnl_summary', 1000);
+  assert.equal(panelArrivals({
+    seen: null, panels: [summary],
+    open: { containerOpen: false, ids: [], active: null },
+    dismissed: new Set(),
+  }), null);
+
+  // It is not counted as arriving later either, however its row changes.
+  assert.equal(panelArrivals({
+    seen: new Map(), panels: [summary],
+    open: { containerOpen: false, ids: [], active: null },
+    dismissed: new Set(),
+  }), null);
+
+  // A page somebody actually opened still arrives, beside it.
+  const opened = panelArrivals({
+    seen: null, panels: [summary, shared('pnl_page', 2000)],
+    open: { containerOpen: false, ids: [], active: null },
+    dismissed: new Set(),
+  });
+  assert.deepEqual(opened, { ids: ['pnl_page'], active: 'pnl_page' });
 });

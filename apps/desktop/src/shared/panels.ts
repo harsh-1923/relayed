@@ -1,4 +1,5 @@
 // A surface open beside a room's main chat, as the screen sees it (docs/PANELS.md).
+import { isStructuralPanel } from './documents.ts';
 
 export const PANEL_TYPES = ['chat', 'web', 'diff', 'file', 'attachment'] as const;
 export type PanelType = (typeof PANEL_TYPES)[number];
@@ -108,8 +109,19 @@ export function panelContainerToggle(
 /** When each shared panel was last opened, as a room view last saw them. */
 export type SeenPanels = ReadonlyMap<string, number>;
 
-export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope'>[]): Map<string, number> =>
-  new Map(panels.filter(panel => panel.scope === 'shared').map(panel => [panel.id, panel.openedAt]));
+/**
+ * A panel that can ARRIVE: one somebody opened for the room.
+ *
+ * A structural panel is excluded, and that is the whole of the rule: a room's
+ * summary has existed since the room did, so it never arrives, and treating it
+ * as an arrival reopens the container somebody just closed — which is what it
+ * did before this filter (DOCUMENTS.md §8.1).
+ */
+const arrivable = (panel: Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>): boolean =>
+  panel.scope === 'shared' && !isStructuralPanel(panel);
+
+export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>[]): Map<string, number> =>
+  new Map(panels.filter(arrivable).map(panel => [panel.id, panel.openedAt]));
 
 /**
  * What a synced room's tabs become as its shared panels change (PANELS.md) —
@@ -125,14 +137,21 @@ export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'sco
  * Closing is never undone by arriving again: `dismissed` is what this person
  * closed in this room, kept only for as long as the app runs. Opening the page
  * again in the room is new, though, and shows it once more.
+ *
+ * A STRUCTURAL PANEL IS NOT AN ARRIVAL. The room's summary is always a tab
+ * (`withSummaryFirst`) and is never in `?p=`, so this must not reach for it:
+ * doing so reopened the container every time somebody closed it, because the
+ * two hooks remember a close differently — this one by panel id in `?p=`, the
+ * summary's by room — and a panel that is never in `?p=` could never be
+ * recorded as dismissed.
  */
 export function panelArrivals(input: {
   seen: SeenPanels | null;
-  panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope'>[];
+  panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>[];
   open: { containerOpen: boolean; ids: readonly string[]; active: string | null };
   dismissed: ReadonlySet<string>;
 }): { ids: string[]; active: string | null } | null {
-  const shared = input.panels.filter(panel => panel.scope === 'shared');
+  const shared = input.panels.filter(arrivable);
 
   if (input.seen === null) {
     if (input.open.containerOpen) return null;

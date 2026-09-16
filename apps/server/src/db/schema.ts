@@ -40,7 +40,8 @@ export interface ActorsTable {
   identity_kind: 'workos_user' | 'workos_agent' | 'system' | null;
   identity_id: string | null;
   owner_actor_id: string | null;
-  provisioned_by: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api';
+  /** `system` is an agent the app provisions, and the only kind allowed no owner (022). */
+  provisioned_by: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api' | 'system';
   state: Generated<'invited' | 'active' | 'suspended' | 'deactivated'>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;

@@ -17,6 +17,7 @@ import { brokerRoutes } from './agents/broker.ts';
 import { accessRoutes } from './agents/access.ts';
 import { startCatalogueRefresh } from './agents/catalogue.ts';
 import { startDispatcher, type Dispatcher } from './agents/dispatcher.ts';
+import { startSummariser } from './agents/summariser.ts';
 import { spaceRoutes } from './sync/routes.ts';
 
 useOtlpIfConfigured('server');
@@ -79,7 +80,7 @@ await app.register(agentRoutes({
   db, deliver: sync.deliver, registry: sync.registry,
   dispatcher: { cancel: (runId) => dispatcher?.cancel(runId) },
 }));
-await app.register(spaceRoutes({ db, deliver: sync.deliver }));
+await app.register(spaceRoutes({ db, deliver: sync.deliver, registry: sync.registry }));
 await app.register(connectionRoutes({ db, registry: sync.registry }));
 await app.register(permissionRoutes({
   db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
@@ -115,8 +116,16 @@ const stopRetention = startRetention(db, Number(process.env['RETENTION_MS'] ?? 3
 // wait a day for the enabled toolkits' tools to appear.
 const stopCatalogue = startCatalogueRefresh(db);
 
+// Keeps each room's summary current (DOCUMENTS.md §4). A job rather than a
+// run: it has no invoker and spends nobody's authority, so it needs the socket
+// registry only to fan out the revision it writes.
+const summariser = startSummariser(db, sync.registry);
+
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => { stopPoller(); stopRetention(); stopCatalogue(); dispatcher?.stop(); void pool.end(); process.exit(0); });
+  process.once(sig, () => {
+    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); dispatcher?.stop();
+    void pool.end(); process.exit(0);
+  });
 }
 
 await app.listen({ port: env.port, host: '127.0.0.1' });

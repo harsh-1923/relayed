@@ -588,10 +588,16 @@ the rest of the app changes: in a release.
   every run gets, plus `write_room_summary` (§4.8). Asking it to read a ticket
   and fold the details into the summary works, and spends the asker's Linear
   access, not the agent's.
-- **Mentioning `@relay` starts an ordinary run too.** For now its instructions
-  describe Relayed and how to work in it. Teaching it the app properly — the
-  docs, the current workspace's shape, what a person is actually looking at — is
-  its own piece of work, and this document does not attempt it.
+- **Mentioning `@relay` starts an ordinary run too** — *wherever Relay is*. A
+  mention only starts an agent that is a member of the space (`invocationsFor`),
+  and Relay is in none by default, so in practice you reach it by DMing it, or
+  by adding it to a room like any other agent. That is the honest consequence of
+  "member of nothing by default", and it is left as is: a Relay auto-joined to
+  every space would be the one agent exempt from the membership rule that makes
+  access have one answer. For now its instructions describe Relayed and how to
+  work in it. Teaching it the app properly — the docs, the current workspace's
+  shape, what a person is actually looking at — is its own piece of work, and
+  this document does not attempt it.
 - **`relay` and `roomkeeping` are reserved handles**, enforced by the existing
   unique handle index the moment the actors exist.
 - **Deactivating Roomkeeping is not a way to turn summaries off.** The

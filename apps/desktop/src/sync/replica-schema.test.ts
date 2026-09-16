@@ -97,14 +97,44 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 18,
-      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts', '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members', '18:documents'] });
+    { from: 1, to: 19,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts', '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members', '18:documents', '19:system_agents'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])
     .map(row => ({ ...row }));
   assert.deepEqual(kept, [{ handle: 'harsh' }], 'the upgrade preserved what was there');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── actors ─────────────────────────────────────────────────────────────────
+
+test('an agent with NO owner is stored, not refused', () => {
+  // THE HOT LOOP (DOCUMENTS.md §9.1). Version 1 required an owner for every
+  // agent, so `actor.created` for Relay — which has none — threw inside
+  // `applyCatchup`, the workspace cursor never advanced, and the client asked
+  // for the same range thousands of times a second. The replica holds what the
+  // server sends; the server's own CHECK decides what may be sent.
+  const db = replica();
+  db.prepare(`INSERT INTO actors
+    (id, workspace_id, type, handle, display_name, avatar_url, avatar_blob,
+     owner_actor_id, state, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run('act_relay', 'wsp_1', 'agent', 'relay', 'Relay', null, null, null, 'active', 1);
+  const row = db.prepare('SELECT handle, owner_actor_id FROM actors').get() as
+    { handle: string; owner_actor_id: string | null };
+  assert.equal(row.handle, 'relay');
+  assert.equal(row.owner_actor_id, null);
+});
+
+test('type and state stay closed sets — those this build renders by name', () => {
+  const db = replica();
+  const insert = (over: { type?: string; state?: string }) => db.prepare(`INSERT INTO actors
+    (id, workspace_id, type, handle, display_name, avatar_url, avatar_blob,
+     owner_actor_id, state, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(`act_${Math.random()}`, 'wsp_1', over.type ?? 'human', `h${Math.random()}`,
+         'Someone', null, null, null, over.state ?? 'active', 1);
+  rejects(() => insert({ type: 'daemon' }), /CHECK constraint failed/);
+  rejects(() => insert({ state: 'paused' }), /CHECK constraint failed/);
 });
 
 // ── spaces: the same policy matrix as the server ───────────────────────────
@@ -366,7 +396,8 @@ test('a replica that reports version 7 without a drafts table gets one, and a co
     stale.exec('ALTER TABLE messages ADD COLUMN parts TEXT; PRAGMA user_version = 7');
     assert.deepEqual(migrate(stale, workspaceMigrations).applied,
       ['8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts',
-       '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members', '18:documents'],
+       '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members',
+       '18:documents', '19:system_agents'],
       'including 12, over the parts column this stale replica already has');
     stale.prepare("INSERT INTO drafts (chat_id, body, revision, updated_at) VALUES ('cht_1', 'hi', 1, 0)").run();
     stale.close();

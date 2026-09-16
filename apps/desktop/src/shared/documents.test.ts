@@ -1,7 +1,7 @@
 // What a document is to the surfaces that read one (docs/DOCUMENTS.md).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { documentIdOfPanel, isEmptyDocument, isStructuralPanel, roomSummary } from './documents.ts';
+import { documentIdOfPanel, isEmptyDocument, isStructuralPanel, roomSummary, webAddress } from './documents.ts';
 
 const document = (over: Record<string, unknown> = {}) => ({
   id: 'doc_1', spaceId: 'spc_1', kind: 'room_summary', title: 'Summary',
@@ -33,4 +33,38 @@ test('the room owns a doc panel: it is structural, so it has no close', () => {
   assert.equal(isStructuralPanel({ type: 'doc' }), true);
   assert.equal(isStructuralPanel({ type: 'web' }), false);
   assert.equal(isStructuralPanel({ type: 'chat' }), false);
+});
+
+// ── webAddress: what a link in a document may open ─────────────────────────
+//
+// The rule exists because this window has no `will-navigate` guard, and
+// Tiptap's Link ships `openOnClick: true` — so before this, clicking a link in
+// a summary could load that page over the app itself.
+
+test('an ordinary web address is opened', () => {
+  assert.equal(webAddress('https://linear.app/harshdev/issue/HAR-21'), 'https://linear.app/harshdev/issue/HAR-21');
+  assert.equal(webAddress('http://localhost:5173/'), 'http://localhost:5173/');
+});
+
+test('a scheme that is not the web opens nothing', () => {
+  // The summary is written by a model out of what people typed. None of these
+  // may become something a click acts on.
+  for (const href of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,<script>',
+                      'relayed-blob://abc', 'mailto:someone@example.com']) {
+    assert.equal(webAddress(href), null, href);
+  }
+});
+
+test("the app's own link forms are inert, not wrong", () => {
+  // Not rendered yet (DOCUMENTS.md §5): they must do nothing rather than be
+  // treated as a web address.
+  assert.equal(webAddress('actor:act_01M2KZ1AS1XPPDHQ08RN98NFGZ'), null);
+  assert.equal(webAddress('space:spc_01M2JA9PRJ0AR4G5936CRWB2VG'), null);
+  assert.equal(webAddress('message:msg_01M2M1B4RG6FV0T5A7DKN3WZ9D'), null);
+});
+
+test('nothing, and nonsense, open nothing', () => {
+  for (const href of [null, undefined, '', '   ', 'not a url', '//example.com']) {
+    assert.equal(webAddress(href), null, String(href));
+  }
 });

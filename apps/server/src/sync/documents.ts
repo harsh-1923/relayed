@@ -8,7 +8,8 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { ulid } from '../db/ulid.ts';
-import type { DocumentUpdated } from './events.ts';
+import { allocateStream } from './allocate.ts';
+import { appendEvent, spaceStream, type AppendedEvent, type DocumentUpdated } from './events.ts';
 
 /** The title a room's summary panel carries. Not the document's content, and never empty. */
 export const ROOM_SUMMARY_TITLE = 'Summary';
@@ -83,6 +84,97 @@ export async function createRoomSummary(
   }).execute();
 
   return { documentId, panelId };
+}
+
+/** A summary body is capped so both the panel and the NEXT prompt stay bounded (§4.5). */
+export const BODY_LIMIT_BYTES = 8 * 1024;
+
+/** How many revisions a document keeps. Pruned by the writer, not by a sweep (§3.3). */
+export const REVISION_RETENTION = 50;
+
+/**
+ * Write the next revision of a document — the ONE write path (§4.2).
+ *
+ * Both writers come through here: the summariser job, and Roomkeeping when
+ * somebody asks it to change the summary (§4.8). Four writes that have to
+ * happen together — bump `rev`, append the revision, prune, emit — and a
+ * second implementation of them is how two writers start disagreeing about
+ * what `rev` means.
+ *
+ * `coveredThrough` is OPTIONAL, and its absence is a decision rather than a
+ * missing value: a person asking for an edit is not a pass over the messages,
+ * so the watermark stays where it was and the next scheduled refresh still
+ * covers what it would have (§4.8).
+ *
+ * The row is locked for the duration, so two writers landing together produce
+ * two revisions in order rather than one overwriting the other.
+ */
+export async function writeDocumentRevision(
+  db: Kysely<DB>,
+  input: {
+    documentId: string;
+    body: string;
+    authorActorId: string;
+    coveredThrough?: Record<string, number> | null;
+  },
+): Promise<{ event: AppendedEvent; rev: number }> {
+  const body = capBytes(input.body, BODY_LIMIT_BYTES);
+  return db.transaction().execute(async (trx) => {
+    const current = await trx.selectFrom('documents')
+      .select(['id', 'space_id', 'rev'])
+      .where('id', '=', input.documentId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    const rev = Number(current.rev) + 1;
+
+    const row = await trx.updateTable('documents')
+      .set({
+        body, rev, updated_by_actor_id: input.authorActorId, updated_at: sql`now()`,
+        ...(input.coveredThrough === undefined
+          ? {}
+          : { covered_through: sql`${JSON.stringify(input.coveredThrough)}::jsonb` }),
+        // A write is a success by definition: whatever was failing has stopped,
+        // and the lease is released for the next pass.
+        refresh_failures: 0, refresh_lease_until: null,
+      })
+      .where('id', '=', input.documentId)
+      .returning(DOCUMENT_COLUMNS)
+      .executeTakeFirstOrThrow();
+
+    await trx.insertInto('document_revisions').values({
+      document_id: input.documentId, rev, body, author_actor_id: input.authorActorId,
+      covered_through: sql`${JSON.stringify(coveredThrough(row.covered_through))}::jsonb`,
+    }).execute();
+
+    // Pruned by the writer, here, rather than by a sweep that has to find work:
+    // exactly one document can be over the limit at this moment, and it is this
+    // one.
+    await trx.deleteFrom('document_revisions')
+      .where('document_id', '=', input.documentId)
+      .where('rev', '<=', rev - REVISION_RETENTION)
+      .execute();
+
+    const allocated = await allocateStream(trx, spaceStream(current.space_id));
+    const event = await appendEvent(
+      trx, allocated, 'document.updated', toDocumentUpdated(row as DocumentRow), { kind: 'stream' });
+    return { event, rev };
+  });
+}
+
+/**
+ * Trim to a byte budget on a character boundary.
+ *
+ * Bytes, not characters, because both things the cap protects — the panel's
+ * frame and the next prompt's context — are measured in bytes, and 8 KB of
+ * emoji is not 8 KB. The tail is dropped rather than the head: a summary's
+ * opening sentences are the part somebody actually reads.
+ */
+function capBytes(text: string, limit: number): string {
+  if (Buffer.byteLength(text, 'utf8') <= limit) return text;
+  const cut = Buffer.from(text, 'utf8').subarray(0, limit).toString('utf8');
+  // A multi-byte character split by `subarray` decodes to U+FFFD; dropping a
+  // trailing one is what keeps the result valid text rather than nearly-valid.
+  return cut.endsWith('�') ? cut.slice(0, -1) : cut;
 }
 
 /**

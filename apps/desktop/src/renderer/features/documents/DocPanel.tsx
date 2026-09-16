@@ -9,23 +9,37 @@
 // Nobody edits a summary here. Not hidden — `editable: false` — and not the
 // guard either: the guard is that the server has no write path for a person
 // (§6). This is the affordance matching the rule.
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import type { Document, ReplicaActor } from '../../../preload/api';
-import { isEmptyDocument } from '../../../shared/documents.ts';
+import { isEmptyDocument, webAddress } from '../../../shared/documents.ts';
 import { useQuery } from '@/lib/query';
+import { call } from '@/lib/ipc';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import './document.css';
 
-/** The same base as the composer's, minus what a document body has no use for. */
+/**
+ * The same base as the composer's, minus what a document body has no use for.
+ *
+ * `link.openOnClick: false` is the important one, and it is a SAFETY rule
+ * rather than a preference. Tiptap's default is `true`, and this window has no
+ * `will-navigate` guard — so a plain anchor in a summary could load Linear (or
+ * anything a summary happens to name) over the app itself, preload bridge and
+ * all. Messages avoid this by rendering links as buttons (`MarkdownText.tsx`);
+ * a document keeps real anchors, for selection and copying, and refuses the
+ * click instead. `openLink` below decides what a click actually does.
+ */
 const extensions = [
-  StarterKit.configure({ horizontalRule: false }),
+  StarterKit.configure({ horizontalRule: false, link: { openOnClick: false } }),
   Markdown.configure({ markedOptions: { gfm: true, breaks: false } }),
 ];
 
-export function DocPanel({ document, spaceId }: { document: Document | null; spaceId: string }) {
+export function DocPanel({ document, spaceId, onOpenPanel }: {
+  document: Document | null; spaceId: string; onOpenPanel: (panelId: string) => void;
+}) {
   const { rows: actors } = useQuery('actors.list');
 
   if (!document) {
@@ -38,10 +52,14 @@ export function DocPanel({ document, spaceId }: { document: Document | null; spa
     // than dumping the source, which is what "kept, not dropped" means here.
     return <Waiting>This document needs a newer version of Relayed.</Waiting>;
   }
-  return <DocBody key={document.id} document={document} actors={actors ?? []} spaceId={spaceId} />;
+  return (
+    <DocBody key={document.id} document={document} actors={actors ?? []} spaceId={spaceId} onOpenPanel={onOpenPanel} />
+  );
 }
 
-function DocBody({ document, actors }: { document: Document; actors: readonly ReplicaActor[]; spaceId: string }) {
+function DocBody({ document, actors, spaceId, onOpenPanel }: {
+  document: Document; actors: readonly ReplicaActor[]; spaceId: string; onOpenPanel: (panelId: string) => void;
+}) {
   const empty = isEmptyDocument(document);
   const editor = useEditor({
     extensions,
@@ -69,12 +87,12 @@ function DocBody({ document, actors }: { document: Document; actors: readonly Re
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex shrink-0 flex-wrap items-baseline gap-x-2 border-b border-border/60 px-5 py-3">
         <h2 className="text-sm font-medium">{document.title ?? 'Document'}</h2>
-        {/* Honest about its own staleness: who wrote this, and when. How far it
-            covers joins this line when a writer starts recording a watermark. */}
+        {/* Honest about its own staleness: who wrote this, and when. */}
         <p className="text-xs text-muted-foreground">
           {empty ? 'Not written yet' : `Updated ${when(document.updatedAt)}`}
           {author && !empty && <> by {author.type === 'agent' ? `@${author.handle}` : author.displayName}</>}
         </p>
+        <Refresh spaceId={spaceId} />
       </header>
 
       {empty
@@ -85,10 +103,84 @@ function DocBody({ document, actors }: { document: Document; actors: readonly Re
         )
         : (
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            <EditorContent editor={editor} className={cn('document', 'select-text')} />
+            {/* The canvas disables selection globally; Tiptap owns the rendered
+                descendants, so restore it through the whole read-only body. */}
+            <EditorContent
+              editor={editor}
+              className={cn('document', 'select-text', '**:select-text')}
+              onClick={event => openLink(event, spaceId, onOpenPanel)}
+            />
           </div>
         )}
     </div>
+  );
+}
+
+/**
+ * What clicking a link in a document does.
+ *
+ * A web page opens as a panel beside the chat — the surface this room already
+ * has for a page the work is about (PANELS.md) — and on THIS DEVICE only, the
+ * same as opening one by hand. A summary naming a dashboard should not push
+ * that dashboard onto everyone else's screen; `local.panels.share` is how a
+ * page becomes the room's, and that stays a person's decision.
+ *
+ * BOTH HALVES, and the second is the one that is easy to forget: opening a
+ * panel makes its row, and `onOpenPanel` is what puts it in the tab strip and
+ * shows it. Without it a click writes a row nobody can see, which looks exactly
+ * like nothing happening.
+ *
+ * Every other href does nothing at all, which is the whole point: the default
+ * would be navigating this window away from Relayed.
+ */
+function openLink(
+  event: React.MouseEvent<HTMLDivElement>, spaceId: string, onOpenPanel: (panelId: string) => void,
+): void {
+  const anchor = (event.target as HTMLElement).closest('a');
+  if (!anchor) return;
+  // Refused before anything is decided: a click must never reach the browser's
+  // own handling, whatever the href turns out to be.
+  event.preventDefault();
+  const url = webAddress(anchor.getAttribute('href'));
+  if (!url) return;
+  void call(api => api.query('local.panels.open', { spaceId, type: 'web', payload: { url } }))
+    .then(opened => { if (opened?.id) onOpenPanel(opened.id); });
+}
+
+/**
+ * Refresh now (DOCUMENTS.md §4.4): the summary otherwise waits for the message
+ * count to cross the threshold, and somebody who can see it is behind should
+ * not have to talk in the room to make it catch up.
+ *
+ * Nothing is rendered on success — the revision arrives as an event and the
+ * panel redraws from the replica, which is the same path every other update
+ * takes. Only a refusal needs saying, because nothing else would say it.
+ */
+function Refresh({ spaceId }: { spaceId: string }) {
+  const [state, setState] = useState<'idle' | 'working' | 'too_soon' | 'failed'>('idle');
+  return (
+    <span className="ml-auto flex items-center gap-2">
+      {state === 'too_soon' && <span className="text-xs text-muted-foreground">Just refreshed</span>}
+      {state === 'failed' && <span className="text-xs text-muted-foreground">Could not refresh</span>}
+      <Button
+        variant="ghost"
+        size="xs"
+        disabled={state === 'working'}
+        onClick={() => {
+          setState('working');
+          void call(api => api.query('documents.refreshSummary', { spaceId }))
+            // Null is the bridge having nothing to say — treated as a failure,
+            // since a refresh that did not happen must not look like one that did.
+            .then(answer => setState(
+              !answer ? 'failed' : answer.ok ? 'idle' : answer.error === 'too_soon' ? 'too_soon' : 'failed'))
+            // An offline client throws rather than refusing: the same message,
+            // since "could not refresh" is all either of them means here.
+            .catch(() => setState('failed'));
+        }}
+      >
+        {state === 'working' ? 'Refreshing…' : 'Refresh'}
+      </Button>
+    </span>
   );
 }
 

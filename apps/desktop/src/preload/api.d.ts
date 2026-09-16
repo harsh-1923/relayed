@@ -334,6 +334,12 @@ export interface RelayedApi {
   query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** One space's documents — a room's running summary (DOCUMENTS.md). */
   query(op: "documents.list", params: { spaceId: string }): Promise<Document[]>;
+  /**
+   * Refresh this room's summary now (DOCUMENTS.md §4.4). Online only, and rate
+   * limited: `too_soon` means one was written within the last minute.
+   */
+  query(op: "documents.refreshSummary", params: { spaceId: string }):
+    Promise<AgentAnswer<{ space_id: string; outcome: string }>>;
   query(op: "prefs.list"): Promise<PreferenceRow[]>;
   /** The person's own Claude Code, as one row (LOCAL-ROOMS.md §3.2). Probes once, then answers from memory. */
   query(op: "claude.status"): Promise<ClaudeStatus[]>;

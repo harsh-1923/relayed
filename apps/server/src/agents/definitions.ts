@@ -157,6 +157,24 @@ async function agentGate(db: Kysely<DB>, actorId: string, agentId: string) {
 }
 
 /**
+ * An agent the app provisions, which nobody may change (DOCUMENTS.md §9.2).
+ *
+ * Its own rule rather than a consequence of ownership, and that is the point:
+ * owner is an edit grant elsewhere, Roomkeeping is owned by Relay, and a run
+ * acts for a person — so "owner may edit" flowing through Relay would let any
+ * member edit Roomkeeping by asking Relay to. This refuses the ACTION, so the
+ * caller does not matter.
+ */
+export class SystemAgentError extends Error {
+  readonly agentId: string;
+  constructor(agentId: string) {
+    super(`agent ${agentId} is a system agent`);
+    this.name = 'SystemAgentError';
+    this.agentId = agentId;
+  }
+}
+
+/**
  * The agent, if the actor may act on it at all. Not-found comes first and is
  * the answer for anything outside the actor's workspace — a member of it may
  * always read the definition, so "may not read" and "does not exist" collapse
@@ -173,8 +191,13 @@ export async function requireAgent(
   const gate = await agentGate(db, actorId, agentId);
   if (!gate.placed || !gate.may('read_definition')) throw new AgentNotFoundError(agentId);
   if (!gate.may(action)) throw new Forbidden(action, agentTarget(agentId));
-  const row = await db.selectFrom('actors').select(['workspace_id', 'state'])
+  const row = await db.selectFrom('actors').select(['workspace_id', 'state', 'provisioned_by'])
     .where('id', '=', agentId).executeTakeFirstOrThrow();
+  // Every writing path comes through here — edit, deactivate, maintainers —
+  // which is why the rule is enforced at this one point rather than three.
+  // Reading a system agent's definition stays open to its workspace, like any
+  // other agent's (§4.1: no secret prompts).
+  if (row.provisioned_by === 'system' && action !== 'read_definition') throw new SystemAgentError(agentId);
   return { workspaceId: row.workspace_id, state: row.state };
 }
 
@@ -449,6 +472,8 @@ export async function setMaintainers(
 
 export interface AgentDefinition {
   agentId: string;
+  /** Provisioned by the app, not by a person: readable by all, editable by none (§9.2). */
+  system: boolean;
   description: string;
   instructions: string;
   model: string | null;
@@ -482,7 +507,8 @@ export async function agentDefinition(
   const [row, maintainers, spaces] = await Promise.all([
     db.selectFrom('agents').innerJoin('actors', 'actors.id', 'agents.actor_id')
       .select(['agents.description', 'agents.instructions', 'agents.model', 'agents.thinking_level',
-               'agents.config_rev', 'agents.created_at', 'agents.updated_at', 'actors.owner_actor_id'])
+               'agents.config_rev', 'agents.created_at', 'agents.updated_at',
+               'actors.owner_actor_id', 'actors.provisioned_by'])
       .where('agents.actor_id', '=', agentId).executeTakeFirst(),
     db.selectFrom('memberships').select('actor_id')
       .where('scope_type', '=', 'agent').where('scope_id', '=', agentId)
@@ -501,8 +527,10 @@ export async function agentDefinition(
 
   const iso = (value: unknown): string =>
     value instanceof Date ? value.toISOString() : String(value);
+  const system = row.provisioned_by === 'system';
   return {
     agentId,
+    system,
     description: row.description,
     instructions: row.instructions,
     model: row.model,
@@ -513,10 +541,15 @@ export async function agentDefinition(
     updatedAt: iso(row.updated_at),
     maintainers: maintainers.map(m => m.actor_id),
     spaceIds: spaces.map(s => s.scope_id),
-    you: {
-      edit: gate.may('edit'),
-      manageMaintainers: gate.may('manage_maintainers'),
-      deactivate: gate.may('deactivate'),
-    },
+    // A system agent is readable and answers to nobody: the editor asks this
+    // before drawing its buttons, so the same rule `requireAgent` enforces is
+    // what the page shows (§9.2).
+    you: system
+      ? { edit: false, manageMaintainers: false, deactivate: false }
+      : {
+        edit: gate.may('edit'),
+        manageMaintainers: gate.may('manage_maintainers'),
+        deactivate: gate.may('deactivate'),
+      },
   };
 }

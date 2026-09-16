@@ -19,7 +19,7 @@ import type { FanoutResult } from '../sync/fanout.ts';
 import type { Registry } from '../sync/registry.ts';
 import {
   createAgent, updateAgent, deactivateAgent, setMaintainers, handleAvailability,
-  AgentInvalidError, HandleTakenError, AgentNotFoundError, AgentDeactivatedError,
+  AgentInvalidError, HandleTakenError, AgentNotFoundError, AgentDeactivatedError, SystemAgentError,
   type AgentFields,
 } from './definitions.ts';
 import { triggerRef, claimReplyMessageId, postFinishedNotice } from './dispatcher.ts';
@@ -73,6 +73,9 @@ function refuse(reply: FastifyReply, err: unknown): FastifyReply {
   if (err instanceof HandleTakenError) return reply.code(409).send({ error: 'handle_taken', field: 'handle' });
   if (err instanceof AgentDeactivatedError) return reply.code(409).send({ error: 'agent_deactivated' });
   if (err instanceof AgentNotFoundError) return reply.code(404).send({ error: 'not_found' });
+  // 403, not 404: the agent is there and readable, and the answer is about
+  // WHAT was asked rather than who asked it — no caller gets a different one.
+  if (err instanceof SystemAgentError) return reply.code(403).send({ error: 'system_agent' });
   if (err instanceof Forbidden) return reply.code(403).send({ error: 'forbidden', action: err.action });
   throw err;
 }

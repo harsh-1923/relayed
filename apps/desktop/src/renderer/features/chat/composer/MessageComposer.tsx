@@ -19,7 +19,7 @@ import {
   PauseCircle,
   PlusDefault,
 } from '@relayed/icons';
-import type { ClaudeCommand, ReplicaActor } from '../../../../preload/api';
+import type { ClaudeCommand, ReplicaActor, Space } from '../../../../preload/api';
 import { parseSlashCommand } from '../../../../shared/slash-commands.ts';
 import { ComposerSuggestions, forwardSuggestionKey, type ComposerTrigger } from './composer-suggestions.ts';
 import { RelayedMention } from './relayed-mention.ts';
@@ -60,11 +60,12 @@ interface SuggestionItem {
   id: string;
   label: string;
   description: string;
-  group: 'People and agents' | 'Audiences' | 'Commands' | 'Claude Code' | 'Plugins';
+  group: 'People and agents' | 'Rooms and channels' | 'Audiences' | 'Commands' | 'Claude Code' | 'Plugins';
   /** What goes after the name, shown beside it. */
   hint?: string;
   agentCommand?: ClaudeCommand;
   actor?: ReplicaActor;
+  space?: Space;
   audience?: 'here' | 'chat' | 'channel' | 'room';
   command?: 'codeBlock' | 'blockquote' | 'bulletList' | 'orderedList' | 'paragraph';
 }
@@ -127,6 +128,12 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
 }) {
   const { rows: workspaceActors } = useQuery('actors.list');
   const actors = useMemo(() => (props.scope === 'local' ? LOCAL_ACTORS : (workspaceActors ?? [])), [props.scope, workspaceActors]);
+  // What `#` offers. The replica holds only this person's own memberships, so
+  // this read cannot name a room they are not in — the visibility rule is the
+  // storage, not a filter somebody has to remember.
+  const { rows: workspaceSpaces } = useQuery('spaces.list');
+  const spaces = useMemo(
+    () => (props.scope === 'local' ? [] : (workspaceSpaces ?? [])), [props.scope, workspaceSpaces]);
   const revisionRef = useRef(props.initialRevision);
   const suppressDraftWrite = useRef(false);
   const suggestionKeyHandlerRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
@@ -171,7 +178,9 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
   });
 
   const slashCommands = props.slash?.commands;
-  const suggestions = useMemo(() => suggestionsFor(trigger, actors, slashCommands ?? []), [trigger, actors, slashCommands]);
+  const suggestions = useMemo(
+    () => suggestionsFor(trigger, actors, spaces, slashCommands ?? []),
+    [trigger, actors, spaces, slashCommands]);
   const isEmpty = useEditorState({ editor, selector: ({ editor: currentEditor }) => currentEditor?.isEmpty ?? true });
   const showPlaceholder = useEditorState({
     editor,
@@ -223,6 +232,11 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
     if (item.actor) {
       editor.chain().focus().insertContentAt(trigger.range, [
         { type: 'relayedMention', attrs: { kind: 'actor', id: item.actor.id, label: item.actor.handle } },
+        { type: 'text', text: ' ' },
+      ]).run();
+    } else if (item.space) {
+      editor.chain().focus().insertContentAt(trigger.range, [
+        { type: 'relayedMention', attrs: { kind: 'space', id: item.space.id, label: item.space.name } },
         { type: 'text', text: ' ' },
       ]).run();
     } else if (item.audience) {
@@ -420,9 +434,13 @@ function SuggestionSurface(props: {
 /** How many agent commands the menu lists at once. Hundreds come back with plugins; typing narrows them. */
 const MAX_AGENT_COMMANDS = 50;
 
-function suggestionsFor(trigger: ComposerTrigger | null, actors: ReplicaActor[], agentCommands: readonly ClaudeCommand[]): SuggestionItem[] {
+function suggestionsFor(
+  trigger: ComposerTrigger | null, actors: ReplicaActor[], spaces: Space[],
+  agentCommands: readonly ClaudeCommand[],
+): SuggestionItem[] {
   if (!trigger) return [];
   const query = trigger.query.toLocaleLowerCase();
+  if (trigger.kind === 'room') return rooms(spaces, query);
   if (trigger.kind === 'command') {
     const formatting = COMMANDS.filter(item => item.label.slice(1).includes(query));
     // At the start of a message the agent's commands come first: that is what a leading slash is for.
@@ -442,6 +460,27 @@ function suggestionsFor(trigger: ComposerTrigger | null, actors: ReplicaActor[],
       group: 'People and agents', actor,
     }));
   return [...people, ...AUDIENCES.filter(item => item.label.slice(1).includes(query))];
+}
+
+/**
+ * The rooms and channels `#` offers.
+ *
+ * DMs are left out: `#` names a place the work happens, and a direct message
+ * is named by who is in it, not by a name anyone typed. Mentioning one would
+ * also put its participants' names in a message other people can read.
+ */
+function rooms(spaces: Space[], query: string): SuggestionItem[] {
+  return spaces
+    .filter(space => space.kind === 'room' || space.kind === 'channel')
+    .filter(space => space.name.toLocaleLowerCase().includes(query))
+    .slice(0, 8)
+    .map<SuggestionItem>(space => ({
+      id: `space:${space.id}`,
+      label: `#${space.name}`,
+      description: space.kind === 'channel' ? 'Channel' : 'Room',
+      group: 'Rooms and channels',
+      space,
+    }));
 }
 
 /**

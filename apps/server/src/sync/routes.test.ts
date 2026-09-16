@@ -6,8 +6,9 @@ import Fastify from 'fastify';
 import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import type { AppendedEvent } from './events.ts';
-import { createChannel, addToSpace, spaceMembers } from './spaces.ts';
+import { createChannel, createRoom, addToSpace, spaceMembers } from './spaces.ts';
 import { spaceRoutes } from './routes.ts';
+import { provisionSystemAgents } from '../provisioning/system-agents.ts';
 
 const up = await reachable();
 const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
@@ -36,6 +37,9 @@ before(async () => {
       scope_type: 'workspace', scope_id: workspaceId, actor_id: actorId, role: 'member',
     }).execute();
   }
+  // Every workspace is created with its system agents, and a room's summary
+  // has no writer without them — so the fixture has them too.
+  await provisionSystemAgents(db, workspaceId);
   const channel = await createChannel(db, { workspaceId, name: 'Route', createdBy: alice });
   spaceId = channel.spaceId;
   await addToSpace(db, spaceId, bob, alice, ulid('msg'));
@@ -179,10 +183,16 @@ for (const kind of ['channel', 'room'] as const) {
         assert.equal(chats.length, 1);
         assert.equal(chats[0]?.id, created.chat_id);
         assert.equal(chats[0]?.kind, kind === 'channel' ? 'sole' : 'default');
+        // The PERSON's membership, which is what this asserts: a room also gets
+        // Roomkeeping (DOCUMENTS.md §9), and counting every row would make this
+        // test fail whenever a room gains something structural.
         const members = await db.selectFrom('memberships').select(['actor_id', 'role'])
-          .where('scope_type', '=', 'space').where('scope_id', '=', created.space_id).execute();
+          .where('scope_type', '=', 'space').where('scope_id', '=', created.space_id)
+          .where('actor_id', '=', alice).execute();
         assert.deepEqual(members, [{ actor_id: alice, role: 'admin' }]);
-        assert.deepEqual(delivered.map(event => [event.rev, event.type]),
+        // A room's Roomkeeping join is a fourth event on its stream; a channel's
+        // three are all there is.
+        assert.deepEqual(delivered.map(event => [event.rev, event.type]).slice(0, 3),
           [[1, 'space.created'], [2, 'chat.created'], [3, 'space.member_added']]);
         const founding = delivered[2]?.payload as { hydration: { space: { id: string; kind: string }; chats: { id: string; kind: string }[] } };
         assert.equal(founding.hydration.space.id, created.space_id);
@@ -227,6 +237,39 @@ test('creation rechecks workspace permission even for an authenticated caller', 
   } finally {
     await db.updateTable('memberships').set({ left_at: null })
       .where('scope_type', '=', 'workspace').where('scope_id', '=', workspaceId).where('actor_id', '=', carol).execute();
+    await app.close();
+  }
+});
+
+// ─── Refresh now (DOCUMENTS.md §4.4) ────────────────────────────────────────
+//
+// The successful pass needs the agent runtime, so what is proved here is the
+// two refusals — which are the parts a person can actually reach by accident.
+
+test('a refresh is refused for somebody who cannot read the room', opts, async () => {
+  const { app } = await server();
+  const room = await createRoom(db, { workspaceId, name: 'Private work', createdBy: alice, visibility: 'private' });
+  try {
+    const response = await app.inject({ method: 'POST', headers: as(carol),
+      url: `/spaces/${room.spaceId}/summary/refresh` });
+    // 404, not 403: a room carol cannot read is a room carol is not told exists.
+    assert.equal(response.statusCode, 404, response.body);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a refresh within the floor is refused as too soon', opts, async () => {
+  const { app } = await server();
+  const room = await createRoom(db, { workspaceId, name: 'Busy', createdBy: alice });
+  try {
+    // The document was written this instant by `createRoom` itself, which is
+    // exactly the state the rate limit exists for.
+    const response = await app.inject({ method: 'POST', headers: as(alice),
+      url: `/spaces/${room.spaceId}/summary/refresh` });
+    assert.equal(response.statusCode, 429, response.body);
+    assert.equal(JSON.parse(response.body).error, 'too_soon');
+  } finally {
     await app.close();
   }
 });

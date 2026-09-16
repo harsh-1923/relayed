@@ -8,18 +8,19 @@
 // person, one step further down the chain (`startMentionedRuns`).
 import type { Kysely } from 'kysely';
 import { can, chat as chatTarget } from '@relayed/authz';
-import type { DB } from '../db/schema.ts';
-import type { AppendedEvent } from '../sync/events.ts';
-import type { FanoutResult } from '../sync/fanout.ts';
-import { loadGrants, Forbidden } from '../authz/can.ts';
-import { chatPlacement } from '../sync/placement.ts';
-import { applyOnce } from '../sync/allocate.ts';
-import { writeMessage } from '../sync/ops.ts';
+import type { DB } from '../../db/schema.ts';
+import type { AppendedEvent } from '../../sync/events.ts';
+import type { FanoutResult } from '../../sync/fanout.ts';
+import { loadGrants, Forbidden } from '../../authz/can.ts';
+import { chatPlacement } from '../../sync/placement.ts';
+import { applyOnce } from '../../sync/allocate.ts';
+import { writeMessage } from '../../sync/ops.ts';
 import {
   addToSpace, openDm, InvalidDmMembersError, SealedSpaceError, SpaceMemberUnavailableError, DM_MAX_MEMBERS,
-} from '../sync/spaces.ts';
-import { ulid } from '../db/ulid.ts';
-import { startMentionedRuns } from './checkpoints.ts';
+} from '../../sync/spaces.ts';
+import { ulid } from '../../db/ulid.ts';
+import { startMentionedRuns } from '../checkpoints.ts';
+import type { AppTool } from './contract.ts';
 
 /** Longer than any message a person would write to someone; a model that goes past it is dumping, not messaging. */
 export const AGENT_MESSAGE_MAX = 8_000;
@@ -193,3 +194,77 @@ export async function addToRoomFor(deps: MessagingDeps, run: RunContext, args: R
 /** An app link the desktop opens as the space (`space:spc_…`). */
 const link = (name: string | null, spaceId: string): string =>
   `[${(name ?? 'Conversation').replaceAll(/[[\]]/g, '')}](space:${spaceId})`;
+
+// ─── As tools ───────────────────────────────────────────────────────────────
+//
+// The definitions sit beside the handlers that answer them, so a schema and the
+// code reading its arguments cannot drift apart unnoticed.
+
+export const SEND_DM = 'send_dm';
+export const POST_MESSAGE = 'post_message';
+export const ADD_TO_ROOM = 'add_to_room';
+
+const PEOPLE = {
+  type: 'array', items: { type: 'string' },
+  description: 'Actor ids, e.g. "act_01M2…" — from a mention in the conversation, which is written [Name](actor:act_…).',
+};
+
+/**
+ * Last in the offered list, for the same reason a room is: a stop for access
+ * re-runs the whole request, and a message already sent would be sent again.
+ */
+const MESSAGING_PROMPT = `\n\nPeople in this conversation are written [Name](actor:act_…); use that id to reach them. `
+  + `When the person asks you to message someone, use ${SEND_DM} — a direct message for one person, one group message `
+  + `only when they ask for a group. To post in a room or channel, use ${POST_MESSAGE}; to add people to one, `
+  + `${ADD_TO_ROOM}. Do these LAST, after everything else the request needs. Never message or add anyone the person `
+  + 'did not ask for. If you are not a member where you were asked to post, say you could not, and why. Mentioning an '
+  + 'agent in a message you send asks it to act.';
+
+export const sendDm: AppTool = {
+  name: SEND_DM,
+  definition: () => ({
+    name: SEND_DM,
+    description: 'Send a direct message. One person: a direct message between you and them. Several people: one group '
+      + 'message with you and all of them — only when the person asked for a group. Uses the conversation that already '
+      + 'exists with exactly those people. Only when the person asks you to message someone.',
+    parameters: {
+      type: 'object', required: ['people', 'text'],
+      properties: { people: PEOPLE, text: { type: 'string', description: 'The message, in Markdown. Mention someone as [Name](actor:act_…).' } },
+    },
+  }),
+  // One fragment for all three, carried by the first: three near-identical
+  // paragraphs would spend context saying the same thing.
+  prompt: () => MESSAGING_PROMPT,
+  handle: sendDmFor,
+};
+
+export const postMessage: AppTool = {
+  name: POST_MESSAGE,
+  definition: () => ({
+    name: POST_MESSAGE,
+    description: 'Post a message in a room, channel or conversation you are a member of. If you are not a member, this '
+      + 'says so: tell the person you could not post there. Only when the person asks you to post somewhere.',
+    parameters: {
+      type: 'object', required: ['space_id', 'text'],
+      properties: {
+        space_id: { type: 'string', description: 'The space, e.g. "spc_01M2…" — from a space link [name](space:spc_…) or a tool result.' },
+        text: { type: 'string', description: 'The message, in Markdown. Mention someone as [Name](actor:act_…).' },
+      },
+    },
+  }),
+  handle: postMessageFor,
+};
+
+export const addToRoom: AppTool = {
+  name: ADD_TO_ROOM,
+  definition: () => ({
+    name: ADD_TO_ROOM,
+    description: 'Add people to a room or channel you are a member of. Not a direct or group message: nobody is added '
+      + 'to those. Only when the person asks you to add someone.',
+    parameters: {
+      type: 'object', required: ['space_id', 'people'],
+      properties: { space_id: { type: 'string', description: 'The room or channel, e.g. "spc_01M2…".' }, people: PEOPLE },
+    },
+  }),
+  handle: addToRoomFor,
+};

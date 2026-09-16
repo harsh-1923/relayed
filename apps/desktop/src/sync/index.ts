@@ -22,7 +22,7 @@ import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
   agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSpace, openDm, type SpaceInput,
-  stopAgentRun, type AgentInput,
+  stopAgentRun, refreshRoomSummary, type AgentInput,
   listToolkits, disconnectConnection,
   grantAgentPermission, revokeAgentPermission, allowAccessRequest,
 } from './auth/relayed.ts';
@@ -1035,6 +1035,17 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
    * same as `found: false`.
    */
   'agents.definition': async (params) => link.definition((params as { agentId: string }).agentId),
+  /**
+   * Refresh this room's summary now (DOCUMENTS.md §4.4). Online only: there is
+   * nothing local to refresh from — the pass reads messages the server holds
+   * and calls the runtime.
+   */
+  'documents.refreshSummary': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return refreshRoomSummary(token, (params as { spaceId: string }).spaceId);
+  },
+
   /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
   'agents.stopRun': async (params) => {
     const token = await session.ensureFresh();

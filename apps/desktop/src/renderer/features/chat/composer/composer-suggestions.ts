@@ -3,7 +3,7 @@ import { PluginKey } from '@tiptap/pm/state';
 import { Suggestion, type SuggestionProps } from '@tiptap/suggestion';
 
 export interface ComposerTrigger {
-  kind: 'mention' | 'command';
+  kind: 'mention' | 'command' | 'room';
   query: string;
   /** Nothing before it in the message: only there is a slash an agent's command. */
   atStart: boolean;
@@ -17,6 +17,7 @@ interface ComposerSuggestionsOptions {
 
 const mentionSuggestionKey = new PluginKey('composerMentionSuggestion');
 const commandSuggestionKey = new PluginKey('composerCommandSuggestion');
+const roomSuggestionKey = new PluginKey('composerRoomSuggestion');
 
 /** Keep selection and its scrolling on cmdk's keyboard path (COMPOSER, suggestion surface). */
 export function forwardSuggestionKey(event: KeyboardEvent, command: HTMLElement | null): boolean {
@@ -52,12 +53,16 @@ export const ComposerSuggestions = Extension.create<ComposerSuggestionsOptions>(
     const activeTriggers: Record<ComposerTrigger['kind'], ComposerTrigger | null> = {
       mention: null,
       command: null,
+      room: null,
     };
-    const notify = () => options.changed(activeTriggers.mention ?? activeTriggers.command);
+    // One at a time: the characters cannot both be mid-word, and a menu
+    // showing people while you type a room name would be the wrong list.
+    const notify = () => options.changed(
+      activeTriggers.mention ?? activeTriggers.room ?? activeTriggers.command);
 
     const plugin = (
       kind: ComposerTrigger['kind'],
-      character: '@' | '/',
+      character: '@' | '/' | '#',
       pluginKey: PluginKey,
     ) => Suggestion({
       editor,
@@ -93,6 +98,7 @@ export const ComposerSuggestions = Extension.create<ComposerSuggestionsOptions>(
     return [
       plugin('mention', '@', mentionSuggestionKey),
       plugin('command', '/', commandSuggestionKey),
+      plugin('room', '#', roomSuggestionKey),
     ];
   },
 });

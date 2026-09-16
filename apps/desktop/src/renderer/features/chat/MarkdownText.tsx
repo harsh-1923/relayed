@@ -45,9 +45,18 @@ export function MarkdownText({
           @{children}
         </span>
       ) :
-      // A room in this app: opens it, with no address to show on hover.
+      // A room in this app: opens it, with no address to show on hover. Drawn
+      // as `#name`, the way it was typed and the way a mention is drawn — the
+      // sigil is not in the label, so it is added here rather than stored.
       spaceLinkTarget(href) ? (
-        <button type="button" className="md-link" onClick={() => { if (href) onOpenLink?.(href); }}>{children}</button>
+        <button
+          type="button"
+          className="md-mention md-mention-button"
+          data-mention-kind="space"
+          onClick={() => { if (href) onOpenLink?.(href); }}
+        >
+          #{children}
+        </button>
       ) :
       <HoverCard>
         <HoverCardTrigger
