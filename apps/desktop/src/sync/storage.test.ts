@@ -850,6 +850,7 @@ test('a preference outlives the process, which is the point of storing it', () =
   first.setPreference('appearance.theme', 'dark');
   first.setPreference('shell.sidebar.open', false);
   first.setPreference('shell.sidebar.width', 288);
+  first.setPreference('developer.route_strip.visible', true);
   first.close();
 
   const second = new Storage(dir);
@@ -860,6 +861,7 @@ test('a preference outlives the process, which is the point of storing it', () =
     'appearance.theme': 'dark',
     'shell.sidebar.open': false,
     'shell.sidebar.width': 288,
+    'developer.route_strip.visible': true,
   });
 });
 

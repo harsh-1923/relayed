@@ -6,7 +6,7 @@ import type { NavigationDestination, NavigationIcon } from './destinations.ts';
 
 const ICONS = {
   chat: ChatDefault,
-  connectors: PluginAddonPuzzle,
+  apps: PluginAddonPuzzle,
   group: UserTwo,
   hashtag: Hashtag,
   lock: LockClose,

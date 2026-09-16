@@ -14,6 +14,7 @@ import { CommandMenu } from '@/features/command-menu/CommandMenu';
 import { AppCommands } from '@/app/shell/AppCommands';
 import { PersistentSidebarProvider } from '@/app/shell/PersistentSidebarProvider';
 import { Commands } from '@/app/Commands';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 // The FIRST GUESS, before React mounts and before the stored preference has
 // been read: whatever this machine is set to. `<Theme />` below takes over from
@@ -31,44 +32,49 @@ document.documentElement.classList.toggle(
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <HashRouter>
-      <AppStateProvider>
-        {/* Renders nothing; reports the two facts only this side holds — which
-            route is showing, and when it first actually painted. */}
-        <Telemetry />
+      {/* One timing group for every tooltip in the window. The shadcn Base UI
+          wrapper is designed to put this provider at the app root; each
+          tooltip still owns its own trigger and content. */}
+      <TooltipProvider>
+        <AppStateProvider>
+          {/* Renders nothing; reports the two facts only this side holds — which
+              route is showing, and when it first actually painted. */}
+          <Telemetry />
 
-        {/* Renders nothing; owns `html.dark`. Inside the provider because the
-            preference is an ordinary live read, and above the router because
-            every screen is themed — including the signed-out ones. */}
-        <Theme />
+          {/* Renders nothing; owns `html.dark`. Inside the provider because the
+              preference is an ordinary live read, and above the router because
+              every screen is themed — including the signed-out ones. */}
+          <Theme />
 
-        {/* THE PROVIDER IS AT THE ROOT so the top bar can hold the sidebar's
-            toggle. It is state plus a wrapper div, and the wrapper takes our
-            class — a COLUMN here, so the bar spans the whole window and the
-            sidebar and the route share the row beneath it. The block this is
-            based on puts its header inside the inset instead, which gives a bar
-            that stops where the sidebar starts.
+          {/* THE PROVIDER IS AT THE ROOT so the top bar can hold the sidebar's
+              toggle. It is state plus a wrapper div, and the wrapper takes our
+              class — a COLUMN here, so the bar spans the whole window and the
+              sidebar and the route share the row beneath it. The block this is
+              based on puts its header inside the inset instead, which gives a bar
+              that stops where the sidebar starts.
 
-            PersistentSidebarProvider controls its desktop state from the
-            account preference. The vendored shadcn provider still writes its
-            unused server-rendering cookie; account.db is the authority. */}
-        {/* The command bus: one keyboard listener and every command handler,
-            for the window's lifetime (SHORTCUTS.md §6.2). */}
-        <Commands>
-        <PersistentSidebarProvider>
-          {/* Outside the route tree on purpose, and above it: it is the window's
-              title bar now, so every screen needs it — including the ones a cut
-              network or a signed-out session strands you on. */}
-          <TopBar />
-          {/* The command menu and its command, for every route (SHORTCUTS.md §10). */}
-          <CommandMenu />
-          {/* Renders nothing: the settings and shortcuts commands, for every route. */}
-          <AppCommands />
-          <div className="flex min-h-0 flex-1">
-            <Router />
-          </div>
-        </PersistentSidebarProvider>
-        </Commands>
-      </AppStateProvider>
+              PersistentSidebarProvider controls its desktop state from the
+              account preference. The vendored shadcn provider still writes its
+              unused server-rendering cookie; account.db is the authority. */}
+          {/* The command bus: one keyboard listener and every command handler,
+              for the window's lifetime (SHORTCUTS.md §6.2). */}
+          <Commands>
+            <PersistentSidebarProvider>
+              {/* Outside the route tree on purpose, and above it: it is the window's
+                  title bar now, so every screen needs it — including the ones a cut
+                  network or a signed-out session strands you on. */}
+              <TopBar />
+              {/* The command menu and its command, for every route (SHORTCUTS.md §10). */}
+              <CommandMenu />
+              {/* Renders nothing: the settings and shortcuts commands, for every route. */}
+              <AppCommands />
+              <div className="flex min-h-0 flex-1">
+                <Router />
+              </div>
+            </PersistentSidebarProvider>
+          </Commands>
+        </AppStateProvider>
+      </TooltipProvider>
     </HashRouter>
   </StrictMode>,
 );

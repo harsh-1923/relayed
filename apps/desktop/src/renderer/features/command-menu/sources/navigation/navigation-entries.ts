@@ -15,7 +15,7 @@ export interface NavigationEntry {
 
 const PRIMARY_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   People: ['members'],
-  Connectors: ['integrations', 'apps'],
+  Apps: ['integrations', 'connectors'],
 };
 
 const SPACE_ALIASES: Readonly<Record<string, readonly string[]>> = {

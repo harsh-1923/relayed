@@ -3,7 +3,7 @@
 // resizable panel, mobile Sheet and title-bar toggle remain one mechanism.
 import { Link, useLocation } from 'react-router';
 import {
-  ArrowLeft, Bot, ColorPalette, FilterHorizontal, Globe, KeyboardWired, NotificationBellOn, Tools,
+  ArrowLeft, Bot, Code, ColorPalette, FilterHorizontal, Globe, KeyboardWired, NotificationBellOn, Tools,
 } from '@relayed/icons';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
@@ -22,6 +22,7 @@ const SETTINGS_NAVIGATION = [
   { to: '/settings/shortcuts', label: 'Keyboard shortcuts', icon: KeyboardWired },
   { to: '/settings/browsers', label: 'Browser sign-ins', icon: Globe },
   { to: '/settings/advanced', label: 'Advanced', icon: Tools },
+  { to: '/settings/developers', label: 'Developers', icon: Code },
 ] as const;
 
 export function SettingsSidebar({ inline = false }: { inline?: boolean }) {
@@ -51,15 +52,8 @@ export function SettingsSidebar({ inline = false }: { inline?: boolean }) {
               render={<Link to={returnTo} />}
               className="gap-2"
             >
-              <span className="grid size-7 shrink-0 place-items-center rounded-lg border bg-background/70">
-                <ArrowLeft className="size-4" />
-              </span>
-              <div className="grid min-w-0 flex-1 text-left leading-tight">
-                <span className="truncate text-sm font-medium">Settings</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {workspace ? `Back to ${workspace.name}` : 'Back to account'}
-                </span>
-              </div>
+              <ArrowLeft className="text-muted-foreground" />
+              <span className="truncate text-sm font-medium">Back to app</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

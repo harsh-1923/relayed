@@ -15,7 +15,10 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
-export function Page({ className, children }: { className?: string; children: ReactNode }) {
+export function Page({ className, children }: {
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <div className={cn('min-h-0 flex-1 overflow-y-auto p-10', className)}>
       {children}

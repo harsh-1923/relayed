@@ -20,6 +20,7 @@ to everything the engine knows.
 | Keyboard shortcuts? | One `keybindings.<command id>` row per customized command, written through `prefs.set`, `prefs.clear` and the transactional `prefs.apply` | 8, 11; SHORTCUTS.md §9 |
 | How does the theme actually apply? | `nativeTheme.themeSource` in main for the window, `<Theme />` for the tokens — both from the stored value | 9 |
 | Does the sidebar survive a restart? | **Yes.** Desktop open state and last expanded width are separate account-local preferences | 10.2 |
+| Is the route strip shown by default? | **No.** The Developers setting opts into it per account on this device | 10.3 |
 
 ---
 
@@ -209,6 +210,9 @@ between two copies of a vocabulary fails silently.
   tier: 'account', reach: 'local', fallback: 256,
   parse: integerBetween(224, 320),
 },
+'developer.route_strip.visible': {
+  tier: 'account', reach: 'local', fallback: false, parse: boolean,
+},
 ```
 
 The catalogue owns four things per key: which database it lives in, how far it
@@ -377,6 +381,14 @@ after direct pointer or keyboard manipulation ends. Programmatic restoration,
 window resizing and initial mount never write. Both preferences therefore
 survive renderer reload and process restart without turning a drag into one
 SQLite write and live-query invalidation per pixel.
+
+### 10.3 The developer route strip — built
+
+`developer.route_strip.visible` is an account-local boolean preference that
+defaults to false. The Developers settings page controls it, and `RouteStrip`
+reads it through the live-query preference client before drawing the current
+path and panel query in the top bar. A missing row therefore keeps the strip
+out of both development and production builds until the person opts in.
 
 ---
 

@@ -23,7 +23,7 @@ import { Settings } from '@/routes/Settings';
 import { SettingsMembers } from '@/routes/SettingsMembers';
 import { SettingsProfile } from '@/routes/SettingsProfile';
 import { SettingsAgents } from '@/routes/SettingsAgents';
-import { Connectors } from '@/routes/Connectors';
+import { Apps, AppsCatalogue, InstalledApps } from '@/routes/Apps';
 import { SettingsAgentEditor } from '@/routes/SettingsAgentEditor';
 import { AgentProfile } from '@/features/agents/AgentProfile';
 import { Account } from '@/routes/Account';
@@ -32,6 +32,7 @@ import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
 import { AccountSettingsBrowsers } from '@/routes/AccountSettingsBrowsers';
 import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
 import { AccountSettingsAgent } from '@/routes/AccountSettingsAgent';
+import { AccountSettingsDevelopers } from '@/routes/AccountSettingsDevelopers';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
 import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
 import { AccountSettingsShortcuts } from '@/routes/AccountSettingsShortcuts';
@@ -72,6 +73,7 @@ export function Router() {
           <Route path="shortcuts" element={<AccountSettingsShortcuts />} />
           <Route path="browsers" element={<AccountSettingsBrowsers />} />
           <Route path="advanced" element={<AccountSettingsAdvanced />} />
+          <Route path="developers" element={<AccountSettingsDevelopers />} />
         </Route>
 
         {/* The gate turns a URL into a switch, and is the ONLY caller of
@@ -80,13 +82,18 @@ export function Router() {
           <Route index element={<Page><WorkspaceHome /></Page>} />
           <Route path="s/:spaceId" element={<Space />} />
           <Route path="people" element={<Page><People /></Page>} />
-          <Route path="connectors" element={<Page><Connectors /></Page>} />
+          <Route path="apps" element={<Page className="[scrollbar-gutter:stable]"><Apps /></Page>}>
+            <Route index element={<AppsCatalogue />} />
+            <Route path="installed" element={<InstalledApps />} />
+          </Route>
+          <Route path="connectors" element={<Navigate to="../apps" relative="path" replace />} />
           <Route path="settings" element={<Page><Settings /></Page>}>
             <Route index element={<Navigate to="members" replace />} />
             <Route path="members" element={<SettingsMembers />} />
             <Route path="profile" element={<SettingsProfile />} />
             <Route path="agents" element={<SettingsAgents />} />
-            <Route path="connectors" element={<Navigate to="../../connectors" replace />} />
+            <Route path="apps" element={<Navigate to="../../apps" replace />} />
+            <Route path="connectors" element={<Navigate to="../../apps" replace />} />
             <Route path="agents/new" element={<SettingsAgentEditor />} />
             <Route path="agents/:agentId" element={<AgentProfile />} />
             <Route path="agents/:agentId/edit" element={<SettingsAgentEditor />} />

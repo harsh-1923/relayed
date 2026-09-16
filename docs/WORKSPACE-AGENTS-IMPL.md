@@ -911,8 +911,8 @@ This step can run in parallel with steps 1–3.
 | **New** `apps/desktop/src/sync/connect.ts` | `connections.connect(toolkit, accessRequestId?)`: listen, `POST /connections`, open `start_url` in the system browser, receive the loopback redirect, check `state`, `POST …/complete`. Never a `BrowserWindow` (`PHASE-1-IDENTITY.md`, the desktop auth flow §6) |
 | **Changes** `apps/desktop/src/sync/migrations/workspace.ts` | Version 13: `connections` and `agent_permissions` projections |
 | **Changes** `apps/desktop/src/sync/storage.ts`, `sync/link.ts` | Apply both from `welcome` and from their push frames; invalidate their topics |
-| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/connectors` and `…/connectors/:toolkit` |
-| **New** `apps/desktop/src/renderer/routes/Connectors.tsx`, `features/connectors/ToolkitPage.tsx` | Yours and Browse ([where the connector store lives, §7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([a toolkit as a tile and a page, §7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
+| **Changes** `apps/desktop/src/renderer/app/router.tsx` | `/w/:wsId/apps` and `…/apps/:toolkit` |
+| **New** `apps/desktop/src/renderer/routes/Apps.tsx`, `features/apps/ToolkitPage.tsx` | Yours and Browse ([where the connector store lives, §7.1](WORKSPACE-AGENTS.md#71-where-it-lives)), the toolkit page ([a toolkit as a tile and a page, §7.2](WORKSPACE-AGENTS.md#72-a-toolkit-as-a-tile-and-as-a-page)), and offline states that say what needs a connection |
 | **Changes** `apps/desktop/src/renderer/routes/SettingsAgentEditor.tsx` | The Tools section: toolkits, then tools grouped by effect; read tools preselected; destructive off; the 30-tool cap with its reason (D11) |
 
 ### Boundary rules
@@ -941,7 +941,7 @@ are what prove the real service behaves as the fake assumes.
 ### By hand
 
 The proposal's connections and connector-store step (step 4):
-1. Connect Linear from the Connectors page.
+1. Connect Linear from the Apps page.
 2. See it on a second device while offline.
 3. Disconnect it, and see Linear's authorised apps list drop Relayed.
 
@@ -1017,7 +1017,7 @@ its duration ([§11](WORKSPACE-AGENTS.md#11-observability-proposed)).
 |---|---|
 | **New** `apps/desktop/src/renderer/features/agents/AccessCard.tsx` | [§7.4](WORKSPACE-AGENTS.md#74-the-card-in-a-chat): for **the actor**, the action from the local `connections` and `agent_permissions` projections while `pending`, and Run again once `resolved`; for **everyone else**, the public sentence for the part's `state`. Which view is chosen by comparing `actor_id` with the signed-in actor — presentation only |
 | **Changes** `apps/desktop/src/renderer/features/chat/MessageParts.tsx`, `effects.ts` | Draws `access_request` through `AccessCard`; `message.updated` also replaces `parts` |
-| **Changes** `apps/desktop/src/renderer/features/connectors/ToolkitPage.tsx`, `features/agents/AgentProfile.tsx` | "Agents you allowed" with Revoke; the agent's toolkits, each with your status |
+| **Changes** `apps/desktop/src/renderer/features/apps/ToolkitPage.tsx`, `features/agents/AgentProfile.tsx` | "Agents you allowed" with Revoke; the agent's toolkits, each with your status |
 
 ### Tests
 
@@ -1242,7 +1242,7 @@ them in one short sentence and stop". No change to how remote tools register:
 |---|---|
 | **Delete** `apps/desktop/src/renderer/features/agents/AgentTools.tsx`; **changes** `routes/SettingsAgentEditor.tsx` | No Tools section. Creating an agent is name, handle, description, instructions and model |
 | **Changes** `features/agents/AccessCard.tsx` | Resolved shows "GitHub is ready. @triage is running again." instead of Run again. `EFFECT_WORDS` gets its own `destructive` wording ("to delete or overwrite things in your") |
-| **Changes** `apps/desktop/src/sync/index.ts`, `sync/auth/relayed.ts`, `preload/api.d.ts`, `features/connectors/useToolkits.ts` | `agents.retryRun`, `agents.setTools` and `toolkits.get` are deleted, with their HTTP calls and `useToolkitDetail` — the tool picker was their only user |
+| **Changes** `apps/desktop/src/sync/index.ts`, `sync/auth/relayed.ts`, `preload/api.d.ts`, `features/apps/useToolkits.ts` | `agents.retryRun`, `agents.setTools` and `toolkits.get` are deleted, with their HTTP calls and `useToolkitDetail` — the tool picker was their only user |
 | **Changes** `routes/SettingsAgents.tsx`, `features/agents/AgentProfile.tsx` | The toolkit badges go. The profile's Tools row says the agent finds what it needs and asks you for access the first time it uses yours |
 
 **Already built, contrary to what planning first assumed:** "Connect and allow in

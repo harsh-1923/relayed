@@ -25,7 +25,7 @@ export const NAVIGATION_GROUPS = [
 ] as const;
 
 export type NavigationGroupId = (typeof NAVIGATION_GROUPS)[number]['id'];
-export type NavigationIcon = 'chat' | 'connectors' | 'group' | 'hashtag' | 'lock' | 'people';
+export type NavigationIcon = 'apps' | 'chat' | 'group' | 'hashtag' | 'lock' | 'people';
 
 export interface NavigationDestination {
   /** Stable and unique. Labels are not unique. */
@@ -50,11 +50,11 @@ export function primaryDestinationsFor(workspaceId: string | null): NavigationDe
       disabled: false,
     },
     {
-      id: `p:${workspaceId}:connectors`,
-      label: 'Connectors',
+      id: `p:${workspaceId}:apps`,
+      label: 'Apps',
       group: 'go-to',
-      icon: 'connectors',
-      to: `/w/${workspaceId}/connectors`,
+      icon: 'apps',
+      to: `/w/${workspaceId}/apps`,
       disabled: false,
     },
   ];

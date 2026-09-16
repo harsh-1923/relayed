@@ -80,7 +80,7 @@ export function AgentProfile() {
         <dt className="text-muted-foreground">Model</dt>
         <dd className="font-mono">{definition ? (definition.model ?? 'The runtime default') : '—'}</dd>
         <dt className="text-muted-foreground">Tools</dt>
-        <dd>Finds what it needs in the workspace's connectors, and asks you for access the first time it uses yours.</dd>
+        <dd>Finds what it needs in the workspace's apps, and asks you for access the first time it uses yours.</dd>
       </dl>
 
       <section className="space-y-2">

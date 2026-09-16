@@ -1312,11 +1312,23 @@ it does not matter).
 
 ### 7.1 Where it lives
 
-**Connectors**, a top-level workspace destination at
-`/w/:workspaceId/connectors`, because connections are workspace-scoped. Keeping
+**Apps**, a top-level workspace destination at
+`/w/:workspaceId/apps`, because connections are workspace-scoped. Keeping
 the workspace in the URL makes a connector link unambiguous across workspaces;
 keeping it outside Settings makes a primary agent capability directly
-reachable from the workspace sidebar and search. Two tabs:
+reachable from the workspace sidebar and search.
+
+**The current first build:** active connections are a compact, single-row strip
+of app icons at the top. **Manage** opens `/w/:workspaceId/apps/installed`,
+which lists those apps in the catalogue grid with a Disconnect action on each
+one. Both routes live beneath the same Apps shell, so its heading and width
+remain fixed while only the page content changes. The searchable catalogue
+below omits active apps, so a connection is visible once without taking a full
+catalogue tile. Moving between the two routes uses each toolkit's stable slug
+as its React key so both views preserve the same app identity. Connections that
+need reconnecting remain in the catalogue because they still require an action.
+
+**Later, two tabs:**
 
 - **Yours** — every connection you have, needs-reconnect first.
 - **Browse** — the enabled catalogue, searchable, by category.
@@ -1892,7 +1904,7 @@ A step that only ever ran under `node --test` has not been used.
 | 1 | **Restricted messages, no agent — built as a dormant capability**; cards do not use it (§7.4, §8.1). Schema and constraints; `appendEvent`'s required audience; fanout, catch-up, gap tail, backfill, counters and activity filtered; `withheld` in the client; a dev-only route that writes one. Also **`message.updated`**, which step 5 needs | With three dev clients (`MULTI-CLIENT-DEV.md`): the listed one sees the message, the others never do, and all three keep receiving the chat — after reconnects, a gap and a backfill to ordinal 1 | — |
 | 2 | **Creating agents.** Tables, the `agent` membership scope and actions, the directory summary, Settings → Agents, the editor and profile | An agent appears in autocomplete on every client, and a maintainer can edit it while another member cannot | — |
 | 3 | **Runs with no tools.** `agent_runs` in `applyOnce`; the dispatcher and the six checkpoints (§5.9) with their v1 bodies; the new `/run` fields with `palette: 'none'`; the reply as the agent with `on_behalf_of` and `delegation_id`; the notices, the working indicator and Stop; the runtime's model-call stall timeout | Mention `@triage` in a channel and in a DM: the answer arrives in the trigger's thread. Two people mention it in one thread: two answers. Stop one mid-run: "Stopped", no answer. Kill the server mid-run: `interrupted`, with a notice | Step 2; parts in the schema (`AGENT-RESPONSES.md` phase 3) |
-| 4 | **Connections and the connector store.** Catalogue sync, `connections`, OAuth connect and disconnect, then API-key toolkits; the `welcome` projection and push | Connect Linear from the Connectors page, see it on a second device offline, disconnect it | Composio spike |
+| 4 | **Connections and the connector store.** Catalogue sync, `connections`, OAuth connect and disconnect, then API-key toolkits; the `welcome` projection and push | Connect Linear from the Apps page, see it on a second device offline, disconnect it | Composio spike |
 | 5 | **The broker.** `/agent/tools`, permissions and their card, connection card, `agent_tool_calls` | Bob asks `@triage` to file a bug with nothing connected: one card in the thread — Bob sees Connect and Allow, everyone else sees `@triage` waiting for Bob. Bob allows, every client shows the card resolved, the request runs again by itself, and the issue appears in **Bob's** Linear as Bob | Steps 3, 4; `message.updated` (built with step 1) |
 | 6 | **Reconnect.** `needs_reauth` from execution errors and Composio's own status | Revoke the app in Linear's settings; the next run asks Bob to reconnect instead of failing vaguely | Step 5 |
 

@@ -635,7 +635,9 @@ it, so the container and the main chat keep working.
 
 A web panel is `features/panels/WebPanel.tsx`: a toolbar (back, forward, reload
 with a spinner while the page is loading, and an editable address) over a
-**`<webview>`** that fills the panel.
+**`<webview>`** that fills the panel. Each icon-only toolbar button shows its
+label in a tooltip on hover or keyboard focus; disabled buttons keep the same
+label available on hover.
 When a load fails, a message with **Try again** is drawn over it.
 
 **The address bar** shows where the page is, and takes the person anywhere:

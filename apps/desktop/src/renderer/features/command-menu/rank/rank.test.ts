@@ -7,7 +7,7 @@ test('an empty search keeps every row', () => {
 });
 
 test('ranks human keywords without letting unrelated words match', () => {
-  assert.equal(rankKeywords('swat', ['Connectors', 'integrations', 'apps']), 0);
+  assert.equal(rankKeywords('swat', ['Apps', 'integrations', 'connectors']), 0);
   assert.ok(rankKeywords('swat', ['swat', 'channel']) > 0);
   assert.equal(rankKeywords('direct', ['People', 'members']), 0);
   assert.ok(rankKeywords('DIRECT harsh', ['Harsh Sharma', 'direct message', 'dm']) > 0);

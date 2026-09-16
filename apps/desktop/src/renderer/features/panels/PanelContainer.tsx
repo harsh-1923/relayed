@@ -17,7 +17,7 @@ import { useQuery } from '@/lib/query';
 import { useActorLookup } from '@/lib/actors';
 import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
-import { AddressBar, WebPanel } from './WebPanel';
+import { AddressBar, UrlBarButton, WebPanel } from './WebPanel';
 import { DocPanel } from '../documents/DocPanel';
 import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
 import './panels.css';
@@ -203,9 +203,9 @@ function NewPanelPage({ space, scope, closed, metaOf, attributionOf, addressFocu
     <>
       {/* A browser's new tab: the web panel's own toolbar, with nowhere to go back to yet. */}
       <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border/60 px-1.5">
-        <Button variant="ghost" size="icon-xs" aria-label="Back" title="Back" disabled><ArrowLeft /></Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Forward" title="Forward" disabled><ArrowRight /></Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Reload" title="Reload" disabled><Refresh /></Button>
+        <UrlBarButton label="Back" variant="ghost" size="icon-xs" disabled><ArrowLeft /></UrlBarButton>
+        <UrlBarButton label="Forward" variant="ghost" size="icon-xs" disabled><ArrowRight /></UrlBarButton>
+        <UrlBarButton label="Reload" variant="ghost" size="icon-xs" disabled><Refresh /></UrlBarButton>
         <AddressBar
           url="" disabled={false} focusRequest={addressFocus}
           onGo={address => {

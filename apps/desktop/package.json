@@ -37,6 +37,8 @@
     "date-fns": "^4.4.0",
     "dialkit": "^2.0.2",
     "embla-carousel-react": "^8.6.0",
+    "framer-motion": "^13.3.0",
+    "fuse.js": "7.5.0",
     "input-otp": "^1.5.0",
     "motion": "^13.2.0",
     "react-day-picker": "^10.0.1",

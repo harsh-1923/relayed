@@ -10,6 +10,17 @@ test('no active workspace means no workspace destinations', () => {
   assert.equal(workspaceSpaceDestination(null, space('channel', 'channel')), null);
 });
 
+test('projects Apps as a workspace destination', () => {
+  assert.deepEqual(primaryDestinationsFor('workspace').at(-1), {
+    id: 'p:workspace:apps',
+    label: 'Apps',
+    group: 'go-to',
+    icon: 'apps',
+    to: '/w/workspace/apps',
+    disabled: false,
+  });
+});
+
 test('projects every workspace space kind with its sidebar group, icon and route', () => {
   const destinations = [
     space('channel', 'channel', { name: 'General', visibility: 'public' }),

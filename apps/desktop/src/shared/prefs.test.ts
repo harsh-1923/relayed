@@ -15,6 +15,7 @@ test('a stored value decodes', () => {
   assert.equal(decode('appearance.theme', [row('appearance.theme', '"dark"')]), 'dark');
   assert.equal(decode('shell.sidebar.open', [row('shell.sidebar.open', 'false')]), false);
   assert.equal(decode('shell.sidebar.width', [row('shell.sidebar.width', '288')]), 288);
+  assert.equal(decode('developer.route_strip.visible', [row('developer.route_strip.visible', 'true')]), true);
 });
 
 test('ABSENT is the ordinary case, and decodes to the default', () => {
@@ -23,6 +24,7 @@ test('ABSENT is the ordinary case, and decodes to the default', () => {
   assert.equal(decode('appearance.theme', null), 'system', 'and before the first read lands');
   assert.equal(decode('shell.sidebar.open', []), true);
   assert.equal(decode('shell.sidebar.width', []), 256);
+  assert.equal(decode('developer.route_strip.visible', []), false);
 });
 
 test('every way a row can be unreadable falls back rather than throwing', () => {
@@ -33,6 +35,7 @@ test('every way a row can be unreadable falls back rather than throwing', () => 
                  `${stored} should have fallen back`);
   }
   assert.equal(decode('shell.sidebar.open', [row('shell.sidebar.open', '"false"')]), true);
+  assert.equal(decode('developer.route_strip.visible', [row('developer.route_strip.visible', '"true"')]), false);
   for (const stored of ['223', '321', '256.5', '"256"', 'null']) {
     assert.equal(decode('shell.sidebar.width', [row('shell.sidebar.width', stored)]), 256,
                  `${stored} should have fallen back`);
@@ -50,6 +53,7 @@ test('encode produces JSON TEXT, which is what the table CHECK requires', () => 
   assert.deepEqual(encode('appearance.theme', 'dark'), { value: '"dark"', reach: 'local' });
   assert.deepEqual(encode('shell.sidebar.open', false), { value: 'false', reach: 'local' });
   assert.deepEqual(encode('shell.sidebar.width', 288), { value: '288', reach: 'local' });
+  assert.deepEqual(encode('developer.route_strip.visible', true), { value: 'true', reach: 'local' });
 });
 
 test('encode refuses an unknown key and a value outside the domain', () => {
@@ -57,6 +61,7 @@ test('encode refuses an unknown key and a value outside the domain', () => {
   assert.throws(() => encode('appearance.theme', 'sepia'), /invalid value/);
   assert.throws(() => encode('appearance.theme', null), /invalid value/);
   assert.throws(() => encode('shell.sidebar.open', 'false'), /invalid value/);
+  assert.throws(() => encode('developer.route_strip.visible', 'true'), /invalid value/);
   for (const invalidWidth of [223, 321, 256.5, '256', null]) {
     assert.throws(() => encode('shell.sidebar.width', invalidWidth), /invalid value/);
   }
@@ -69,6 +74,7 @@ test('every key declares a fallback its own parse accepts', () => {
   // being added rather than by somebody remembering to test it.
   for (const key of [
     'appearance.theme', 'shell.sidebar.open', 'shell.sidebar.width',
+    'developer.route_strip.visible',
   ] as const) {
     assert.ok(isPreferenceKey(key));
     const spec = specOf(key);
@@ -82,6 +88,7 @@ test('nothing is synced yet', () => {
   // merge rule should fail here first.
   for (const key of [
     'appearance.theme', 'shell.sidebar.open', 'shell.sidebar.width',
+    'developer.route_strip.visible',
   ] as const) {
     assert.equal(specOf(key).reach, 'local');
   }

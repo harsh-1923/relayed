@@ -9,12 +9,13 @@
 // container keeps every open page mounted and parks the ones not shown out of
 // sight rather than hiding them. Parked, not `visibility: hidden`: t3code found
 // Electron can leave a macOS webview blank for good after that.
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type ComponentProps, type FormEvent } from 'react';
 import { AlertTriangle, ArrowLeft, ArrowRight, ExternalLink, Globe, Refresh, Spinner } from '@relayed/icons';
 import type { Panel } from '../../../preload/api';
 import { useSession } from '@/app/state';
 import { bridge, call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, withoutFragmentDirective,
@@ -143,6 +144,28 @@ const ERR_ABORTED = -3;
  * reaches main, which sends it to the system browser rather than losing it.
  */
 const ALLOW_POPUPS = { allowpopups: 'true' } as unknown as { allowpopups?: boolean };
+
+/** An icon-only browser control whose visible label works with a mouse or keyboard. */
+export function UrlBarButton({ label, disabled = false, ...props }: {
+  label: string;
+} & Omit<ComponentProps<typeof Button>, 'aria-label' | 'title'>) {
+  const button = <Button {...props} disabled={disabled} aria-label={label} />;
+
+  return (
+    <Tooltip>
+      {disabled ? (
+        // A disabled button receives no pointer events, so its wrapper owns the
+        // hover target while the button keeps its native disabled semantics.
+        <TooltipTrigger delay={300} render={<span className="inline-flex" />}>
+          {button}
+        </TooltipTrigger>
+      ) : (
+        <TooltipTrigger delay={300} render={button} />
+      )}
+      <TooltipContent side="bottom">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
 
 export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
   const { state: session } = useSession();
@@ -284,22 +307,22 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
       inert={!shown}
     >
       <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border/60 px-1.5">
-        <Button variant="ghost" size="icon-xs" aria-label="Back" title="Back" disabled={!page.canGoBack} onClick={() => element()?.goBack()}>
+        <UrlBarButton label="Back" variant="ghost" size="icon-xs" disabled={!page.canGoBack} onClick={() => element()?.goBack()}>
           <ArrowLeft />
-        </Button>
-        <Button variant="ghost" size="icon-xs" aria-label="Forward" title="Forward" disabled={!page.canGoForward} onClick={() => element()?.goForward()}>
+        </UrlBarButton>
+        <UrlBarButton label="Forward" variant="ghost" size="icon-xs" disabled={!page.canGoForward} onClick={() => element()?.goForward()}>
           <ArrowRight />
-        </Button>
+        </UrlBarButton>
         {page.loading ? (
-          <Button variant="ghost" size="icon-xs" aria-label="Loading" title="Loading" disabled>
+          <UrlBarButton label="Loading" variant="ghost" size="icon-xs" disabled>
             <span className="flex animate-spin" aria-hidden="true">
               <Spinner />
             </span>
-          </Button>
+          </UrlBarButton>
         ) : (
-          <Button variant="ghost" size="icon-xs" aria-label="Reload" title="Reload" disabled={!drawable} onClick={retry}>
+          <UrlBarButton label="Reload" variant="ghost" size="icon-xs" disabled={!drawable} onClick={retry}>
             <Refresh />
-          </Button>
+          </UrlBarButton>
         )}
         <AddressBar
           // Never the directive: it is how the reader got to the passage, not
@@ -312,13 +335,13 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
             load(address);
           }}
         />
-        <Button
-          variant="ghost" size="icon-xs" aria-label="Open in browser" title="Open in browser"
+        <UrlBarButton
+          label="Open in browser" variant="ghost" size="icon-xs"
           disabled={!isWebUrl(page.url)}
           onClick={() => { void call(api => api.query('web.openExternal', { url: withoutFragmentDirective(page.url) })); }}
         >
           <ExternalLink />
-        </Button>
+        </UrlBarButton>
       </div>
       <div ref={surface} className="relative min-h-0 flex-1">
         {drawable && session.accountId ? (

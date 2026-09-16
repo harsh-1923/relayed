@@ -1,16 +1,16 @@
-// The route being rendered, in the top bar — development builds only.
+// The route being rendered, in the top bar when the person asks to see it.
 //
 // Panels, threads and the open tabs all live in the query (PANELS.md §8), so
 // watching this is how to see what the room view believes is open. The query's
 // own keys are spaced out: `?p=pnl_A,pnl_B &pa=pnl_B &pn` reads at a glance
 // where the raw string does not.
 import { useLocation } from 'react-router';
-import { useSession } from '@/app/state';
+import { usePreference } from '@/lib/prefs';
 
 export function RouteStrip() {
-  const { state } = useSession();
+  const visible = usePreference('developer.route_strip.visible');
   const { pathname, search } = useLocation();
-  if (!state.devTools) return null;
+  if (!visible.value) return null;
 
   const query = [...new URLSearchParams(search).entries()];
   const full = `${pathname}${search}`;

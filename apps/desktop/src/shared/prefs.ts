@@ -96,6 +96,13 @@ export const PREFERENCES = {
     fallback: 256,
     parse: integerBetween(224, 320),
   },
+  /** Whether the current route and panel query are visible in the top bar. */
+  'developer.route_strip.visible': {
+    tier: 'account',
+    reach: 'local',
+    fallback: false,
+    parse: boolean,
+  },
 } as const satisfies Record<string, PreferenceSpec<unknown>>;
 
 export type PreferenceKey = keyof typeof PREFERENCES;
