@@ -94,7 +94,7 @@ function ToolkitRow({ toolkit, logo, connection, onChanged }: {
   }
 
   return (
-    <li className="flex items-center gap-4 py-4">
+    <li className="flex items-start gap-4 py-4">
       <ToolkitLogo toolkit={toolkit} logo={logo} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -102,7 +102,7 @@ function ToolkitRow({ toolkit, logo, connection, onChanged }: {
           {toolkit.deprecated && <Badge variant="outline">Deprecated</Badge>}
           {status && <Badge variant={connected ? 'secondary' : 'outline'}>{STATUS_LABEL[status]}</Badge>}
         </div>
-        <p className="truncate text-sm text-muted-foreground">{toolkit.description}</p>
+        <p className="line-clamp-2 text-sm text-muted-foreground">{toolkit.description}</p>
         {error && <p className="text-sm text-destructive">{error}</p>}
       </div>
       {connected
@@ -201,7 +201,7 @@ function AppsContent({ installed }: { installed: boolean }) {
         </section>
       )}
 
-      {!installed && <div className="space-y-4">
+      {!installed && <div className="sticky top-[7.5rem] z-10 bg-background py-4">
         <div className="relative">
           <SearchDefault className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -244,7 +244,7 @@ function AppsContent({ installed }: { installed: boolean }) {
 export function Apps() {
   return (
     <div className="mx-auto w-full max-w-6xl space-y-8">
-      <div className="space-y-2">
+      <div className="sticky top-0 z-20 flex h-[7.5rem] flex-col justify-center gap-2 bg-background pt-10">
         <h1 className="text-2xl font-semibold">Apps</h1>
         <p className="text-sm text-muted-foreground">
           Connect an account here once, then allow individual agents to use it through your apps or from

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  localRoomDestination, primaryDestinationsFor, workspaceSpaceDestination,
+  installedAppsDestination, localRoomDestination, primaryDestinationsFor, workspaceSpaceDestination,
 } from './destinations.ts';
 import { localRoom, space } from './destinations.fixtures.ts';
 
@@ -17,6 +17,17 @@ test('projects Apps as a workspace destination', () => {
     group: 'go-to',
     icon: 'apps',
     to: '/w/workspace/apps',
+    disabled: false,
+  });
+});
+
+test('projects Installed apps as its nested workspace route', () => {
+  assert.deepEqual(installedAppsDestination('workspace'), {
+    id: 'p:workspace:apps:installed',
+    label: 'Installed apps',
+    group: 'go-to',
+    icon: 'apps',
+    to: '/w/workspace/apps/installed',
     disabled: false,
   });
 });

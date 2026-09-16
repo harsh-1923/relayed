@@ -3,7 +3,7 @@
 import type { LocalRoom } from '../../../../../shared/local-rooms.ts';
 import type { Space } from '../../../../../shared/spaces.ts';
 import {
-  localRoomDestination, primaryDestinationsFor, WORKSPACE_SPACE_GROUPS,
+  installedAppsDestination, localRoomDestination, primaryDestinationsFor, WORKSPACE_SPACE_GROUPS,
   workspaceSpaceDestination, type NavigationDestination,
 } from '../../../../lib/navigation/destinations/destinations.ts';
 
@@ -16,6 +16,7 @@ export interface NavigationEntry {
 const PRIMARY_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   People: ['members'],
   Apps: ['integrations', 'connectors'],
+  'Installed apps': ['connected apps', 'connections', 'manage apps'],
 };
 
 const SPACE_ALIASES: Readonly<Record<string, readonly string[]>> = {
@@ -35,7 +36,7 @@ export function navigationEntriesFor(
   if (workspaceId === null) return [];
 
   const entries: NavigationEntry[] = [
-    ...primaryDestinationsFor(workspaceId).map(destination => ({
+    ...[...primaryDestinationsFor(workspaceId), installedAppsDestination(workspaceId)].map(destination => ({
       destination,
       keywords: [destination.label, ...(PRIMARY_KEYWORDS[destination.label] ?? [])],
       detail: null,

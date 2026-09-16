@@ -82,7 +82,7 @@ export function Router() {
           <Route index element={<Page><WorkspaceHome /></Page>} />
           <Route path="s/:spaceId" element={<Space />} />
           <Route path="people" element={<Page><People /></Page>} />
-          <Route path="apps" element={<Page className="[scrollbar-gutter:stable]"><Apps /></Page>}>
+          <Route path="apps" element={<Page className="pt-0 [scrollbar-gutter:stable]"><Apps /></Page>}>
             <Route index element={<AppsCatalogue />} />
             <Route path="installed" element={<InstalledApps />} />
           </Route>

@@ -18,6 +18,9 @@ test('each kind is found by its name, its aliases and its slug', () => {
   const keywordsOf = (id: string) => entries.find(entry => entry.destination.id === id)?.keywords;
 
   assert.deepEqual(keywordsOf('p:workspace:people'), ['People', 'members']);
+  assert.deepEqual(keywordsOf('p:workspace:apps:installed'), [
+    'Installed apps', 'connected apps', 'connections', 'manage apps',
+  ]);
   assert.deepEqual(keywordsOf('s:workspace:channel'), ['General', 'channel', 'general']);
   assert.deepEqual(keywordsOf('s:workspace:group'), ['Ada and Lin', 'group message', 'group dm']);
   assert.deepEqual(keywordsOf('s:workspace:direct'), ['Ada', 'direct message', 'dm']);
@@ -43,7 +46,7 @@ test('keeps duplicate labels distinct and orders them like the sidebar', () => {
   ]);
 
   assert.deepEqual(entries.map(entry => entry.destination.group), [
-    'go-to', 'go-to', 'local-room', 'local-room', 'channel', 'room', 'dm',
+    'go-to', 'go-to', 'go-to', 'local-room', 'local-room', 'channel', 'room', 'dm',
   ]);
   assert.equal(new Set(entries.map(entry => entry.destination.id)).size, entries.length);
   assert.deepEqual(entries.filter(entry => entry.destination.label === 'General').map(entry => entry.destination.to), [

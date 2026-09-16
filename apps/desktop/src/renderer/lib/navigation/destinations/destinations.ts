@@ -60,6 +60,18 @@ export function primaryDestinationsFor(workspaceId: string | null): NavigationDe
   ];
 }
 
+/** The installed-app management view, offered by navigation search but not pinned in the sidebar. */
+export function installedAppsDestination(workspaceId: string): NavigationDestination {
+  return {
+    id: `p:${workspaceId}:apps:installed`,
+    label: 'Installed apps',
+    group: 'go-to',
+    icon: 'apps',
+    to: `/w/${workspaceId}/apps/installed`,
+    disabled: false,
+  };
+}
+
 /** One workspace space, or null when the sidebar has no section for its kind. */
 export function workspaceSpaceDestination(
   workspaceId: string | null,
