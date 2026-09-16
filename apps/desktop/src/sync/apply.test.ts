@@ -505,7 +505,7 @@ test('a space stream has its own frontier, independent of any chat', () => {
 
   assert.equal(frontierOf(db, space), 1);
   assert.equal(frontierOf(db, CHAT), 1, 'and the chat is untouched');
-  assert.deepEqual(joined.topics, ['space:spc_eng', 'spaces']);
+  assert.deepEqual(joined.topics, ['space:spc_eng', 'spaces', 'space:spc_eng:members']);
   db.close();
 });
 
@@ -667,7 +667,7 @@ test('a member_added for someone else stays topology invalidation only — nothi
 
   const result = applyEvent(deps, space, memberAdded(1, 'act_someone_else'));
 
-  assert.deepEqual(result.topics, ['space:spc_new', 'spaces']);
+  assert.deepEqual(result.topics, ['space:spc_new', 'spaces', 'space:spc_new:members']);
   assert.equal(db.prepare('SELECT id FROM spaces WHERE id = ?').get('spc_new'), undefined,
     'existing members never store a space from this event — only the caller-only projection');
   assert.equal(
@@ -683,7 +683,7 @@ test('a member_added with no active actor configured behaves exactly as before',
 
   const result = applyEvent(deps, space, memberAdded(1, 'act_me'));
 
-  assert.deepEqual(result.topics, ['space:spc_new', 'spaces']);
+  assert.deepEqual(result.topics, ['space:spc_new', 'spaces', 'space:spc_new:members']);
   assert.equal(db.prepare('SELECT id FROM spaces WHERE id = ?').get('spc_new'), undefined);
   db.close();
 });

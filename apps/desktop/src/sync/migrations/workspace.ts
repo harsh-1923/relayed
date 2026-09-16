@@ -762,4 +762,38 @@ export const workspaceMigrations: readonly Migration[] = [
       CREATE UNIQUE INDEX actor_handle ON actors(workspace_id, handle);
     `,
   },
+  {
+    version: 20,
+    name: 'space_rosters',
+    // Who is in a space, for everyone in it (SPACE-MEMBERSHIP-MARKERS.md,
+    // rosters). A snapshot per space, kept current by the membership events on
+    // that space's own stream — the directory's shape, one space at a time.
+    //
+    // NOT `memberships`. That table is this person's own grants, which `can()`
+    // reads; somebody else's row in it would be a grant nobody holds.
+    //
+    // `space_rosters` says which lists are held: `loading` while pages arrive
+    // (and after a gap, until they arrive again), `complete` once the last has.
+    // `dirty` is a membership event applied mid-load: the pages may predate it,
+    // so the list is fetched once more rather than trusted.
+    //
+    // `member_count` is on the space row because `welcome` carries it for every
+    // joined space, list held or not.
+    up: `
+      CREATE TABLE space_members (
+        space_id  TEXT    NOT NULL,
+        actor_id  TEXT    NOT NULL,
+        role      TEXT    NOT NULL,
+        joined_at INTEGER NOT NULL,
+        PRIMARY KEY (space_id, actor_id)
+      );
+      CREATE TABLE space_rosters (
+        space_id TEXT    PRIMARY KEY,
+        state    TEXT    NOT NULL,
+        dirty    INTEGER NOT NULL DEFAULT 0,
+        CHECK (state IN ('loading','complete'))
+      );
+      ALTER TABLE spaces ADD COLUMN member_count INTEGER;
+    `,
+  },
 ];

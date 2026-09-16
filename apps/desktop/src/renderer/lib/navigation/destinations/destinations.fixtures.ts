@@ -19,6 +19,7 @@ export const space = (
   createdByActorId: null,
   onBehalfOfActorId: null,
   memberIds: null,
+  memberCount: null,
   chats: options.hydrated === false ? [] : [chat(id, kind === 'room' ? 'default' : 'sole')],
 });
 

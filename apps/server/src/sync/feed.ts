@@ -335,12 +335,13 @@ async function snapshotOf(db: Kysely<DB>, readerId: string, stream: Stream): Pro
           id: space.id, kind: space.kind, name: space.name, slug: space.slug,
           visibility: space.visibility, membershipPolicy: space.membership_policy,
           lifecycle: space.lifecycle, createdByActorId: space.created_by_actor_id,
-          onBehalfOfActorId: space.on_behalf_of_actor_id, memberIds: dmMembers(space.dm_key), rev: space.next_rev,
+          onBehalfOfActorId: space.on_behalf_of_actor_id, memberIds: dmMembers(space.dm_key),
+          memberCount: members.length, rev: space.next_rev,
         }
       : {
           id: stream.id, kind: 'channel', name: null, slug: null,
           visibility: null, membershipPolicy: 'invite', lifecycle: 'archived',
-          createdByActorId: null, onBehalfOfActorId: null, memberIds: null, rev: 0,
+          createdByActorId: null, onBehalfOfActorId: null, memberIds: null, memberCount: 0, rev: 0,
         },
     chats: chats.map(chat => ({
       id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
@@ -533,6 +534,8 @@ export interface WelcomeSpace {
   onBehalfOfActorId: string | null;
   /** Who a DM or group DM is between. Null for every other kind. */
   memberIds: string[] | null;
+  /** How many actors are in it — a number, never the list (invariant 71). */
+  memberCount: number;
   rev: number;
 }
 
@@ -689,13 +692,22 @@ async function welcomeSpaces(db: Kysely<DB>, actorId: string): Promise<WelcomeSp
     .select(['spaces.id', 'spaces.kind', 'spaces.name', 'spaces.slug',
              'spaces.visibility', 'spaces.membership_policy', 'spaces.lifecycle',
              'spaces.created_by_actor_id', 'spaces.on_behalf_of_actor_id', 'spaces.dm_key', 'spaces.next_rev'])
+    // Still one statement: a correlated count per joined space, on the
+    // membership primary key.
+    .select(eb => eb.selectFrom('memberships as m')
+      .select(eb.fn.countAll<number>().as('n'))
+      .whereRef('m.scope_id', '=', 'spaces.id')
+      .where('m.scope_type', '=', 'space')
+      .where('m.left_at', 'is', null)
+      .as('member_count'))
     .execute();
 
   return rows.map(row => ({
     id: row.id, kind: row.kind, name: row.name, slug: row.slug,
     visibility: row.visibility, membershipPolicy: row.membership_policy,
     lifecycle: row.lifecycle, createdByActorId: row.created_by_actor_id,
-    onBehalfOfActorId: row.on_behalf_of_actor_id, memberIds: dmMembers(row.dm_key), rev: row.next_rev,
+    onBehalfOfActorId: row.on_behalf_of_actor_id, memberIds: dmMembers(row.dm_key),
+    memberCount: Number(row.member_count ?? 0), rev: row.next_rev,
   }));
 }
 
@@ -824,6 +836,62 @@ export interface DirectoryPage {
 
 /** How many actors ride in one directory page. Four pages at 1,600 members. */
 export const DIRECTORY_PAGE = 500;
+export const ROSTER_PAGE = 500;
+
+export interface RosterPage {
+  /** The spaces asked about that the caller may read. */
+  spaceIds: string[];
+  rows: { spaceId: string; actorId: string; role: string; joinedAt: number }[];
+  nextAfter: { spaceId: string; actorId: string } | null;
+  complete: boolean;
+}
+
+/**
+ * One page of who is in some spaces (SPACE-MEMBERSHIP-MARKERS.md, rosters).
+ *
+ * Only spaces the caller is IN are answered: a roster is something every
+ * member is entitled to, which is what lets it ride the space stream at all,
+ * and a space id in a request is not evidence of membership. Two statements
+ * however many spaces are asked about.
+ */
+export async function rosterPage(
+  db: Kysely<DB>, actorId: string, spaceIds: readonly string[],
+  after: { spaceId: string; actorId: string } | null = null, limit = ROSTER_PAGE,
+): Promise<RosterPage> {
+  if (spaceIds.length === 0) return { spaceIds: [], rows: [], nextAfter: null, complete: true };
+  const allowed = (await db.selectFrom('memberships').select('scope_id')
+    .where('scope_type', '=', 'space').where('actor_id', '=', actorId)
+    .where('left_at', 'is', null).where('scope_id', 'in', [...spaceIds])
+    .execute()).map(row => row.scope_id).sort();
+  if (allowed.length === 0) return { spaceIds: [], rows: [], nextAfter: null, complete: true };
+
+  let query = db.selectFrom('memberships')
+    .select(['scope_id', 'actor_id', 'role', 'joined_at'])
+    .where('scope_type', '=', 'space').where('left_at', 'is', null)
+    .where('scope_id', 'in', allowed)
+    .orderBy('scope_id').orderBy('actor_id')
+    .limit(limit);
+  if (after) {
+    query = query.where(eb => eb.or([
+      eb('scope_id', '>', after.spaceId),
+      eb.and([eb('scope_id', '=', after.spaceId), eb('actor_id', '>', after.actorId)]),
+    ]));
+  }
+  const rows = await query.execute();
+  const last = rows.at(-1);
+  const full = rows.length === limit;
+  return {
+    spaceIds: allowed,
+    rows: rows.map(row => ({
+      spaceId: row.scope_id, actorId: row.actor_id, role: row.role,
+      joinedAt: new Date(row.joined_at as unknown as string).getTime(),
+    })),
+    // Derived from the page being short, as the directory's is, so a client
+    // cannot be told to keep paging into nothing.
+    nextAfter: full && last ? { spaceId: last.scope_id, actorId: last.actor_id } : null,
+    complete: !full,
+  };
+}
 
 /**
  * One page of the workspace directory, keyset on actor id.

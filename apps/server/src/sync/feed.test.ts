@@ -20,7 +20,7 @@ import {
 } from './spaces.ts';
 import { send, deleteMessage, markRead, writeMessage, MessageNotFoundError } from './ops.ts';
 import {
-  head, catchup, backfill, repair, threadReplies, counters, welcome, eventsSince,
+  head, catchup, backfill, repair, threadReplies, counters, welcome, eventsSince, rosterPage,
   GAP_THRESHOLD, REPLAY_LIMIT, type MessageRow,
 } from './feed.ts';
 import { chatStream } from './events.ts';
@@ -876,6 +876,53 @@ test('SPIKE §6.6: removal freezes a chat — it leaves welcome, and re-add rest
 
   const back = (await welcome(db, wsp, bob)).chats.find(c => c.chatId === chatId);
   assert.equal(back?.headRev, 5, 'and re-adding is exactly a gap: the head moved on');
+});
+
+// ── rosters ─────────────────────────────────────────────────────────────────
+
+test('welcome says how many are in each space, and never who', opts, async () => {
+  const { spaceId } = await channel();
+  const space = (await welcome(db, wsp, me)).spaces.find(row => row.id === spaceId);
+  assert.equal(space?.memberCount, 2);
+  assert.equal(space?.memberIds, null, 'a channel carries a count, not a list');
+
+  await leaveSpace(db, spaceId, bob);
+  assert.equal((await welcome(db, wsp, me)).spaces.find(row => row.id === spaceId)?.memberCount, 1,
+    'somebody who left is not counted');
+});
+
+test('a roster pages several spaces by (space, actor), and a space is done once the page moves past it',
+  opts, async () => {
+  const first = await channel();
+  const second = await channel();
+  const all: { spaceId: string; actorId: string }[] = [];
+  let after: { spaceId: string; actorId: string } | null = null;
+  for (let page = 0; page < 10; page++) {
+    const got = await rosterPage(db, me, [first.spaceId, second.spaceId], after, 1);
+    assert.deepEqual(got.spaceIds, [first.spaceId, second.spaceId].sort());
+    all.push(...got.rows.map(row => ({ spaceId: row.spaceId, actorId: row.actorId })));
+    if (got.complete) break;
+    after = got.nextAfter;
+  }
+  const expected = [first.spaceId, second.spaceId].flatMap(spaceId => [me, bob].map(actorId => ({ spaceId, actorId })))
+    .sort((a, b) => a.spaceId.localeCompare(b.spaceId) || a.actorId.localeCompare(b.actorId));
+  assert.deepEqual(all, expected, 'every member of every space, once, in order');
+
+  const roles = await rosterPage(db, me, [first.spaceId]);
+  assert.equal(roles.rows.find(row => row.actorId === me)?.role, 'admin');
+  assert.equal(roles.rows.find(row => row.actorId === bob)?.role, 'member');
+  assert.ok(roles.complete);
+});
+
+test('a roster answers only for spaces the caller is in, and leaves out who left', opts, async () => {
+  const { spaceId } = await channel();
+  const refused = await rosterPage(db, stranger, [spaceId]);
+  assert.deepEqual(refused, { spaceIds: [], rows: [], nextAfter: null, complete: true },
+    'a space id in a request is not evidence of membership');
+
+  await leaveSpace(db, spaceId, bob);
+  const left = await rosterPage(db, me, [spaceId]);
+  assert.deepEqual(left.rows.map(row => row.actorId), [me]);
 });
 
 test('the replay limit and the gap threshold cannot drift apart', opts, () => {

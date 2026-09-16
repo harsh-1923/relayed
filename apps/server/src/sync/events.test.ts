@@ -383,7 +383,7 @@ test('a rolled back transaction leaves neither the effect nor the event',
         { actor_id: bob, role: 'member', by_actor_id: me,
           hydration: { space: { id: spaceId, kind: 'channel', name: null, slug: null,
                                  visibility: null, membership_policy: 'open', lifecycle: 'active',
-                                 created_by_actor_id: me, on_behalf_of_actor_id: null, member_ids: null, rev: 1 },
+                                 created_by_actor_id: me, on_behalf_of_actor_id: null, member_ids: null, member_count: 1, rev: 1 },
                        chats: [] } },
         { kind: 'stream' });
       throw new Error('the effect failed after the event was written');

@@ -319,13 +319,34 @@ export const AgentDefinitionRequest = z.object({
 });
 export type AgentDefinitionRequest = z.infer<typeof AgentDefinitionRequest>;
 
+/**
+ * Who is in some spaces, as a paged snapshot (SPACE-MEMBERSHIP-MARKERS.md,
+ * rosters).
+ *
+ * The same shape as the directory: a snapshot read once per space, kept
+ * current afterwards by the membership events on each space's own stream. Only
+ * ids and roles — who an actor IS comes from the directory the client already
+ * holds.
+ *
+ * Several spaces at once, because the spaces a client fetches eagerly (rooms,
+ * group messages) are small and many. Keyset on (space, actor): pages cannot
+ * skip or repeat when somebody joins mid-fetch.
+ */
+export const RosterRequest = z.object({
+  space_ids: z.array(z.string().min(1)).min(1).max(50),
+  /** Absent for the first page; the last page's `next_after` afterwards. */
+  after: z.object({ space_id: z.string(), actor_id: z.string() }).nullable().optional(),
+  limit: z.number().int().positive().max(1000).optional(),
+});
+export type RosterRequest = z.infer<typeof RosterRequest>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
   catchup: CatchupRequest, backfill: BackfillRequest,
   repair: RepairRequest, thread: ThreadRequest,
   directory: DirectoryRequest, op: OpFrame,
-  agent_definition: AgentDefinitionRequest,
+  agent_definition: AgentDefinitionRequest, roster: RosterRequest,
 };
 
 // ─── Server → client ────────────────────────────────────────────────────────
@@ -449,6 +470,13 @@ export const Welcome = z.object({
     on_behalf_of_actor_id: z.string().nullable().optional(),
     /** Who a DM or group DM is between — what a client names it by. Null for every other kind; absent from an older server. */
     member_ids: z.array(z.string()).nullable().optional(),
+    /**
+     * How many people and agents are in it. One number per joined space, so
+     * the frame still grows with the actor rather than the workspace
+     * (invariant 71) — and a client can say "128 members", and decide whether
+     * to fetch the list, without holding it. Absent from an older server.
+     */
+    member_count: z.number().int().nonnegative().optional(),
     rev: z.number().int().nonnegative(),
   })).optional(),
 
@@ -842,6 +870,28 @@ export const AgentActivity = z.object({
 });
 export type AgentActivity = z.infer<typeof AgentActivity>;
 
+/**
+ * One page of rosters, for the spaces the request named that the caller may
+ * read — `space_ids` echoes exactly those, so a space missing from it was
+ * refused and its request should not be repeated.
+ *
+ * Rows are ordered by (space, actor). A space whose id is below
+ * `next_after.space_id` is complete, and every space is complete once
+ * `complete` is true — the client needs no count to know.
+ */
+export const RosterOk = z.object({
+  space_ids: z.array(z.string()),
+  rows: z.array(z.object({
+    space_id: z.string(),
+    actor_id: z.string(),
+    role: z.string(),
+    joined_at: z.number().int(),
+  })),
+  next_after: z.object({ space_id: z.string(), actor_id: z.string() }).nullable(),
+  complete: z.boolean(),
+});
+export type RosterOk = z.infer<typeof RosterOk>;
+
 export const OUTBOUND: Bodies = {
   welcome: Welcome, pong: Pong, too_old: TooOld, ev: Ev,
   catchup_ok: CatchupOk, gap: Gap, backfill_ok: BackfillOk,
@@ -849,6 +899,7 @@ export const OUTBOUND: Bodies = {
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
   agent_definition_ok: AgentDefinitionOk, agent_activity: AgentActivity,
   connections: ConnectionsPush, agent_permissions: AgentPermissionsPush,
+  roster_ok: RosterOk,
 };
 
 /**

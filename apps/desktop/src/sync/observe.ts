@@ -142,6 +142,13 @@ function dispatch(name: string, detail: Record<string, unknown>): void {
       count('directory.synced', { result: 'error' });
       return;
 
+    // ── space rosters ───────────────────────────────────────────────────────
+    case 'sync.roster.page':
+    case 'sync.roster.timeout':
+      // Traced, not counted: the `sync.roster.hydrate` span holds how long a
+      // fetch took, and a timeout ends it early. A failure is `sync.failed`.
+      return;
+
     // ── the write path ──────────────────────────────────────────────────────
     //
     // Counted on the way OUT, never on the way in. An enqueue counter and a
@@ -226,9 +233,9 @@ const opOf = (detail: Record<string, unknown>): 'send' | 'delete' =>
   detail['kind'] === 'delete' ? 'delete' : 'send';
 
 const STAGES = new Set(
-  ['frame', 'apply', 'catchup', 'directory', 'drain', 'welcome'] as const);
+  ['frame', 'apply', 'catchup', 'directory', 'roster', 'drain', 'welcome'] as const);
 
-type Stage = 'frame' | 'apply' | 'catchup' | 'directory' | 'drain' | 'welcome';
+type Stage = 'frame' | 'apply' | 'catchup' | 'directory' | 'roster' | 'drain' | 'welcome';
 
 /** Narrow a stage, falling back to `frame`. Same rule as every other label. */
 const stageOf = (value: unknown): Stage =>

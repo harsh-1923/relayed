@@ -883,7 +883,7 @@ test('a space reads by id in the same shape the sidebar lists, and a DM is given
   const eng = storage.space('spc_eng');
   assert.deepEqual(eng, {
     id: 'spc_eng', kind: 'channel', name: 'engineering', slug: 'engineering', visibility: 'public',
-    createdByActorId: null, onBehalfOfActorId: null, memberIds: null,
+    createdByActorId: null, onBehalfOfActorId: null, memberIds: null, memberCount: null,
     chats: [{ id: 'cht_eng', spaceId: 'spc_eng', kind: 'sole', name: null, unread: 0, mentions: 0 }],
   });
   assert.deepEqual(storage.spaces().find(space => space.id === 'spc_eng'), eng, 'one shape for the list and the single read');

@@ -96,6 +96,11 @@ function dispatch(name: string, detail: Record<string, unknown>): void {
       // hangs on says how long the page took, which is the part we do not.
       return;
 
+    case 'sync.roster.page':
+      // Traced, not counted, for the directory's reason: the span says how
+      // long a page took, and pages per roster is a number we already hold.
+      return;
+
     // ── the error boundary ──────────────────────────────────────────────────
     case 'sync.failed':
       // Both signals, and they answer different questions. The counter says

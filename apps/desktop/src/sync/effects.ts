@@ -15,6 +15,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { WITHHELD_EVENT } from '@relayed/protocol';
 import { topic } from '../shared/topics.ts';
 import type { Effect, Stream, Envelope } from './apply.ts';
+import { applyMemberEvent } from './roster.ts';
 
 interface ActorChanged {
   id: string; type: string; handle: string; display_name: string;
@@ -108,6 +109,8 @@ interface SpaceMemberAddedHydration {
     /** Absent from a server that predates them. */
     created_by_actor_id?: string | null; on_behalf_of_actor_id?: string | null;
     member_ids?: string[] | null;
+    /** Absent from a server that predates it. */
+    member_count?: number;
     rev: number;
   };
   chats: {
@@ -211,7 +214,11 @@ export function replicaEffect(
       // added member sees it without reconnecting.
       case 'space.member_added':
         return spaceMemberAdded(db, stream, event, activeActorId?.() ?? null);
-      case 'space.member_removed':
+      case 'space.member_removed': {
+        const { actor_id: removed } = event.payload as { actor_id: string };
+        applyMemberEvent(db, stream.id, { removed });
+        return [topic.space(stream.id), topic.spaces(), topic.spaceMembers(stream.id)];
+      }
       case 'space.created':
       case 'chat.created':
         return [topic.space(stream.id), topic.spaces()];
@@ -317,9 +324,12 @@ function spaceMemberAdded(
   db: DatabaseSync, stream: Stream, event: Envelope, activeActorId: string | null,
 ): string[] {
   const body = event.payload as SpaceMemberAdded;
+  // Everyone's copy of the list, the added actor's own included: a list held
+  // or loading takes the change, and one never fetched is untouched.
+  applyMemberEvent(db, stream.id, { added: { actorId: body.actor_id, role: body.role } });
 
   if (body.actor_id !== activeActorId || !body.hydration) {
-    return [topic.space(stream.id), topic.spaces()];
+    return [topic.space(stream.id), topic.spaces(), topic.spaceMembers(stream.id)];
   }
   const { space, chats } = body.hydration;
   const now = Date.now();
@@ -327,8 +337,8 @@ function spaceMemberAdded(
   db.prepare(`
     INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
                         membership_policy, lifecycle, created_by_actor_id, on_behalf_of_actor_id,
-                        member_ids, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        member_ids, member_count, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       kind = excluded.kind, name = excluded.name, slug = excluded.slug,
       visibility = excluded.visibility,
@@ -337,11 +347,12 @@ function spaceMemberAdded(
       created_by_actor_id = excluded.created_by_actor_id,
       on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
       member_ids = excluded.member_ids,
+      member_count = COALESCE(excluded.member_count, spaces.member_count),
       updated_at = excluded.updated_at
   `).run(space.id, stream.id, space.kind, space.name, space.slug,
          space.visibility, space.membership_policy, space.lifecycle,
          space.created_by_actor_id ?? null, space.on_behalf_of_actor_id ?? null,
-         space.member_ids ? JSON.stringify(space.member_ids) : null, now, now);
+         space.member_ids ? JSON.stringify(space.member_ids) : null, space.member_count ?? null, now, now);
 
   const chat = db.prepare(`
     INSERT INTO chats (id, workspace_id, space_id, kind, name, created_at, updated_at)
@@ -376,7 +387,7 @@ function spaceMemberAdded(
       role = excluded.role, left_at = NULL
   `).run(space.id, activeActorId, body.role, now);
 
-  return [topic.space(stream.id), topic.spaces(), topic.panels(stream.id)];
+  return [topic.space(stream.id), topic.spaces(), topic.panels(stream.id), topic.spaceMembers(stream.id)];
 }
 
 function messageDeleted(db: DatabaseSync, stream: Stream, event: Envelope): string[] {

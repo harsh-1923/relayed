@@ -147,7 +147,7 @@ test('a local room reads as a space, in the replica\'s shape, with its settings 
   const { spaceId, chatId } = store.createRoom({ cwd: root, name: 'Flaky test' });
 
   assert.deepEqual(store.space(spaceId), {
-    id: spaceId, kind: 'room', name: 'Flaky test', slug: null, visibility: 'private', createdByActorId: null, onBehalfOfActorId: null, memberIds: null,
+    id: spaceId, kind: 'room', name: 'Flaky test', slug: null, visibility: 'private', createdByActorId: null, onBehalfOfActorId: null, memberIds: null, memberCount: null,
     chats: [{ id: chatId, spaceId, kind: 'default', name: null, unread: 0, mentions: 0 }],
   });
   const settings = store.roomSettings(spaceId);

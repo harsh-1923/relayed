@@ -2,7 +2,7 @@ import type { StoredPart } from '@relayed/protocol';
 import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
 import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 import type { AgentActivity } from '../shared/agent-activity.ts';
-import type { Space } from '../shared/spaces.ts';
+import type { Space, SpaceRoster } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
 import type { Document } from '../shared/documents.ts';
@@ -14,7 +14,7 @@ export type {
 } from '../shared/claude.ts';
 export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 export type { AgentActivity } from '../shared/agent-activity.ts';
-export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
+export type { Space, SpaceChat, SpaceMember, SpaceRoster, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
 export type { Document } from '../shared/documents.ts';
 export type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
@@ -330,6 +330,11 @@ export interface RelayedApi {
   query(op: "spaces.list"): Promise<Space[]>;
   /** One space and its chats: one row, or none when this replica does not hold it. */
   query(op: "space.get", params: { spaceId: string }): Promise<Space[]>;
+  /**
+   * Who is in a space, as this device holds it — one row. A list not held yet
+   * is asked for by the read itself, and the read wakes when it lands.
+   */
+  query(op: "space.members", params: { spaceId: string }): Promise<SpaceRoster[]>;
   /** One synced room's shared panels (PANELS.md). */
   query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** One space's documents — a room's running summary (DOCUMENTS.md). */

@@ -661,9 +661,15 @@ async function hydrationSnapshot(
   const panels = space.kind === 'room' ? await roomPanels(trx, [spaceId]) : [];
   const documents = await spaceDocuments(trx, [spaceId]);
 
+  const count = await trx.selectFrom('memberships')
+    .select(eb => eb.fn.countAll<number>().as('n'))
+    .where('scope_type', '=', 'space').where('scope_id', '=', spaceId)
+    .where('left_at', 'is', null)
+    .executeTakeFirstOrThrow();
+
   const { dm_key: key, ...row } = space;
   return {
-    space: { ...row, member_ids: dmMembers(key), rev: spaceRev },
+    space: { ...row, member_ids: dmMembers(key), member_count: Number(count.n), rev: spaceRev },
     chats: chats.map(chat => ({
       id: chat.id, space_id: chat.space_id, kind: chat.kind, name: chat.name,
       head_ord: chat.next_ord, head_rev: chat.next_rev,

@@ -204,6 +204,8 @@ export interface SpaceMemberAdded {
       visibility: string | null; membership_policy: string; lifecycle: string;
       created_by_actor_id: string | null; on_behalf_of_actor_id: string | null;
       member_ids: string[] | null;
+      /** Who is in it now, this addition included. */
+      member_count: number;
       rev: number;
     };
     chats: {

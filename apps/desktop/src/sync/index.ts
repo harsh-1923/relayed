@@ -375,7 +375,7 @@ const link = createLink({
         visibility: space.visibility, membershipPolicy: space.membership_policy,
         lifecycle: space.lifecycle, createdByActorId: space.created_by_actor_id ?? null,
         onBehalfOfActorId: space.on_behalf_of_actor_id ?? null, memberIds: space.member_ids ?? null,
-        rev: space.rev,
+        memberCount: space.member_count ?? null, rev: space.rev,
       })),
       chats: (body.chats ?? []).map(chat => ({
         id: chat.id, spaceId: chat.space_id, kind: chat.kind, name: chat.name,
@@ -663,6 +663,18 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   'panels.list': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     return spaceId && storage.hasWorkspace ? storage.panels(spaceId) : [];
+  },
+  /**
+   * Who is in a space, held here. A list not held is ASKED FOR by this read:
+   * the renderer only ever reads, and the sync process decides to fetch — the
+   * directory's rule (SPACE-MEMBERSHIP-MARKERS.md, rosters).
+   */
+  'space.members': (params) => {
+    const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+    if (!spaceId || !storage.hasWorkspace) return [];
+    const roster = storage.spaceRoster(spaceId);
+    if (roster.state === 'none') link.wantRoster(spaceId);
+    return [roster];
   },
   'space.get': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;

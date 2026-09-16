@@ -22,7 +22,8 @@ import { applyPreferences, readPreferences, writePreference, type PreferenceChan
 import { isKeybindingKey, isPreferenceKey, isWritablePreferenceKey, specOf, type PreferenceRow } from '../shared/prefs.ts';
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
-import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
+import { spaceName, type Space, type SpaceChat, type SpaceRoster } from '../shared/spaces.ts';
+import { readRoster } from './roster.ts';
 import type { Panel } from '../shared/panels.ts';
 import type { Document } from '../shared/documents.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
@@ -269,6 +270,8 @@ export interface WelcomePayload {
     visibility: string | null; membershipPolicy: string; lifecycle: string;
     createdByActorId: string | null; onBehalfOfActorId: string | null;
     memberIds: string[] | null;
+    /** Absent from a server that predates it; the stored count is then left alone. */
+    memberCount?: number | null;
     rev: number;
   }[];
   chats: {
@@ -660,8 +663,8 @@ export class Storage {
       const space = db.prepare(`
         INSERT INTO spaces (id, workspace_id, kind, name, slug, visibility,
                             membership_policy, lifecycle, created_by_actor_id, on_behalf_of_actor_id,
-                            member_ids, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            member_ids, member_count, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           kind = excluded.kind, name = excluded.name, slug = excluded.slug,
           visibility = excluded.visibility,
@@ -670,13 +673,14 @@ export class Storage {
           created_by_actor_id = excluded.created_by_actor_id,
           on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
           member_ids = excluded.member_ids,
+          member_count = COALESCE(excluded.member_count, spaces.member_count),
           updated_at = excluded.updated_at
       `);
       for (const row of payload.spaces) {
         space.run(row.id, workspaceId, row.kind, row.name, row.slug,
                   row.visibility, row.membershipPolicy, row.lifecycle,
                   row.createdByActorId, row.onBehalfOfActorId,
-                  row.memberIds ? JSON.stringify(row.memberIds) : null, now, now);
+                  row.memberIds ? JSON.stringify(row.memberIds) : null, row.memberCount ?? null, now, now);
       }
 
       const chat = db.prepare(`
@@ -956,13 +960,19 @@ export class Storage {
     return this.#readSpaces(spaceId)[0] ?? null;
   }
 
+  /** Who is in a space, as this device holds it (SPACE-MEMBERSHIP-MARKERS.md, rosters). */
+  spaceRoster(spaceId: string): SpaceRoster {
+    return readRoster(this.workspace, spaceId);
+  }
+
   #readSpaces(spaceId: string | null): Space[] {
     const spaces = this.workspace.prepare(`
-      SELECT id, kind, name, slug, visibility, created_by_actor_id, on_behalf_of_actor_id, member_ids
+      SELECT id, kind, name, slug, visibility, created_by_actor_id, on_behalf_of_actor_id, member_ids, member_count
         FROM spaces WHERE lifecycle = 'active' AND (?1 IS NULL OR id = ?1) ORDER BY name
     `).all(spaceId) as {
       id: string; kind: string; name: string | null; slug: string | null; visibility: string | null;
       created_by_actor_id: string | null; on_behalf_of_actor_id: string | null; member_ids: string | null;
+      member_count: number | null;
     }[];
 
     // A DM is named by the other people in it, from the directory this replica
@@ -1004,6 +1014,7 @@ export class Storage {
       createdByActorId: space.created_by_actor_id,
       onBehalfOfActorId: space.on_behalf_of_actor_id,
       memberIds: membersOf(space),
+      memberCount: space.member_count === null ? null : Number(space.member_count),
       chats: chats
         .filter(chat => chat.space_id === space.id)
         .map((chat): SpaceChat => ({

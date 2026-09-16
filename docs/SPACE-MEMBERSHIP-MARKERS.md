@@ -273,6 +273,58 @@ is written into the replica by the sync process. The renderer still reads only
 SQLite. Do not broaden `welcome` to every workspace membership; that has the
 members-by-spaces shape the existing design rejects.
 
+**Built — see [Rosters](#rosters).** The picker now leaves out a space's
+members once this device holds its list.
+
+## Rosters
+
+Who is in a space, held on the device the way the directory is: a **paged
+snapshot per space, then the membership events on that space's own stream**.
+A reconnect replays those events from the space's cursor like any other, so a
+list is fetched again only after a gap.
+
+**Wire.**
+- `welcome` carries `member_count` on each joined space — one number per space,
+  so the frame still grows with the actor (invariant 71). It is also on the
+  `space.member_added` hydration and the space gap snapshot.
+- `roster { space_ids ≤ 50, after }` → `roster_ok { space_ids, rows, next_after,
+  complete }` (`rosterPage`, `apps/server/src/sync/feed.ts`). Rows are
+  `(space_id, actor_id, role, joined_at)`, keyset-paged on `(space, actor)`.
+  Only spaces the caller is in are answered; `space_ids` echoes those, so a
+  space missing from it was refused. A space below `next_after.space_id` is
+  complete, and all are once `complete` is true.
+
+**Replica** (workspace migration 20, `apps/desktop/src/sync/roster.ts`).
+- `space_members (space_id, actor_id, role, joined_at)` — never `memberships`,
+  which is this person's own grants.
+- `space_rosters (space_id, state, dirty)` — `loading` while pages arrive,
+  `complete` after. `dirty` is a membership event applied mid-load: the pages
+  may predate it, so the list is fetched again (at most twice more, then kept
+  with its events applied).
+- `spaces.member_count` — the server's count, replaced by the held list's own
+  count once complete.
+
+**What is fetched, when.** Rooms and group DMs as soon as `welcome` lands, and
+channels of up to 200 members. A larger channel only when a surface reads its
+list (`space.members`), after which it is held and kept current like the rest.
+A DM needs none: `member_ids` is on its row. The worker (`fetchRosters`,
+`link.ts`) drains everything owed a batch at a time, and re-reads what is owed
+after each batch; a list still `loading` when the socket drops resumes on the
+next `welcome`.
+
+**Events.** `space.member_added` and `space.member_removed` update a held or
+loading list and leave one never fetched alone. A gap on a space stream sends a
+held list back to `loading`.
+
+**Reading.** `useSpaceMembers(spaceId)` (`renderer/lib/space-members.ts`) reads
+`space.members`: `{ state, count, members }`, owners and admins first, then by
+name. Reading a list that is not held asks the sync process to fetch it — the
+renderer still only reads SQLite. Who each member is comes from `useActor`.
+
+**Not built.** Role changes have no event yet (nothing changes a role), so a
+promotion reaches other devices only through a gap. Private chat members will
+follow the same shape on the chat stream.
+
 ## Server implementation
 
 `apps/server/src/sync/spaces.ts`

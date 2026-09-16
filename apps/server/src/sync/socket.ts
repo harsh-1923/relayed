@@ -18,7 +18,7 @@ import type { Kysely } from 'kysely';
 import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
   type Hello, type CatchupRequest, type BackfillRequest, type RepairRequest,
-  type ThreadRequest, type DirectoryRequest, type AgentDefinitionRequest,
+  type ThreadRequest, type DirectoryRequest, type AgentDefinitionRequest, type RosterRequest,
   type OpFrame, type Ping,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
@@ -30,7 +30,7 @@ import { Registry, type Delivery } from './registry.ts';
 import { fanout, type FanoutResult } from './fanout.ts';
 import { parseStream, type AppendedEvent, type Stream } from './events.ts';
 import {
-  welcome, catchup, backfill, repair, threadReplies, streamHead, directoryPage,
+  welcome, catchup, backfill, repair, threadReplies, streamHead, directoryPage, rosterPage,
   type Snapshot, type MessageRow,
 } from './feed.ts';
 import { send, deleteMessage, MessageNotFoundError, PartsRefusedError } from './ops.ts';
@@ -301,6 +301,11 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
                       { parent });
       return;
     }
+    if (read.t === 'roster') {
+      await startSpan('sync.roster', () => onRoster(state, read.body as RosterRequest),
+                      { parent });
+      return;
+    }
     if (read.t === 'op') {
       await startSpan('sync.op', () => onOp(state, read.body as OpFrame), { parent });
       return;
@@ -516,6 +521,29 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
   }
 
   /**
+   * One page of who is in some spaces. Answered as the connection's actor, and
+   * only for spaces that actor is in; `space_ids` says which those were.
+   */
+  async function onRoster(state: ConnectionState, request: RosterRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    const page = await rosterPage(
+      deps.db, claims.actorId, request.space_ids,
+      request.after ? { spaceId: request.after.space_id, actorId: request.after.actor_id } : null,
+      request.limit,
+    );
+    note('sync.roster.page', { rows: page.rows.length });
+    state.send('roster_ok', {
+      space_ids: page.spaceIds,
+      rows: page.rows.map(row => ({
+        space_id: row.spaceId, actor_id: row.actorId, role: row.role, joined_at: row.joinedAt,
+      })),
+      next_after: page.nextAfter ? { space_id: page.nextAfter.spaceId, actor_id: page.nextAfter.actorId } : null,
+      complete: page.complete,
+    });
+  }
+
+  /**
    * What an agent was told (WORKSPACE-AGENTS.md §4.5), for anyone in its
    * workspace. Answered as the connection's actor — never a workspace or an
    * actor named in the request — and with `found: false` rather than silence
@@ -709,7 +737,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
         id: space.id, kind: space.kind, name: space.name, slug: space.slug,
         visibility: space.visibility, membership_policy: space.membershipPolicy,
         lifecycle: space.lifecycle, created_by_actor_id: space.createdByActorId,
-        on_behalf_of_actor_id: space.onBehalfOfActorId, member_ids: space.memberIds, rev: space.rev,
+        on_behalf_of_actor_id: space.onBehalfOfActorId, member_ids: space.memberIds,
+        member_count: space.memberCount, rev: space.rev,
       })),
       chats: payload.chats.map(chat => ({
         id: chat.chatId, space_id: chat.spaceId, kind: chat.kind, name: chat.name,
@@ -922,7 +951,7 @@ function onWire(snapshot: Snapshot): Record<string, unknown> {
         membership_policy: snapshot.space.membershipPolicy,
         lifecycle: snapshot.space.lifecycle, created_by_actor_id: snapshot.space.createdByActorId,
         on_behalf_of_actor_id: snapshot.space.onBehalfOfActorId, member_ids: snapshot.space.memberIds,
-        rev: snapshot.space.rev,
+        member_count: snapshot.space.memberCount, rev: snapshot.space.rev,
       },
       chats: snapshot.chats.map(chat => ({
         id: chat.id, space_id: chat.spaceId, kind: chat.kind, name: chat.name,

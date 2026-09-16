@@ -36,7 +36,28 @@ export interface Space {
   onBehalfOfActorId: string | null;
   /** Who a DM or group DM is between, you included. Null for every other kind. */
   memberIds: string[] | null;
+  /** How many are in it, from the server. Null for a local room and before a server sent it. */
+  memberCount: number | null;
   chats: SpaceChat[];
+}
+
+/** One member of a space. Who they are is the directory's to say (`useActor`). */
+export interface SpaceMember {
+  actorId: string;
+  role: string;
+  joinedAt: number;
+}
+
+/**
+ * A space's member list as this device holds it. `none` and `loading` both
+ * mean "not yet": a read of `none` asks for it, so a surface only ever waits.
+ */
+export interface SpaceRoster {
+  state: 'none' | 'loading' | 'complete';
+  /** The server's count, even while the list itself is not held. */
+  count: number | null;
+  /** Owners and admins first, then by name. Empty unless `complete`. */
+  members: SpaceMember[];
 }
 
 /**

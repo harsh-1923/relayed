@@ -10,7 +10,7 @@
 // everywhere else. Nothing to remember.
 import type {
   AgentPermissionRow, ClaudeCommand, ClaudeStatus, ComposerDraft, ConnectionRow, LocalRoom, LocalRoomSettings,
-  Document, PendingApproval, ReplicaActor, ReplicaMessage, Panel, ToolkitLogo, PanelMetaRow, PreferenceRow, Space,
+  Document, PendingApproval, ReplicaActor, ReplicaMessage, Panel, ToolkitLogo, PanelMetaRow, PreferenceRow, Space, SpaceRoster,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -19,6 +19,7 @@ export interface Queries {
   'actors.list': { args: undefined; rows: ReplicaActor[] };
   'spaces.list': { args: undefined; rows: Space[] };
   'space.get': { args: { spaceId: string }; rows: Space[] };
+  'space.members': { args: { spaceId: string }; rows: SpaceRoster[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'prefs.list': { args: undefined; rows: PreferenceRow[] };
   'claude.status': { args: undefined; rows: ClaudeStatus[] };
@@ -54,6 +55,10 @@ export const TOPICS: TopicsFor = {
   // `spaces` as well as the space's own topic: a rename or a new chat arrives
   // on the space stream, which invalidates both.
   'space.get': ({ spaceId }) => [topic.space(spaceId), topic.spaces(), topic.actors()],
+  // The list's own topic, and `space:<id>` covers it by prefix — a count that
+  // moved arrives there. `actors` because members are ordered by name, and
+  // `spaces` because `welcome` rewrites every count.
+  'space.members': ({ spaceId }) => [topic.spaceMembers(spaceId), topic.spaces(), topic.actors()],
   // Only this chat's messages. `chatState` is NOT here: a read cursor moving
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.

@@ -118,10 +118,10 @@ export interface LabelValues {
    */
   version: string;
   /**
-   * Where the engine threw. Six places, because they are six different bugs:
-   * an apply that cannot write is not a pager that lost its page.
+   * Where the engine threw. Seven places, because they are seven different
+   * bugs: an apply that cannot write is not a pager that lost its page.
    */
-  stage: 'frame' | 'apply' | 'catchup' | 'directory' | 'drain' | 'welcome';
+  stage: 'frame' | 'apply' | 'catchup' | 'directory' | 'roster' | 'drain' | 'welcome';
 
   // ── message parts (AGENT-RESPONSES.md §3, §9 phase 3) ────────────────────
   /**
@@ -232,7 +232,7 @@ export const labelValues = {
   // Not enumerable: a version is minted by a release, not declared here. The
   // number is the allowance the series budget reserves for live versions.
   version: Array.from({ length: 12 }, (_, i) => `v${i}`) as unknown as string[],
-  stage: ['frame', 'apply', 'catchup', 'directory', 'drain', 'welcome'],
+  stage: ['frame', 'apply', 'catchup', 'directory', 'roster', 'drain', 'welcome'],
   genui_outcome: ['valid', 'repaired', 'given_up'],
   genui_error: ['empty', 'too-large', 'parse-exception', 'no-root', 'wrong-root',
                 'incomplete', 'too-many-statements', 'data-not-allowed', 'state-not-allowed',

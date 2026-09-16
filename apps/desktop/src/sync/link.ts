@@ -15,7 +15,7 @@
 // the frontier rule lives.
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity, ConnectionRow, AgentPermissionRow,
+  Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity, ConnectionRow, AgentPermissionRow, RosterOk,
 } from '@relayed/protocol';
 import { Connection, type LinkState, type SocketLike } from './transport/connection.ts';
 import type { Gate } from './network.ts';
@@ -23,12 +23,16 @@ import {
   applyEvent, frontierOf, type Envelope, type Stream, type Effect,
 } from './apply.ts';
 import { replicaEffect } from './effects.ts';
+import { topic } from '../shared/topics.ts';
 import {
   CatchupScheduler, applyCatchup, applyGap, applyBackfill, backfillFloor,
   applyRepair, applyThread, repairOwed, repairsOwed,
   applyDirectoryPage, directorySnapshotComplete, directoryOwed,
   type MessageRow, type DirectoryRow,
 } from './catchup.ts';
+import {
+  rostersOwed, beginRosters, applyRosterPage, refetchRoster, wantRoster, ROSTER_BATCH,
+} from './roster.ts';
 import {
   ready, markInflight, requeueInflight, applyAck, applyNack, depth, type Ack,
 } from './outbox.ts';
@@ -37,7 +41,7 @@ import {
 } from '@relayed/telemetry';
 
 /** Where the engine can throw. Matches the `stage` label in the catalogue. */
-type Stage = 'frame' | 'apply' | 'catchup' | 'directory' | 'drain' | 'welcome';
+type Stage = 'frame' | 'apply' | 'catchup' | 'directory' | 'roster' | 'drain' | 'welcome';
 import { observe } from './observe.ts';
 
 export interface LinkDeps {
@@ -105,6 +109,12 @@ export interface Link {
    * with no instructions.
    */
   definition(agentId: string): Promise<AgentDefinitionOk | null>;
+  /**
+   * A surface wants to know who is in this space (SPACE-MEMBERSHIP-MARKERS.md,
+   * rosters). Fetched now if online, and on the next connection otherwise;
+   * nothing happens for a list already held or on its way.
+   */
+  wantRoster(spaceId: string): void;
   /** Reconnect now — waking from sleep, or a freshly refreshed token. */
   retryNow(): void;
   readonly state: LinkState;
@@ -196,6 +206,16 @@ export function createLink(deps: LinkDeps): Link {
    * agent at once and the frame carries no request id to tell them apart.
    */
   const awaitingDefinition = new Map<string, ((answer: AgentDefinitionOk | null) => void)[]>();
+  /** The roster page in flight, one at a time like the directory's; null settles it with "none coming". */
+  let awaitingRoster: ((page: RosterOk | null) => void) | null = null;
+  /** Whether the roster worker is running. It drains everything owed before it stops. */
+  let rostering = false;
+  /**
+   * Times each list has been fetched again because a membership event landed
+   * mid-fetch. Bounded: a space churning faster than a page is kept with its
+   * events applied rather than fetched for ever.
+   */
+  const rosterRetries = new Map<string, number>();
 
   const connection = new Connection({
     url: deps.url,
@@ -241,6 +261,8 @@ export function createLink(deps: LinkDeps): Link {
     void hydrateDirectory().catch((e: unknown) => {
       failure('directory', { id: deps.workspaceId() ?? 'unknown' }, e);
     });
+    rosterRetries.clear();
+    pumpRosters();
     // Repairs owed from before this connection — a gap taken on a socket that
     // then dropped, or the app quit mid-repair — are persisted precisely so
     // that they resume here rather than being forgotten with the socket.
@@ -282,6 +304,8 @@ export function createLink(deps: LinkDeps): Link {
       // client a hundred events behind sees a hundred arrivals and the answer
       // to all of them is the same range.
       if (result.needsCatchup) scheduler?.want(frame.stream);
+      // Somebody joining may be this person joining a space whose list is owed.
+      if (frame.type === 'space.member_added') pumpRosters();
       return;
     }
 
@@ -325,6 +349,12 @@ export function createLink(deps: LinkDeps): Link {
       // The directory's gap is not repaired by the gap frame — it says only
       // that a paged snapshot is owed.
       if (frame.stream.kind === 'workspace') void hydrateDirectory();
+      // A space's gap jumped over membership events this device will never
+      // see, so a list it holds is fetched again rather than trusted.
+      if (frame.stream.kind === 'space') {
+        deps.invalidate(refetchRoster(db, frame.stream.id));
+        pumpRosters();
+      }
       // A chat's gap owes a repair: the held messages that changed while this
       // client was too far behind to be told. Asked for now, at reconnect,
       // because a deleted message that stays on screen is not a cosmetic delay.
@@ -442,6 +472,13 @@ export function createLink(deps: LinkDeps): Link {
       const resolve = awaitingPage;
       awaitingPage = null;
       resolve?.(body as DirectoryOk);
+      return;
+    }
+
+    if (t === 'roster_ok') {
+      const resolve = awaitingRoster;
+      awaitingRoster = null;
+      resolve?.(body as RosterOk);
       return;
     }
 
@@ -674,6 +711,66 @@ export function createLink(deps: LinkDeps): Link {
     });
   }
 
+  /** Start the roster worker, unless it is already running. Failures are reported, never thrown. */
+  function pumpRosters(): void {
+    if (rostering) return;
+    rostering = true;
+    void startSpan('sync.roster.hydrate', fetchRosters)
+      .catch((e: unknown) => { failure('roster', { id: deps.workspaceId() ?? 'unknown' }, e); })
+      .finally(() => { rostering = false; });
+  }
+
+  /**
+   * Fetch every list owed, a batch of spaces at a time, until none is. Reads
+   * what is owed again after each batch, so a list asked for mid-fetch — or one
+   * a membership event sent back — is picked up by the same run.
+   */
+  async function fetchRosters(): Promise<void> {
+    for (;;) {
+      const db = deps.db();
+      if (!db || connection.state !== 'live') return;
+      const batch = rostersOwed(db).slice(0, ROSTER_BATCH);
+      if (batch.length === 0) return;
+      deps.invalidate(beginRosters(db, batch));
+
+      let after: RosterOk['next_after'] = null;
+      for (;;) {
+        const page = await requestRoster(batch, after);
+        // The socket went away, or the workspace changed under the fetch. The
+        // lists stay `loading`, which is what the next connection resumes.
+        if (!page || deps.db() !== db) return;
+        const result = applyRosterPage(db, batch, page, id => {
+          const tries = rosterRetries.get(id) ?? 0;
+          rosterRetries.set(id, tries + 1);
+          return tries < 2;
+        });
+        if (result.topics.length > 0) deps.invalidate(result.topics);
+        note('sync.roster.page', { rows: page.rows.length });
+        if (page.complete || page.next_after === null) break;
+        after = page.next_after;
+      }
+    }
+  }
+
+  /** One roster page, or null if the connection went away or no answer came in time. */
+  function requestRoster(spaceIds: string[], after: RosterOk['next_after']): Promise<RosterOk | null> {
+    return new Promise(resolve => {
+      let settled = false;
+      awaitingRoster = (page) => { if (!settled) { settled = true; resolve(page); } };
+      send('roster', { space_ids: spaceIds, after });
+      // A deadline (invariant 64). A server that predates rosters ignores the
+      // frame, and the lists wait for one that answers.
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        awaitingRoster = null;
+        note('sync.roster.timeout');
+        resolve(null);
+      }, 15_000);
+      timer.unref?.();
+    });
+  }
+
   function definition(agentId: string): Promise<AgentDefinitionOk | null> {
     return new Promise(resolve => {
       let settled = false;
@@ -708,6 +805,12 @@ export function createLink(deps: LinkDeps): Link {
     backfill,
     thread,
     definition,
+    wantRoster: (spaceId) => {
+      const db = deps.db();
+      if (!db) return;
+      if (wantRoster(db, spaceId)) deps.invalidate([topic.spaceMembers(spaceId)]);
+      pumpRosters();
+    },
     stop: () => {
       // The pager may be waiting on a page that will never arrive now. Settling
       // it is the difference between a stopped link and a stopped link holding
@@ -721,6 +824,9 @@ export function createLink(deps: LinkDeps): Link {
       // as a monogram until they happened to change. The pager already has a
       // word for "no page is coming"; this is it.
       waiting?.(null);
+      const roster = awaitingRoster;
+      awaitingRoster = null;
+      roster?.(null);
       for (const readers of awaitingDefinition.values()) for (const each of readers) each(null);
       awaitingDefinition.clear();
       // Same rule for spans: one still open when the link stops is never
