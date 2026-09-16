@@ -21,6 +21,7 @@ import {
 } from '@relayed/icons';
 import type { ClaudeCommand, ReplicaActor, Space } from '../../../../preload/api';
 import { parseSlashCommand } from '../../../../shared/slash-commands.ts';
+import { useMarkedAnnotations } from '@/lib/pending-annotations';
 import { ComposerSuggestions, forwardSuggestionKey, type ComposerTrigger } from './composer-suggestions.ts';
 import { RelayedMention } from './relayed-mention.ts';
 import { RelayedCommand, restoreCommandChip } from './relayed-command.ts';
@@ -33,6 +34,8 @@ type Scope = 'workspace' | 'local';
 
 interface MessageComposerProps {
   chatId: string | undefined;
+  /** The room a marked passage is carried across (docs/ANNOTATIONS.md, capture). */
+  spaceId: string;
   scope: Scope;
   replying: boolean;
   onSent: () => void;
@@ -175,6 +178,20 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
         chatId: props.chatId, body, revision,
       })).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
     },
+  });
+
+  // A passage marked in a web panel is written where the caret is, as an
+  // ordinary link: the quote as its text, the page-with-directive as its target
+  // (docs/ANNOTATIONS.md). Nothing is held for the send — once it is in the
+  // document it is text like any other, so it rides the draft and the body with
+  // no second representation to keep in step.
+  useMarkedAnnotations(props.spaceId, passage => {
+    if (!editor) return;
+    editor.chain().focus().insertContent([
+      { type: 'text', text: passage.label, marks: [{ type: 'link', attrs: { href: passage.address } }] },
+      // Unmarked, so what the person types next is not swallowed into the link.
+      { type: 'text', text: ' ' },
+    ]).run();
   });
 
   const slashCommands = props.slash?.commands;

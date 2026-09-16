@@ -69,6 +69,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/WORKSPACE-AGENTS.md`](docs/WORKSPACE-AGENTS.md) | **Proposal.** Creating agents as actors, a mention becoming a run in `apps/agent`, tool calls brokered by the server through Composio as the invoker, connections and the connector store, and restricted messages with what they do to `ord` and `rev`. Its header lists the `DESIGN.md` decisions it replaces. |
 | [`docs/WORKSPACE-AGENTS-IMPL.md`](docs/WORKSPACE-AGENTS-IMPL.md) | **Plan.** How the workspace agents proposal is built: seven steps in order, each linked to the proposal sections it implements, with files, migrations, tests, what to check by hand, and the decisions and corrections it feeds back into the proposal. |
 | [`docs/AGENT-BROWSER.md`](docs/AGENT-BROWSER.md) | **Proposal.** Letting an agent drive a web panel — click, type, read — for the things with no API: the driver in main over the Chrome DevTools Protocol, one implementation reached from both room kinds, and the consent model a credentialed session needs. |
+| [`docs/ANNOTATIONS.md`](docs/ANNOTATIONS.md) | **Proposal, backed by a spike.** Marking a passage in a web panel and attaching it to a message: capture with no code in the page, the W3C selector triple, a part with a body atom, and clicking one to open the page scrolled to it. Evidence in [`spikes/text-fragments/`](spikes/text-fragments/README.md) (`pnpm verify:text-fragments`). |
 | [`docs/PHASE-1-IDENTITY.md`](docs/PHASE-1-IDENTITY.md) | Phase 1, **closed**: tenancy, social login, the actor model, invitations. |
 | [`docs/PHASE-2-SYNC.md`](docs/PHASE-2-SYNC.md) | The sync core's scope and traps. Superseded in part by the plan below, which its header names. |
 | [`docs/MULTI-CLIENT-DEV.md`](docs/MULTI-CLIENT-DEV.md) | Running two or three isolated Electron clients against one server, and why sync cannot be seen with one. |
@@ -238,6 +239,7 @@ pnpm spike:sync      # sync-protocol model tests — must stay green
 pnpm spike:authz     # authorization model tests
 pnpm verify:hotkeys  # keyboard shortcut spikes under real Electron (spikes/hotkeys)
 pnpm verify:web-panels # web pages in panels as <webview>, and main's attach check (spikes/web-panels)
+pnpm verify:text-fragments # #:~:text= scrolling inside a panel, for annotations (spikes/text-fragments)
 pnpm check:boundaries # the rules below, run by typecheck too
 pnpm otel:smoke      # prove the telemetry loop works before debugging the app
 ```

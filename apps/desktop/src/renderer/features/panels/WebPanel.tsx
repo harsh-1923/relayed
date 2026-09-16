@@ -16,7 +16,12 @@ import { useSession } from '@/app/state';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { addressFromTyped, isWebUrl, webPanelPartition } from '../../../shared/web-panels.ts';
+import {
+  addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, withoutFragmentDirective,
+} from '../../../shared/web-panels.ts';
+import { markAnnotation } from '@/lib/pending-annotations';
+import { usePanelPointer } from '@/lib/panel-navigation';
+import { annotationLabel, anchorScript, readAnchor } from '../../../shared/annotations.ts';
 
 /** The methods of Electron's `<webview>` this panel uses. Callable only once `dom-ready` has fired. */
 interface WebviewElement extends HTMLElement {
@@ -47,6 +52,57 @@ interface PageState {
   /** Why the page could not be shown, and the address that failed; null while it is fine. */
   failure: { reason: string; url: string } | null;
 }
+
+/**
+ * What Chromium reports about a right-click, and the whole of how a passage is
+ * captured (docs/ANNOTATIONS.md, capture).
+ *
+ * NOTHING RUNS IN THE PAGE for this. The selection, the address it came from
+ * and where it was clicked all arrive on the event, so marking a passage costs
+ * none of the attach guard that keeps this app's code out of a page holding
+ * somebody's logins (`main/web-panels.ts`).
+ *
+ * `x` and `y` are **WINDOW** coordinates, not the webview's, however much they
+ * look like the latter. A panel on the right of a split is offset by hundreds
+ * of pixels, so a menu placed inside the panel straight from these lands well
+ * outside it and is never seen — which is indistinguishable from the event not
+ * firing at all. They are converted against the surface's own rect, an
+ * invariant `spikes/text-fragments` measures and then asserts both halves of.
+ */
+interface ContextMenuParams {
+  x: number;
+  y: number;
+  selectionText: string;
+  pageURL: string;
+  frameURL: string;
+}
+
+/**
+ * NESTED UNDER `params`, unlike every other webview event this file reads.
+ *
+ * `did-fail-load` and `page-title-updated` carry their fields directly on the
+ * DOM event, and `context-menu` looks like it should too. It does not: the
+ * event itself has none of them, and reading `event.selectionText` yields
+ * `undefined` — which, trimmed, is an empty selection, so the menu silently
+ * never opened on any page. Measured in `spikes/text-fragments`
+ * (`pnpm verify:text-fragments`), which now asserts the nesting so an Electron
+ * upgrade that flattens it fails a check rather than the feature.
+ */
+interface ContextMenuEvent extends Event {
+  params?: ContextMenuParams;
+}
+
+/** A right-click worth drawing a menu for: where it was, and what was under it. */
+interface PageMenu {
+  x: number;
+  y: number;
+  selection: string;
+  url: string;
+}
+
+/** The menu's own size, to keep it inside the panel. `min-w-44` is 176px; one row is about 30. */
+const MENU_WIDTH = 176;
+const MENU_HEIGHT = 34;
 
 /**
  * Read a page's icon from inside the page, as a `data:` URL.
@@ -94,6 +150,9 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
   const [src] = useState(url);
   const view = useRef<HTMLWebViewElement>(null);
   const [page, setPage] = useState<PageState>({ url, loading: true, canGoBack: false, canGoForward: false, failure: null });
+  const [menu, setMenu] = useState<PageMenu | null>(null);
+  /** The box the page and the menu share, and what window coordinates are measured against. */
+  const surface = useRef<HTMLDivElement>(null);
   const drawable = session.accountId !== null && isWebUrl(src);
 
   useEffect(() => {
@@ -135,7 +194,41 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
         .catch(() => { /* the page went away mid-read; the next load reports again */ });
     };
 
+    // Electron draws no menu of its own in a webview, so until now a right-click
+    // in a panel did nothing at all. This is the only one there is.
+    const onContextMenu = (event: Event): void => {
+      const params = (event as ContextMenuEvent).params;
+      if (!params) return setMenu(null);
+      const selection = (params.selectionText ?? '').trim();
+      // Nothing to cite, so nothing to offer. A menu with only disabled items
+      // is worse than the silence it replaces.
+      if (selection === '') return setMenu(null);
+      // Window coordinates into surface coordinates. Read at the click rather
+      // than at render: the split can be dragged, and the rect then means
+      // something different from what it meant when the menu opened.
+      const box = surface.current?.getBoundingClientRect();
+      // Kept inside the panel: a right-click near its right or bottom edge
+      // would otherwise put the menu over the rest of the app, or past it.
+      const within = (point: number, extent: number, size: number): number =>
+        Math.max(4, Math.min(point, extent - size - 4));
+      setMenu({
+        x: within(params.x - (box?.left ?? 0), box?.width ?? 0, MENU_WIDTH),
+        y: within(params.y - (box?.top ?? 0), box?.height ?? 0, MENU_HEIGHT),
+        selection,
+        // The FRAME's address, not the page's: a passage inside an embedded
+        // document belongs to that document, and it is the one a text
+        // directive would have to match.
+        url: params.frameURL || params.pageURL || element.getURL(),
+      });
+    };
+
+    /** A page that moves under an open menu leaves it pointing at nothing. */
+    const closeMenu = (): void => { setMenu(null); };
+
     const updates = ['did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'];
+    const closers = ['did-start-loading', 'did-navigate', 'did-navigate-in-page'];
+    element.addEventListener('context-menu', onContextMenu);
+    for (const name of closers) element.addEventListener(name, closeMenu);
     element.addEventListener('dom-ready', onReady);
     element.addEventListener('did-start-loading', onStart);
     element.addEventListener('did-fail-load', onFail);
@@ -144,6 +237,8 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
     element.addEventListener('page-favicon-updated', onFavicon);
     for (const name of updates) element.addEventListener(name, read);
     return () => {
+      element.removeEventListener('context-menu', onContextMenu);
+      for (const name of closers) element.removeEventListener(name, closeMenu);
       element.removeEventListener('dom-ready', onReady);
       element.removeEventListener('did-start-loading', onStart);
       element.removeEventListener('did-fail-load', onFail);
@@ -159,6 +254,13 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
   const load = (address: string): void => {
     try { void element()?.loadURL(address).catch(() => {}); } catch { /* not attached yet */ }
   };
+  // Sent back to a passage while already open (docs/ANNOTATIONS.md). Only the
+  // fragment changes, so the document survives and the page simply moves.
+  usePanelPointer(panel.id, address => {
+    setPage(previous => ({ ...previous, failure: null }));
+    load(address);
+  });
+
   const retry = (): void => {
     setPage(previous => ({ ...previous, loading: true, failure: null }));
     const failed = page.failure;
@@ -191,7 +293,9 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
           </Button>
         )}
         <AddressBar
-          url={page.url}
+          // Never the directive: it is how the reader got to the passage, not
+          // where they are (docs/ANNOTATIONS.md, §7.2).
+          url={withoutFragmentDirective(page.url)}
           disabled={!drawable}
           onGo={address => {
             // A failure message would otherwise stay over the page being loaded.
@@ -200,7 +304,7 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
           }}
         />
       </div>
-      <div className="relative min-h-0 flex-1">
+      <div ref={surface} className="relative min-h-0 flex-1">
         {drawable && session.accountId ? (
           <webview
             // A different account is a different session, which a webview takes only when it attaches.
@@ -218,8 +322,55 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
             <p className="text-xs text-muted-foreground">This panel does not point at a web page.</p>
           </div>
         )}
+        {menu && (
+          // The backdrop is what dismisses it: a click inside the page belongs
+          // to another process and never reaches this window, so there is no
+          // outside-click to listen for without covering the page first.
+          <div
+            className="absolute inset-0 z-10"
+            onMouseDown={() => setMenu(null)}
+            onContextMenu={event => { event.preventDefault(); setMenu(null); }}
+          >
+            <div
+              className="absolute min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+              style={{ left: menu.x, top: menu.y }}
+              onMouseDown={event => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="flex w-full items-center rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  const selection = menu.selection;
+                  const page = menu.url;
+                  // The anchor is read from the page, and the page may refuse
+                  // to answer — a selection inside an iframe, or one that went
+                  // away. The quote is kept either way: without an anchor the
+                  // link lands on the first copy of its text, which is worse
+                  // than exact and much better than nothing.
+                  void element()?.executeJavaScript(anchorScript())
+                    .then(readAnchor)
+                    .catch(() => null)
+                    .then(anchor => {
+                      const exact = anchor?.exact ?? selection;
+                      markAnnotation(panel.spaceId, {
+                        label: annotationLabel(exact),
+                        address: annotationAddress(page, {
+                          exact,
+                          ...(anchor?.prefix ? { prefix: anchor.prefix } : {}),
+                          ...(anchor?.suffix ? { suffix: anchor.suffix } : {}),
+                        }),
+                      });
+                    });
+                  setMenu(null);
+                }}
+              >
+                Add to message
+              </button>
+            </div>
+          </div>
+        )}
         {page.failure && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background p-6 text-center">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-6 text-center">
             <AlertTriangle className="size-6 text-muted-foreground" />
             <p className="max-w-full truncate text-sm font-medium select-text" title={page.failure.url}>{page.failure.url}</p>
             <p className="text-xs text-muted-foreground">{page.failure.reason}</p>

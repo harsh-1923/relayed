@@ -49,6 +49,7 @@ export default tseslint.config(
       'spikes/electron-verify/**',
       'spikes/hotkeys/**',
       'spikes/web-panels/**',
+      'spikes/text-fragments/**',
       // Declaration files describe types; there is no code in them to lint, and
       // type-aware rules on one report nothing but the cost of loading it.
       '**/*.d.ts',

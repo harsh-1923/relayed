@@ -20,8 +20,10 @@
 import { Children, Fragment, type ReactNode } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { TextQuote } from '@relayed/icons';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
+import { isAnnotationLink } from '../../../shared/annotations.ts';
 import { parseSlashCommand } from '../../../shared/slash-commands.ts';
 import { spaceLinkTarget } from '../../../shared/spaces.ts';
 import { CopyButton } from './CopyButton';
@@ -63,6 +65,11 @@ export function MarkdownText({
           delay={300}
           render={<button type="button" className="md-link" onClick={() => { if (href) onOpenLink?.(href); }} />}
         >
+          {/* A passage someone marked reads as an ordinary link, because that is
+              what it is (docs/ANNOTATIONS.md). The mark says it is a quotation
+              rather than a page — the label is somebody's words, not a title,
+              and without it the two are indistinguishable. */}
+          {isAnnotationLink(href) && <TextQuote className="md-link-icon" aria-hidden />}
           {href && isBareUrl(children, href) ? shortUrl(href) : children}
         </HoverCardTrigger>
         {/* Where it goes, in full: the text on screen is a title or a shortened

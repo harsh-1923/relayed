@@ -169,6 +169,7 @@ function ComposerAtLiveEdge({ spaceId, ...props }: { spaceId: string; chatId: st
   return (
     <MessageComposer
       {...props}
+      spaceId={spaceId}
       onSent={() => scrollToEnd({ behavior: 'smooth' })}
       approvalControl={local ? className => <RoomModePicker spaceId={spaceId} className={className} /> : undefined}
       modelControl={local

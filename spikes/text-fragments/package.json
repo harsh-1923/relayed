@@ -1,0 +1,14 @@
+{
+  "name": "text-fragments-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Does a text fragment (#:~:text=) fire inside a panel <webview> under the app's own guard (docs/ANNOTATIONS.md, navigating to an annotation) — standalone, not a workspace member",
+  "dependencies": {
+    "esbuild": "0.28.2"
+  },
+  "main": "main.cjs",
+  "scripts": {
+    "bundle": "esbuild ../../apps/desktop/src/main/web-panels.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/guard.cjs && esbuild ../../apps/desktop/src/shared/web-panels.ts --bundle --platform=node --format=cjs --outfile=dist/shared.cjs && esbuild ../../apps/desktop/src/shared/annotations.ts --bundle --platform=node --format=cjs --outfile=dist/annotations.cjs",
+    "test": "npm run bundle && ../../apps/desktop/node_modules/.bin/electron ."
+  }
+}

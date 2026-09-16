@@ -85,6 +85,18 @@
     }
   }
 
+  /* The mark on a link that goes to a passage rather than to a page
+     (docs/ANNOTATIONS.md). Sized to the text it sits in so it reads as
+     punctuation rather than as a button. */
+  & .md-link-icon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.15em;
+    vertical-align: -0.125em;
+    opacity: 0.7;
+  }
+
   /* The app accent, where it is a colour: in dark mode it is #606ACC, while
      light mode's accent is still shadcn's near-white hover grey, which would
      make a link vanish — there a link keeps the text colour and its underline. */

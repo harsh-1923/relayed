@@ -18,6 +18,7 @@ import { useOpenPanels } from '@/features/panels/useOpenPanels';
 import { useRoomPanelArrivals } from '@/features/panels/useRoomPanelArrivals';
 import { useRoomSummaryTab, withSummaryFirst } from '@/features/documents/useRoomSummaryTab';
 import { call } from '@/lib/ipc';
+import { pointPanel, useAnnotationRequests } from '@/lib/panel-navigation';
 import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
 import { Button } from '@/components/ui/button';
 import { SidebarRightOpen } from '@relayed/icons';
@@ -53,6 +54,24 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   });
   useRoomPanelArrivals({
     enabled: hasPanels && scope === 'workspace', ready: panelsStatus !== 'loading', spaceId, panels, openPanels,
+  });
+
+  // Clicking a passage in a message (docs/ANNOTATIONS.md). Opened as an
+  // ordinary device-local page, at the passage — the store returns the panel
+  // already there when the same address is opened twice, so nothing here has
+  // to reason about which tabs exist.
+  useAnnotationRequests(hasPanels ? spaceId : '', address => {
+    void call(api => api.query('local.panels.open', {
+      spaceId, type: 'web', payload: { url: address },
+    })).then(opened => {
+      if (!opened?.id) return;
+      // An id the room already knew is a page already open — the store returns
+      // the same panel for the same address. A NEW panel loads at the passage
+      // on its own, so pointing it too would only load it twice.
+      const known = panels.some(panel => panel.id === opened.id);
+      openPanels.open(opened.id);
+      if (known) pointPanel(opened.id, address);
+    }).catch(() => { /* a room that cannot open a panel says so by not opening one */ });
   });
 
   useCommandHandler('room.panels.toggle', {

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import type { ReplicaMessage } from '../../../preload/api';
 import { useSession } from '@/app/state';
 import { spaceLinkTarget } from '../../../shared/spaces.ts';
@@ -16,6 +16,8 @@ import { blobSrc, initials } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { CopyButton } from './CopyButton';
 import { MessageParts } from './MessageParts';
+import { showAnnotation } from '@/lib/panel-navigation';
+import { isAnnotationLink } from '../../../shared/annotations.ts';
 
 interface ChatBubbleProps {
   message: ReplicaMessage;
@@ -52,10 +54,13 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   const unbubbled = !message.deleted && agentAuthored && (parts !== null || streaming);
   const navigate = useNavigate();
   const { state: session } = useSession();
-  // Only a link to a room in this workspace opens anything so far — the room an
-  // agent made. Where a web link opens, and which schemes may, is phase 6
-  // (docs/AGENT-RESPONSES.md, actions).
+  // A passage someone marked opens beside the chat (docs/ANNOTATIONS.md); the
+  // room does the opening, because the panel list is its. Every OTHER web link
+  // still goes nowhere — where those open is phase 6, and an annotation must
+  // not settle that question on its way past.
+  const { spaceId: roomId = '' } = useParams();
   const openLink = (href: string): void => {
+    if (isAnnotationLink(href)) return showAnnotation(roomId, href);
     const spaceId = spaceLinkTarget(href);
     if (spaceId && session.workspaceId) void navigate(`/w/${session.workspaceId}/s/${spaceId}`);
   };
