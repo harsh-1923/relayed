@@ -3,7 +3,8 @@ import type { ReplicaMessage } from '../../../preload/api';
 import { useSession } from '@/app/state';
 import { spaceLinkTarget } from '../../../shared/spaces.ts';
 import { AlertCircle, ClockDefault } from '@relayed/icons';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { useActor } from '@/lib/actors';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import {
   Message, MessageAvatar, MessageContent, MessageFooter, MessageHeader,
@@ -12,7 +13,6 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller';
 import { LANG, LIBRARY_VERSION } from '@relayed/genui';
 import { ThinkingOrb } from 'thinking-orbs';
 import { useAgentStream } from '@/lib/agent-stream';
-import { blobSrc, initials } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { CopyButton } from './CopyButton';
 import { MessageParts } from './MessageParts';
@@ -31,6 +31,7 @@ interface ChatBubbleProps {
 export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = false }: ChatBubbleProps) {
   const align = mine ? 'end' : 'start';
   const agentAuthored = message.authorType === 'agent';
+  const authorName = useActor(message.authorId)?.displayName ?? message.authorName;
   // A restricted message always shows who it is for, mid-stack or not: that is
   // not detail to reveal on hover.
   const showFooter = message.state !== 'acked' || endsGroup || message.visibleTo !== null;
@@ -83,12 +84,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
           // pushed it out of the row, and a row with `content-visibility: auto`
           // clips whatever leaves it.
           <MessageAvatar className={cn('size-7 min-w-0 group-has-data-[slot=message-footer]/message:-translate-y-8.25', !endsGroup && 'invisible')}>
-            <Avatar className="size-7 overflow-hidden">
-              <AvatarImage src={blobSrc(message.authorAvatarBlob) ?? undefined} />
-              <AvatarFallback className="text-[10px]">
-                {initials(message.authorName)}
-              </AvatarFallback>
-            </Avatar>
+            <ActorAvatar id={message.authorId} className="size-7" fallbackClassName="text-[10px]" />
           </MessageAvatar>
         )}
 
@@ -101,7 +97,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 ? 'w-full border-b border-border px-0 pb-2.5 text-sm font-normal'
                 : undefined}
             >
-              {message.authorName}
+              {authorName}
             </MessageHeader>
           )}
 

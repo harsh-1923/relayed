@@ -21,6 +21,7 @@ import { Children, Fragment, type ReactNode } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { TextQuote } from '@relayed/icons';
+import { ActorAvatar } from '@/components/ActorAvatar';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
@@ -43,9 +44,9 @@ export function MarkdownText({
     ),
     a: ({ href, children }) => (
       isSemanticMention(href) ? (
-        <span className="md-mention" data-mention-kind={href.startsWith('actor:') ? 'actor' : 'audience'}>
-          @{children}
-        </span>
+        href.startsWith('actor:')
+          ? <ActorMention actorId={href.slice('actor:'.length)}>{children}</ActorMention>
+          : <span className="md-mention" data-mention-kind="audience">@{children}</span>
       ) :
       // A room in this app: opens it, with no address to show on hover. Drawn
       // as `#name`, the way it was typed and the way a mention is drawn — the
@@ -99,6 +100,20 @@ export function MarkdownText({
         {text}
       </Markdown>
     </div>
+  );
+}
+
+/**
+ * A person or agent, with their face before the name. The label is the one the
+ * author typed, so a rename does not rewrite what was said.
+ */
+function ActorMention({ actorId, children }: { actorId: string; children: ReactNode }) {
+  const label = Children.toArray(children).filter(child => typeof child === 'string').join('');
+  return (
+    <span className="md-mention md-mention-actor" data-mention-kind="actor">
+      <ActorAvatar id={actorId} fallbackName={label} className="md-mention-avatar" fallbackClassName="text-[8px]" />
+      {children}
+    </span>
   );
 }
 

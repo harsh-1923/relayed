@@ -17,8 +17,6 @@ import {
   ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo, Bot,
 } from '@relayed/icons';
 import { useSession } from '../../state';
-import { blobSrc, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -26,6 +24,7 @@ import {
 import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function AccountSwitcher() {
   const { state } = useSession();
@@ -41,12 +40,10 @@ export function AccountSwitcher() {
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger render={<SidebarMenuButton  className="gap-2 rounded-2xl" />}>
-            <Avatar className="size-5">
-              <AvatarImage src={blobSrc(me.actorAvatarBlob) ?? undefined} />
-              <AvatarFallback className="rounded-lg text-[10px]">
-                {initials(me.actorDisplayName)}
-              </AvatarFallback>
-            </Avatar>
+            <ActorAvatar
+              id={me.actorId} fallbackName={me.actorDisplayName} fallbackBlob={me.actorAvatarBlob}
+              className="size-5" fallbackClassName="rounded-lg text-[10px]"
+            />
             <div className="grid min-w-0 flex-1 text-left leading-tight">
               <span className="min-w-0 truncate text-sm font-normal text-muted-foreground">{me.actorDisplayName}</span>
               {/*<span className="truncate text-xs text-muted-foreground">@{me.actorHandle}</span>*/}

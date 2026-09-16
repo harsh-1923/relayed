@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import type { RunActivity } from '@/lib/agent-activity';
-import { useQuery } from '@/lib/query';
+import { useActor } from '@/lib/actors';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 
@@ -16,8 +16,7 @@ interface RunIndicatorProps {
 }
 
 export function RunIndicator({ run, isInvoker }: RunIndicatorProps) {
-  const { rows: actors } = useQuery('actors.list');
-  const agent = actors?.find(actor => actor.id === run.agentId);
+  const agent = useActor(run.agentId);
   const [stopping, setStopping] = useState(false);
 
   const label = run.state === 'waiting'

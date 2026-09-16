@@ -14,6 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { ChatView } from '@/features/chat/ChatView';
 import { blobSrc, call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
+import { useActorLookup } from '@/lib/actors';
 import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
 import { AddressBar, WebPanel } from './WebPanel';
@@ -57,14 +58,14 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels, address
   /** Bumped by the new-tab shortcut: put the cursor in the new-panel tab's address bar. */
   addressFocus: number;
 }) {
-  const { rows: actors } = useQuery('actors.list');
+  const actorOf = useActorLookup();
   const { rows: metaRows } = useQuery('local.panels.meta', { spaceId: space.id });
   const metaOf = (panel: Panel): PanelMeta => metaRows?.find(row => row.panelId === panel.id)?.meta ?? {};
   /** "opened by @triage for Alice" — who put a shared page in front of the room, and whose request it was. */
   const attributionOf = (panel: Panel): string | null => {
     if (panel.scope !== 'shared' || !panel.createdByActorId) return null;
-    const by = actors?.find(actor => actor.id === panel.createdByActorId);
-    const forWhom = actors?.find(actor => actor.id === panel.onBehalfOfActorId);
+    const by = actorOf(panel.createdByActorId);
+    const forWhom = actorOf(panel.onBehalfOfActorId);
     if (!by) return null;
     const name = by.type === 'agent' ? `@${by.handle}` : by.displayName;
     return forWhom && forWhom.id !== by.id ? `opened by ${name} for ${forWhom.displayName}` : `opened by ${name}`;

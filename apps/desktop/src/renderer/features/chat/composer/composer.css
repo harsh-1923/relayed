@@ -95,6 +95,16 @@
   padding: 0.08rem 0.25rem;
   color: var(--accent-foreground);
 }
+.composer-mention-actor {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  vertical-align: bottom;
+}
+.composer-mention-avatar {
+  width: 1.1em;
+  height: 1.1em;
+}
 .composer-command {
   background: var(--primary);
   color: var(--primary-foreground);

@@ -9,13 +9,14 @@
 // Nobody edits a summary here. Not hidden — `editable: false` — and not the
 // guard either: the guard is that the server has no write path for a person
 // (§6). This is the affordance matching the rule.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
-import type { Document, ReplicaActor } from '../../../preload/api';
+import type { Document } from '../../../preload/api';
 import { isEmptyDocument, webAddress } from '../../../shared/documents.ts';
-import { useQuery } from '@/lib/query';
+import { useActor } from '@/lib/actors';
+import { ActorAvatar } from '@/components/ActorAvatar';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -40,7 +41,6 @@ const extensions = [
 export function DocPanel({ document, spaceId, onOpenPanel }: {
   document: Document | null; spaceId: string; onOpenPanel: (panelId: string) => void;
 }) {
-  const { rows: actors } = useQuery('actors.list');
 
   if (!document) {
     // The panel exists and its document does not: only reachable if a client
@@ -53,12 +53,12 @@ export function DocPanel({ document, spaceId, onOpenPanel }: {
     return <Waiting>This document needs a newer version of Relayed.</Waiting>;
   }
   return (
-    <DocBody key={document.id} document={document} actors={actors ?? []} spaceId={spaceId} onOpenPanel={onOpenPanel} />
+    <DocBody key={document.id} document={document} spaceId={spaceId} onOpenPanel={onOpenPanel} />
   );
 }
 
-function DocBody({ document, actors, spaceId, onOpenPanel }: {
-  document: Document; actors: readonly ReplicaActor[]; spaceId: string; onOpenPanel: (panelId: string) => void;
+function DocBody({ document, spaceId, onOpenPanel }: {
+  document: Document; spaceId: string; onOpenPanel: (panelId: string) => void;
 }) {
   const empty = isEmptyDocument(document);
   const editor = useEditor({
@@ -78,10 +78,7 @@ function DocBody({ document, actors, spaceId, onOpenPanel }: {
     if (editor && !empty) editor.commands.setContent(document.body, { emitUpdate: false, contentType: 'markdown' });
   }, [editor, document.rev, empty]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const author = useMemo(
-    () => actors.find(actor => actor.id === document.updatedByActorId) ?? null,
-    [actors, document.updatedByActorId],
-  );
+  const author = useActor(document.updatedByActorId) ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -91,7 +88,14 @@ function DocBody({ document, actors, spaceId, onOpenPanel }: {
           {/* Honest about its own staleness: who wrote this, and when. */}
           <p className="text-xs text-muted-foreground">
             {empty ? 'Not written yet' : `Updated ${when(document.updatedAt)}`}
-            {author && !empty && <> by {author.type === 'agent' ? `@${author.handle}` : author.displayName}</>}
+            {author && !empty && (
+              <> by{' '}
+                <span className="inline-flex items-center gap-1 align-bottom">
+                  <ActorAvatar id={author.id} className="size-4" fallbackClassName="text-[8px]" />
+                  {author.displayName}
+                </span>
+              </>
+            )}
           </p>
           <Refresh spaceId={spaceId} />
         </div>

@@ -6,13 +6,12 @@
 // that proves a switch actually completed.
 import { Link } from 'react-router';
 import { useSession } from '@/app/state';
-import { blobSrc, initials } from '@/lib/ipc';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
+import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function WorkspaceHome() {
   const { state } = useSession();
@@ -51,10 +50,7 @@ export function WorkspaceHome() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex items-center gap-3">
-          <Avatar>
-            <AvatarImage src={blobSrc(active.actorAvatarBlob)} />
-            <AvatarFallback>{initials(active.actorDisplayName)}</AvatarFallback>
-          </Avatar>
+          <ActorAvatar id={active.actorId} fallbackName={active.actorDisplayName} fallbackBlob={active.actorAvatarBlob} />
           <div className="flex-1">
             <div className="font-medium">{active.actorDisplayName}</div>
             <div className="text-sm text-muted-foreground">@{active.actorHandle}</div>

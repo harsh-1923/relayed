@@ -8,13 +8,13 @@ import { can, space as spaceTarget } from '@relayed/authz';
 import { UserPlus } from '@relayed/icons';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
-import { blobSrc, call, grantsOf, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { call, grantsOf } from '@/lib/ipc';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from '@/components/ui/command';
+import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function AddSpaceMember({ spaceId }: { spaceId: string }) {
   const { state } = useSession();
@@ -94,10 +94,7 @@ export function AddSpaceMember({ spaceId }: { spaceId: string }) {
                   disabled={busyActorId !== null}
                   onSelect={() => { void add(actor.id); }}
                 >
-                  <Avatar className="size-7">
-                    <AvatarImage src={blobSrc(actor.avatarBlob)} />
-                    <AvatarFallback className="text-xs">{initials(actor.displayName)}</AvatarFallback>
-                  </Avatar>
+                  <ActorAvatar id={actor.id} className="size-7" fallbackClassName="text-xs" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{actor.displayName}</div>
                     <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>

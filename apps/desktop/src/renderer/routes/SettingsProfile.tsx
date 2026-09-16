@@ -1,10 +1,9 @@
 import { useSession } from '@/app/state';
-import { blobSrc, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card';
+import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function SettingsProfile() {
   const { state } = useSession();
@@ -21,10 +20,7 @@ export function SettingsProfile() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-3">
-          <Avatar className="size-12">
-            <AvatarImage src={blobSrc(active.actorAvatarBlob)} />
-            <AvatarFallback>{initials(active.actorDisplayName)}</AvatarFallback>
-          </Avatar>
+          <ActorAvatar id={active.actorId} fallbackName={active.actorDisplayName} fallbackBlob={active.actorAvatarBlob} className="size-12" />
           <div className="flex-1">
             <div className="font-medium">{active.actorDisplayName}</div>
             <div className="text-sm text-muted-foreground">@{active.actorHandle}</div>

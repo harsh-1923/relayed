@@ -5,16 +5,18 @@ import { Link } from 'react-router';
 import { can, workspace as wsTarget } from '@relayed/authz';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
-import { blobSrc, grantsOf, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { grantsOf } from '@/lib/ipc';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { useActorLookup } from '@/lib/actors';
 
 export function SettingsAgents() {
   const { state } = useSession();
   const { rows: actors, status } = useQuery('actors.list');
   const agents = (actors ?? []).filter(actor => actor.type === 'agent');
-  const nameOf = (id: string | null) => actors?.find(actor => actor.id === id)?.displayName ?? 'someone';
+  const actorOf = useActorLookup();
+  const nameOf = (id: string | null) => actorOf(id)?.displayName ?? 'someone';
   const wsId = state.workspaceId;
   // Hidden, not disabled, where the replica says the action does not exist.
   // The server decides; this only spares a button that would always fail.
@@ -38,10 +40,7 @@ export function SettingsAgents() {
         {agents.map(agent => (
           <li key={agent.id}>
             <Link to={agent.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50">
-              <Avatar className="size-8">
-                <AvatarImage src={blobSrc(agent.avatarBlob) ?? undefined} />
-                <AvatarFallback className="text-xs">{initials(agent.displayName)}</AvatarFallback>
-              </Avatar>
+              <ActorAvatar id={agent.id} className="size-8" fallbackClassName="text-xs" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium">{agent.displayName}</span>

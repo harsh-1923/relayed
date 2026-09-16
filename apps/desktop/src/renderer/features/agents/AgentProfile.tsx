@@ -9,25 +9,27 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useQuery } from '@/lib/query';
-import { blobSrc, call, initials } from '@/lib/ipc';
+import { call } from '@/lib/ipc';
 import { MarkdownText } from '@/features/chat/MarkdownText';
 import { describeRefusal, useAgentDefinition } from './definition';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { useActor, useActorLookup } from '@/lib/actors';
 
 export function AgentProfile() {
   const { agentId } = useParams();
   const { rows: actors } = useQuery('actors.list');
-  const agent = actors?.find(a => a.id === agentId && a.type === 'agent');
+  const found = useActor(agentId);
+  const agent = found?.type === 'agent' ? found : undefined;
   const { state: loaded, reload } = useAgentDefinition(agentId, agent?.agent?.configRev);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState('');
 
-  const person = (id: string | null) => actors?.find(a => a.id === id);
+  const person = useActorLookup();
   const definition = loaded.status === 'ready' ? loaded.definition : null;
   const you = definition?.you;
   const active = agent?.state === 'active';
@@ -57,10 +59,7 @@ export function AgentProfile() {
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-start gap-4">
-        <Avatar className="size-12">
-          <AvatarImage src={blobSrc(agent.avatarBlob) ?? undefined} />
-          <AvatarFallback>{initials(agent.displayName)}</AvatarFallback>
-        </Avatar>
+        <ActorAvatar id={agent.id} className="size-12" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold">{agent.displayName}</h2>

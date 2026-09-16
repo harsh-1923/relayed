@@ -289,6 +289,21 @@
     border-radius: 6px;
   }
 
+  /* The avatar sits where the `@` was: the face says it is a person. */
+  & .md-mention-actor {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding-left: 2px;
+    margin-bottom: 2px;
+    vertical-align: bottom;
+  }
+
+  & .md-mention-avatar {
+    width: 1.1em;
+    height: 1.1em;
+  }
+
   /* A room mention is a mention that goes somewhere: same shape, and the
      pointer is what says it can be clicked. */
   & .md-mention-button {

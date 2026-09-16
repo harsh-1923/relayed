@@ -10,11 +10,11 @@
 import { can, workspace as workspaceTarget } from '@relayed/authz';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
-import { blobSrc, grantsOf, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { grantsOf } from '@/lib/ipc';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useOpenDm } from '@/features/dms/useOpenDm';
+import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function People() {
   const { rows: actors, status, error } = useQuery('actors.list');
@@ -59,10 +59,7 @@ export function People() {
             <li key={actor.id} className="flex items-center gap-3 p-3">
               {/* The BLOB, never `avatarUrl` — invariant 46. Absent until the
                   prefetch lands, which is what the monogram is for. */}
-              <Avatar className="size-8">
-                <AvatarImage src={blobSrc(actor.avatarBlob)} />
-                <AvatarFallback>{initials(actor.displayName)}</AvatarFallback>
-              </Avatar>
+              <ActorAvatar id={actor.id} className="size-8" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{actor.displayName}</div>
                 <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>

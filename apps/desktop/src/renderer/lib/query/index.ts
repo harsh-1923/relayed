@@ -172,6 +172,34 @@ export function useQuery<Name extends QueryName>(
   return { rows, error: snapshot.error, status };
 }
 
+/**
+ * `useQuery`, narrowed to one derived value: the component re-renders only when
+ * `select` returns something that is not `Object.is` the last answer. Every
+ * caller still shares the one entry per (name, args).
+ *
+ * `select` must be pure and return a STABLE value for unchanged input — an
+ * object built fresh on every call re-renders every time, which is exactly
+ * what this exists to avoid.
+ */
+export function useQuerySelect<Name extends QueryName, Value>(
+  name: Name,
+  args: Queries[Name]['args'],
+  select: (rows: Queries[Name]['rows'] | null) => Value,
+): Value {
+  const argsKey = useMemo(() => JSON.stringify(args ?? null), [args]);
+  const subscribe = useCallback(
+    (onChange: () => void) => registry.subscribe(name, args, TOPICS[name](args), onChange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on argsKey, as in useQuery
+    [name, argsKey],
+  );
+  const getSnapshot = useCallback(
+    () => select(registry.snapshot(name, args).rows as Queries[Name]['rows'] | null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on argsKey, as in useQuery
+    [name, argsKey, select],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
 function statusOf(
   loaded: boolean, rows: readonly unknown[] | null, offline: boolean, auth: string,
 ): QueryStatus {

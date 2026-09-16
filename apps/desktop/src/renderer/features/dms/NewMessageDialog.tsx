@@ -7,8 +7,6 @@ import { useState } from 'react';
 import { MultipleCrossCancelDefault } from '@relayed/icons';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
-import { blobSrc, initials } from '@/lib/ipc';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +14,8 @@ import {
 } from '@/components/ui/command';
 import { DM_MAX_MEMBERS } from '../../../shared/spaces.ts';
 import { useOpenDm } from './useOpenDm';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { useActorLookup } from '@/lib/actors';
 
 export function NewMessageDialog({ onClose }: { onClose: () => void }) {
   const { state } = useSession();
@@ -25,7 +25,7 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
   const me = state.workspaces.find(row => row.workspaceId === state.workspaceId)?.actorId;
 
   const candidates = (actors ?? []).filter(actor => actor.state === 'active' && actor.id !== me);
-  const byId = new Map(candidates.map(actor => [actor.id, actor]));
+  const actorOf = useActorLookup();
   // The other people a group message may hold: everyone but you.
   const full = chosen.length >= DM_MAX_MEMBERS - 1;
 
@@ -50,8 +50,8 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
           <div className="flex flex-wrap gap-1.5 border-b px-3 py-2">
             {chosen.map(id => (
               <Badge key={id} variant="secondary" className="gap-1 pr-1">
-                {byId.get(id)?.displayName ?? 'Someone'}
-                <button type="button" aria-label={`Remove ${byId.get(id)?.displayName ?? 'person'}`}
+                {actorOf(id)?.displayName ?? 'Someone'}
+                <button type="button" aria-label={`Remove ${actorOf(id)?.displayName ?? 'person'}`}
                   className="rounded-sm opacity-70 hover:opacity-100" onClick={() => toggle(id)}>
                   <MultipleCrossCancelDefault className="size-3" />
                 </button>
@@ -73,10 +73,7 @@ export function NewMessageDialog({ onClose }: { onClose: () => void }) {
                   data-checked={selected}
                   onSelect={() => toggle(actor.id)}
                 >
-                  <Avatar className="size-7">
-                    <AvatarImage src={blobSrc(actor.avatarBlob)} />
-                    <AvatarFallback className="text-xs">{initials(actor.displayName)}</AvatarFallback>
-                  </Avatar>
+                  <ActorAvatar id={actor.id} className="size-7" fallbackClassName="text-xs" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{actor.displayName}</div>
                     <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>

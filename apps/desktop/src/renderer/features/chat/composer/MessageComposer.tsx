@@ -4,6 +4,8 @@ import { EditorContent, useEditor, useEditorState } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import { useQuery } from '@/lib/query';
+import { LOCAL_ACTORS } from '@/lib/actors';
+import { ActorAvatar } from '@/components/ActorAvatar';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,7 +25,7 @@ import type { ClaudeCommand, ReplicaActor, Space } from '../../../../preload/api
 import { parseSlashCommand } from '../../../../shared/slash-commands.ts';
 import { useMarkedAnnotations } from '@/lib/pending-annotations';
 import { ComposerSuggestions, forwardSuggestionKey, type ComposerTrigger } from './composer-suggestions.ts';
-import { RelayedMention } from './relayed-mention.ts';
+import { ComposerMention } from './ComposerMention';
 import { RelayedCommand, restoreCommandChip } from './relayed-command.ts';
 import { shouldShowComposerPlaceholder } from './placeholder.ts';
 import { isSendKey } from './send-key.ts';
@@ -88,15 +90,9 @@ const COMMANDS: SuggestionItem[] = [
   { id: 'command:text', label: '/text', description: 'Return this block to ordinary text.', group: 'Commands', command: 'paragraph' },
 ];
 
-const LOCAL_ACTORS: ReplicaActor[] = [
-  { id: 'act_local_me', workspaceId: 'local', type: 'human', handle: 'me', displayName: 'You', avatarUrl: null, avatarBlob: null, ownerActorId: null, state: 'active', updatedAt: 0, agent: null },
-  { id: 'act_local_agent', workspaceId: 'local', type: 'agent', handle: 'agent', displayName: 'Claude Agent', avatarUrl: null, avatarBlob: null, ownerActorId: 'act_local_me', state: 'active', updatedAt: 0,
-    agent: { description: 'Your Claude Code, in this room', configRev: 1, toolkits: [] } },
-];
-
 const editorExtensions = [
   StarterKit.configure({ heading: false, horizontalRule: false }),
-  RelayedMention,
+  ComposerMention,
   RelayedCommand,
   Markdown.configure({ markedOptions: { gfm: true, breaks: false } }),
 ];
@@ -425,6 +421,9 @@ function SuggestionSurface(props: {
               onSelect={() => props.onChoose(item)}
               onMouseDown={event => event.preventDefault()}
             >
+              {item.actor && (
+                <ActorAvatar id={item.actor.id} className="size-5" fallbackClassName="text-[9px]" />
+              )}
               <span className="truncate">{item.label}</span>
               <CommandShortcut className="shrink-0 tracking-normal">{item.group}</CommandShortcut>
             </CommandItem>
@@ -452,7 +451,7 @@ function SuggestionSurface(props: {
 const MAX_AGENT_COMMANDS = 50;
 
 function suggestionsFor(
-  trigger: ComposerTrigger | null, actors: ReplicaActor[], spaces: Space[],
+  trigger: ComposerTrigger | null, actors: readonly ReplicaActor[], spaces: Space[],
   agentCommands: readonly ClaudeCommand[],
 ): SuggestionItem[] {
   if (!trigger) return [];

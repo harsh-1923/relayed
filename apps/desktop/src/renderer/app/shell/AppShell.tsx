@@ -21,6 +21,7 @@ import {
 import { SidebarInset, useSidebar } from '@/components/ui/sidebar';
 import { usePreference } from '@/lib/prefs';
 import { useQueryInvalidation } from '@/lib/query';
+import { useActorDirectory } from '@/lib/actors';
 
 const SIDEBAR_MIN_WIDTH = 224;
 const SIDEBAR_MAX_WIDTH = 320;
@@ -45,6 +46,9 @@ export function AppShell() {
   // teardown, and here rather than per-surface so a second reader cannot forget.
   // Surfaces call useQuery, which is live in its own right.
   useQueryInvalidation();
+  // Who every actor id is, kept live for the session so `useActor` anywhere
+  // resolves without a read of its own (lib/actors.ts).
+  useActorDirectory();
 
   // The ONE case where the engine is allowed to move the URL (invariant 57):
   // the thing you were looking at has ceased to exist. Sign-out is the common

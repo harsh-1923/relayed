@@ -12,6 +12,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import type { AgentInput } from '../../preload/api';
 import { call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
+import { useActor } from '@/lib/actors';
 import { describeRefusal, useAgentDefinition } from '@/features/agents/definition';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -28,9 +29,8 @@ export function SettingsAgentEditor() {
   const { agentId } = useParams();
   const editing = agentId !== undefined;
   const navigate = useNavigate();
-  const { rows: actors } = useQuery('actors.list');
   const { rows: spaces } = useQuery('spaces.list');
-  const actor = actors?.find(a => a.id === agentId);
+  const actor = useActor(agentId);
   const { state: loaded } = useAgentDefinition(agentId);
 
   const [name, setName] = useState('');

@@ -14,6 +14,7 @@ import { useState } from 'react';
 import type { AccessRequestPart } from '@relayed/protocol';
 import { useSession } from '@/app/state';
 import { useQuery } from '@/lib/query';
+import { useActor } from '@/lib/actors';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { MarkdownText } from '../chat/MarkdownText';
@@ -39,14 +40,13 @@ export function AccessCard({ part, body, onOpenLink }: {
   onOpenLink?: (href: string) => void;
 }) {
   const myActorId = useMyActorId();
-  const { rows: actors } = useQuery('actors.list');
+  const agentHandle = useActor(part.agent_id)?.handle ?? 'agent';
   const { rows: connections } = useQuery('connections.list');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (part.actor_id !== myActorId) return <MarkdownText text={body} onOpenLink={onOpenLink} />;
 
-  const agentHandle = actors?.find(a => a.id === part.agent_id)?.handle ?? 'agent';
   const toolkit = toolkitName(part.toolkit);
 
   if (part.state === 'expired') {
