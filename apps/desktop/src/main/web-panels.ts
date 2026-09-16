@@ -40,11 +40,25 @@ function harden(pages: Session): void {
   // save, so a page cannot write to disk without the person choosing a place.
 }
 
+/** What a page asks the window for when a link wants a tab: the room opens it as a panel. */
+export interface WebPanelOpenRequest { webContentsId: number; url: string; background: boolean }
+
 /** A page attached to the window: kept to the web, and to the panel it is in. */
-function guardPage(contents: WebContents): void {
-  // A link that wants a new window goes to the system browser; the app opens none.
-  contents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) void shell.openExternal(url);
+function guardPage(contents: WebContents, host: WebContents): void {
+  // The app opens no window. A link that wants a tab — `target=_blank`,
+  // `window.open()`, Cmd+click for a background one — becomes a tab in the
+  // room. Anything else goes to the system browser as it always has: a popup
+  // the page sized, which is how sign-in windows open, and Shift+click.
+  // Electron has no popup blocker, so neither path waits for a click; the
+  // system-browser path never did either.
+  contents.setWindowOpenHandler(({ url, disposition }) => {
+    if (!isWebUrl(url)) return { action: 'deny' };
+    if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+      const request: WebPanelOpenRequest = { webContentsId: contents.id, url, background: disposition === 'background-tab' };
+      host.send('web-panel:open', request);
+    } else {
+      void shell.openExternal(url);
+    }
     return { action: 'deny' };
   });
   // No frame reaches the app's own schemes or the disk, by link or by redirect.
@@ -75,5 +89,5 @@ export function guardWebPanels(window: BrowserWindow, accountId: () => string | 
     webPreferences.webSecurity = true;
     webPreferences.allowRunningInsecureContent = false;
   });
-  window.webContents.on('did-attach-webview', (_event, contents) => { guardPage(contents); });
+  window.webContents.on('did-attach-webview', (_event, contents) => { guardPage(contents, window.webContents); });
 }

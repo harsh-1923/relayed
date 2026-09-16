@@ -37,6 +37,7 @@ test('command IDs are a reviewed snapshot', () => {
     'app.search.open',
     'shell.sidebar.toggle',
     'room.panels.toggle',
+    'room.panels.newTab',
     'navigation.back',
     'navigation.forward',
     'app.settings.open',

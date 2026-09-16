@@ -17,6 +17,7 @@ import { vault as bridgeVault, browserImport, openBrowser, pickFolder, setBlobAc
 import { KEYBINDING_PREFIX } from '../shared/prefs.ts';
 import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts';
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
+import { isWebUrl } from '../shared/web-panels.ts';
 import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts';
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
@@ -688,6 +689,14 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   },
   'browserImport.clear': () => browserImport.clear(),
   'browserImport.openFullDiskAccess': () => browserImport.openFullDiskAccess(),
+
+  /** A web panel's page, in the system browser. Only the web: `browser:open` itself opens anything. */
+  'web.openExternal': async (params) => {
+    const url = (params as { url?: unknown } | undefined)?.url;
+    if (!isWebUrl(url)) throw new Error('an http or https url is required');
+    await openBrowser(url);
+    return null;
+  },
 
   // ── local rooms (LOCAL-ROOMS.md §7–§8) ─────────────────────────────────
   ...localRooms.handlers,

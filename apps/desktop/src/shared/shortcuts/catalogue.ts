@@ -90,6 +90,18 @@ export const COMMANDS = {
     keyMatch: 'physical',
     nativeMenu: false,
   },
+  'room.panels.newTab': {
+    title: 'New panel tab',
+    description: 'Open a new tab in a room\'s panels, with its address bar ready to type into.',
+    category: 'View',
+    layer: 'route',
+    defaultBindings: everywhere('Mod+T'),
+    configurable: true,
+    inputPolicy: 'allow-editable',
+    repeat: 'ignore',
+    keyMatch: 'logical',
+    nativeMenu: false,
+  },
   'navigation.back': {
     title: 'Navigate back',
     description: 'Go to the previous screen.',

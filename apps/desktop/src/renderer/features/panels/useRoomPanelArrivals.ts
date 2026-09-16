@@ -13,6 +13,9 @@ import type { OpenPanels } from './useOpenPanels';
  */
 const dismissedByRoom = new Map<string, Set<string>>();
 
+/** The shared panels each room was last seen with, so a page opened while this person was elsewhere still arrives. */
+const seenByRoom = new Map<string, SeenPanels>();
+
 /** Stands in for the new-panel tab when asking `panelArrivals`; never a real panel id. */
 const NEW_TAB = '\u0000new-panel';
 
@@ -20,7 +23,6 @@ export function useRoomPanelArrivals(input: {
   enabled: boolean; ready: boolean; spaceId: string; panels: readonly Panel[]; openPanels: OpenPanels;
 }): void {
   const { enabled, ready, spaceId, panels, openPanels } = input;
-  const seen = useRef<{ spaceId: string; panels: SeenPanels } | null>(null);
   const lastOpen = useRef<{ spaceId: string; ids: readonly string[] } | null>(null);
 
   // A tab that was open and is not any more was closed by this person.
@@ -37,7 +39,7 @@ export function useRoomPanelArrivals(input: {
 
   useEffect(() => {
     if (!enabled || !ready) return;
-    const known = seen.current?.spaceId === spaceId ? seen.current.panels : null;
+    const known = seenByRoom.get(spaceId) ?? null;
     // Someone on the new-panel tab is choosing what to open, which is looking
     // at something: an arriving page joins the tabs and waits.
     const choosing = openPanels.newTabOpen;
@@ -51,7 +53,7 @@ export function useRoomPanelArrivals(input: {
       },
       dismissed: dismissedByRoom.get(spaceId) ?? new Set(),
     });
-    seen.current = { spaceId, panels: seenPanels(panels) };
+    seenByRoom.set(spaceId, seenPanels(panels));
     // Replaced, not pushed: a page arriving is not the person navigating, so
     // Back must not walk through what the room opened.
     if (next) {

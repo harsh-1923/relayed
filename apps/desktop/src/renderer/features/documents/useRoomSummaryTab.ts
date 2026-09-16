@@ -6,16 +6,13 @@
 // cannot lose it.
 //
 // The CONTAINER is a different question, and it is this person's: the summary
-// is shown the first time they enter a room in this session, and if they close
-// the container it stays closed for that room until the app restarts. "Nobody
-// has to know to open it" and "it reopens every time I close it" are both
-// rules; only the first one is wanted.
-import { useEffect, useRef } from 'react';
+// is shown the first time they enter a room in this session. After that the
+// room is as they left it (`useOpenPanels`), closed included. "Nobody has to
+// know to open it" and "it reopens every time I close it" are both rules; only
+// the first one is wanted.
+import { useEffect } from 'react';
 import type { Panel } from '../../../preload/api';
 import type { OpenPanels } from '../panels/useOpenPanels';
-
-/** Rooms where this person closed the container, for as long as the app runs. Never stored, never synced. */
-const closedByRoom = new Set<string>();
 
 /** The room's structural summary panel, first, then whatever this person opened. */
 export function withSummaryFirst(tabs: readonly Panel[], panels: readonly Panel[]): Panel[] {
@@ -28,18 +25,9 @@ export function useRoomSummaryTab(input: {
   enabled: boolean; ready: boolean; spaceId: string; panels: readonly Panel[]; openPanels: OpenPanels;
 }): void {
   const { enabled, ready, spaceId, panels, openPanels } = input;
-  const containerWas = useRef<{ spaceId: string; open: boolean } | null>(null);
-
-  // Closing the container in a room is remembered for that room.
-  useEffect(() => {
-    const previous = containerWas.current;
-    if (previous?.spaceId === spaceId && previous.open && !openPanels.containerOpen) closedByRoom.add(spaceId);
-    if (openPanels.containerOpen) closedByRoom.delete(spaceId);
-    containerWas.current = { spaceId, open: openPanels.containerOpen };
-  }, [spaceId, openPanels.containerOpen]);
 
   useEffect(() => {
-    if (!enabled || !ready || openPanels.containerOpen || closedByRoom.has(spaceId)) return;
+    if (!enabled || !ready || openPanels.containerOpen || openPanels.remembered) return;
     if (!panels.some(panel => panel.type === 'doc')) return;
     // No ids: the summary is not in `?p=` at all, so an open container with
     // nothing else opened shows exactly it.

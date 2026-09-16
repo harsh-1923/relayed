@@ -97,8 +97,9 @@ and Linux.
   or Escape inside an open dialog.
 - Syncing shortcuts between machines. The preference rows remain
   `reach='local'` until a merge policy is designed.
-- A command palette in the first vertical slice. `cmdk` is already used for
-  search, but a search dialog and a command palette are different products.
+- A command palette in the first vertical slice. `cmdk` searches and navigates
+  to the active sidebar's destinations, but a search dialog and a palette that
+  enumerates and executes catalogue commands are different products.
 - Inventing shortcuts for every action. Only frequent, stable commands get a
   default; catalogue entries may exist without a default binding.
 
@@ -628,6 +629,7 @@ This is the first useful set, not a claim that every action deserves a key.
 | Open search — `app.search.open` | `Mod+K` | `Mod+K` | Allowed in editable focus; application layer | Yes |
 | Toggle sidebar — `shell.sidebar.toggle` | `Mod+B` | `Mod+B` | Denied in editable focus; shell layer | No |
 | Toggle room panels — `room.panels.toggle` | `Mod+Shift+B` | — | Allowed in editable focus while a room route is mounted; physical-key match | No |
+| New panel tab — `room.panels.newTab` | `Mod+T` | `Mod+T` | Allowed in editable focus while a room route is mounted; route layer | No |
 | Navigate back — `navigation.back` | `Mod+[` | `Alt+ArrowLeft` | Denied in editable focus; route layer | No |
 | Navigate forward — `navigation.forward` | `Mod+]` | `Alt+ArrowRight` | Denied in editable focus; route layer | No |
 | Open settings — `app.settings.open` | `Mod+,` | `Mod+,` | Allowed in editable focus; application layer | Yes |
@@ -635,7 +637,10 @@ This is the first useful set, not a claim that every action deserves a key.
 | Send message — `composer.message.send` | `Enter`, `Mod+Enter` | `Enter`, `Mod+Enter` | Focused editor only; editor layer | No |
 
 **Where each handler lives.** Search in `app/shell/SearchPalette.tsx`, enabled
-once a workspace is open. Sidebar toggle, back and forward in `TopBar`, which is
+once a workspace is open. It reads the active workspace's spaces and the
+account's local rooms through the live-query client only while open, then
+navigates to the same destinations as the sidebar. Sidebar toggle, back and
+forward in `TopBar`, which is
 always mounted and already holds whether a sidebar is on screen and whether
 either history direction leads anywhere (`use-back-forward`); with nowhere to
 go, the key is left alone. Open settings and open keyboard shortcuts in

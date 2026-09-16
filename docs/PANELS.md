@@ -506,6 +506,13 @@ the spaces and chats it already carries — subject to the same size ceiling
   (`closePanelTab` in `shared/panels.ts`).
 - **Order, width, and which are open** live in the URL and the resizable layout;
   never stored. Two people in the same room can have entirely different tabs.
+- **A room is as you left it.** The URL only holds the room on screen, so each
+  room's tabs, the tab shown, and whether the container was open are also kept
+  in memory for as long as the app runs (`useOpenPanels`). Closing the container
+  hides its tabs rather than forgetting them; **Toggle room panels** brings them
+  back. Entering a room with no `?p` in the URL restores it; a URL that names
+  panels (Back, a link) wins. Only a room never opened this session falls back
+  to its newest panel.
 - **Navigation inside a web panel** is device-local and never written
   (`LOCAL-ROOMS.md` §10). Changing a *shared* panel's URL is out of scope for
   v1; share a new panel instead.
@@ -569,9 +576,10 @@ still written so the transcript shows *why* a panel appeared.
   header on the left, and the container's header sits in the same line on the
   right. Both rows are the same height, so they read as one bar.
 - **An open container with no tabs is useful, not blank.** It offers two
-  full-width choices: create a public or private side chat, or open a web page
-  locally. Both use the same dialogs as the Panels menu. Opening the container
-  alone never writes a panel row.
+  places to start: an address bar at the top, which opens a web page locally,
+  and a public or private side chat, whose choice opens in place into its name
+  and privacy. There is no creation dialog. Opening the container alone never
+  writes a panel row.
 - **One panel is shown at a time.** Opening a panel adds a tab and shows it;
   it never adds a second split.
 - **A tab** shows the type's icon (a chat, a private chat, a page) and the
@@ -595,6 +603,13 @@ still written so the transcript shows *why* a panel appeared.
   none; invoking it while the container is open closes the whole container.
   The command is active in editable controls because its complete modifier
   chord does not take text from the composer.
+- **New panel tab** (`room.panels.newTab`, `Command+T`) is a route command,
+  like a browser's new tab, and the same as the tab strip's **+**: the
+  container opens (with its remembered tabs, if it was closed) on the new-panel
+  tab, whose address bar has the cursor. Enter turns the tab into a web panel —
+  the same address already open in the room is that panel. There is no
+  address dialog, and no panel row exists until an address is entered, so a
+  new tab closed empty leaves nothing behind.
 
 As built: `routes/Space.tsx`, `features/panels/PanelContainer.tsx`,
 `PanelMenu.tsx` and `useOpenPanels.ts`. The chat view both panes use is
@@ -660,7 +675,7 @@ through `will-attach-webview`:
 | Only the open account's session | `partition` must equal `persist:panels:<accountId>`, or the attach is refused. Per account, so two accounts' logins do not mix, and never the app's own session |
 | Only a web page | `src` must be http or https |
 | Nothing of the app's in the page | Any `preload` is deleted; `sandbox`, `contextIsolation`, `webSecurity` forced on, Node integration forced off, whatever the tag asked for |
-| No windows | `setWindowOpenHandler`: an http(s) URL goes to the system browser, and nothing opens in the app. `allowpopups` is set on the tag so a `target="_blank"` link reaches that handler rather than doing nothing |
+| No windows | `setWindowOpenHandler` denies every window. A link that wants a tab (`disposition` `foreground-tab` — `target="_blank"`, `window.open()` — or `background-tab`, Cmd+click) is sent to the window as `web-panel:open` with the page's `webContents` id; the panel that owns that page asks its room, which opens the address as a device-local web panel (shown, or added behind for Cmd+click; the same address already open is that tab). Anything else — a popup the page sized, which is how sign-in windows open, and Shift+click (`new-window`) — goes to the system browser, unchanged. `allowpopups` is set on the tag so these reach the handler rather than doing nothing. **Electron has no popup blocker**: a `window.open` with no click behind it reaches the handler exactly as a clicked one, and the handler is not told which it was (measured under Electron 44.2). Nothing extra is added for it; the system-browser path had the same exposure |
 | No leaving the web | `will-frame-navigate` and `will-redirect` refuse anything but http and https, in every frame |
 | Permissions | Denied, except `clipboard-sanitized-write` — the copy buttons on a dev server's error page need it (t3code found the same). Camera, microphone, location, notifications and clipboard read stay denied |
 | User agent | `Electron/…` removed; `Relayed/<version>` kept. Removing both made the agent claim Google Chrome while Client Hints say Chromium, and Google's sign-in refused it as an insecure browser. Named as an app, the way t3code's preview is, it matched t3code, which signs in |
@@ -674,7 +689,11 @@ no window; the app's own scheme is refused while an unguarded page reaches it; a
 element above the webview draws over it; a parked webview keeps its page and
 draws again; a moved one reloads.
 
-**Not built:** opening the page in the system browser from the toolbar, the
+**Open in browser** is the toolbar button after the address bar: the page's
+current address, without a text directive, through the `web.openExternal` query
+(http and https only).
+
+**Not built:** the
 page's title on its tab, shortcuts while the page has focus (key presses go to
 the page, not the app's command bus), and pop-out into a window.
 

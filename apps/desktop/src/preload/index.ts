@@ -2,6 +2,8 @@
 // port itself, and never sees anything resembling arbitrary SQL (§13.2).
 import { contextBridge, ipcRenderer } from 'electron';
 import { isNativeCommandId, type NativeCommandId } from '../shared/shortcuts/catalogue.ts';
+import { isWebUrl } from '../shared/web-panels.ts';
+import type { WebPanelOpenRequest } from '../main/web-panels.ts';
 
 let port: MessagePort | null = null;
 let nextId = 1;
@@ -115,5 +117,19 @@ function onCommand(fn: (id: NativeCommandId) => void): () => void {
   return () => { ipcRenderer.removeListener('command:invoke', listener); };
 }
 
+/**
+ * A link in a web panel that wants a tab (PANELS.md). Checked again here: only
+ * an http(s) address and the page it came from cross.
+ */
+function onWebPanelOpen(fn: (request: WebPanelOpenRequest) => void): () => void {
+  const listener = (_event: unknown, raw: unknown) => {
+    const request = raw as Partial<WebPanelOpenRequest> | null;
+    if (typeof request?.webContentsId !== 'number' || !isWebUrl(request.url)) return;
+    fn({ webContentsId: request.webContentsId, url: request.url, background: request.background === true });
+  };
+  ipcRenderer.on('web-panel:open', listener);
+  return () => { ipcRenderer.removeListener('web-panel:open', listener); };
+}
+
 // Narrow surface only: no port, no tokens, no arbitrary SQL (§13.2).
-contextBridge.exposeInMainWorld('relayed', { query, subscribe, onCommand, STALE });
+contextBridge.exposeInMainWorld('relayed', { query, subscribe, onCommand, onWebPanelOpen, STALE });

@@ -12,8 +12,14 @@
 // (`spikes/text-fragments` measures both, and that the document survives).
 import { useEffect, useState } from 'react';
 
-const rooms = new Map<string, Set<(address: string) => void>>();
-const panels = new Map<string, Set<(address: string) => void>>();
+type Registry<T> = Map<string, Set<(value: T) => void>>;
+
+const rooms: Registry<string> = new Map();
+const panels: Registry<string> = new Map();
+
+/** A link in a room's web page that wants a tab; `background` for Cmd+click. */
+export interface LinkRequest { address: string; background: boolean }
+const links: Registry<LinkRequest> = new Map();
 
 /** Ask the room to open this passage. */
 export function showAnnotation(spaceId: string, address: string): void {
@@ -28,6 +34,16 @@ export function showAnnotation(spaceId: string, address: string): void {
  */
 export function pointPanel(panelId: string, address: string): void {
   for (const listener of panels.get(panelId) ?? []) listener(address);
+}
+
+/** Ask the room to open a link from one of its pages as a tab. */
+export function openLink(spaceId: string, request: LinkRequest): void {
+  for (const listener of links.get(spaceId) ?? []) listener(request);
+}
+
+/** The room answers links that want a tab for as long as it is on screen. */
+export function useLinkRequests(spaceId: string, onOpen: (request: LinkRequest) => void): void {
+  useSubscription(links, spaceId, onOpen);
 }
 
 /** The room answers annotation clicks for as long as it is on screen. */
@@ -45,17 +61,14 @@ export function usePanelPointer(panelId: string, onPoint: (address: string) => v
  * close over state that changes constantly, and depending on the handler itself
  * would drop a request that arrived between the two.
  */
-function useSubscription(
-  registry: Map<string, Set<(address: string) => void>>,
-  key: string, handler: (address: string) => void,
-): void {
+function useSubscription<T>(registry: Registry<T>, key: string, handler: (value: T) => void): void {
   const [held] = useState(() => ({ current: handler }));
   held.current = handler;
 
   useEffect(() => {
     if (key === '') return;
-    const listener = (address: string): void => { held.current(address); };
-    const forKey = registry.get(key) ?? new Set<(address: string) => void>();
+    const listener = (value: T): void => { held.current(value); };
+    const forKey = registry.get(key) ?? new Set<(value: T) => void>();
     forKey.add(listener);
     registry.set(key, forKey);
     return () => {

@@ -372,6 +372,8 @@ export interface RelayedApi {
   query(op: "local.panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** Open a content panel on this device only. Opening the same thing again returns the same panel. */
   query(op: "local.panels.open", params: { spaceId: string; workspaceId?: string | null; type: ContentPanelType; payload: Record<string, unknown>; title?: string | null; openedFromChatId?: string | null }): Promise<{ id: string }>;
+  /** Open an http(s) address in the system browser. */
+  query(op: "web.openExternal", params: { url: string }): Promise<null>;
   /** What this device learned about a room's panels by showing them: page titles and icons. */
   query(op: "local.panels.meta", params: { spaceId: string }): Promise<PanelMetaRow[]>;
   /** A panel on screen reporting its page. `icon` is a small raster `data:` URL; anything else is ignored. */
@@ -582,6 +584,8 @@ export interface RelayedApi {
    * allow-list arrive; the returned function unsubscribes.
    */
   onCommand(fn: (id: NativeCommandId) => void): () => void;
+  /** A link in a web panel that wants a tab. `webContentsId` is the page it was clicked in. */
+  onWebPanelOpen(fn: (request: { webContentsId: number; url: string; background: boolean }) => void): () => void;
   /**
    * Property name marking a reply superseded by a workspace switch. Present on
    * the RESOLVED value — contextBridge drops custom properties from Errors.

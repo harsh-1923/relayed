@@ -2,17 +2,23 @@
 // `?pn` (PANELS.md §8). View state, so it is never stored — two people in one
 // room can have entirely different tabs open, and a link with the query
 // stripped still opens the space.
-import { useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router';
+//
+// The URL only holds the room on screen, so each room's tabs are also kept
+// here for as long as the app runs (§8.1): closing the container hides them
+// rather than forgetting them, and a room entered again is as it was left.
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useParams, useSearchParams } from 'react-router';
 import { activePanelId, closePanelTab, formatPanelParam, parsePanelParam } from '../../../shared/panels.ts';
 
 export interface OpenPanels {
   /** The container may be open with no tabs, which is represented by an empty `?p=`. */
   containerOpen: boolean;
-  /** The open tabs, in the order they were opened. */
+  /** The tabs, in the order they were opened — while the container is closed, the ones it will reopen with. */
   ids: string[];
-  /** The tab shown. One panel at a time; null when no tab is open. */
+  /** The tab shown, or shown last while the container is closed. One panel at a time; null when there is none. */
   active: string | null;
+  /** This person has had the container open in this room since the app started. */
+  remembered: boolean;
   /**
    * The new-panel tab — a browser's new tab — is open, and shown. `?pn`, present
    * or absent. It offers what to open next, and becomes the panel chosen.
@@ -20,9 +26,11 @@ export interface OpenPanels {
   newTabOpen: boolean;
   /** Open a panel as a tab, or bring its tab forward. A history entry, so Back undoes it. */
   open: (id: string) => void;
-  /** Show the empty container without inventing a panel. */
+  /** Add a tab without showing it, as Cmd+click does in a browser. Opens the container if it was closed. */
+  add: (id: string) => void;
+  /** Show the container with the tabs it had, or empty when it has had none. */
   openContainer: () => void;
-  /** Close the whole container and all of its tabs. */
+  /** Hide the container. Its tabs are kept for when it opens again. */
   closeContainer: () => void;
   /** Show another open tab. Not a history entry: switching tabs is not navigating. */
   select: (id: string) => void;
@@ -35,14 +43,22 @@ export interface OpenPanels {
   replace: (ids: readonly string[], active: string | null) => void;
 }
 
+interface RoomView { open: boolean; ids: string[]; active: string | null }
+
+/** Each room's tabs as this person last had them. Never stored, never synced. */
+const viewByRoom = new Map<string, RoomView>();
+
 export function useOpenPanels(): OpenPanels {
+  const { spaceId = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const rawIds = params.get('p');
   const rawActive = params.get('pa');
   const newTabOpen = params.has('pn');
   const containerOpen = params.has('p') || newTabOpen;
-  const ids = useMemo(() => parsePanelParam(rawIds), [rawIds]);
-  const active = activePanelId(ids, rawActive);
+  const urlIds = useMemo(() => parsePanelParam(rawIds), [rawIds]);
+  const view = containerOpen ? null : viewByRoom.get(spaceId);
+  const ids = view ? view.ids : urlIds;
+  const active = view ? view.active : activePanelId(urlIds, rawActive);
 
   /**
    * `newTab`: true opens the new-panel tab, false closes it, `keep` leaves it —
@@ -65,13 +81,30 @@ export function useOpenPanels(): OpenPanels {
     }, { replace });
   }, [setParams]);
 
+  const entered = useRef<string | null>(null);
+  useEffect(() => {
+    if (entered.current !== spaceId) {
+      entered.current = spaceId;
+      // Entering a room: a URL that names its panels wins (Back, a link);
+      // otherwise the room is shown as this person left it.
+      if (view?.open) {
+        write(view.ids, view.active, true, true, false);
+        return;
+      }
+    }
+    if (containerOpen) viewByRoom.set(spaceId, { open: true, ids, active });
+    else if (view) viewByRoom.set(spaceId, { ...view, open: false });
+  }, [spaceId, containerOpen, ids, active]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return useMemo(() => ({
     containerOpen,
     ids,
     active,
+    get remembered() { return viewByRoom.has(spaceId); },
     newTabOpen,
     open: id => write(ids.includes(id) ? ids : [...ids, id], id, false, false, false),
-    openContainer: () => write([], null, false, true, false),
+    add: id => write(ids.includes(id) ? ids : [...ids, id], active ?? ids.at(-1) ?? id, false, true, 'keep'),
+    openContainer: () => write(ids, active, false, true, false),
     closeContainer: () => write([], null, false, false, false),
     select: id => { if (ids.includes(id)) write(ids, id, true, true, false); },
     close: id => {
@@ -81,5 +114,5 @@ export function useOpenPanels(): OpenPanels {
     openNewTab: () => write(ids, active, false, true, true),
     closeNewTab: () => write(ids, active, false, ids.length > 0, false),
     replace: (next, shown) => write(next, shown, true, containerOpen, 'keep'),
-  }), [containerOpen, ids, active, newTabOpen, write]);
+  }), [spaceId, containerOpen, ids, active, newTabOpen, write]);
 }

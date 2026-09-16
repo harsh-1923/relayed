@@ -5,17 +5,18 @@
 // A type this build does not know is kept and drawn as a placeholder, never
 // dropped: a newer version wrote it (§3.3). A body that throws is caught here,
 // so one broken panel does not take the container or the chat with it.
-import { Component, useState, type ComponentType, type ReactNode } from 'react';
-import { ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, Notebook, PlusDefault, UploadUp } from '@relayed/icons';
+import { Component, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, ArrowRight, ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, Notebook, PlusDefault, Refresh, UploadUp } from '@relayed/icons';
 import type { Panel, PanelMeta, Space, SpaceScope } from '../../../preload/api';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { ChatView } from '@/features/chat/ChatView';
 import { blobSrc, call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
 import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
-import { WebPanel } from './WebPanel';
-import { PanelCreationDialog, type PanelCreationKind } from './PanelCreationDialog';
+import { AddressBar, WebPanel } from './WebPanel';
 import { DocPanel } from '../documents/DocPanel';
 import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
 import './panels.css';
@@ -47,14 +48,15 @@ function DocumentBody({ panel, spaceId, onOpenPanel }: {
   );
 }
 
-export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
+export function PanelContainer({ tabs, panels, space, scope, openPanels, addressFocus }: {
   /** The open tabs, in order. */
   tabs: readonly Panel[];
   /** Every panel the room has, open or not — what the new-panel tab offers to reopen. */
   panels: readonly Panel[];
   space: Space; scope: SpaceScope; openPanels: OpenPanels;
+  /** Bumped by the new-tab shortcut: put the cursor in the new-panel tab's address bar. */
+  addressFocus: number;
 }) {
-  const [adding, setAdding] = useState<PanelCreationKind>(null);
   const { rows: actors } = useQuery('actors.list');
   const { rows: metaRows } = useQuery('local.panels.meta', { spaceId: space.id });
   const metaOf = (panel: Panel): PanelMeta => metaRows?.find(row => row.panelId === panel.id)?.meta ?? {};
@@ -74,12 +76,16 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
   const shown = choosing ? null : (tabs.find(panel => panel.id === openPanels.active) ?? tabs.at(-1) ?? null);
   const Body = shown ? (PANEL_BODIES[shown.type] ?? UnknownPanelBody) : null;
 
+  // The new-panel tab becomes the page: the same address opened twice in a room is the same panel.
+  const openAddress = (address: string) =>
+    call(api => api.query('local.panels.open', { spaceId: space.id, type: 'web', payload: { url: address } }))
+      .then(opened => { if (opened?.id) openPanels.open(opened.id); });
+
   const share = () => { if (shown) void call(api => api.query('local.panels.share', { panelId: shown.id })); };
   const remove = () => {
     if (!shown) return;
     void call(api => api.query('local.panels.remove', { panelId: shown.id })).then(() => openPanels.close(shown.id));
   };
-  const created = (id: string | null) => { setAdding(null); if (id) openPanels.open(id); };
 
   return (
     <section className="flex h-full min-h-0 min-w-0 flex-col" aria-label="Panels">
@@ -131,7 +137,9 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
             metaOf={metaOf}
             attributionOf={attributionOf}
             onReopen={openPanels.open}
-            onCreate={setAdding}
+            addressFocus={addressFocus}
+            onGo={openAddress}
+            onCreated={openPanels.open}
           />
         )}
         {/* Keyed, so a tab switch starts the next panel fresh rather than reusing the last one's state. */}
@@ -149,7 +157,6 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
           </PanelBoundary>
         ))}
       </div>
-      <PanelCreationDialog kind={adding} space={space} onKindChange={setAdding} onCreated={created} />
     </section>
   );
 }
@@ -157,7 +164,7 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
 /** The new-panel tab itself: always the one shown while it is open. */
 function NewPanelTab({ onClose }: { onClose: () => void }) {
   return (
-    <div data-selected="true" className="panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md pr-1 pl-2 text-xs text-foreground transition-colors">
+    <div data-selected="true" className="panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md px-2 text-xs text-foreground transition-colors">
       <span role="tab" aria-selected className="flex min-w-0 flex-1 items-center gap-1.5">
         <PlusDefault className="size-3.5 shrink-0" />
         <span className="truncate">New panel</span>
@@ -180,63 +187,132 @@ function NewPanelTab({ onClose }: { onClose: () => void }) {
  * What to open next: a web page, a side chat where a room can have one, or a
  * panel the room already has that is not open on this screen.
  */
-function NewPanelPage({ space, scope, closed, metaOf, attributionOf, onReopen, onCreate }: {
+function NewPanelPage({ space, scope, closed, metaOf, attributionOf, addressFocus, onGo, onReopen, onCreated }: {
   space: Space; scope: SpaceScope; closed: readonly Panel[];
   metaOf: (panel: Panel) => PanelMeta;
   attributionOf: (panel: Panel) => string | null;
-  onReopen: (id: string) => void; onCreate: (kind: PanelCreationKind) => void;
+  addressFocus: number;
+  onGo: (address: string) => Promise<void>;
+  onReopen: (id: string) => void;
+  /** A panel made here, which the new-panel tab becomes. */
+  onCreated: (id: string) => void;
 }) {
+  const [failure, setFailure] = useState<string | null>(null);
   return (
-    <div className="flex min-h-0 flex-1 justify-center overflow-y-auto p-6">
-      <div className="w-full max-w-sm">
-        <div className="mb-5 text-center">
-          <h2 className="text-base font-medium">Open a panel</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Work beside the room without leaving the conversation.</p>
-        </div>
-        <div className="space-y-2">
-          <EmptyPanelChoice
-            icon={<Globe />}
-            title="Web page"
-            description="Open a site on this device."
-            onClick={() => onCreate('web')}
-          />
-          {/* Side chats in a synced room need the server to write them, which it does not yet. */}
-          {scope === 'local' && (
-            <EmptyPanelChoice
-              icon={<ChatPlus />}
-              title="Side chat"
-              description="Start a public or private conversation."
-              onClick={() => onCreate('chat')}
-            />
+    <>
+      {/* A browser's new tab: the web panel's own toolbar, with nowhere to go back to yet. */}
+      <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border/60 px-1.5">
+        <Button variant="ghost" size="icon-xs" aria-label="Back" title="Back" disabled><ArrowLeft /></Button>
+        <Button variant="ghost" size="icon-xs" aria-label="Forward" title="Forward" disabled><ArrowRight /></Button>
+        <Button variant="ghost" size="icon-xs" aria-label="Reload" title="Reload" disabled><Refresh /></Button>
+        <AddressBar
+          url="" disabled={false} focusRequest={addressFocus}
+          onGo={address => {
+            setFailure(null);
+            onGo(address).catch((error: unknown) => setFailure(error instanceof Error ? error.message : String(error)));
+          }}
+        />
+      </div>
+      {failure && <p className="px-3 pt-2 text-xs text-destructive">{failure}</p>}
+      <div className="flex min-h-0 flex-1 justify-center overflow-y-auto p-6">
+        <div className="w-full max-w-sm">
+          <div className="mb-5 text-center">
+            <h2 className="text-base font-medium">Open a panel</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Type an address above, or pick something to work beside.</p>
+          </div>
+          <div className="space-y-2">
+            {/* Side chats in a synced room need the server to write them, which it does not yet. */}
+            {scope === 'local' && (
+              <SideChatChoice spaceId={space.id} onCreated={onCreated} />
+            )}
+          </div>
+          {closed.length > 0 && (
+            <div className="mt-6">
+              <h3 className="mb-2 px-1 text-xs font-medium text-muted-foreground">In this room</h3>
+              <ul className="space-y-1">
+                {closed.map(panel => {
+                  const chat = panel.chatId ? space.chats.find(candidate => candidate.id === panel.chatId) : undefined;
+                  const meta = metaOf(panel);
+                  const attribution = attributionOf(panel);
+                  return (
+                    <li key={panel.id}>
+                      <button
+                        type="button"
+                        onClick={() => onReopen(panel.id)}
+                        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
+                      >
+                        <PanelIcon panel={panel} chatKind={chat?.kind} meta={meta} className="size-4 text-muted-foreground" />
+                        <span className={cn('truncate', panel.scope === 'local' && 'italic')}>{panelTitle(panel, chat?.name, meta)}</span>
+                        {attribution && <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">{attribution}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </div>
-        {closed.length > 0 && (
-          <div className="mt-6">
-            <h3 className="mb-2 px-1 text-xs font-medium text-muted-foreground">In this room</h3>
-            <ul className="space-y-1">
-              {closed.map(panel => {
-                const chat = panel.chatId ? space.chats.find(candidate => candidate.id === panel.chatId) : undefined;
-                const meta = metaOf(panel);
-                const attribution = attributionOf(panel);
-                return (
-                  <li key={panel.id}>
-                    <button
-                      type="button"
-                      onClick={() => onReopen(panel.id)}
-                      className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
-                    >
-                      <PanelIcon panel={panel} chatKind={chat?.kind} meta={meta} className="size-4 text-muted-foreground" />
-                      <span className={cn('truncate', panel.scope === 'local' && 'italic')}>{panelTitle(panel, chat?.name, meta)}</span>
-                      {attribution && <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">{attribution}</span>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
       </div>
-    </div>
+    </>
+  );
+}
+
+/**
+ * A side chat, made in place: the choice opens into its name and privacy, so
+ * the new-panel tab never hands off to a dialog.
+ */
+function SideChatChoice({ spaceId, onCreated }: { spaceId: string; onCreated: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [isPrivate, setPrivate] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <EmptyPanelChoice
+        icon={<ChatPlus />}
+        title="Side chat"
+        description="Start a public or private conversation."
+        onClick={() => setOpen(true)}
+      />
+    );
+  }
+
+  const cancel = () => { setOpen(false); setName(''); setPrivate(false); setError(null); };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    void call(api => api.query('local.chats.create', { spaceId, name, kind: isPrivate ? 'private' : 'public' }))
+      .then(created => { if (created?.panelId) onCreated(created.panelId); })
+      .catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } }}
+      className="space-y-3 rounded-xl border border-border bg-muted/25 px-4 py-3"
+    >
+      <div className="flex items-center gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground [&_svg]:size-4">
+          <ChatPlus />
+        </span>
+        <span className="text-sm font-medium">New side chat</span>
+      </div>
+      <Input autoFocus aria-label="Name" placeholder="try a different fix" value={name} onChange={event => setName(event.target.value)} />
+      <label className="flex items-center justify-between gap-3 text-sm">
+        <span>
+          Private
+          <span className="block text-xs text-muted-foreground">Only its members see it, or know it exists.</span>
+        </span>
+        <Switch checked={isPrivate} onCheckedChange={setPrivate} />
+      </label>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="xs" onClick={cancel}>Cancel</Button>
+        <Button type="submit" size="xs" disabled={name.trim().length === 0}>Create</Button>
+      </div>
+    </form>
   );
 }
 
@@ -270,7 +346,7 @@ function PanelTab({ panel, space, meta, attribution, selected, onSelect, onClose
     <div
       data-selected={selected}
       className={cn(
-        'panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md pr-1 pl-2 text-sm transition-colors',
+        'panel-tab group/tab relative flex h-7 max-w-48 min-w-0 shrink-0 items-center overflow-hidden rounded-md px-2 text-sm transition-colors',
         selected
           ? 'text-foreground'
           : 'text-muted-foreground hover:text-foreground focus-within:text-foreground',

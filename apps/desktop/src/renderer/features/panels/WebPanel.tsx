@@ -10,17 +10,17 @@
 // sight rather than hiding them. Parked, not `visibility: hidden`: t3code found
 // Electron can leave a macOS webview blank for good after that.
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowRight, Globe, Refresh, Spinner } from '@relayed/icons';
+import { AlertTriangle, ArrowLeft, ArrowRight, ExternalLink, Globe, Refresh, Spinner } from '@relayed/icons';
 import type { Panel } from '../../../preload/api';
 import { useSession } from '@/app/state';
-import { call } from '@/lib/ipc';
+import { bridge, call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, withoutFragmentDirective,
 } from '../../../shared/web-panels.ts';
 import { markAnnotation } from '@/lib/pending-annotations';
-import { usePanelPointer } from '@/lib/panel-navigation';
+import { openLink, usePanelPointer } from '@/lib/panel-navigation';
 import { annotationLabel, anchorScript, readAnchor } from '../../../shared/annotations.ts';
 
 /** The methods of Electron's `<webview>` this panel uses. Callable only once `dom-ready` has fired. */
@@ -32,6 +32,7 @@ interface WebviewElement extends HTMLElement {
   reload(): void;
   loadURL(url: string): Promise<void>;
   getURL(): string;
+  getWebContentsId(): number;
   getTitle(): string;
   isLoading(): boolean;
   executeJavaScript(code: string): Promise<unknown>;
@@ -261,6 +262,14 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
     load(address);
   });
 
+  // A link in this page that wants a tab: main says which page it came from,
+  // and only this panel's page is this panel's to pass on to the room.
+  useEffect(() => bridge()?.onWebPanelOpen(request => {
+    let own: number | null = null;
+    try { own = element()?.getWebContentsId() ?? null; } catch { /* not attached yet */ }
+    if (own === request.webContentsId) openLink(panel.spaceId, { address: request.url, background: request.background });
+  }), [panel.spaceId]);
+
   const retry = (): void => {
     setPage(previous => ({ ...previous, loading: true, failure: null }));
     const failed = page.failure;
@@ -303,6 +312,13 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
             load(address);
           }}
         />
+        <Button
+          variant="ghost" size="icon-xs" aria-label="Open in browser" title="Open in browser"
+          disabled={!isWebUrl(page.url)}
+          onClick={() => { void call(api => api.query('web.openExternal', { url: withoutFragmentDirective(page.url) })); }}
+        >
+          <ExternalLink />
+        </Button>
       </div>
       <div ref={surface} className="relative min-h-0 flex-1">
         {drawable && session.accountId ? (
@@ -389,10 +405,17 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
  * web panel may show can be typed; another scheme is refused here as main would
  * refuse it anyway.
  */
-function AddressBar({ url, disabled, onGo }: { url: string; disabled: boolean; onGo: (address: string) => void }) {
+export function AddressBar({ url, disabled, onGo, focusRequest }: {
+  url: string; disabled: boolean; onGo: (address: string) => void;
+  /** Focus the bar on mount and whenever this changes; absent, the bar waits to be clicked. */
+  focusRequest?: number;
+}) {
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focusRequest !== undefined) input.current?.focus();
+  }, [focusRequest]);
 
   const submit = (event: FormEvent): void => {
     event.preventDefault();
