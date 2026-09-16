@@ -394,3 +394,153 @@ test('a room a person creates themselves is unchanged: no on_behalf_of, one admi
   assert.deepEqual(members, [{ actor_id: alice, role: 'admin' }]);
   assert.deepEqual(made.events.map(event => event.type), ['space.created', 'chat.created', 'space.member_added']);
 });
+
+// ── send_dm, post_message, add_to_room ─────────────────────────────────────
+
+/** A person in the workspace who is not in any of the test's spaces. */
+async function person(name: string): Promise<string> {
+  const id = ulid('act');
+  await db.insertInto('actors').values({
+    id, org_id: org, workspace_id: wsp, type: 'human', handle: `b-${id.slice(-6).toLowerCase()}`, display_name: name,
+    avatar_url: null, identity_kind: 'workos_user', identity_id: `wu_${id}`, owner_actor_id: null, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: id, role: 'member' }).execute();
+  return id;
+}
+
+type Answer = { result: string; message?: string; data?: Record<string, unknown> };
+const callAs = (app: Awaited<ReturnType<typeof server>>['app'], r: { runId: string; grant: string }, tool: string, args: unknown, toolCallId = ulid('call')) =>
+  app.inject({
+    method: 'POST', url: '/agent/tools', headers: { authorization: `Bearer ${r.grant}` },
+    payload: { runId: r.runId, toolCallId, tool, arguments: args },
+  }).then(res => res.json<Answer>());
+
+const messagesIn = (spaceId: string) => db.selectFrom('messages')
+  .innerJoin('chats', 'chats.id', 'messages.chat_id')
+  .select(['messages.author_id', 'messages.body', 'messages.on_behalf_of_actor_id', 'messages.delegation_id', 'messages.message_kind'])
+  .where('chats.space_id', '=', spaceId).orderBy('messages.ord').execute();
+
+test('send_dm to one person: a DM between the agent and them, written as the agent for the person who asked', opts, async () => {
+  const { app } = await server();
+  const bob = await person('Bob');
+  const r = await run(triage);
+
+  const answer = await callAs(app, r, 'send_dm', { people: [bob], text: `Reminder about HAR-2314, [Bob](actor:${bob}).` });
+  assert.equal(answer.result, 'ok');
+  const spaceId = answer.data!['space_id'] as string;
+  assert.equal(answer.data!['kind'], 'dm');
+  assert.equal(answer.data!['link'], `[Direct message](space:${spaceId})`);
+  const space = await db.selectFrom('spaces').select(['kind', 'dm_key']).where('id', '=', spaceId).executeTakeFirstOrThrow();
+  assert.deepEqual(space, { kind: 'dm', dm_key: [triage, bob].sort().join(',') });
+  assert.deepEqual(await messagesIn(spaceId), [{
+    author_id: triage, body: `Reminder about HAR-2314, [Bob](actor:${bob}).`, on_behalf_of_actor_id: alice, delegation_id: r.runId, message_kind: 'actor',
+  }]);
+
+  const again = await callAs(app, r, 'send_dm', { people: [bob], text: 'And another.' });
+  assert.deepEqual([again.data!['space_id'], again.data!['new_conversation']], [spaceId, false], 'the conversation already there');
+  await app.close();
+});
+
+test('send_dm to several people is one group message with the agent and all of them', opts, async () => {
+  const { app } = await server();
+  const [carol, dave] = [await person('Carol'), await person('Dave')];
+  const r = await run(triage);
+  const answer = await callAs(app, r, 'send_dm', { people: [carol, dave, triage], text: 'Standup moved to 11.' });
+  assert.equal(answer.data!['kind'], 'group_dm');
+  const space = await db.selectFrom('spaces').select('dm_key').where('id', '=', answer.data!['space_id'] as string).executeTakeFirstOrThrow();
+  assert.equal(space.dm_key, [triage, carol, dave].sort().join(','), 'the agent once, however the model listed it');
+  await app.close();
+});
+
+test('send_dm refuses no people, no text, and someone outside the workspace — sending nothing', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+  assert.equal((await callAs(app, r, 'send_dm', { people: [], text: 'hi' })).result, 'failed');
+  assert.equal((await callAs(app, r, 'send_dm', { people: [alice], text: '   ' })).result, 'failed');
+  const stranger = await callAs(app, r, 'send_dm', { people: ['act_nobody'], text: 'hi' });
+  assert.equal(stranger.result, 'failed');
+  assert.match(stranger.message ?? '', /not an active member/);
+  assert.deepEqual(recorded.delivered, []);
+  await app.close();
+});
+
+test('post_message posts where the agent is a member, and says it is not where it is not', opts, async () => {
+  const { app, recorded } = await server();
+  const r = await run(triage);
+  const posted = await callAs(app, r, 'post_message', { space_id: r.spaceId, text: 'Summary: all green.' });
+  assert.equal(posted.result, 'ok');
+  assert.equal((await messagesIn(r.spaceId)).at(-1)?.body, 'Summary: all green.');
+
+  const elsewhere = await createChannel(db, { workspaceId: wsp, name: `x-${ulid('x')}`, createdBy: alice });
+  recorded.delivered.length = 0;
+  const refused = await callAs(app, r, 'post_message', { space_id: elsewhere.spaceId, text: 'Hello?' });
+  assert.equal(refused.result, 'not_a_member');
+  assert.match(refused.message ?? '', /not a member/);
+  assert.equal((await messagesIn(elsewhere.spaceId)).filter(row => row.message_kind === 'actor').length, 0);
+  assert.deepEqual(recorded.delivered, []);
+  assert.equal((await callAs(app, r, 'post_message', { space_id: 'spc_nowhere', text: 'hi' })).result, 'failed');
+  await app.close();
+});
+
+test('the same tool call sent twice posts one message', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage);
+  const id = ulid('call');
+  const first = await callAs(app, r, 'post_message', { space_id: r.spaceId, text: 'Only once.' }, id);
+  const second = await callAs(app, r, 'post_message', { space_id: r.spaceId, text: 'Only once.' }, id);
+  assert.equal(first.data!['message_id'], second.data!['message_id']);
+  assert.equal((await messagesIn(r.spaceId)).filter(row => row.body === 'Only once.').length, 1);
+  await app.close();
+});
+
+test('add_to_room adds people with the marker, and refuses a room the agent is not in and a DM', opts, async () => {
+  const { app } = await server();
+  const [erin, frank] = [await person('Erin'), await person('Frank')];
+  const r = await run(triage, 'room');
+
+  const answer = await callAs(app, r, 'add_to_room', { space_id: r.spaceId, people: [erin, frank, alice, 'act_nobody'] });
+  assert.equal(answer.result, 'ok');
+  assert.deepEqual(answer.data, { space_id: r.spaceId, added: [erin, frank], already_members: [alice], not_in_workspace: ['act_nobody'] });
+  const markers = (await messagesIn(r.spaceId)).filter(row => row.message_kind === 'system');
+  assert.equal(markers.length >= 2, true);
+
+  const theirs = await createRoom(db, { workspaceId: wsp, name: `t-${ulid('x')}`, createdBy: alice });
+  assert.equal((await callAs(app, r, 'add_to_room', { space_id: theirs.spaceId, people: [erin] })).result, 'not_a_member');
+
+  const dm = await callAs(app, r, 'send_dm', { people: [erin], text: 'hi' });
+  const sealed = await callAs(app, r, 'add_to_room', { space_id: dm.data!['space_id'], people: [frank] });
+  assert.equal(sealed.result, 'failed');
+  assert.match(sealed.message ?? '', /Nobody can be added/);
+  await app.close();
+});
+
+test('a message the agent sends that mentions another agent starts it for the same person, and stops at depth three', opts, async () => {
+  const { app } = await server();
+  const r = await run(triage);
+  await joinSpace(db, r.spaceId, review).catch(() => { /* already in */ });
+
+  const posted = await callAs(app, r, 'post_message', { space_id: r.spaceId, text: `[Review](actor:${review}) please check this` });
+  const chained = await db.selectFrom('agent_runs').select(['agent_actor_id', 'invoker_actor_id', 'chain_depth'])
+    .where('trigger_message_id', '=', posted.data!['message_id'] as string).execute();
+  assert.deepEqual(chained, [{ agent_actor_id: review, invoker_actor_id: alice, chain_depth: 2 }]);
+
+  await db.updateTable('agent_runs').set({ chain_depth: 3 }).where('id', '=', r.runId).execute();
+  const deep = await callAs(app, r, 'post_message', { space_id: r.spaceId, text: `[Review](actor:${review}) again` });
+  assert.equal((await db.selectFrom('agent_runs').select('id').where('trigger_message_id', '=', deep.data!['message_id'] as string).execute()).length, 0);
+  await app.close();
+});
+
+test('an agent\'s message where the person who asked is not a member starts nobody', opts, async () => {
+  const { app } = await server();
+  const bob = await person('Bob');
+  const r = await run(triage);
+  const bobs = await createChannel(db, { workspaceId: wsp, name: `bob-${ulid('x')}`, createdBy: bob });
+  await joinSpace(db, bobs.spaceId, triage);
+  await joinSpace(db, bobs.spaceId, review);
+
+  const posted = await callAs(app, r, 'post_message', { space_id: bobs.spaceId, text: `[Review](actor:${review}) have a look` });
+  assert.equal(posted.result, 'ok', 'the agent may post there — it is a member');
+  assert.equal((await db.selectFrom('agent_runs').select('id').where('trigger_message_id', '=', posted.data!['message_id'] as string).execute()).length, 0,
+    'but Alice cannot read it, so no run is started for her');
+  await app.close();
+});

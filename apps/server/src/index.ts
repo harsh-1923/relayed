@@ -84,7 +84,7 @@ await app.register(connectionRoutes({ db, registry: sync.registry }));
 await app.register(permissionRoutes({
   db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
 }));
-await app.register(brokerRoutes({ db, deliver: sync.deliver }));
+await app.register(brokerRoutes({ db, deliver: sync.deliver, dispatcher: { wake: () => dispatcher?.wake() } }));
 await app.register(accessRoutes({
   db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
 }));

@@ -196,6 +196,8 @@ export interface AgentRunsTable {
   chat_id: string;
   trigger_message_id: string;
   attempt: Generated<number>;
+  /** 1 for a person's mention; a run started by an agent's message is its run's depth + 1, never past 3. */
+  chain_depth: Generated<number>;
   state: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout'
     | 'refused' | 'interrupted';
   refusal: string | null;

@@ -360,13 +360,16 @@ next `welcome` (plan D20). The summary rides the ordinary actor read (D19).
 
 ### 5.1 What starts a run
 
-All of these, checked inside the `send` op:
+All of these, checked inside the transaction that writes the message — a
+person's `send`, or a message an agent writes during a run (`startMentionedRuns`,
+`apps/server/src/agents/checkpoints.ts`):
 
 | Condition | Why |
 |---|---|
 | The message **mentions** an agent — the canonical actor link `[…](actor:<id>)` that `feed.ts` already counts mentions with — **or** the chat is the `sole` chat of a DM with an agent | One parser, the one the counters use, so a badge and a run cannot disagree about what a mention is |
 | The agent is `active` and a **member of the space**, with access to the chat | `DESIGN.md` §6.4, Boundary B: "who can see this room" stays answerable by the member list alone |
-| The author is a **person** | No agent-to-agent invocation. Delegation is never chained (`DESIGN.md` §6.4) |
+| The author is a **person**, or an **agent in a run** less than three steps from a person | A person's mention starts a run at depth 1, for that person. An agent's reply, or a message it posts, starts the agents it mentions at its run's depth + 1 — **for the same person**, whose permissions and connections the chained run spends; an agent has none of its own. Nothing starts past depth 3, so two agents mentioning each other stop. An agent never starts itself, and a notice never starts anyone. `agent_runs.chain_depth` (`DESIGN.md` §6.4) |
+| An agent's message is somewhere **the person can read** | A run reads only what its agent and its person can both read (§5.6), so a message in a DM between the agent and Bob starts nobody for Alice, rather than a run that could only be refused |
 | The op is `send` | Not an import: publishing a local room writes history and must never start anything (`LOCAL-ROOMS.md`, publishing §12.6). Edits do not exist yet; when they do, an added mention does not invoke |
 
 A message mentioning two agents starts two runs. A mention of an agent that is
@@ -612,6 +615,23 @@ sync path, so it is attributed like any other change.
   service — because a service can stop the run for access, and resolving that
   card re-runs the whole request: a room made before the stop would be made
   again. That is an instruction, not a guarantee (§13).
+- **`send_dm({ people, text })`**, **`post_message({ space_id, text })`** and
+  **`add_to_room({ space_id, people })`** (`apps/server/src/agents/messaging.ts`)
+  let an agent talk to people the way a person does. People are named by the
+  actor ids their mentions carry — `[Bob](actor:act_…)` stays in the transcript
+  (§5.6) — and every id is checked against the workspace. `send_dm` opens the
+  conversation the way a person does (`openDm`, `DESIGN.md` §7.1), with the
+  **agent** as the opener: one person is a DM between the agent and them,
+  several are one group message with the agent and all of them, as the person
+  asked. `post_message` writes into a space's structural chat **only where the
+  agent itself may post** — it is a member — and otherwise answers
+  `not_a_member`, which the prompt says to report. `add_to_room` adds each
+  person as a member would, with the marker; a DM takes nobody. Every message is
+  authored by the agent, `on_behalf_of` the invoker, with the run as its
+  `delegation_id`; it is written once per tool call (`op_<run>_<call>` in the
+  ops ledger), and a mention of an agent in it starts that agent (§5.1). Like
+  `create_room`, the prompt says to do these **last** and never for people
+  nobody asked for.
 
 **A call id executes at most once.** The row is claimed before anything else is
 decided, so a runtime that sends the same call twice — a retry after a dropped
@@ -1791,6 +1811,9 @@ gapped across the reply with a stale reply count.
 | An agent gains a destructive tool silently | No wildcards; tools are listed one by one, and a higher effect re-asks every invoker (§4.3, §6.4) |
 | A deactivated person's runs continue | Checked at claim and at every tool call (§5.3, §5.5) |
 | Other people's text steers a run | Labelled as context (§5.6). Reduced, not prevented; the approval guardrail is deferred by decision (§13) |
+| Two agents mention each other for ever, each run spending the person's accounts | `agent_runs.chain_depth`: nothing starts past three steps from the person's message (§5.1) |
+| A chained run spends an agent's own access, or someone else's | Its invoker is the original person, carried down the chain; an agent holds no connections (§5.1) |
+| An agent posts where its member list does not show it | `post_message` and `add_to_room` need the agent's own membership; `send_dm` puts the agent in the conversation it opens (§5.5) |
 | Text a run reads — a ticket, a page, another message — tells it to create rooms | `create_room` spends only the invoker's own `create_space`, which they could use themselves; its prompt says to create one only when asked, and a room is private by default. No hard cap per run, by decision (§13) |
 | Third-party content ends up in a room | Accepted etiquette, as `DESIGN.md` §6.6 already records. Deferred by decision |
 
@@ -1938,7 +1961,9 @@ purpose rather than rediscovered.
 | **Disconnecting a person's accounts when they are deactivated** | Cheap, and recommended alongside the WorkOS poller's deactivation. v1 relies on the broker's per-call check, which stops use but leaves tokens live in Composio |
 | **Connections owned by an agent or a team** | Decided against: the invoker, always |
 | **Scheduled or event-triggered agents** (Composio triggers) | There is no invoker in the room, so there is no one whose authority a run can spend without a standing grant — a separate design |
-| **Agents invoking agents** | Never chained (`DESIGN.md` §6.4) |
+| **A chain deeper than three steps, or per-agent control over who may mention it** | A real workflow needs a longer hand-off. `MAX_CHAIN_DEPTH` in `checkpoints.ts` is one constant |
+| **Idempotent messaging across re-runs** | A message sent twice because an access card re-ran a request that had already sent it. Today only the prompt holds it (§5.5); a key on the triggering message, the agent and the conversation would |
+| **Finding people who were not mentioned** (`find_people`) | "Add Carol and Dave" without mentioning them. Today an agent reaches only ids in its transcript |
 | **External agents calling our API** | A customer brings their own. That is where WorkOS M2M or Agent Registration decides (`DESIGN.md` §16) |
 | **Any use of restricted messages** — person-to-person or otherwise | Built and dormant (§8.1). Re-decide §8.9 for that use first |
 | **Letting a creator restrict an agent's tools** | A creator needs an agent that must never, say, merge. Decided against for v1: agents are open, and each person's permission is the guard |

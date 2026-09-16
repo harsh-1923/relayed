@@ -13,7 +13,7 @@ import type { RunResultBody, MessagePart } from '@relayed/protocol';
 import { writeMessage, type Ack } from '../sync/ops.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { applyOnce } from '../sync/allocate.ts';
-import { deliverReply as deliverReplyDecision, type RefusalCode } from './checkpoints.ts';
+import { deliverReply as deliverReplyDecision, startMentionedRuns, type RefusalCode } from './checkpoints.ts';
 import { noticeFor, type FailureReason } from './notices.ts';
 
 export interface FinishedRun {
@@ -96,7 +96,7 @@ async function writeRunMessage(
   const applied = await applyOnce(db, {
     opId: `op_${run.id}`, actorId: run.agentActorId, chatId: run.chatId, kind: 'send',
   }, async (trx): Promise<WriteOutcome> => {
-    const row = await trx.selectFrom('agent_runs').select('state')
+    const row = await trx.selectFrom('agent_runs').select(['state', 'chain_depth'])
       .where('id', '=', run.id)
       .forUpdate()
       .executeTakeFirst();
@@ -111,6 +111,16 @@ async function writeRunMessage(
       onBehalfOfActorId: run.invokerActorId, delegationId: run.id,
       ...(content.parts ? { parts: content.parts } : { body: content.body ?? '' }),
     });
+
+    // An answer that mentions another agent starts it, for the same person, one
+    // step further down the chain. A notice never does: it is ours, not the model's.
+    if (content.nextState === 'completed') {
+      await startMentionedRuns(trx, {
+        chatId: run.chatId, messageId: run.replyMessageId, authorId: run.agentActorId,
+        body: (written.event.payload as { body: string }).body,
+        invokerActorId: run.invokerActorId, depth: (row?.chain_depth ?? 1) + 1,
+      });
+    }
 
     // `IN ('running', 'queued')`, matching `deliverReplyDecision`'s own
     // widened guard above: a run stopped before it was ever claimed is still

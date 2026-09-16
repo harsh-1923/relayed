@@ -23,7 +23,7 @@ import { ulid } from '../db/ulid.ts';
  */
 export async function rerunIfReady(db: Kysely<DB>, runId: string): Promise<string | null> {
   const run = await db.selectFrom('agent_runs')
-    .select(['workspace_id', 'agent_actor_id', 'invoker_actor_id', 'chat_id', 'trigger_message_id', 'attempt', 'state'])
+    .select(['workspace_id', 'agent_actor_id', 'invoker_actor_id', 'chat_id', 'trigger_message_id', 'attempt', 'chain_depth', 'state'])
     .where('id', '=', runId).executeTakeFirst();
   if (!run || run.state === 'queued' || run.state === 'running') return null;
 
@@ -36,7 +36,7 @@ export async function rerunIfReady(db: Kysely<DB>, runId: string): Promise<strin
   const inserted = await db.insertInto('agent_runs').values({
     id: ulid('run'), workspace_id: run.workspace_id, agent_actor_id: run.agent_actor_id,
     invoker_actor_id: run.invoker_actor_id, chat_id: run.chat_id, trigger_message_id: run.trigger_message_id,
-    attempt: run.attempt + 1, state: 'queued',
+    attempt: run.attempt + 1, chain_depth: run.chain_depth, state: 'queued',
   })
     .onConflict(oc => oc.columns(['trigger_message_id', 'agent_actor_id', 'attempt']).doNothing())
     .returning('id')

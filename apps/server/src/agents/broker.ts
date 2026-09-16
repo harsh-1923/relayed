@@ -24,7 +24,8 @@ import {
 } from './composio.ts';
 import { mapComposioError, mapExecuteResult } from './tool-errors.ts';
 import { raiseAccessRequest } from './access.ts';
-import { FIND_TOOLS, CALL_TOOL, OPEN_PANEL, CREATE_ROOM } from './run-tools.ts';
+import { FIND_TOOLS, CALL_TOOL, OPEN_PANEL, CREATE_ROOM, SEND_DM, POST_MESSAGE, ADD_TO_ROOM } from './run-tools.ts';
+import { addToRoomFor, postMessageFor, sendDmFor, type RunContext } from './messaging.ts';
 import { openRoomPanel, roomPanelUrl, NotARoomError, PrivateChatError, type UrlRefusal } from '../sync/panels.ts';
 import { createRoom, spaceNameFrom } from '../sync/spaces.ts';
 import { Forbidden } from '../authz/can.ts';
@@ -46,6 +47,8 @@ export interface BrokerRouteDeps {
   db: Kysely<DB>;
   deliver: (event: AppendedEvent) => Promise<FanoutResult>;
   composio?: BrokerComposio;
+  /** Nudged when a message an agent sends mentions another agent, so that run starts now rather than at the next poll. */
+  dispatcher?: { wake(): void };
 }
 
 interface ToolCallBody {
@@ -94,7 +97,7 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
       }
 
       // step 2: load the run — must still be running.
-      const run = await deps.db.selectFrom('agent_runs').select(['state', 'chat_id'])
+      const run = await deps.db.selectFrom('agent_runs').select(['state', 'chat_id', 'chain_depth'])
         .where('id', '=', runId).executeTakeFirst();
       if (!run || run.state !== 'running') return reply.send({ result: 'run_not_running' });
 
@@ -111,6 +114,15 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
       }
       if (tool === CREATE_ROOM) {
         return reply.send(await createRoomFor(deps, { chatId: run.chat_id, invokerActorId, agentActorId, args }));
+      }
+      if (tool === SEND_DM || tool === POST_MESSAGE || tool === ADD_TO_ROOM) {
+        const inactive = await inactiveParty(deps.db, invokerActorId, agentActorId);
+        if (inactive) return reply.send({ result: inactive });
+        const context: RunContext = {
+          runId, toolCallId, chatId: run.chat_id, invokerActorId, agentActorId, chainDepth: run.chain_depth,
+        };
+        const answer = tool === SEND_DM ? sendDmFor : tool === POST_MESSAGE ? postMessageFor : addToRoomFor;
+        return reply.send(await answer(deps, context, args));
       }
       if (tool !== CALL_TOOL) return reply.send({ result: 'tool_not_allowed' });
 
@@ -204,6 +216,17 @@ async function openPanel(
     if (err instanceof NotARoomError || err instanceof PrivateChatError) return { result: 'tool_not_allowed' };
     throw err;
   }
+}
+
+/** Step 4 (§5.5): the person and the agent are both still active. */
+async function inactiveParty(db: Kysely<DB>, invokerActorId: string, agentActorId: string): Promise<string | null> {
+  const [invoker, agent] = await Promise.all([
+    db.selectFrom('actors').select('state').where('id', '=', invokerActorId).executeTakeFirst(),
+    db.selectFrom('actors').select('state').where('id', '=', agentActorId).executeTakeFirst(),
+  ]);
+  if (!invoker || invoker.state !== 'active') return 'invoker_inactive';
+  if (!agent || agent.state !== 'active') return 'agent_inactive';
+  return null;
 }
 
 /**

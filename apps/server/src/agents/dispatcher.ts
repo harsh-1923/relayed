@@ -316,6 +316,13 @@ async function processRun(
           : frame.result.status === 'timeout' ? { state: 'timeout' as const }
           : frame.result.status === 'cancelled' ? { state: 'cancelled' as const, by: 'the runtime' }
           : { state: 'failed' as const, reason: 'run_failed' as const };
+        // The runtime's own reason, dropped otherwise: `run_failed` tells the
+        // person nothing, and telemetry events carry no free text (§1 of the
+        // catalogue). Console only, for whoever is watching this process —
+        // never stored, never sent anywhere.
+        if (outcome.state === 'failed' && frame.result.error) {
+          console.error(`[agent.dispatcher] run ${run.id} (${run.agentActorId}) failed: ${frame.result.error}`);
+        }
         const written = await deliverReply(db, finished, outcome);
         count('agent.run', { run_outcome: outcome.state });
         await finishDelivery(db, registry, finished, written);

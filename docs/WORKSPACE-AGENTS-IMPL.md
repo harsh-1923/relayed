@@ -1390,6 +1390,73 @@ and optional, so a client meeting an older server parses it.
 
 ---
 
+## 11b. Agents message people — `send_dm`, `post_message`, `add_to_room`
+
+> **Built 2026-09-15.** **Checked:** server 438 tests, 12 new (`broker.test.ts`
+> 8, `reply.test.ts` 2, `run-tools.test.ts` 2), with the one failure
+> `find_tools refuses a toolkit that is not enabled` failing identically before
+> this; migration 020 applied to the development database. **Not checked:** a
+> live run — "@triage send a DM reminder to @Bob" with a real model.
+
+**Why.** "Read HAR-2314 and DM Bob a reminder", or "make a room, add Carol and
+Dave, and post the summary": today an agent can only answer where it was
+mentioned.
+
+**The decisions** (the dev's):
+
+1. **A mention of an agent starts it, whoever wrote the message** — a person, or
+   an agent in a run. The chained run acts **for the original person**; a chain
+   stops at depth 3.
+2. **The agent must be a member to post or add**, and says so when it is not.
+   For DMs it opens the conversation itself, as a person would.
+3. **Who a DM is between is what the person asked for**: one person is a DM
+   with the agent, a group when asked for a group.
+4. **Last, by the prompt**, like `create_room`.
+
+People are named by the ids their mentions already carry in the transcript, so
+no directory lookup is built yet.
+
+### Schema
+
+Migration 020: `agent_runs.chain_depth INTEGER NOT NULL DEFAULT 1`, `CHECK >= 1`.
+`rerun.ts` carries it to the next attempt.
+
+### Server
+
+| File | Change |
+|---|---|
+| `agents/checkpoints.ts` | `startMentionedRuns`: the one handoff from a message to runs — `invocationsFor` (never the author itself), the invoker and depth given, nothing past `MAX_CHAIN_DEPTH` (3), nothing where the invoker cannot read the chat |
+| `sync/ops.ts` | `send` uses it at depth 1 |
+| `agents/reply.ts` | A **completed** answer uses it at the run's depth + 1; a notice never does |
+| `agents/messaging.ts` (new) | `sendDmFor` (`openDm` with the agent as opener, then post), `postMessageFor` (the space's `sole`/`default` chat, the agent's own `post`), `addToRoomFor` (`addToSpace` per person, reporting added, already members and not in the workspace). Messages: author the agent, `on_behalf_of` the invoker, `delegation_id` the run, once per `op_<run>_<call>`, starting mentioned agents at depth + 1 and waking the dispatcher |
+| `agents/run-tools.ts` | The three tools for every run, and the prompt: ids from `[Name](actor:act_…)`, a group only when asked, last, never for anyone not asked for, report not being a member |
+| `agents/broker.ts`, `index.ts` | Dispatch on the three names after step 4; the broker gets the dispatcher to wake |
+
+### Tests
+
+| Test | Proves |
+|---|---|
+| `send_dm` to one person: a DM of the agent and them, the message as the agent for the invoker with the run as delegation; again reuses it | DM and attribution |
+| `send_dm` to several: one group message; the agent once however listed | Group |
+| `send_dm` refuses no people, no text, an id outside the workspace, delivering nothing | Input |
+| `post_message` where a member, `not_a_member` where not, `failed` for an unknown space | Membership |
+| The same tool call twice posts once | Ledger |
+| `add_to_room` adds with markers and reports each person; refused in a room the agent is not in, and in a DM | Adding |
+| A posted mention of an agent starts it for the invoker at depth 2; at depth 3 nothing | Chain |
+| A posted mention where the invoker cannot read starts nobody | Transcript intersection |
+| A completed answer's mention starts the agent, never the author; depth 3 starts nothing; a notice starts nothing | Replies |
+| The tools are offered to every run; the prompt carries the rules | Offer |
+
+### By hand
+
+1. `@triage send a DM reminder about HAR-2314 to @Bob`: Bob has a DM from Triage; the reply says so.
+2. `@triage make a group message with @Bob and @Carol saying standup moved`: one group message of Triage, Bob and Carol.
+3. `@triage post "deploy done" in #eng`, with Triage not in #eng: it replies that it is not a member there.
+4. `@triage ask @review to check PR 4561`, both agents in the channel: Review runs, for you.
+5. Two agents told to keep mentioning each other stop after three runs.
+
+---
+
 ## 12. Cross-cutting
 
 ### 12.1 Module layout
@@ -1427,13 +1494,15 @@ apps/server/src/agents/
 | 016 | `tool_discovery` — drops `agent_tools`; `composio_sessions` per person | 7 |
 | 017 | `panels` — a room's shared panels (`PANELS.md`) | `open_panel` |
 | 018 | `space_on_behalf_of` — `spaces.on_behalf_of_actor_id` | `create_room` (§11a) |
+| 019 | `dm_key` — `spaces.dm_key`, unique per workspace | DMs (`DESIGN.md` §7.1) |
+| 020 | `run_chain` — `agent_runs.chain_depth` | Agents message people (§11b) |
 
 Steps that run in parallel must renumber on merge rather than share a number.
 Every CHECK added gets one test per constraint, against Postgres
 (`AGENTS.md`, rule 2).
 
 Replica migrations in `apps/desktop/src/sync/migrations/workspace.ts`:
-version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4), 15 (room panels), 16 (`space_attribution`: `spaces.on_behalf_of_actor_id`, §11a). Step 7 needs none: `agent_summaries.toolkits` stays until the wire field goes.
+version 9 (step 0), 10 (step 1), 11 (step 2), 12 (message parts), 13 (step 4), 15 (room panels), 16 (`space_attribution`: `spaces.on_behalf_of_actor_id`, §11a), 17 (`dm_members`: `spaces.member_ids`, DMs). Step 7 needs none: `agent_summaries.toolkits` stays until the wire field goes.
 
 ### 12.3 Telemetry by step
 

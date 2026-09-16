@@ -16,6 +16,51 @@ import { loadGrants } from '../authz/can.ts';
 import { chatPlacement } from '../sync/placement.ts';
 import { mentionedActorIds } from '../sync/mentions.ts';
 import { rerunIfReady } from './rerun.ts';
+import { ulid } from '../db/ulid.ts';
+
+// ─── startMentionedRuns ──────────────────────────────────────────────────────
+
+/** A chain stops here: a run this deep starts no runs from its messages. */
+export const MAX_CHAIN_DEPTH = 3;
+
+/**
+ * THE HANDOFF (§5.2): queue a run for every agent a just-written message
+ * mentions, inside the transaction that wrote it. The one place a run is
+ * started from a message, whoever wrote it.
+ *
+ * A person's message starts runs at depth 1, for that person. A message an
+ * agent writes during a run — its reply, or one it posts — starts the agents it
+ * mentions at that run's depth + 1, **for the same person**: the chained run's
+ * invoker is the original person, so it spends their permissions and
+ * connections, never the agent's (an agent has none). Past `MAX_CHAIN_DEPTH`
+ * nothing is started, which is what stops two agents mentioning each other
+ * from running for ever.
+ */
+export async function startMentionedRuns(
+  trx: Transaction<DB>,
+  input: { chatId: string; messageId: string; authorId: string; body: string; invokerActorId: string; depth: number },
+): Promise<string[]> {
+  if (input.depth > MAX_CHAIN_DEPTH) return [];
+  const invocations = await invocationsFor(trx, { chatId: input.chatId, authorId: input.authorId, body: input.body });
+  if (invocations.length === 0) return [];
+  // A run reads only what its agent AND its person can both read (§5.6), and
+  // `admitRun` refuses one whose person cannot read the chat. So an agent's
+  // message in a place the original person is not — a DM between the agent and
+  // Bob — starts nobody, rather than a run that would only post a refusal there.
+  if (input.invokerActorId !== input.authorId) {
+    const grants = await loadGrants(trx, input.invokerActorId);
+    if (!can(grants, 'read', chatTarget(input.chatId), await chatPlacement(trx, input.chatId))) return [];
+  }
+  const chat = await trx.selectFrom('chats').select('workspace_id')
+    .where('id', '=', input.chatId).executeTakeFirstOrThrow();
+  const rows = invocations.map(invocation => ({
+    id: ulid('run'), workspace_id: chat.workspace_id, agent_actor_id: invocation.agentActorId,
+    invoker_actor_id: input.invokerActorId, chat_id: input.chatId, trigger_message_id: input.messageId,
+    chain_depth: input.depth, state: 'queued' as const,
+  }));
+  await trx.insertInto('agent_runs').values(rows).execute();
+  return rows.map(row => row.id);
+}
 
 // ─── invocationsFor ─────────────────────────────────────────────────────────
 
@@ -32,9 +77,9 @@ export interface TriggerMessage {
 /**
  * Which agents a message starts, if any (§5.1).
  *
- * Called INSIDE `send`'s transaction, for a person's `chat` message only — the
- * caller has already checked the author is a person and the op is `send`
- * (§5.1's other two conditions; an import or an edit must never reach here).
+ * Called through `startMentionedRuns`, INSIDE the transaction that wrote the
+ * message — a person's send, or a message an agent wrote during a run (its
+ * reply, or one it posted). An import or an edit must never reach here.
  *
  * A mention is the canonical actor link `mentions.ts` also counts unread
  * badges with — one parser, so a badge and a run cannot disagree about what a
@@ -43,8 +88,8 @@ export interface TriggerMessage {
  * actor's read access is answered with, because an agent's membership works
  * exactly like a person's (`AUTHZ.md` §7).
  *
- * DMs are not built yet (D2) — "every message in a DM with an agent" (§5.1)
- * has no chats to apply to, and is left for whichever step builds `createDm`.
+ * A DM with an agent is no different: it runs when mentioned, not on every
+ * message (§5.1's "every message in a DM with an agent" is not built).
  */
 export async function invocationsFor(
   trx: Transaction<DB>, message: TriggerMessage,
@@ -52,9 +97,12 @@ export async function invocationsFor(
   const mentioned = mentionedActorIds(message.body);
   if (mentioned.length === 0) return [];
 
+  // Never the author itself: an agent mentioning itself in its own message
+  // would only start itself again.
   const agents = await trx.selectFrom('actors')
     .select('id')
     .where('id', 'in', mentioned)
+    .where('id', '!=', message.authorId)
     .where('type', '=', 'agent')
     .where('state', '=', 'active')
     .execute();

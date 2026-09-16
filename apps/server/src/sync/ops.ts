@@ -22,8 +22,7 @@ import {
 import { Parts, forbiddenPartKind, type MessagePart } from '@relayed/protocol';
 import { deriveBody, uiPartRefusal } from '@relayed/genui';
 import { startSpan, annotate, mark, count } from '@relayed/telemetry';
-import { invocationsFor } from '../agents/checkpoints.ts';
-import { ulid } from '../db/ulid.ts';
+import { startMentionedRuns } from '../agents/checkpoints.ts';
 
 /** The message named by an op does not exist. */
 export class MessageNotFoundError extends Error {
@@ -134,18 +133,10 @@ async function sendInner(db: Kysely<DB>, input: SendInput): Promise<Applied> {
     // chat — so §5.1's other two conditions (a person, the op is `send`) hold
     // by construction; only "does it mention a member agent" is asked.
     const body = (written.event.payload as { body: string }).body;
-    const invocations = await invocationsFor(trx, { chatId: input.chatId, authorId: input.actorId, body });
-    if (invocations.length > 0) {
-      const chat = await trx.selectFrom('chats').select('workspace_id')
-        .where('id', '=', input.chatId).executeTakeFirstOrThrow();
-      const rows = invocations.map(invocation => ({
-        id: ulid('run'), workspace_id: chat.workspace_id, agent_actor_id: invocation.agentActorId,
-        invoker_actor_id: input.actorId, chat_id: input.chatId, trigger_message_id: input.messageId,
-        state: 'queued' as const,
-      }));
-      await trx.insertInto('agent_runs').values(rows).execute();
-      runIds = rows.map(row => row.id);
-    }
+    runIds = await startMentionedRuns(trx, {
+      chatId: input.chatId, messageId: input.messageId, authorId: input.actorId, body,
+      invokerActorId: input.actorId, depth: 1,
+    });
 
     return written.ack;
   });

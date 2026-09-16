@@ -156,3 +156,50 @@ test('each non-answer outcome posts its own one-line notice', opts, async () => 
     assert.equal(row.body, c.text);
   }
 });
+
+// ── an answer that mentions another agent (agents mentioning agents) ────────
+
+async function reviewer(): Promise<string> {
+  const id = ulid('act');
+  await db.insertInto('actors').values({
+    id, org_id: org, workspace_id: wsp, type: 'agent', handle: `r-${id.slice(-6).toLowerCase()}`, display_name: 'Review',
+    avatar_url: null, identity_kind: 'system', identity_id: null, owner_actor_id: invoker, provisioned_by: 'api', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: id, role: 'member' }).execute();
+  return id;
+}
+
+const answer = (run: FinishedRun, text: string) => deliverReply(db, run, {
+  state: 'completed',
+  result: {
+    runId: run.id, status: 'completed', text, toolCalls: [],
+    usage: { input: 1, output: 1, cacheRead: 0 }, turns: 1, provider: 'anthropic', durationMs: 1,
+  },
+});
+
+test('an answer mentioning another agent starts it, for the same person, one step down the chain', opts, async () => {
+  const review = await reviewer();
+  const run = await setup('running');
+  const space = await db.selectFrom('chats').select('space_id').where('id', '=', run.chatId).executeTakeFirstOrThrow();
+  await joinSpace(db, space.space_id, review);
+
+  await answer(run, `Handing over to [Review](actor:${review}) and not to myself, [Triage](actor:${agent}).`);
+  const started = await db.selectFrom('agent_runs').select(['agent_actor_id', 'invoker_actor_id', 'chain_depth', 'trigger_message_id'])
+    .where('trigger_message_id', '=', run.replyMessageId).execute();
+  assert.deepEqual(started, [{ agent_actor_id: review, invoker_actor_id: invoker, chain_depth: 2, trigger_message_id: run.replyMessageId }],
+    'the mentioned agent runs for the original person; the author does not start itself');
+});
+
+test('a chain stops at depth three, and a notice never starts anyone', opts, async () => {
+  const review = await reviewer();
+  const deep = await setup('running');
+  const space = await db.selectFrom('chats').select('space_id').where('id', '=', deep.chatId).executeTakeFirstOrThrow();
+  await joinSpace(db, space.space_id, review);
+  await db.updateTable('agent_runs').set({ chain_depth: 3 }).where('id', '=', deep.id).execute();
+  await answer(deep, `[Review](actor:${review}) your turn`);
+  assert.equal((await db.selectFrom('agent_runs').select('id').where('trigger_message_id', '=', deep.replyMessageId).execute()).length, 0);
+
+  const failed = await setup('running');
+  await deliverReply(db, failed, { state: 'failed', reason: 'run_failed' });
+  assert.equal((await db.selectFrom('agent_runs').select('id').where('trigger_message_id', '=', failed.replyMessageId).execute()).length, 0);
+});

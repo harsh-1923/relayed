@@ -547,9 +547,13 @@ of — the member-list argument above is about reaching rooms that already exist
 every agent is a workspace member, and the room is made for the invoker, who
 joins it as an admin beside the agent.
 
-**No delegation chaining.** An agent may not delegate to another agent. `act`
-claims nest, so it is representable, but chained delegation is where security
-models go to die. Revisit when agent-to-agent work is designed.
+**Chaining is bounded, and never changes whose authority is spent.** An agent's
+message that mentions another agent starts it (`WORKSPACE-AGENTS.md` §5.1) —
+but the chained run acts for **the same person** the first did, never for the
+agent that mentioned it: no agent delegates its own authority, because it has
+none. `act` claims do not nest. A chain stops three steps from the person's
+message (`agent_runs.chain_depth`), and starts nothing in a chat that person
+cannot read.
 
 **Delegation is minted at execution time, not compose time.** An invocation may
 sit in the outbox while the user is offline; the grant is issued when the op

@@ -10,6 +10,9 @@ export const FIND_TOOLS = 'find_tools';
 export const CALL_TOOL = 'call_tool';
 export const OPEN_PANEL = 'open_panel';
 export const CREATE_ROOM = 'create_room';
+export const SEND_DM = 'send_dm';
+export const POST_MESSAGE = 'post_message';
+export const ADD_TO_ROOM = 'add_to_room';
 
 export interface OfferedToolkit { slug: string; name: string }
 
@@ -24,8 +27,49 @@ export function runTools(toolkits: readonly OfferedToolkit[], where: { inRoom: b
     ...(toolkits.length > 0 ? serviceTools(toolkits) : []),
     ...(where.inRoom ? [OPEN_PANEL_TOOL] : []),
     CREATE_ROOM_TOOL,
+    ...MESSAGING_TOOLS,
   ];
 }
+
+const PEOPLE = {
+  type: 'array', items: { type: 'string' },
+  description: 'Actor ids, e.g. "act_01M2…" — from a mention in the conversation, which is written [Name](actor:act_…).',
+};
+
+/** Talking to people the way a person does (`messaging.ts`): as you, on behalf of the person who asked. */
+const MESSAGING_TOOLS: RunTool[] = [
+  {
+    name: SEND_DM,
+    description: 'Send a direct message. One person: a direct message between you and them. Several people: one group '
+      + 'message with you and all of them — only when the person asked for a group. Uses the conversation that already '
+      + 'exists with exactly those people. Only when the person asks you to message someone.',
+    parameters: {
+      type: 'object', required: ['people', 'text'],
+      properties: { people: PEOPLE, text: { type: 'string', description: 'The message, in Markdown. Mention someone as [Name](actor:act_…).' } },
+    },
+  },
+  {
+    name: POST_MESSAGE,
+    description: 'Post a message in a room, channel or conversation you are a member of. If you are not a member, this '
+      + 'says so: tell the person you could not post there. Only when the person asks you to post somewhere.',
+    parameters: {
+      type: 'object', required: ['space_id', 'text'],
+      properties: {
+        space_id: { type: 'string', description: 'The space, e.g. "spc_01M2…" — from a space link [name](space:spc_…) or a tool result.' },
+        text: { type: 'string', description: 'The message, in Markdown. Mention someone as [Name](actor:act_…).' },
+      },
+    },
+  },
+  {
+    name: ADD_TO_ROOM,
+    description: 'Add people to a room or channel you are a member of. Not a direct or group message: nobody is added '
+      + 'to those. Only when the person asks you to add someone.',
+    parameters: {
+      type: 'object', required: ['space_id', 'people'],
+      properties: { space_id: { type: 'string', description: 'The room or channel, e.g. "spc_01M2…".' }, people: PEOPLE },
+    },
+  },
+];
 
 /**
  * Makes a room for the person who asked, with this agent in it (every run,
@@ -115,8 +159,17 @@ function serviceTools(toolkits: readonly OfferedToolkit[]): RunTool[] {
 
 /** Appended to the agent's own instructions. Empty when nothing is offered. */
 export function toolsPrompt(toolkits: readonly OfferedToolkit[], where: { inRoom: boolean }): string {
-  return servicesPrompt(toolkits) + (where.inRoom ? ROOM_PROMPT : '') + CREATE_ROOM_PROMPT;
+  return servicesPrompt(toolkits) + (where.inRoom ? ROOM_PROMPT : '') + CREATE_ROOM_PROMPT + MESSAGING_PROMPT;
 }
+
+// Last, for the same reason a room is: a stop for access re-runs the whole
+// request, and a message already sent would be sent again.
+const MESSAGING_PROMPT = `\n\nPeople in this conversation are written [Name](actor:act_…); use that id to reach them. `
+  + `When the person asks you to message someone, use ${SEND_DM} — a direct message for one person, one group message `
+  + `only when they ask for a group. To post in a room or channel, use ${POST_MESSAGE}; to add people to one, `
+  + `${ADD_TO_ROOM}. Do these LAST, after everything else the request needs. Never message or add anyone the person `
+  + 'did not ask for. If you are not a member where you were asked to post, say you could not, and why. Mentioning an '
+  + 'agent in a message you send asks it to act.';
 
 // Last, because a service may stop the run to ask the person for access — and
 // the request is then run again once they allow it. A room made before that
