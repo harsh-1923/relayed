@@ -94,7 +94,7 @@ function DocBody({ document, spaceId, onOpenPanel }: {
             {author && !empty && (
               <> by{' '}
                 <span className="inline-flex items-center gap-1 align-bottom">
-                  <ActorAvatar id={author.id} className="size-4" fallbackClassName="text-[8px]" />
+                  <ActorAvatar id={author.id} className="size-4" fallbackClassName="text-[8px]" profileOnHover />
                   {author.displayName}
                 </span>
               </>

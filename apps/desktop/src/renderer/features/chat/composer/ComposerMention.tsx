@@ -5,19 +5,27 @@
 import type { MarkdownToken } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer, type ReactNodeViewProps } from '@tiptap/react';
 import { ActorAvatar } from '@/components/ActorAvatar';
+import { ActorHoverCard } from '@/components/ActorHoverCard';
 import { RelayedMention } from './relayed-mention.ts';
 
-function MentionView({ node }: ReactNodeViewProps) {
+function MentionView({ node, editor }: ReactNodeViewProps) {
   const kind = String(node.attrs['kind'] ?? 'actor');
   const label = String(node.attrs['label'] ?? '');
   const id = typeof node.attrs['id'] === 'string' ? node.attrs['id'] : null;
   if (kind !== 'actor' && kind !== 'actor-ref') {
     return <NodeViewWrapper as="span">{kind === 'space' ? '#' : '@'}{label}</NodeViewWrapper>;
   }
-  return (
-    <NodeViewWrapper as="span" className="composer-mention-actor">
+  const chip = (
+    <span className="composer-mention-actor">
       <ActorAvatar id={id} fallbackName={label} className="composer-mention-avatar" fallbackClassName="text-[8px]" />
       {label}
+    </span>
+  );
+  // Read-only — a document — shows who it is on hover. While composing, a card
+  // opening under the caret would only get in the way.
+  return (
+    <NodeViewWrapper as="span">
+      {id && !editor.isEditable ? <ActorHoverCard actorId={id} fallbackName={label}>{chip}</ActorHoverCard> : chip}
     </NodeViewWrapper>
   );
 }

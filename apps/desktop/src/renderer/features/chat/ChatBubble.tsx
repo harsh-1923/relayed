@@ -84,7 +84,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
           // pushed it out of the row, and a row with `content-visibility: auto`
           // clips whatever leaves it.
           <MessageAvatar className={cn('size-7 min-w-0 group-has-data-[slot=message-footer]/message:-translate-y-8.25', !endsGroup && 'invisible')}>
-            <ActorAvatar id={message.authorId} className="size-7" fallbackClassName="text-[10px]" />
+            <ActorAvatar id={message.authorId} className="size-7" fallbackClassName="text-[10px]" profileOnHover />
           </MessageAvatar>
         )}
 

@@ -22,6 +22,7 @@ import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { TextQuote } from '@relayed/icons';
 import { ActorAvatar } from '@/components/ActorAvatar';
+import { ActorHoverCard } from '@/components/ActorHoverCard';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 import { cn } from '@/lib/utils';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
@@ -110,10 +111,12 @@ export function MarkdownText({
 function ActorMention({ actorId, children }: { actorId: string; children: ReactNode }) {
   const label = Children.toArray(children).filter(child => typeof child === 'string').join('');
   return (
-    <span className="md-mention md-mention-actor" data-mention-kind="actor">
-      <ActorAvatar id={actorId} fallbackName={label} className="md-mention-avatar" fallbackClassName="text-[8px]" />
-      {children}
-    </span>
+    <ActorHoverCard actorId={actorId} fallbackName={label}>
+      <span className="md-mention md-mention-actor" data-mention-kind="actor">
+        <ActorAvatar id={actorId} fallbackName={label} className="md-mention-avatar" fallbackClassName="text-[8px]" />
+        {children}
+      </span>
+    </ActorHoverCard>
   );
 }
 

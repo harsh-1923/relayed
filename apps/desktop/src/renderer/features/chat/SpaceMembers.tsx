@@ -82,7 +82,7 @@ function MemberRow({ member }: { member: SpaceMember }) {
   return (
     // Searchable by name and handle; nothing happens on select yet.
     <CommandItem value={`${name} ${actor?.handle ?? ''} ${member.actorId}`}>
-      <ActorAvatar id={member.actorId} className="size-7" fallbackClassName="text-xs" />
+      <ActorAvatar id={member.actorId} className="size-7" fallbackClassName="text-xs" profileOnHover />
       <div className="min-w-0 flex-1">
         <div className="truncate">{name}</div>
         {actor && <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>}
