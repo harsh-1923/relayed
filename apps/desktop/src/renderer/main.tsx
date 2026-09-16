@@ -10,7 +10,7 @@ import { Router } from '@/app/router';
 import { Telemetry } from '@/app/Telemetry';
 import { Theme } from '@/app/Theme';
 import { TopBar } from '@/app/shell/TopBar';
-import { SearchPalette } from '@/app/shell/SearchPalette';
+import { CommandMenu } from '@/features/command-menu/CommandMenu';
 import { AppCommands } from '@/app/shell/AppCommands';
 import { PersistentSidebarProvider } from '@/app/shell/PersistentSidebarProvider';
 import { Commands } from '@/app/Commands';
@@ -59,8 +59,8 @@ createRoot(document.getElementById('root')!).render(
               title bar now, so every screen needs it — including the ones a cut
               network or a signed-out session strands you on. */}
           <TopBar />
-          {/* The search dialog and its command, for every route (SHORTCUTS.md §10). */}
-          <SearchPalette />
+          {/* The command menu and its command, for every route (SHORTCUTS.md §10). */}
+          <CommandMenu />
           {/* Renders nothing: the settings and shortcuts commands, for every route. */}
           <AppCommands />
           <div className="flex min-h-0 flex-1">

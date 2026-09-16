@@ -12,7 +12,8 @@
 // behind a long list of spaces.
 import { useSession } from '../../state';
 import { SearchDefault } from '@relayed/icons';
-import { destinationsFor } from '../SearchPalette';
+import { iconForDestination } from '@/lib/navigation/destinations/destination-icon.ts';
+import { primaryDestinationsFor } from '@/lib/navigation/destinations/destinations.ts';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
 import { AccountSwitcher } from './AccountSwitcher';
@@ -30,7 +31,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
   // From state, not the URL: a local room's route has no workspace in its path.
   const wsId = useSession().state.workspaceId;
-  const destinations = destinationsFor(wsId);
+  const destinations = primaryDestinationsFor(wsId);
   const search = useCommand('app.search.open');
 
   // The top bar holds the toggle and sits above this tree, so it cannot see
@@ -70,10 +71,11 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
           <SidebarMenu className="gap-0.5">
             {destinations.map(destination => (
               <SidebarItem
-                key={destination.label}
+                key={destination.id}
                 label={destination.label}
-                icon={destination.icon}
+                icon={iconForDestination(destination)}
                 to={destination.to}
+                disabled={destination.disabled}
               />
             ))}
           </SidebarMenu>

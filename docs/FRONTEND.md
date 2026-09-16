@@ -591,7 +591,7 @@ renderer/
       AppShell.tsx      the layout route
       Page.tsx          padding and the scroll container, opted into per route
       TopBar.tsx        the window's title bar; sidebar, back and forward commands
-      SearchPalette.tsx the search dialog and `app.search.open`, for every route
+      SearchPalette.tsx sidebar-destination search and `app.search.open`, every route
       AppCommands.tsx   renders nothing; open settings and open keyboard shortcuts
       use-back-forward/ whether Back and Forward lead anywhere (§6.1b)
         use-back-forward.ts
@@ -817,8 +817,11 @@ to know:
   key stays in its capture-phase handler but reads the bus's binding.
 - **Bindings are preferences.** `keybindings.<id>` rows on the ordinary
   `prefs.list` live read, edited at `/settings/shortcuts` (`PREFERENCES.md`).
-- **`cmdk` is the search dialog**, not a command palette. A palette, when built,
-  lists catalogue commands and calls `useCommand(id).execute`.
+- **`cmdk` is the navigation search**, not a command palette. It projects local
+  rooms and the active workspace's channels, rooms and messages from the same
+  destination model as the sidebar, using ordinary live queries while open.
+  A command palette, when built, lists catalogue commands and calls
+  `useCommand(id).execute`.
 
 To add a command: a catalogue entry in `shared/shortcuts/catalogue.ts`, a
 `useCommandHandler` at its owner, and `useCommand` at every visible entry point

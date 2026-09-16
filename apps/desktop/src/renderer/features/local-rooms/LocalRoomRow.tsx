@@ -4,15 +4,17 @@
 // Enter or leaving the field keeps it, Escape puts the old one back. Regenerate
 // name asks for a new one from the conversation so far.
 import { useState } from 'react';
-import { ChatDefault } from '@relayed/icons';
 import type { LocalRoom } from '../../../preload/api';
 import { SidebarItem } from '@/components/SidebarItem';
+import { iconForDestination } from '@/lib/navigation/destinations/destination-icon.ts';
+import { localRoomDestination } from '@/lib/navigation/destinations/destinations.ts';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Input } from '@/components/ui/input';
 import { SidebarMenuItem } from '@/components/ui/sidebar';
 import { call } from '@/lib/ipc';
 
 export function LocalRoomRow({ room, active }: { room: LocalRoom; active: boolean }) {
+  const destination = localRoomDestination(room);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(room.name);
   const [naming, setNaming] = useState(false);
@@ -65,9 +67,9 @@ export function LocalRoomRow({ room, active }: { room: LocalRoom; active: boolea
       <ContextMenuTrigger
         render={(
           <SidebarItem
-            label={room.name}
-            icon={ChatDefault}
-            to={`/local/s/${room.id}`}
+            label={destination.label}
+            icon={iconForDestination(destination)}
+            to={destination.to}
             isActive={active}
             labelClassName={naming ? 'shimmer' : undefined}
             title={error ?? undefined}

@@ -20,6 +20,7 @@ import { useState } from 'react';
 import { can, workspace as workspaceTarget } from '@relayed/authz';
 import { PlusDefault } from '@relayed/icons';
 import { useSession } from '@/app/state';
+import { WORKSPACE_SPACE_GROUPS } from '@/lib/navigation/destinations/destinations.ts';
 import { grantsOf } from '@/lib/ipc';
 import { CreateSpaceDialog } from './CreateSpaceDialog.tsx';
 import { SpaceDirectoryRow } from './SpaceDirectoryRow.tsx';
@@ -36,13 +37,6 @@ import {
  * would leave it to whatever the runtime feels like. `kind` values are the
  * schema's, spelled here exactly once.
  */
-const SECTIONS = [
-  { kind: 'channel', label: 'Channels' },
-  { kind: 'room', label: 'Rooms' },
-  { kind: 'group_dm', label: 'Group messages' },
-  { kind: 'dm', label: 'Direct messages' },
-] as const;
-
 export function SpaceDirectory() {
   const { rows: spaces, status, error } = useQuery('spaces.list');
   const { state } = useSession();
@@ -58,7 +52,7 @@ export function SpaceDirectory() {
     <>
       {error && <p role="alert" className="px-4 py-2 text-sm text-destructive">Could not read channels and rooms.</p>}
       {status === 'empty' && !mayCreate && <p className="px-4 py-2 text-sm text-muted-foreground">Nothing here yet.</p>}
-      {SECTIONS.map(section => {
+      {WORKSPACE_SPACE_GROUPS.map(section => {
         const mine = (spaces ?? []).filter(space => space.kind === section.kind);
         const creatable = section.kind === 'channel' || section.kind === 'room';
         const startable = section.kind === 'dm';
