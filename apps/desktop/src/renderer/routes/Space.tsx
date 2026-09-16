@@ -16,6 +16,7 @@ import { RoomActivity } from '@/features/local-rooms/RoomActivity';
 import { PanelContainer } from '@/features/panels/PanelContainer';
 import { useOpenPanels } from '@/features/panels/useOpenPanels';
 import { useRoomPanelArrivals } from '@/features/panels/useRoomPanelArrivals';
+import { useRoomSummaryTab, withSummaryFirst } from '@/features/documents/useRoomSummaryTab';
 import { call } from '@/lib/ipc';
 import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
 import { Button } from '@/components/ui/button';
@@ -45,7 +46,11 @@ export function Space({ scope = 'workspace' }: { scope?: SpaceScope }) {
   );
   const panelsStatus = scope === 'workspace' && roomPanelsStatus === 'loading' ? 'loading' : devicePanelsStatus;
   const openPanels = useOpenPanels();
-  const open = resolveOpenPanels(openPanels.ids, panels);
+  // The room's summary leads the strip whatever else is open (DOCUMENTS.md §8.1).
+  const open = withSummaryFirst(resolveOpenPanels(openPanels.ids, panels), panels);
+  useRoomSummaryTab({
+    enabled: hasPanels && scope === 'workspace', ready: panelsStatus !== 'loading', spaceId, panels, openPanels,
+  });
   useRoomPanelArrivals({
     enabled: hasPanels && scope === 'workspace', ready: panelsStatus !== 'loading', spaceId, panels, openPanels,
   });

@@ -28,3 +28,16 @@ export const roomSummary = (documents: readonly Document[]): Document | null =>
 /** Nothing written yet: a room nobody has said anything in, not a document that failed to load. */
 export const isEmptyDocument = (document: Pick<Document, 'rev' | 'body'>): boolean =>
   document.rev === 0 || document.body.trim().length === 0;
+
+/** The document a `doc` panel is a window onto (§8.1). Null for every other panel type. */
+export function documentIdOfPanel(panel: { type: string; payload: Record<string, unknown> }): string | null {
+  if (panel.type !== 'doc') return null;
+  const id = panel.payload['document_id'];
+  return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/**
+ * A panel the room owns rather than a person: created with the room, always in
+ * the tab strip, and never closed. A room's summary is the only one today.
+ */
+export const isStructuralPanel = (panel: { type: string }): boolean => panel.type === 'doc';

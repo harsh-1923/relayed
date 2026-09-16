@@ -16,13 +16,23 @@ import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
 import { WebPanel } from './WebPanel';
 import { PanelCreationDialog, type PanelCreationKind } from './PanelCreationDialog';
+import { DocPanel } from '../documents/DocPanel';
+import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
 
 interface PanelBodyProps { panel: Panel; space: Space; scope: SpaceScope }
 
 /** Bodies drawn only while their tab is shown. A `web` panel is not here: its page stays mounted while its tab is open. */
 const PANEL_BODIES: Partial<Record<string, ComponentType<PanelBodyProps>>> = {
   chat: ({ panel, space, scope }) => (panel.chatId ? <ChatView spaceId={space.id} chatId={panel.chatId} scope={scope} /> : null),
+  doc: ({ panel, space }) => <DocumentBody panel={panel} spaceId={space.id} />,
 };
+
+/** The document this panel is a window onto, from the space's own documents. */
+function DocumentBody({ panel, spaceId }: { panel: Panel; spaceId: string }) {
+  const { rows: documents } = useQuery('documents.list', { spaceId });
+  const documentId = documentIdOfPanel(panel);
+  return <DocPanel spaceId={spaceId} document={documents?.find(row => row.id === documentId) ?? null} />;
+}
 
 export function PanelContainer({ tabs, panels, space, scope, openPanels }: {
   /** The open tabs, in order. */
@@ -260,17 +270,21 @@ function PanelTab({ panel, space, meta, attribution, selected, onSelect, onClose
         <PanelIcon panel={panel} chatKind={chat?.kind} meta={meta} className={cn('size-3.5', panel.scope === 'local' && 'grayscale')} />
         <span className="truncate">{title}</span>
       </button>
-      <button
-        type="button"
-        aria-label={`Close ${title}`}
-        onClick={onClose}
-        className={cn(
-          'flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted',
-          selected ? 'opacity-70' : 'opacity-0 group-hover/tab:opacity-70',
-        )}
-      >
-        <MultipleCrossCancelDefault className="size-3" />
-      </button>
+      {/* The room's own panel has no close: it is created with the room and
+          nobody can lose it (DOCUMENTS.md §8.1). */}
+      {!isStructuralPanel(panel) && (
+        <button
+          type="button"
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+          className={cn(
+            'flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted',
+            selected ? 'opacity-70' : 'opacity-0 group-hover/tab:opacity-70',
+          )}
+        >
+          <MultipleCrossCancelDefault className="size-3" />
+        </button>
+      )}
     </div>
   );
 }
