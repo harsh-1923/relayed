@@ -613,6 +613,53 @@ test('a room an agent made for someone keeps who made it and for whom, and an ol
   older.close();
 });
 
+// ── documents (DOCUMENTS.md §7.2) ───────────────────────────────────────────
+
+const documentUpdated = (rev: number, body: string): Envelope => ({
+  rev, type: 'document.updated',
+  payload: {
+    id: 'doc_1', space_id: 'spc_new', kind: 'room_summary', title: 'Summary',
+    body, format: 'markdown', rev, updated_by_actor_id: 'act_roomkeeping',
+    covered_through: { cht_new: rev * 10 }, updated_at: '2026-09-16T14:32:11.882Z',
+  },
+});
+
+const summaryOf = (db: DatabaseSync) =>
+  db.prepare('SELECT body, rev, covered_through FROM documents WHERE id = ?').get('doc_1') as
+    { body: string; rev: number; covered_through: string } | undefined;
+
+test('a document is stored, and an older revision NEVER replaces a newer one', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+
+  const first = applyEvent(deps, space, documentUpdated(1, 'first'));
+  assert.deepEqual(first.topics, ['space:spc_new:documents']);
+  assert.deepEqual({ ...summaryOf(db) }, { body: 'first', rev: 1, covered_through: '{"cht_new":10}' });
+
+  applyEvent(deps, space, documentUpdated(2, 'second'));
+  assert.equal(summaryOf(db)?.body, 'second');
+
+  // Late, duplicated, or replayed after a reconnect: all the same answer.
+  applyEvent(deps, space, documentUpdated(1, 'first again'));
+  assert.deepEqual({ ...summaryOf(db) }, { body: 'second', rev: 2, covered_through: '{"cht_new":20}' },
+    'the newer body stands');
+  db.close();
+});
+
+test('a document arrives with the room somebody is added to', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me') };
+  const added = memberAdded(1, 'act_me', 'admin');
+  const hydration = (added.payload as { hydration: Record<string, unknown> }).hydration;
+  hydration['documents'] = [(documentUpdated(4, 'from the hydration').payload)];
+
+  applyEvent(deps, space, added);
+  assert.deepEqual({ ...summaryOf(db) }, { body: 'from the hydration', rev: 4, covered_through: '{"cht_new":40}' });
+  db.close();
+});
+
 test('a member_added for someone else stays topology invalidation only — nothing is written', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };

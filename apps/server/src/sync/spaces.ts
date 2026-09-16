@@ -24,6 +24,7 @@ import {
 import { writeMessage } from './ops.ts';
 import { ulid } from '../db/ulid.ts';
 import { roomPanels } from './panels.ts';
+import { createRoomSummary, spaceDocuments } from './documents.ts';
 
 export interface NewChannel {
   workspaceId: string;
@@ -191,6 +192,11 @@ async function createNamedSpace(
         scope_type: 'space', scope_id: spaceId, actor_id: input.createdBy,
         role: 'admin',
       }).execute();
+
+      // A room keeps a running summary, and the panel it is read in is
+      // structural like the default chat (DOCUMENTS.md §4.1). Written BEFORE
+      // the events below, so the founding member's hydration carries both.
+      if (kind === 'room') await createRoomSummary(trx, { workspaceId: input.workspaceId, spaceId });
 
       // THREE events, not one composite, and the extra revisions are the point.
       // `chat.created` and `space.member_added` have to exist anyway — the
@@ -625,6 +631,7 @@ async function hydrationSnapshot(
   // A room's panels come too, so someone added mid-way sees what everyone is
   // already working beside — the same set `welcome` would give them.
   const panels = space.kind === 'room' ? await roomPanels(trx, [spaceId]) : [];
+  const documents = await spaceDocuments(trx, [spaceId]);
 
   const { dm_key: key, ...row } = space;
   return {
@@ -634,6 +641,7 @@ async function hydrationSnapshot(
       head_ord: chat.next_ord, head_rev: chat.next_rev,
     })),
     ...(panels.length > 0 ? { panels } : {}),
+    ...(documents.length > 0 ? { documents } : {}),
   };
 }
 

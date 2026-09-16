@@ -9,6 +9,7 @@
     "migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
     "keygen": "node src/auth/keygen.ts",
     "enable-toolkit": "node --env-file-if-exists=../../.env scripts/enable-toolkit.ts",
+    "backfill-room-summaries": "node --env-file-if-exists=../../.env scripts/backfill-room-summaries.ts",
     "test": "node --env-file-if-exists=../../.env --test src/",
     "typecheck": "tsc --noEmit"
   },

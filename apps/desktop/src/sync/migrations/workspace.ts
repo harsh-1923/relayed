@@ -693,4 +693,30 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE spaces ADD COLUMN member_ids TEXT;
     `,
   },
+  {
+    version: 18,
+    name: 'documents',
+    // Text that belongs to a space and changes over time (DOCUMENTS.md §3) —
+    // a room's running summary, today. No CHECK on `kind` or `format`, the
+    // same rule `panels` holds: a kind a newer server sends is KEPT and drawn
+    // as a placeholder, never dropped, because a newer client wrote it.
+    up: `
+      CREATE TABLE documents (
+        id                  TEXT PRIMARY KEY,
+        space_id            TEXT NOT NULL,
+        kind                TEXT NOT NULL,
+        title               TEXT,
+        body                TEXT NOT NULL DEFAULT '',
+        format              TEXT NOT NULL DEFAULT 'markdown',
+        -- The highest revision this replica has seen. An event carrying a
+        -- lower one is older news and never applied (DOCUMENTS.md §7.2).
+        rev                 INTEGER NOT NULL DEFAULT 0,
+        updated_by_actor_id TEXT,
+        -- JSON, and only for the panel's "covers up to" line.
+        covered_through     TEXT,
+        updated_at          INTEGER NOT NULL
+      );
+      CREATE INDEX document_space ON documents(space_id);
+    `,
+  },
 ];

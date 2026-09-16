@@ -212,6 +212,8 @@ export interface SpaceMemberAdded {
     }[];
     /** The room's open panels, so a newly added member sees what everyone is working beside. Absent for a space with none. */
     panels?: PanelOpened[];
+    /** The space's documents — a room's summary, so somebody arriving has it before reading a message (DOCUMENTS.md §7.3). Absent for a space with none. */
+    documents?: DocumentUpdated[];
   };
 }
 export interface SpaceMemberRemoved { actor_id: string }
@@ -225,11 +227,28 @@ export interface SpaceMemberRemoved { actor_id: string }
  * On the SPACE stream, whose audience is every room member: a room's shared
  * panels are the room's, not any one chat's.
  */
+export interface DocumentUpdated {
+  id: string;
+  space_id: string;
+  /** `room_summary` today; a kind a client does not know is kept and placeholdered, never dropped. */
+  kind: string;
+  title: string | null;
+  body: string;
+  format: string;
+  /** Monotonic per document: a reader keeps the highest it has seen (DOCUMENTS.md §7.2). */
+  rev: number;
+  updated_by_actor_id: string | null;
+  /** `{ [chatId]: ord }` — how far its writer had read. Null for a document not derived from messages. */
+  covered_through: Record<string, number> | null;
+  updated_at: string;
+}
+
 export interface PanelOpened {
   id: string;
   space_id: string;
-  type: 'web';
-  payload: { url: string };
+  type: 'web' | 'doc';
+  /** `{ url }` for a page, `{ document_id }` for a document (DOCUMENTS.md §8.1). */
+  payload: { url: string } | { document_id: string };
   title: string | null;
   opened_from_chat_id: string | null;
   created_by_actor_id: string | null;
@@ -293,6 +312,7 @@ interface EventCatalogue {
   'space.member_removed': { stream: SpaceStream; payload: SpaceMemberRemoved };
   'chat.created': { stream: SpaceStream; payload: ChatCreated };
   'panel.opened': { stream: SpaceStream; payload: PanelOpened };
+  'document.updated': { stream: SpaceStream; payload: DocumentUpdated };
 
   'actor.created': { stream: WorkspaceStream; payload: ActorChanged };
   'actor.updated': { stream: WorkspaceStream; payload: ActorChanged };
@@ -341,6 +361,7 @@ const TOUCHES: { [T in EventType]: (payload: PayloadOf<T>) => string[] } = {
   'space.member_removed': () => [],
   'chat.created': () => [],
   'panel.opened': () => [],
+  'document.updated': () => [],
   'actor.created': () => [],
   'actor.updated': () => [],
 };

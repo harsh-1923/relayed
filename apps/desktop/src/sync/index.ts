@@ -392,6 +392,7 @@ const link = createLink({
         agentActorId: p.agent_actor_id, toolkit: p.toolkit, effect: p.effect, revoked: p.revoked,
       })),
       panels: body.panels ?? [],
+      documents: body.documents ?? [],
     });
     // Every badge in the sidebar is correct as of this line, with the message
     // table still empty. Waking the surfaces is what makes that visible.
@@ -653,6 +654,11 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
 
   /** One space and its chats. An array, as every read is: one row, or none. */
   /** One synced room's shared panels, from the replica (PANELS.md). */
+  /** One space's documents — a room's running summary (DOCUMENTS.md §8.2). */
+  'documents.list': (params) => {
+    const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+    return spaceId && storage.hasWorkspace ? storage.documents(spaceId) : [];
+  },
   'panels.list': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     return spaceId && storage.hasWorkspace ? storage.panels(spaceId) : [];

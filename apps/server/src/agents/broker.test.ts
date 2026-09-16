@@ -255,7 +255,7 @@ test('open_panel in a room opens the page for the room and delivers it to everyo
   const answer = await call(app, r, 'open_panel', { url: 'https://linear.app/acme/issue/LIN-42', title: 'LIN-42' });
   assert.equal(answer.result, 'ok');
   const panels = await db.selectFrom('panels').select(['space_id', 'title', 'created_by_actor_id', 'on_behalf_of_actor_id'])
-    .where('space_id', '=', r.spaceId).execute();
+    .where('space_id', '=', r.spaceId).where('type', '=', 'web').execute();
   assert.deepEqual(panels, [{ space_id: r.spaceId, title: 'LIN-42', created_by_actor_id: triage, on_behalf_of_actor_id: alice }]);
   assert.deepEqual(recorded.delivered.map(event => event.type), ['panel.opened']);
   assert.deepEqual(recorded.executions, [], 'nothing of anyone\'s account is spent');
@@ -271,7 +271,8 @@ test('open_panel refuses a page that is not public https, saying why, and writes
   assert.match(local.message ?? '', /local or private/);
   const insecure = await call(app, r, 'open_panel', { url: 'http://linear.app/acme' }) as { result: string; message?: string };
   assert.match(insecure.message ?? '', /https/);
-  assert.equal((await db.selectFrom('panels').select('id').where('space_id', '=', r.spaceId).execute()).length, 0);
+  assert.equal((await db.selectFrom('panels').select('id')
+    .where('space_id', '=', r.spaceId).where('type', '=', 'web').execute()).length, 0, 'no page opened');
   assert.deepEqual(recorded.delivered, []);
   await app.close();
 });

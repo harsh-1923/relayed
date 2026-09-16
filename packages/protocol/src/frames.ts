@@ -398,6 +398,27 @@ export const PanelRow = z.object({
 });
 export type PanelRow = z.infer<typeof PanelRow>;
 
+/**
+ * A space's document (DOCUMENTS.md §3), as `welcome`, `document.updated` and a
+ * newly added member's hydration all carry it — the complete row, so applying
+ * it is one upsert and a client that missed an earlier one is corrected by
+ * this. `kind` and `format` stay strings for the reason `PanelRow.type` does:
+ * a newer server may send one this client keeps without knowing how to draw it.
+ */
+export const DocumentRow = z.object({
+  id: z.string(),
+  space_id: z.string(),
+  kind: z.string(),
+  title: z.string().nullable(),
+  body: z.string(),
+  format: z.string(),
+  rev: z.number().int().nonnegative(),
+  updated_by_actor_id: z.string().nullable(),
+  covered_through: z.record(z.string(), z.number()).nullable(),
+  updated_at: z.string(),
+});
+export type DocumentRow = z.infer<typeof DocumentRow>;
+
 export const Welcome = z.object({
   protocol: z.number().int(),
   now: z.number().int(),
@@ -487,6 +508,11 @@ export const Welcome = z.object({
    * absent here is one the room no longer has.
    */
   panels: z.array(PanelRow).optional(),
+  /**
+   * The documents of every space the caller has joined, complete — a room's
+   * running summary. Absent from a server that predates them.
+   */
+  documents: z.array(DocumentRow).optional(),
 });
 export type Welcome = z.infer<typeof Welcome>;
 

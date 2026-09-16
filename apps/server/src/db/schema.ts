@@ -345,7 +345,7 @@ export interface PanelsTable {
   id: string;
   workspace_id: string;
   space_id: string;
-  type: 'chat' | 'web' | 'diff' | 'file' | 'attachment';
+  type: 'chat' | 'web' | 'diff' | 'file' | 'attachment' | 'doc';
   chat_id: string | null;
   payload: Generated<unknown>;
   title: string | null;
@@ -355,6 +355,40 @@ export interface PanelsTable {
   created_at: Generated<Timestamp>;
   opened_at: Generated<Timestamp>;
   removed_at: Timestamp | null;
+}
+
+/**
+ * Text that belongs to a space and changes over time (DOCUMENTS.md §3) — as
+ * opposed to a message, which is an event that happened. A room's summary is
+ * the first kind.
+ */
+export interface DocumentsTable {
+  id: string;
+  workspace_id: string;
+  space_id: string;
+  kind: 'room_summary' | 'note';
+  title: string | null;
+  body: Generated<string>;
+  format: Generated<'markdown'>;
+  /** Monotonic per document; a reader keeps the highest it has seen (§7.2). */
+  rev: Generated<number>;
+  updated_by_actor_id: string | null;
+  /** `{ [chatId]: ord }` — how far its writer had read (§4.5). */
+  covered_through: unknown | null;
+  refresh_lease_until: Timestamp | null;
+  refresh_failures: Generated<number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
+/** Every revision of a document, as a full snapshot (§3.3). */
+export interface DocumentRevisionsTable {
+  document_id: string;
+  rev: number;
+  body: string;
+  author_actor_id: string | null;
+  covered_through: unknown | null;
+  created_at: Generated<Timestamp>;
 }
 
 /** One Composio session per person (WORKSPACE-AGENTS-IMPL.md step 7, D24), shared by every agent they invoke. */
@@ -447,6 +481,8 @@ export interface DB {
   toolkit_tools: ToolkitToolsTable;
   connections: ConnectionsTable;
   connection_attempts: ConnectionAttemptsTable;
+  documents: DocumentsTable;
+  document_revisions: DocumentRevisionsTable;
   agent_permissions: AgentPermissionsTable;
   composio_webhook_deliveries: ComposioWebhookDeliveriesTable;
   agent_tool_calls: AgentToolCallsTable;

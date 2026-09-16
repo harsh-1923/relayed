@@ -64,6 +64,43 @@ interface MessageCreated {
   subject_actor_id?: string;
 }
 
+export interface DocumentRow {
+  id: string;
+  space_id: string;
+  kind: string;
+  title: string | null;
+  body: string;
+  format: string;
+  rev: number;
+  updated_by_actor_id: string | null;
+  covered_through?: Record<string, number> | null;
+  updated_at: string;
+}
+
+/**
+ * One document, upserted — and NEVER wound back (DOCUMENTS.md §7.2).
+ *
+ * `rev` is monotonic per document, so an event that arrives late or twice must
+ * not replace a newer body with an older one. The guard is in the statement
+ * rather than in a read-then-write, so two applies racing cannot both win.
+ */
+export function storeDocument(db: DatabaseSync, row: DocumentRow): void {
+  db.prepare(`
+    INSERT INTO documents (id, space_id, kind, title, body, format, rev,
+                           updated_by_actor_id, covered_through, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      kind = excluded.kind, title = excluded.title, body = excluded.body,
+      format = excluded.format, rev = excluded.rev,
+      updated_by_actor_id = excluded.updated_by_actor_id,
+      covered_through = excluded.covered_through,
+      updated_at = excluded.updated_at
+    WHERE excluded.rev > documents.rev
+  `).run(row.id, row.space_id, row.kind, row.title, row.body, row.format ?? 'markdown', row.rev,
+         row.updated_by_actor_id, row.covered_through ? JSON.stringify(row.covered_through) : null,
+         Date.parse(row.updated_at) || Date.now());
+}
+
 interface SpaceMemberAddedHydration {
   space: {
     id: string; kind: string; name: string | null; slug: string | null;
@@ -79,6 +116,8 @@ interface SpaceMemberAddedHydration {
   }[];
   /** The room's open panels — absent from a server that predates them, and for a space with none. */
   panels?: PanelRow[];
+  /** The space's documents — absent from a server that predates them, and for a space with none. */
+  documents?: DocumentRow[];
 }
 
 interface SpaceMemberAdded {
@@ -176,6 +215,12 @@ export function replicaEffect(
       case 'space.created':
       case 'chat.created':
         return [topic.space(stream.id), topic.spaces()];
+
+      // A room's summary, written or rewritten (DOCUMENTS.md §7.1).
+      case 'document.updated': {
+        storeDocument(db, event.payload as DocumentRow);
+        return [topic.documents(stream.id)];
+      }
 
       // A page opened for everyone in a room, or brought forward (PANELS.md).
       case 'panel.opened': {
@@ -322,6 +367,7 @@ function spaceMemberAdded(
     chatCursor.run(c.id, c.head_rev);
   }
   for (const panel of body.hydration.panels ?? []) storePanel(db, { ...panel, space_id: stream.id });
+  for (const document of body.hydration.documents ?? []) storeDocument(db, { ...document, space_id: stream.id });
 
   db.prepare(`
     INSERT INTO memberships (scope_type, scope_id, actor_id, role, joined_at, left_at)

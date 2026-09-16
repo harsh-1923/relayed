@@ -195,8 +195,12 @@ test('panels through the handlers: a side chat and a URL appear in the room, and
   const { id: webId } = rooms.handlers['local.panels.open']({ spaceId, type: 'web', payload: { url: 'https://example.com' } });
   assert.ok(invalidated.at(-1)?.includes(panelsTopic));
 
-  assert.deepEqual(rooms.handlers['local.panels.list']({ spaceId }).map(p => [p.id, p.scope]),
-    [[chat.panelId, 'shared'], [webId, 'local']]);
+  assert.deepEqual(
+    rooms.handlers['local.panels.list']({ spaceId }).map(p => [p.id, p.scope])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    [[chat.panelId, 'shared'], [webId, 'local']]
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    'both are in the room — their order within one millisecond is not the point');
 
   assert.throws(() => rooms.handlers['local.panels.open']({ spaceId, type: 'chat', payload: {} }), /content panel/);
   assert.throws(() => rooms.handlers['local.chats.create']({ spaceId, name: 'x', kind: 'default' }), /public or private/);

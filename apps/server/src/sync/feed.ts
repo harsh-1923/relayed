@@ -9,11 +9,12 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import { type Stream } from './events.ts';
 import { dmMembers, spaceMembers } from './spaces.ts';
+import { spaceDocuments } from './documents.ts';
 import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
 import { mentionPattern } from './mentions.ts';
 import { agentSummaries } from '../agents/summary.ts';
-import type { AgentSummary, PanelOpened } from './events.ts';
+import type { AgentSummary, DocumentUpdated, PanelOpened } from './events.ts';
 import { roomPanels } from './panels.ts';
 
 /**
@@ -580,6 +581,8 @@ export interface WelcomePayload {
   agentPermissions: WelcomeAgentPermission[];
   /** The open panels of every room this actor has joined — what a person arriving is shown beside the chat (PANELS.md). */
   panels: PanelOpened[];
+  /** The documents of every space this actor has joined — a room's running summary (DOCUMENTS.md §7.3). */
+  documents: DocumentUpdated[];
 }
 
 
@@ -634,9 +637,10 @@ export async function welcome(
   // One more statement, and still a constant: every joined room's panels at
   // once, never one read per room.
   const panels = await roomPanels(db, spaces.filter(space => space.kind === 'room').map(space => space.id));
+  const documents = await spaceDocuments(db, spaces.map(space => space.id));
 
   return {
-    spaces, chats, memberships, connections, agentPermissions, panels,
+    spaces, chats, memberships, connections, agentPermissions, panels, documents,
     // Only the workspace stream. There is no actor cursor: an actor is a
     // delivery address rather than an ordered stream, so there is nothing to
     // be behind on (docs/SYNC-FLOWS.md §5). Space cursors ride on the space

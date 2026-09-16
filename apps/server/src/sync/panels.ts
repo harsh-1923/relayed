@@ -70,13 +70,20 @@ const urlOf = (payload: unknown): string => {
 const iso = (value: unknown): string => (value instanceof Date ? value.toISOString() : String(value));
 
 function toPanelOpened(row: PanelRow): PanelOpened {
+  const documentId = row.type === 'doc' ? documentIdOf(row.payload) : null;
   return {
-    id: row.id, space_id: row.space_id, type: 'web',
-    payload: { url: urlOf(row.payload) },
+    id: row.id, space_id: row.space_id, type: documentId ? 'doc' : 'web',
+    payload: documentId ? { document_id: documentId } : { url: urlOf(row.payload) },
     title: row.title, opened_from_chat_id: row.opened_from_chat_id,
     created_by_actor_id: row.created_by_actor_id, on_behalf_of_actor_id: row.on_behalf_of_actor_id,
     created_at: iso(row.created_at), opened_at: iso(row.opened_at),
   };
+}
+
+/** A doc panel's document (DOCUMENTS.md §8.1). Empty is impossible — `createRoomSummary` writes both — but read leniently anyway. */
+function documentIdOf(payload: unknown): string | null {
+  const id = (payload as { document_id?: unknown } | null)?.document_id;
+  return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
 const PANEL_COLUMNS = ['id', 'space_id', 'type', 'payload', 'title', 'opened_from_chat_id',
@@ -142,7 +149,7 @@ export async function roomPanels(
 ): Promise<PanelOpened[]> {
   if (spaceIds.length === 0) return [];
   const rows = await db.selectFrom('panels').select(PANEL_COLUMNS)
-    .where('space_id', 'in', spaceIds).where('type', '=', 'web').where('removed_at', 'is', null)
+    .where('space_id', 'in', spaceIds).where('type', 'in', ['web', 'doc']).where('removed_at', 'is', null)
     .orderBy('opened_at', 'desc')
     .execute();
   return rows.map(row => toPanelOpened(row as PanelRow));

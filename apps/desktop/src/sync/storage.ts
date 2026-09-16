@@ -24,8 +24,9 @@ import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
 import { spaceName, type Space, type SpaceChat } from '../shared/spaces.ts';
 import type { Panel } from '../shared/panels.ts';
+import type { Document } from '../shared/documents.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
-import { storePanel, type PanelRow } from './effects.ts';
+import { storePanel, storeDocument, type PanelRow, type DocumentRow } from './effects.ts';
 
 /**
  * Two subjects in one row — the workspace, and me in it — so every field says
@@ -281,6 +282,8 @@ export interface WelcomePayload {
   agentPermissions?: AgentPermissionRow[];
   /** Every joined room's open panels, complete (PANELS.md). */
   panels?: PanelRow[];
+  /** Every joined space's documents, complete (DOCUMENTS.md §7.3). */
+  documents?: DocumentRow[];
 }
 
 /** One connected account, in the client's own shape (WORKSPACE-AGENTS.md §6.3). */
@@ -770,6 +773,11 @@ export class Storage {
       db.exec('DELETE FROM panels');
       for (const row of payload.panels ?? []) storePanel(db, row);
 
+      // Documents likewise. Deleted first for the same reason, and `storeDocument`'s
+      // revision guard is no obstacle: every row here is newer than nothing.
+      db.exec('DELETE FROM documents');
+      for (const row of payload.documents ?? []) storeDocument(db, row);
+
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -816,6 +824,40 @@ export class Storage {
   }
 
   /** This actor's grants to agents, revoked included — the connector store and the agent profile both need to tell "never allowed" from "allowed, then revoked" (§7.4). */
+  /**
+   * One space's documents — a room's running summary (DOCUMENTS.md §8.2).
+   *
+   * `body` comes back whole: a summary is kilobytes, and a panel that renders
+   * half a document while it pages the rest would be worse than one that waits.
+   */
+  documents(spaceId: string): Document[] {
+    const rows = this.workspace.prepare(`
+      SELECT id, space_id, kind, title, body, format, rev,
+             updated_by_actor_id, covered_through, updated_at
+        FROM documents WHERE space_id = ? ORDER BY id
+    `).all(spaceId) as {
+      id: string; space_id: string; kind: string; title: string | null; body: string;
+      format: string; rev: number; updated_by_actor_id: string | null;
+      covered_through: string | null; updated_at: number;
+    }[];
+
+    return rows.map(row => {
+      let coveredThrough: Record<string, number> | null = null;
+      try {
+        const parsed: unknown = row.covered_through ? JSON.parse(row.covered_through) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          coveredThrough = parsed as Record<string, number>;
+        }
+      } catch { /* a watermark this build cannot read is no watermark, never a failed read */ }
+      return {
+        id: row.id, spaceId: row.space_id, kind: row.kind, title: row.title,
+        body: row.body, format: row.format, rev: Number(row.rev),
+        updatedByActorId: row.updated_by_actor_id,
+        coveredThrough, updatedAt: Number(row.updated_at),
+      };
+    });
+  }
+
   /** One synced room's shared panels, in the shape a local room's panels already have (PANELS.md). */
   panels(spaceId: string): Panel[] {
     const rows = this.workspace.prepare(`

@@ -61,6 +61,8 @@ export const topic = {
   localMessages: (chatId: string): string => `local:chat:${chatId}:messages`,
   /** Every panel in one room, local and shared (PANELS.md). Under `local:` because this store holds them. */
   localPanels: (spaceId: string): string => `local:space:${spaceId}:panels`,
+  /** One space's documents — a room's running summary (DOCUMENTS.md). */
+  documents: (spaceId: string): string => `space:${spaceId}:documents`,
   /** Every local room's slash commands. One topic: lists change rarely, and a read is a map lookup. */
   localCommands: (): string => 'local:commands',
   /** What Claude Code is waiting on the person for in one local chat. */

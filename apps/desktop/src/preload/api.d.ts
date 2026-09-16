@@ -5,6 +5,7 @@ import type { AgentActivity } from '../shared/agent-activity.ts';
 import type { Space } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
+import type { Document } from '../shared/documents.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
 import type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
@@ -15,6 +16,7 @@ export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-
 export type { AgentActivity } from '../shared/agent-activity.ts';
 export type { Space, SpaceChat, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
+export type { Document } from '../shared/documents.ts';
 export type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export interface DbInfo {
@@ -330,6 +332,8 @@ export interface RelayedApi {
   query(op: "space.get", params: { spaceId: string }): Promise<Space[]>;
   /** One synced room's shared panels (PANELS.md). */
   query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
+  /** One space's documents — a room's running summary (DOCUMENTS.md). */
+  query(op: "documents.list", params: { spaceId: string }): Promise<Document[]>;
   query(op: "prefs.list"): Promise<PreferenceRow[]>;
   /** The person's own Claude Code, as one row (LOCAL-ROOMS.md §3.2). Probes once, then answers from memory. */
   query(op: "claude.status"): Promise<ClaudeStatus[]>;

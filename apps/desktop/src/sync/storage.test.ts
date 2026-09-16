@@ -911,6 +911,31 @@ test('a DM is named by the other people in it, from the directory — and by its
   assert.equal(storage.space('spc_new')?.name, 'Direct message', 'someone the directory has not delivered yet');
 });
 
+test('welcome replaces the documents wholesale, and the room reads its summary back', () => {
+  const dir = root();
+  const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);
+  const document = (over: Record<string, unknown> = {}) => ({
+    id: 'doc_1', space_id: 'spc_eng', kind: 'room_summary', title: 'Summary',
+    body: '**Now.** Mid-migration.', format: 'markdown', rev: 4,
+    updated_by_actor_id: 'act_roomkeeping', covered_through: { cht_eng: 5521 },
+    updated_at: '2026-09-16T14:32:11.882Z', ...over,
+  });
+  storage.applyWelcome(welcomePayload({ documents: [document()] }));
+
+  assert.deepEqual(storage.documents('spc_eng'), [{
+    id: 'doc_1', spaceId: 'spc_eng', kind: 'room_summary', title: 'Summary',
+    body: '**Now.** Mid-migration.', format: 'markdown', rev: 4,
+    updatedByActorId: 'act_roomkeeping', coveredThrough: { cht_eng: 5521 },
+    updatedAt: Date.parse('2026-09-16T14:32:11.882Z'),
+  }]);
+
+  // Complete, like panels: a document absent from `welcome` is one no space
+  // this actor is in still has.
+  storage.applyWelcome(welcomePayload({ documents: [document({ id: 'doc_2', rev: 1, body: 'another room' })] }));
+  assert.deepEqual(storage.documents('spc_eng').map(row => row.id), ['doc_2']);
+  assert.deepEqual(storage.documents('spc_missing'), []);
+});
+
 test('welcome stores who a DM is between', () => {
   const dir = root();
   const { storage } = seeded(dir, [member({ workspaceId: 'wsp_1', actorId: 'act_me' })]);

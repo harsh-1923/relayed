@@ -211,7 +211,8 @@ async function openPanel(
       createdBy: input.agentActorId, onBehalfOf: input.invokerActorId,
     });
     await deps.deliver(event);
-    return { result: 'ok', data: { opened: true, url: panel.payload.url, title: panel.title } };
+    const opened = 'url' in panel.payload ? panel.payload.url : checked.url;
+    return { result: 'ok', data: { opened: true, url: opened, title: panel.title } };
   } catch (err) {
     if (err instanceof NotARoomError || err instanceof PrivateChatError) return { result: 'tool_not_allowed' };
     throw err;

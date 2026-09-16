@@ -40,6 +40,15 @@ after(async () => {
   await pool.end();
 });
 
+/**
+ * The PAGES a room has open. Every room also has the structural summary panel
+ * it is created with (DOCUMENTS.md §4.1), which is not what these tests are
+ * about — counting both would make every one of them fail for a reason that has
+ * nothing to do with panels.
+ */
+const pagesOf = async (spaceId: string) =>
+  (await roomPanels(db, [spaceId])).filter(panel => panel.type === 'web');
+
 const open = (chatId: string, url: string, title: string | null = null) =>
   openRoomPanel(db, { chatId, url, title, createdBy: agent, onBehalfOf: alice });
 
@@ -88,7 +97,7 @@ test('opening the same page again brings the room\'s panel forward instead of ad
   assert.ok(second.panel.opened_at > first.panel.opened_at, 'opened again, so it moves forward');
   assert.equal(second.panel.title, 'Checkout errors', 'an open without a title keeps the one it had');
   assert.ok(second.event.rev > first.event.rev, 'and everyone is told again');
-  assert.equal((await roomPanels(db, [room.spaceId])).length, 1);
+  assert.equal((await pagesOf(room.spaceId)).length, 1, 'one page, however many times it was opened');
 });
 
 test('a channel has no panels, and a private chat cannot announce a page to the room', opts, async () => {
@@ -101,7 +110,7 @@ test('a channel has no panels, and a private chat cannot announce a page to the 
     id: privateChat, workspace_id: wsp, space_id: room.spaceId, kind: 'private', name: 'side', created_by_actor_id: alice,
   } as never).execute();
   await assert.rejects(() => open(privateChat, 'https://linear.app/acme'), PrivateChatError);
-  assert.equal((await roomPanels(db, [room.spaceId])).length, 0);
+  assert.equal((await pagesOf(room.spaceId)).length, 0);
 });
 
 test('welcome carries every joined room\'s panels, most recently opened first', opts, async () => {
@@ -110,7 +119,8 @@ test('welcome carries every joined room\'s panels, most recently opened first', 
   const newer = await open(room.chatId, 'https://linear.app/acme/issue/LIN-2', 'LIN-2');
 
   const payload = await welcome(db, wsp, alice);
-  const mine = payload.panels.filter(panel => panel.space_id === room.spaceId).map(panel => panel.id);
+  const mine = payload.panels
+    .filter(panel => panel.space_id === room.spaceId && panel.type === 'web').map(panel => panel.id);
   assert.deepEqual(mine, [newer.panel.id, older.panel.id]);
 
   const outsider = await welcome(db, wsp, carol);
@@ -127,7 +137,8 @@ test('someone added to the room receives its open panels with the room itself', 
     .where('stream_kind', '=', 'space').where('stream_id', '=', room.spaceId)
     .where('event_type', '=', 'space.member_added')
     .orderBy('stream_rev', 'desc').executeTakeFirstOrThrow();
-  const hydration = (memberAdded.payload as { actor_id: string; hydration: { panels?: { id: string }[] } });
+  const hydration = (memberAdded.payload as { actor_id: string; hydration: { panels?: { id: string; type: string }[] } });
   assert.equal(hydration.actor_id, carol);
-  assert.deepEqual(hydration.hydration.panels?.map(p => p.id), [panel.id]);
+  assert.deepEqual(hydration.hydration.panels?.filter(p => p.type === 'web').map(p => p.id), [panel.id]);
+  assert.equal(hydration.hydration.panels?.some(p => p.type === 'doc'), true, 'and the room\'s summary panel');
 });
