@@ -140,3 +140,9 @@ export function withoutFragmentDirective(url: string): string {
   // `#:~:…` leaves a bare `#`, which is noise rather than a fragment.
   return url.slice(0, at).replace(/#$/, '');
 }
+
+/** Restore this device's last valid location, falling back to where the panel began. */
+export function webPanelStartUrl(baseUrl: unknown, currentUrl: unknown): string {
+  if (isWebUrl(currentUrl)) return withoutFragmentDirective(currentUrl);
+  return typeof baseUrl === 'string' ? baseUrl : '';
+}

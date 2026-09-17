@@ -20,6 +20,8 @@ export interface Queries {
   'spaces.list': { args: undefined; rows: Space[] };
   'space.get': { args: { spaceId: string }; rows: Space[] };
   'space.members': { args: { spaceId: string }; rows: SpaceRoster[] };
+  'chat.participants': { args: { chatId: string }; rows: string[] };
+  'local.chat.participants': { args: { chatId: string }; rows: string[] };
   'messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'prefs.list': { args: undefined; rows: PreferenceRow[] };
   'claude.status': { args: undefined; rows: ClaudeStatus[] };
@@ -59,6 +61,9 @@ export const TOPICS: TopicsFor = {
   // moved arrives there. `actors` because members are ordered by name, and
   // `spaces` because `welcome` rewrites every count.
   'space.members': ({ spaceId }) => [topic.spaceMembers(spaceId), topic.spaces(), topic.actors()],
+  // Who has written is in the messages, so their topic is the one to follow.
+  'chat.participants': ({ chatId }) => [topic.messages(chatId)],
+  'local.chat.participants': ({ chatId }) => [topic.localMessages(chatId)],
   // Only this chat's messages. `chatState` is NOT here: a read cursor moving
   // changes a badge, not the list, and waking the message pane for it would
   // refetch a hundred rows to repaint a number.

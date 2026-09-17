@@ -22,7 +22,7 @@ import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts
 import { Storage, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
-  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSpace, openDm, type SpaceInput,
+  agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSideChat, createSpace, openDm, type SpaceInput,
   stopAgentRun, refreshRoomSummary, type AgentInput,
   listToolkits, disconnectConnection,
   grantAgentPermission, revokeAgentPermission, allowAccessRequest,
@@ -676,6 +676,11 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     if (roster.state === 'none') link.wantRoster(spaceId);
     return [roster];
   },
+  /** Who is in a chat, for the faces beside it (`participants.ts`). */
+  'chat.participants': (params) => {
+    const chatId = (params as { chatId?: string } | undefined)?.chatId;
+    return chatId && storage.hasWorkspace ? storage.chatParticipants(chatId) : [];
+  },
   'space.get': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     const space = spaceId && storage.hasWorkspace ? storage.space(spaceId) : null;
@@ -1016,6 +1021,28 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('offline — a space member cannot be added');
     return addSpaceMember(token, spaceId, actorId, newId('msg'));
+  },
+  /**
+   * Start a side chat (docs/SIDE-CHATS.md). A live command like the two above;
+   * the chat and its panel reach the replica as events. The answer waits for
+   * the panel to land, briefly, so the tab the room opens for it is one the
+   * room already knows — an unknown panel id is dropped from the URL.
+   */
+  'spaces.createChat': async (params) => {
+    const input = params as { spaceId: string; name: string; kind: 'public'; withActorIds: string[] };
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline — a side chat cannot be started');
+    const answer = await createSideChat(token, input.spaceId, {
+      chatId: newId('cht'), panelId: newId('pnl'), messageId: newId('msg'),
+      name: input.name, kind: input.kind, withActorIds: input.withActorIds,
+    });
+    if (answer.ok) {
+      const landed = () => storage.hasWorkspace && storage.panels(input.spaceId).some(panel => panel.id === answer.panel_id);
+      for (let waited = 0; waited < 5_000 && !landed(); waited += 100) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+    return answer;
   },
   // ── agents (WORKSPACE-AGENTS.md §4) ────────────────────────────────────
   // Refusals come back as answers ({ ok: false, field, reason }) so the editor

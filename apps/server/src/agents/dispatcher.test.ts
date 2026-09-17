@@ -10,7 +10,7 @@ import { env } from '../env.ts';
 import { createChannel, joinSpace } from '../sync/spaces.ts';
 import { send } from '../sync/ops.ts';
 import { Registry } from '../sync/registry.ts';
-import { startDispatcher } from './dispatcher.ts';
+import { startDispatcher, placePrompt } from './dispatcher.ts';
 
 const up = await reachable();
 const opts = up && env.agentGrantSecret ? {}
@@ -323,4 +323,13 @@ test('SKIP LOCKED: two dispatchers polling the same table never claim the same r
   } finally {
     a.stop(); b.stop();
   }
+});
+
+test('a run is told where it is, and that a side chat\'s "this room" is the room', () => {
+  const room = { space_id: 'spc_1', space_kind: 'room', space_name: 'Flaky test', chat_kind: 'default', chat_name: null };
+  assert.equal(placePrompt(room), '\n\nYou are in the room "Flaky test" (spc_1).');
+  const side = placePrompt({ ...room, chat_kind: 'public', chat_name: 'Triage' });
+  assert.match(side, /You are in the room "Flaky test" \(spc_1\)\. You are in one of its side chats, "Triage"/);
+  assert.match(side, /"this room" means the whole room, not the side chat/);
+  assert.equal(placePrompt(undefined), '');
 });

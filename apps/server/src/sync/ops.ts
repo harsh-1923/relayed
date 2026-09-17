@@ -278,7 +278,7 @@ export type MessageWrite = MessageWriteCommon & (
     } & MessageContent)
   | {
       kind: 'system';
-      systemKind: 'space.member_added';
+      systemKind: 'space.member_added' | 'chat.started';
       subjectActorId: string;
       /** The compatibility rendering, captured at write time. */
       body: string;

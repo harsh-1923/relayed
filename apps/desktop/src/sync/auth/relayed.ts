@@ -210,6 +210,15 @@ export const addSpaceMember = (accessToken: string, spaceId: string, actorId: st
   request<{ space_id: string; actor_id: string; message_id: string }>('POST',
     `/spaces/${encodeURIComponent(spaceId)}/members`, accessToken,
     { actor_id: actorId, message_id: messageId });
+/** Start a side chat in a room (docs/SIDE-CHATS.md). The ids are the client's, so a retry is the same chat. */
+export const createSideChat = (accessToken: string, spaceId: string, input: {
+  chatId: string; panelId: string; messageId: string; name: string; kind: 'public'; withActorIds: string[];
+}) =>
+  request<{ space_id: string; chat_id: string; panel_id: string; created: boolean }>('POST',
+    `/spaces/${encodeURIComponent(spaceId)}/chats`, accessToken, {
+      chat_id: input.chatId, panel_id: input.panelId, message_id: input.messageId,
+      name: input.name, kind: input.kind, with_actor_ids: input.withActorIds,
+    });
 /**
  * Refresh a room's summary now (DOCUMENTS.md §4.4). `too_soon` is the rate
  * limit answering, not a failure — the panel says so rather than retrying.

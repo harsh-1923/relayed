@@ -740,3 +740,34 @@ for (const kind of ['channel', 'room'] as const) {
     }
   });
 }
+
+// ── side chats (SIDE-CHATS.md) ──────────────────────────────────────────────
+
+test('a side chat started in a held room is stored, with its panel pointing at it', () => {
+  const db = replica();
+  const room: Stream = { kind: 'space', id: 'spc_room' };
+  db.prepare(`INSERT INTO spaces (id, workspace_id, kind, name, visibility, membership_policy, created_at, updated_at)
+              VALUES ('spc_room', 'wsp_1', 'room', 'Room', 'public', 'open', 0, 0)`).run();
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
+
+  applyEvent(deps, room, { rev: 1, type: 'chat.created', payload: { id: 'cht_side', space_id: 'spc_room', kind: 'public', name: 'Flaky login' } });
+  applyEvent(deps, room, { rev: 2, type: 'panel.opened', payload: {
+    id: 'pnl_side', space_id: 'spc_room', type: 'chat', chat_id: 'cht_side', payload: {}, title: null,
+    opened_from_chat_id: null, created_by_actor_id: 'act_alice', on_behalf_of_actor_id: null,
+    created_at: '2026-09-17T10:00:00.000Z', opened_at: '2026-09-17T10:00:00.000Z',
+  } });
+
+  assert.deepEqual({ ...db.prepare('SELECT workspace_id, space_id, kind, name FROM chats WHERE id = ?').get('cht_side') },
+    { workspace_id: 'wsp_1', space_id: 'spc_room', kind: 'public', name: 'Flaky login' });
+  assert.equal((db.prepare('SELECT chat_id FROM panels WHERE id = ?').get('pnl_side') as { chat_id: string }).chat_id, 'cht_side');
+  db.close();
+});
+
+test('a chat in a space this device does not hold is left to the hydration that brings the space', () => {
+  const db = replica();
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
+  applyEvent(deps, { kind: 'space', id: 'spc_elsewhere' },
+    { rev: 1, type: 'chat.created', payload: { id: 'cht_x', space_id: 'spc_elsewhere', kind: 'public', name: 'x' } });
+  assert.equal(db.prepare('SELECT id FROM chats WHERE id = ?').get('cht_x'), undefined);
+  db.close();
+});

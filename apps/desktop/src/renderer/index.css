@@ -113,7 +113,7 @@
 .dark {
   /* shadcn dark theme. Replace this complete section when swapping themes. */
   --background: oklch(0.1693 0.0041 285.95);
-  --foreground: oklch(0.9187 0.0029 264.54);
+  --foreground: oklch(91.9% 0.003 264.5);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);

@@ -433,6 +433,12 @@ extended.
 
 Chat panels have no `panel.removed`: their removal is the chat's removal.
 
+> **As built for public side chats** (SIDE-CHATS.md): a public chat's panel is
+> announced as `panel.opened` on the **space** stream, like a content panel, and
+> is in `welcome`'s room panels — everyone in the room may see a public chat, so
+> nothing leaks. The chat-stream row above is still the rule for a **private**
+> chat's panel, and ships with private side chats.
+
 **Why the chat stream for chat panels.** `fanout.ts` already resolves a chat
 stream's audience through the chat's access rule, private membership included.
 Putting a private chat's panel on the space stream would tell every room member
@@ -645,9 +651,13 @@ Enter loads what they typed, Escape puts the page's address back. What is typed
 goes through `addressFromTyped` (`shared/web-panels.ts`), also used by the Panels
 menu: a bare host becomes https (http for localhost), and text that is not an
 address — no dot, or a space — becomes a Google search. A scheme other than http
-or https is refused in the bar, as main would refuse it anyway. Where the page
-goes is never written back to the panel: `payload.url` stays where it was opened,
-and browsing inside it is device-local view state (§8).
+or https is refused in the bar, as main would refuse it anyway. `payload.url`
+stays where the panel was opened: it is the panel's shared origin and changing
+it would move the page for everybody. Committed main-frame navigation instead
+updates `panel_meta.currentUrl`, the same device-local JSON that holds the last
+title and icon. Reopening on this device resumes there, falling back to the
+origin when no location has been seen. It is never synced, and text-fragment
+directives are removed before it is kept (§8).
 
 **Why `<webview>` and not `WebContentsView`.** `LOCAL-ROOMS.md` §10.1 first chose
 `WebContentsView`, following Electron's guide. A native view is drawn above the

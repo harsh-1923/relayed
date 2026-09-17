@@ -44,6 +44,8 @@ export interface PanelMeta {
   pageTitle?: string;
   /** A sha256 in the account's blob store, served as `relayed-blob://`. */
   iconBlob?: string;
+  /** Where this device last left the page. The panel payload keeps its original address. */
+  currentUrl?: string;
 }
 
 export interface PanelMetaRow { panelId: string; meta: PanelMeta }
@@ -112,13 +114,17 @@ export type SeenPanels = ReadonlyMap<string, number>;
 /**
  * A panel that can ARRIVE: one somebody opened for the room.
  *
- * A structural panel is excluded, and that is the whole of the rule: a room's
- * summary has existed since the room did, so it never arrives, and treating it
- * as an arrival reopens the container somebody just closed — which is what it
- * did before this filter (DOCUMENTS.md §8.1).
+ * A structural panel is excluded: a room's summary has existed since the room
+ * did, so it never arrives, and treating it as an arrival reopens the container
+ * somebody just closed — which is what it did before this filter (DOCUMENTS.md
+ * §8.1).
+ *
+ * So is a side chat's: it opens for whoever started it, and everyone else finds
+ * it under "In this room" rather than having their tabs moved by somebody else's
+ * conversation (SIDE-CHATS.md §1).
  */
 const arrivable = (panel: Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>): boolean =>
-  panel.scope === 'shared' && !isStructuralPanel(panel);
+  panel.scope === 'shared' && !isStructuralPanel(panel) && panel.type !== 'chat';
 
 export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>[]): Map<string, number> =>
   new Map(panels.filter(arrivable).map(panel => [panel.id, panel.openedAt]));

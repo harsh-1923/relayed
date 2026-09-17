@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LOCAL_PANEL_MAX_AGE_MS, LocalStore } from './store.ts';
 import { createLocalRooms } from './rooms.ts';
-import { iconFromDataUrl, metaPatch, MAX_ICON_BYTES } from './panel-meta.ts';
+import { currentUrlFrom, iconFromDataUrl, metaPatch, MAX_ICON_BYTES } from './panel-meta.ts';
 
 const PNG = `data:image/png;base64,${Buffer.from('not really a png, but bytes').toString('base64')}`;
 
@@ -33,10 +33,13 @@ test('merging keeps fields it was not given — including ones this build does n
   store.db.prepare(`INSERT INTO panel_meta VALUES ('pnl_1', ?, '{"fromTheFuture":1}', 0)`).run(spaceId);
   assert.equal(store.mergePanelMeta('pnl_1', spaceId, { pageTitle: 'Linear' }), true);
   assert.equal(store.mergePanelMeta('pnl_1', spaceId, { iconBlob: 'a'.repeat(64) }), true);
+  assert.equal(store.mergePanelMeta('pnl_1', spaceId, { currentUrl: 'https://linear.app/acme/issue/REL-123' }), true);
   assert.equal(store.mergePanelMeta('pnl_1', spaceId, { pageTitle: 'Linear' }), false, 'the same report again changes nothing');
   const raw = JSON.parse((store.db.prepare("SELECT meta FROM panel_meta WHERE panel_id = 'pnl_1'").get() as { meta: string }).meta) as Record<string, unknown>;
-  assert.deepEqual(raw, { fromTheFuture: 1, pageTitle: 'Linear', iconBlob: 'a'.repeat(64) });
-  assert.deepEqual(store.panelMeta(spaceId), [{ panelId: 'pnl_1', meta: { pageTitle: 'Linear', iconBlob: 'a'.repeat(64) } }],
+  assert.deepEqual(raw, { fromTheFuture: 1, pageTitle: 'Linear', iconBlob: 'a'.repeat(64), currentUrl: 'https://linear.app/acme/issue/REL-123' });
+  assert.deepEqual(store.panelMeta(spaceId), [{ panelId: 'pnl_1', meta: {
+    pageTitle: 'Linear', iconBlob: 'a'.repeat(64), currentUrl: 'https://linear.app/acme/issue/REL-123',
+  } }],
     'unknown keys are kept on disk and left out of what is read');
   store.close();
 });
@@ -82,6 +85,14 @@ test('a report stores the icon in the blob store and the title trimmed', () => {
   assert.equal(stored.length, 1);
 });
 
+test('a current location is http(s), bounded, and stripped of a text-fragment directive', () => {
+  assert.equal(currentUrlFrom('https://example.com/docs#section'), 'https://example.com/docs#section');
+  assert.equal(currentUrlFrom('https://example.com/docs#:~:text=retry'), 'https://example.com/docs');
+  assert.equal(currentUrlFrom('file:///etc/passwd'), undefined);
+  assert.equal(currentUrlFrom('not a url'), undefined);
+  assert.equal(currentUrlFrom(`https://example.com/${'x'.repeat(40_000)}`), undefined);
+});
+
 test('reportMeta wakes the room only when something changed', () => {
   const { store, spaceId } = setup();
   const woken: string[][] = [];
@@ -93,10 +104,26 @@ test('reportMeta wakes the room only when something changed', () => {
   });
   const report = (fields: Record<string, unknown>) => rooms.handlers['local.panels.reportMeta']({ panelId: 'pnl_1', spaceId, ...fields });
   report({ pageTitle: 'Linear', icon: PNG });
+  report({ currentUrl: 'https://linear.app/acme/issue/REL-123' });
   report({ pageTitle: 'Linear', icon: PNG });
   report({ icon: 'data:image/svg+xml;base64,PHN2Zz4=' });
-  assert.equal(woken.length, 1);
+  assert.equal(woken.length, 2);
   assert.equal(blobs.size, 1);
-  assert.deepEqual(Object.keys(rooms.handlers['local.panels.meta']({ spaceId })[0]!.meta).sort(), ['iconBlob', 'pageTitle']);
+  assert.deepEqual(Object.keys(rooms.handlers['local.panels.meta']({ spaceId })[0]!.meta).sort(), ['currentUrl', 'iconBlob', 'pageTitle']);
+  store.close();
+});
+
+test('current location and title are kept even when no blob store is available', () => {
+  const { store, spaceId } = setup();
+  const rooms = createLocalRooms({
+    store: () => store, runner: { request: () => Promise.reject(new Error('unused')) },
+    invalidate: () => {}, stream: () => {}, pickFolder: () => Promise.resolve(null),
+  });
+  rooms.handlers['local.panels.reportMeta']({
+    panelId: 'pnl_1', spaceId, currentUrl: 'https://example.com/next', pageTitle: 'Next', icon: PNG,
+  });
+  assert.deepEqual(rooms.handlers['local.panels.meta']({ spaceId }), [{
+    panelId: 'pnl_1', meta: { currentUrl: 'https://example.com/next', pageTitle: 'Next' },
+  }]);
   store.close();
 });

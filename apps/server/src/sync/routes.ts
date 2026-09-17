@@ -18,6 +18,14 @@ import {
   createChannel, createRoom, spaceNameFrom, UnknownWorkspaceError, addToSpace, SealedSpaceError, SpaceMemberUnavailableError,
   openDm, InvalidDmMembersError, DM_MAX_MEMBERS,
 } from './spaces.ts';
+import { NotARoomError } from './panels.ts';
+import {
+  createSideChat, InvalidSideChatError, SideChatConflictError, SIDE_CHAT_NAME_MAX,
+} from './side-chats.ts';
+
+/** An id the client made: its prefix, then characters a URL and a log line carry as they are. */
+const clientId = (prefix: string, value: unknown): value is string =>
+  typeof value === 'string' && new RegExp(`^${prefix}_[A-Za-z0-9]{10,40}$`).test(value);
 
 export interface SpaceRouteDeps {
   db: Kysely<DB>;
@@ -143,6 +151,59 @@ export function spaceRoutes(deps: SpaceRouteDeps) {
           await deps.deliver(result.messageEvent);
           return reply.send({ space_id: req.params.id, actor_id: actorId, message_id: messageId });
         } catch (error) {
+          return refusal(reply, error);
+        }
+      },
+    );
+
+    /**
+     * Start a side chat in a room (docs/SIDE-CHATS.md). The client makes the
+     * chat, panel and first message ids, so asking twice is one chat: the
+     * second answer is 200 with `created: false`, and nothing is delivered.
+     */
+    app.post<{ Params: { id: string }; Body: {
+      chat_id?: unknown; panel_id?: unknown; message_id?: unknown;
+      name?: unknown; kind?: unknown; with_actor_ids?: unknown;
+    } }>(
+      '/spaces/:id/chats', async (req, reply) => {
+        const me = await who(req.headers.authorization);
+        if (!me) return reply.code(401).send({ error: 'unauthenticated' });
+        const body = req.body ?? {};
+        for (const [field, prefix] of [['chat_id', 'cht'], ['panel_id', 'pnl'], ['message_id', 'msg']] as const) {
+          if (!clientId(prefix, body[field])) return reply.code(400).send({ error: 'invalid', field, reason: 'required' });
+        }
+        if (typeof body.name !== 'string') {
+          return reply.code(400).send({ error: 'invalid', field: 'name', reason: 'required', max: SIDE_CHAT_NAME_MAX });
+        }
+        // Private side chats need chat memberships and a members-only
+        // announcement first (SIDE-CHATS.md §4, step 4).
+        if (body.kind !== 'public') {
+          return reply.code(400).send({ error: 'invalid', field: 'kind', reason: body.kind === 'private' ? 'not_supported' : 'required' });
+        }
+        const withActorIds = body.with_actor_ids;
+        if (!Array.isArray(withActorIds) || withActorIds.some(id => typeof id !== 'string')) {
+          return reply.code(400).send({ error: 'invalid', field: 'with_actor_ids', reason: 'required' });
+        }
+        try {
+          const created = await createSideChat(deps.db, {
+            spaceId: req.params.id,
+            chatId: body.chat_id as string, panelId: body.panel_id as string, messageId: body.message_id as string,
+            name: body.name, kind: 'public', withActorIds: withActorIds as string[], createdBy: me.actorId,
+          });
+          // In the order they were written: the chat, its panel, its first row.
+          for (const event of created.events) await deps.deliver(event);
+          return reply.code(created.created ? 201 : 200).send({
+            space_id: req.params.id, chat_id: created.chatId, panel_id: created.panelId, created: created.created,
+          });
+        } catch (error) {
+          if (error instanceof InvalidSideChatError) {
+            return reply.code(400).send({ error: 'invalid', field: error.field, reason: error.reason, max: SIDE_CHAT_NAME_MAX });
+          }
+          if (error instanceof NotARoomError) return reply.code(400).send({ error: 'not_a_room' });
+          if (error instanceof SideChatConflictError) return reply.code(409).send({ error: 'conflict', field: 'chat_id' });
+          if (error instanceof SpaceMemberUnavailableError) {
+            return reply.code(404).send({ error: 'actor_unavailable', field: 'with_actor_ids', actor_id: error.actorId });
+          }
           return refusal(reply, error);
         }
       },

@@ -57,7 +57,7 @@ export interface OpenRoomPanel {
 }
 
 type PanelRow = {
-  id: string; space_id: string; type: string; payload: unknown; title: string | null;
+  id: string; space_id: string; type: string; chat_id: string | null; payload: unknown; title: string | null;
   opened_from_chat_id: string | null; created_by_actor_id: string | null; on_behalf_of_actor_id: string | null;
   created_at: unknown; opened_at: unknown;
 };
@@ -70,6 +70,14 @@ const urlOf = (payload: unknown): string => {
 const iso = (value: unknown): string => (value instanceof Date ? value.toISOString() : String(value));
 
 function toPanelOpened(row: PanelRow): PanelOpened {
+  if (row.type === 'chat' && row.chat_id) {
+    return {
+      id: row.id, space_id: row.space_id, type: 'chat', payload: {}, chat_id: row.chat_id,
+      title: row.title, opened_from_chat_id: row.opened_from_chat_id,
+      created_by_actor_id: row.created_by_actor_id, on_behalf_of_actor_id: row.on_behalf_of_actor_id,
+      created_at: iso(row.created_at), opened_at: iso(row.opened_at),
+    };
+  }
   const documentId = row.type === 'doc' ? documentIdOf(row.payload) : null;
   return {
     id: row.id, space_id: row.space_id, type: documentId ? 'doc' : 'web',
@@ -86,7 +94,7 @@ function documentIdOf(payload: unknown): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
-const PANEL_COLUMNS = ['id', 'space_id', 'type', 'payload', 'title', 'opened_from_chat_id',
+const PANEL_COLUMNS = ['id', 'space_id', 'type', 'chat_id', 'payload', 'title', 'opened_from_chat_id',
   'created_by_actor_id', 'on_behalf_of_actor_id', 'created_at', 'opened_at'] as const;
 
 /**
@@ -143,14 +151,38 @@ export async function openRoomPanel(
   });
 }
 
-/** The open panels of these rooms, most recently opened first — for `welcome` and for a newly added member. */
+/**
+ * The open panels of these rooms, most recently opened first — for `welcome` and
+ * for a newly added member. A side chat's panel is included only while the chat
+ * is public: these go to everyone in the room, and a private chat's existence
+ * does not (DESIGN.md §7.2).
+ */
 export async function roomPanels(
   db: Kysely<DB> | Transaction<DB>, spaceIds: readonly string[],
 ): Promise<PanelOpened[]> {
   if (spaceIds.length === 0) return [];
-  const rows = await db.selectFrom('panels').select(PANEL_COLUMNS)
-    .where('space_id', 'in', spaceIds).where('type', 'in', ['web', 'doc']).where('removed_at', 'is', null)
-    .orderBy('opened_at', 'desc')
+  const rows = await db.selectFrom('panels')
+    .leftJoin('chats', 'chats.id', 'panels.chat_id')
+    .select(PANEL_COLUMNS.map(column => `panels.${column}` as const))
+    .where('panels.space_id', 'in', spaceIds).where('panels.removed_at', 'is', null)
+    .where(eb => eb.or([
+      eb('panels.type', 'in', ['web', 'doc']),
+      eb.and([eb('panels.type', '=', 'chat'), eb('chats.kind', '=', 'public')]),
+    ]))
+    .orderBy('panels.opened_at', 'desc')
     .execute();
   return rows.map(row => toPanelOpened(row as PanelRow));
+}
+
+/** A side chat's panel, written with the chat it shows (PANELS.md §4.1). Inside the caller's transaction. */
+export async function insertChatPanel(
+  trx: Transaction<DB>,
+  input: { panelId: string; workspaceId: string; spaceId: string; chatId: string; createdBy: string },
+): Promise<PanelOpened> {
+  const row = await trx.insertInto('panels').values({
+    id: input.panelId, workspace_id: input.workspaceId, space_id: input.spaceId, type: 'chat',
+    chat_id: input.chatId, payload: sql`'{}'::jsonb`, title: null, opened_from_chat_id: null,
+    created_by_actor_id: input.createdBy, on_behalf_of_actor_id: null, removed_at: null,
+  }).returning(PANEL_COLUMNS).executeTakeFirstOrThrow();
+  return toPanelOpened(row as PanelRow);
 }

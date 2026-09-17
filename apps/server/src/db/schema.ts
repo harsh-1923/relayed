@@ -183,7 +183,7 @@ export interface MessagesTable {
    */
   message_kind: Generated<'actor' | 'system'>;
   /** NULL for `'actor'`; the kind of system row otherwise. */
-  system_kind: 'space.member_added' | null;
+  system_kind: 'space.member_added' | 'chat.started' | null;
   /** NULL for `'actor'`; who the system row is about otherwise (Alice, for "Alice was added by Bob"). */
   subject_actor_id: string | null;
 }

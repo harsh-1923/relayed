@@ -18,7 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
-  addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, withoutFragmentDirective,
+  addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, webPanelStartUrl, withoutFragmentDirective,
 } from '../../../shared/web-panels.ts';
 import { markAnnotation } from '@/lib/pending-annotations';
 import { openLink, usePanelPointer } from '@/lib/panel-navigation';
@@ -167,13 +167,14 @@ export function UrlBarButton({ label, disabled = false, ...props }: {
   );
 }
 
-export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
+export function WebPanel({ panel, shown, initialUrl }: { panel: Panel; shown: boolean; initialUrl?: string | undefined }) {
   const { state: session } = useSession();
   const url = typeof panel.payload['url'] === 'string' ? panel.payload['url'] : '';
-  // Read once: changing a webview's `src` navigates it, and the page moves on from where it started.
-  const [src] = useState(url);
+  // Read once: changing a webview's `src` navigates it. Later metadata updates
+  // describe this same live page; they must not navigate it a second time.
+  const [src] = useState(() => webPanelStartUrl(url, initialUrl));
   const view = useRef<HTMLWebViewElement>(null);
-  const [page, setPage] = useState<PageState>({ url, loading: true, canGoBack: false, canGoForward: false, failure: null });
+  const [page, setPage] = useState<PageState>({ url: src, loading: true, canGoBack: false, canGoForward: false, failure: null });
   const [menu, setMenu] = useState<PageMenu | null>(null);
   /** The box the page and the menu share, and what window coordinates are measured against. */
   const surface = useRef<HTMLDivElement>(null);
@@ -206,8 +207,12 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
 
     // What this device learned about the page, kept with the panel so its tab
     // draws the title and icon before the page loads again (PANELS.md).
-    const report = (fields: { pageTitle?: string; icon?: string }): void => {
+    const report = (fields: { currentUrl?: string; pageTitle?: string; icon?: string }): void => {
       void call(api => api.query('local.panels.reportMeta', { panelId: panel.id, spaceId: panel.spaceId, ...fields }));
+    };
+    const onNavigate = (): void => {
+      read();
+      report({ currentUrl: element.getURL() });
     };
     const onTitle = (event: Event): void => { report({ pageTitle: (event as TitleUpdated).title }); };
     const onFavicon = (event: Event): void => {
@@ -249,7 +254,8 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
     /** A page that moves under an open menu leaves it pointing at nothing. */
     const closeMenu = (): void => { setMenu(null); };
 
-    const updates = ['did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated'];
+    const updates = ['did-stop-loading', 'page-title-updated'];
+    const navigations = ['did-navigate', 'did-navigate-in-page'];
     const closers = ['did-start-loading', 'did-navigate', 'did-navigate-in-page'];
     element.addEventListener('context-menu', onContextMenu);
     for (const name of closers) element.addEventListener(name, closeMenu);
@@ -260,6 +266,7 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
     element.addEventListener('page-title-updated', onTitle);
     element.addEventListener('page-favicon-updated', onFavicon);
     for (const name of updates) element.addEventListener(name, read);
+    for (const name of navigations) element.addEventListener(name, onNavigate);
     return () => {
       element.removeEventListener('context-menu', onContextMenu);
       for (const name of closers) element.removeEventListener(name, closeMenu);
@@ -270,6 +277,7 @@ export function WebPanel({ panel, shown }: { panel: Panel; shown: boolean }) {
       element.removeEventListener('page-title-updated', onTitle);
       element.removeEventListener('page-favicon-updated', onFavicon);
       for (const name of updates) element.removeEventListener(name, read);
+      for (const name of navigations) element.removeEventListener(name, onNavigate);
     };
   }, [session.accountId, drawable, panel.id, panel.spaceId]);
 

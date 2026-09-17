@@ -61,7 +61,7 @@ interface MessageCreated {
   delegation_id?: string;
   /** Present only for a system row (SPACE-MEMBERSHIP-MARKERS.md). Absent means 'actor'. */
   message_kind?: 'system';
-  system_kind?: 'space.member_added';
+  system_kind?: 'space.member_added' | 'chat.started';
   subject_actor_id?: string;
 }
 
@@ -139,6 +139,8 @@ export interface PanelRow {
   id: string;
   space_id: string;
   type: string;
+  /** The side chat a `chat` panel shows. Absent for every other type, and from a server that predates side chats. */
+  chat_id?: string | null | undefined;
   payload: Record<string, unknown>;
   title: string | null;
   opened_from_chat_id: string | null;
@@ -161,14 +163,14 @@ export function storePanel(db: DatabaseSync, row: PanelRow): void {
   db.prepare(`
     INSERT INTO panels (id, space_id, type, chat_id, payload, title, opened_from_chat_id,
                         created_by_actor_id, on_behalf_of_actor_id, created_at, opened_at)
-    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      type = excluded.type, payload = excluded.payload, title = excluded.title,
+      type = excluded.type, chat_id = excluded.chat_id, payload = excluded.payload, title = excluded.title,
       opened_from_chat_id = excluded.opened_from_chat_id,
       created_by_actor_id = excluded.created_by_actor_id,
       on_behalf_of_actor_id = excluded.on_behalf_of_actor_id,
       opened_at = MAX(panels.opened_at, excluded.opened_at)
-  `).run(row.id, row.space_id, row.type, JSON.stringify(row.payload ?? {}), row.title,
+  `).run(row.id, row.space_id, row.type, row.chat_id ?? null, JSON.stringify(row.payload ?? {}), row.title,
          row.opened_from_chat_id, row.created_by_actor_id, row.on_behalf_of_actor_id,
          millis(row.created_at), millis(row.opened_at));
 }
@@ -226,8 +228,9 @@ export function replicaEffect(
         return [topic.space(stream.id), topic.spaces(), topic.spaceMembers(stream.id)];
       }
       case 'space.created':
-      case 'chat.created':
         return [topic.space(stream.id), topic.spaces()];
+      case 'chat.created':
+        return chatCreated(db, stream, event, workspaceId?.() ?? null);
 
       // A room's summary, written or rewritten (DOCUMENTS.md §7.1).
       case 'document.updated': {
@@ -304,6 +307,30 @@ function messageCreated(db: DatabaseSync, stream: Stream, event: Envelope): stri
   }
 
   return [topic.messages(stream.id), topic.chatState(stream.id)];
+}
+
+interface ChatCreated { id: string; space_id: string; kind: string; name: string | null }
+
+/**
+ * A chat appearing in a space this device holds — a side chat someone started
+ * (SIDE-CHATS.md). Stored so its panel has something to show; its messages
+ * arrive on its own stream. A space this device does not hold yet is left to
+ * the hydration that brings it, and so is a replica with no workspace to file
+ * the row under.
+ */
+function chatCreated(db: DatabaseSync, stream: Stream, event: Envelope, workspaceId: string | null): string[] {
+  const body = event.payload as ChatCreated;
+  const held = db.prepare('SELECT 1 FROM spaces WHERE id = ?').get(stream.id);
+  if (workspaceId && held) {
+    const now = Date.now();
+    db.prepare(`
+      INSERT INTO chats (id, workspace_id, space_id, kind, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, name = excluded.name, updated_at = excluded.updated_at
+    `).run(body.id, workspaceId, stream.id, body.kind, body.name, now, now);
+    db.prepare('INSERT INTO chat_state (chat_id, head_ord) VALUES (?, 0) ON CONFLICT(chat_id) DO NOTHING').run(body.id);
+  }
+  return [topic.space(stream.id), topic.spaces()];
 }
 
 /**

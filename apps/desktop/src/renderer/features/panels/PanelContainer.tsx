@@ -5,12 +5,12 @@
 // A type this build does not know is kept and drawn as a placeholder, never
 // dropped: a newer version wrote it (§3.3). A body that throws is caught here,
 // so one broken panel does not take the container or the chat with it.
-import { Component, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, ChatDefault, ChatPlus, Globe, LockClose, MultipleCrossCancelDefault, Notebook, PlusDefault, Refresh, UploadUp } from '@relayed/icons';
+import { Component, useState, type ComponentType, type ReactNode } from 'react';
+import { ArrowLeft, ArrowRight, ChatDefault, Globe, LockClose, MultipleCrossCancelDefault, Notebook, PlusDefault, Refresh, UploadUp } from '@relayed/icons';
 import type { Panel, PanelMeta, Space, SpaceScope } from '../../../preload/api';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { AvatarGroup, AvatarGroupCount } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { ChatView } from '@/features/chat/ChatView';
 import { blobSrc, call } from '@/lib/ipc';
 import { useQuery } from '@/lib/query';
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import type { OpenPanels } from './useOpenPanels';
 import { AddressBar, UrlBarButton, WebPanel } from './WebPanel';
 import { DocPanel } from '../documents/DocPanel';
+import { SideChatChoice } from './SideChatChoice';
 import { documentIdOfPanel, isStructuralPanel } from '../../../shared/documents.ts';
 import './panels.css';
 
@@ -59,7 +60,7 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels, address
   addressFocus: number;
 }) {
   const actorOf = useActorLookup();
-  const { rows: metaRows } = useQuery('local.panels.meta', { spaceId: space.id });
+  const { rows: metaRows, status: metaStatus } = useQuery('local.panels.meta', { spaceId: space.id });
   const metaOf = (panel: Panel): PanelMeta => metaRows?.find(row => row.panelId === panel.id)?.meta ?? {};
   /** "opened by @triage for Alice" — who put a shared page in front of the room, and whose request it was. */
   const attributionOf = (panel: Panel): string | null => {
@@ -152,9 +153,9 @@ export function PanelContainer({ tabs, panels, space, scope, openPanels, address
         {/* Every open page stays mounted, in tab order, and the ones not shown are parked:
             a webview unmounted or moved loads its page again (WebPanel.tsx). The
             new-panel page parks them all rather than closing them. */}
-        {tabs.filter(panel => panel.type === 'web').map(panel => (
+        {metaStatus !== 'loading' && tabs.filter(panel => panel.type === 'web').map(panel => (
           <PanelBoundary key={panel.id}>
-            <WebPanel panel={panel} shown={panel.id === shown?.id} />
+            <WebPanel panel={panel} shown={panel.id === shown?.id} initialUrl={metaOf(panel).currentUrl} />
           </PanelBoundary>
         ))}
       </div>
@@ -222,36 +223,9 @@ function NewPanelPage({ space, scope, closed, metaOf, attributionOf, addressFocu
             <p className="mt-1 text-sm text-muted-foreground">Type an address above, or pick something to work beside.</p>
           </div>
           <div className="space-y-2">
-            {/* Side chats in a synced room need the server to write them, which it does not yet. */}
-            {scope === 'local' && (
-              <SideChatChoice spaceId={space.id} onCreated={onCreated} />
-            )}
+            <SideChatChoice space={space} scope={scope} onCreated={onCreated} />
           </div>
-          {closed.length > 0 && (
-            <div className="mt-6">
-              <h3 className="mb-2 px-1 text-xs font-medium text-muted-foreground">In this room</h3>
-              <ul className="space-y-1">
-                {closed.map(panel => {
-                  const chat = panel.chatId ? space.chats.find(candidate => candidate.id === panel.chatId) : undefined;
-                  const meta = metaOf(panel);
-                  const attribution = attributionOf(panel);
-                  return (
-                    <li key={panel.id}>
-                      <button
-                        type="button"
-                        onClick={() => onReopen(panel.id)}
-                        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted/60"
-                      >
-                        <PanelIcon panel={panel} chatKind={chat?.kind} meta={meta} className="size-4 text-muted-foreground" />
-                        <span className={cn('truncate', panel.scope === 'local' && 'italic')}>{panelTitle(panel, chat?.name, meta)}</span>
-                        {attribution && <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">{attribution}</span>}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
+          <RoomPanels space={space} scope={scope} closed={closed} metaOf={metaOf} attributionOf={attributionOf} onReopen={onReopen} />
         </div>
       </div>
     </>
@@ -259,83 +233,117 @@ function NewPanelPage({ space, scope, closed, metaOf, attributionOf, addressFocu
 }
 
 /**
- * A side chat, made in place: the choice opens into its name and privacy, so
- * the new-panel tab never hands off to a dialog.
+ * What the room has that is not open here, in two kinds that read differently:
+ * conversations, with the faces of who is in them, and pages, with where they
+ * point. One list mixing both made a chat and a page look alike.
  */
-function SideChatChoice({ spaceId, onCreated }: { spaceId: string; onCreated: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [isPrivate, setPrivate] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!open) {
-    return (
-      <EmptyPanelChoice
-        icon={<ChatPlus />}
-        title="Side chat"
-        description="Start a public or private conversation."
-        onClick={() => setOpen(true)}
-      />
-    );
-  }
-
-  const cancel = () => { setOpen(false); setName(''); setPrivate(false); setError(null); };
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    void call(api => api.query('local.chats.create', { spaceId, name, kind: isPrivate ? 'private' : 'public' }))
-      .then(created => { if (created?.panelId) onCreated(created.panelId); })
-      .catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure)));
-  };
-
+function RoomPanels({ space, scope, closed, metaOf, attributionOf, onReopen }: {
+  space: Space; scope: SpaceScope; closed: readonly Panel[];
+  metaOf: (panel: Panel) => PanelMeta;
+  attributionOf: (panel: Panel) => string | null;
+  onReopen: (id: string) => void;
+}) {
+  const chats = closed.filter(panel => panel.type === 'chat');
+  const pages = closed.filter(panel => panel.type !== 'chat');
   return (
-    <form
-      onSubmit={submit}
-      onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } }}
-      className="space-y-3 rounded-xl border border-border bg-muted/25 px-4 py-3"
-    >
-      <div className="flex items-center gap-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground [&_svg]:size-4">
-          <ChatPlus />
-        </span>
-        <span className="text-sm font-medium">New side chat</span>
-      </div>
-      <Input autoFocus aria-label="Name" placeholder="try a different fix" value={name} onChange={event => setName(event.target.value)} />
-      <label className="flex items-center justify-between gap-3 text-sm">
-        <span>
-          Private
-          <span className="block text-xs text-muted-foreground">Only its members see it, or know it exists.</span>
-        </span>
-        <Switch checked={isPrivate} onCheckedChange={setPrivate} />
-      </label>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="ghost" size="xs" onClick={cancel}>Cancel</Button>
-        <Button type="submit" size="xs" disabled={name.trim().length === 0}>Create</Button>
-      </div>
-    </form>
+    <>
+      {chats.length > 0 && (
+        <RoomSection heading="Side chats" count={chats.length}>
+          {chats.map(panel => {
+            const chat = space.chats.find(candidate => candidate.id === panel.chatId);
+            const isPrivate = chat?.kind === 'private';
+            const Icon = isPrivate ? LockClose : ChatDefault;
+            return (
+              <RoomRow
+                key={panel.id}
+                onClick={() => onReopen(panel.id)}
+                icon={<Icon className="size-4" />}
+                title={panelTitle(panel, chat?.name, metaOf(panel))}
+                detail={isPrivate ? 'Private' : 'Everyone in the room'}
+                aside={panel.chatId ? <ChatFaces chatId={panel.chatId} scope={scope} /> : null}
+              />
+            );
+          })}
+        </RoomSection>
+      )}
+      {pages.length > 0 && (
+        <RoomSection heading="Pages" count={pages.length}>
+          {pages.map(panel => {
+            const meta = metaOf(panel);
+            const url = typeof panel.payload['url'] === 'string' ? panel.payload['url'] : null;
+            const host = url ? hostOf(url) : null;
+            const attribution = attributionOf(panel);
+            return (
+              <RoomRow
+                key={panel.id}
+                onClick={() => onReopen(panel.id)}
+                icon={<PanelIcon panel={panel} chatKind={undefined} meta={meta} className="size-4" />}
+                title={panelTitle(panel, null, meta)}
+                detail={[panel.scope === 'local' ? 'Only on this device' : null, host, attribution].filter(Boolean).join(' · ')}
+                muted={panel.scope === 'local'}
+              />
+            );
+          })}
+        </RoomSection>
+      )}
+    </>
   );
 }
 
-function EmptyPanelChoice({ icon, title, description, onClick }: {
-  icon: ReactNode; title: string; description: string; onClick: () => void;
+function RoomSection({ heading, count, children }: { heading: string; count: number; children: ReactNode }) {
+  return (
+    <section className="mt-6">
+      <h3 className="mb-2 flex items-baseline gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+        {heading}<span className="tabular-nums opacity-70">{count}</span>
+      </h3>
+      <ul className="space-y-0.5">{children}</ul>
+    </section>
+  );
+}
+
+function RoomRow({ icon, title, detail, aside = null, muted = false, onClick }: {
+  icon: ReactNode; title: string; detail: string; aside?: ReactNode; muted?: boolean; onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex w-full items-center gap-3 rounded-xl border border-border/60 bg-muted/25 px-4 py-3 text-left transition-colors hover:border-border hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground group-hover:text-foreground [&_svg]:size-4">
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-medium">{title}</span>
-        <span className="block truncate text-xs text-muted-foreground">{description}</span>
-      </span>
-    </button>
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex w-full min-w-0 items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted/60"
+      >
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground">
+          {icon}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={cn('block truncate text-sm', muted && 'italic')}>{title}</span>
+          {detail && <span className="block truncate text-xs text-muted-foreground">{detail}</span>}
+        </span>
+        {aside}
+      </button>
+    </li>
   );
 }
+
+/** The first few people in a chat, and how many more. */
+function ChatFaces({ chatId, scope }: { chatId: string; scope: SpaceScope }) {
+  const read = scope === 'local' ? 'local.chat.participants' : 'chat.participants';
+  const { rows } = useQuery(read as 'chat.participants', { chatId });
+  const ids = rows ?? [];
+  if (ids.length === 0) return null;
+  const shown = ids.slice(0, 3);
+  return (
+    <AvatarGroup className="shrink-0 -space-x-1.5">
+      {shown.map(id => <ActorAvatar key={id} id={id} className="size-6" fallbackClassName="text-[9px]" />)}
+      {ids.length > shown.length && (
+        <AvatarGroupCount className="size-6 text-[10px]">+{ids.length - shown.length}</AvatarGroupCount>
+      )}
+    </AvatarGroup>
+  );
+}
+
+const hostOf = (url: string): string | null => {
+  try { return new URL(url).host.replace(/^www\./, ''); } catch { return null; }
+};
 
 function PanelTab({ panel, space, meta, attribution, selected, onSelect, onClose }: {
   panel: Panel; space: Space; meta: PanelMeta; attribution: string | null; selected: boolean; onSelect: () => void; onClose: () => void;

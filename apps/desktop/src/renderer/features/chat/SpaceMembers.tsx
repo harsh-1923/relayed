@@ -15,12 +15,18 @@ import { useSpaceMembers } from '@/lib/space-members';
 
 const FACES = 3;
 
+/**
+ * Roles shown apart from everyone else. Display only — who may do what is
+ * `can()`'s to say (AUTHZ.md §7), and nothing here gates an action.
+ */
+const LISTED_FIRST = new Set(['owner', 'admin']);
+
 export function SpaceMembers({ spaceId }: { spaceId: string }) {
   const roster = useSpaceMembers(spaceId);
   const [open, setOpen] = useState(false);
   const count = roster.state === 'complete' ? roster.members.length : roster.count;
-  const admins = roster.members.filter(member => member.role !== 'member');
-  const members = roster.members.filter(member => member.role === 'member');
+  const admins = roster.members.filter(member => LISTED_FIRST.has(member.role));
+  const members = roster.members.filter(member => !LISTED_FIRST.has(member.role));
 
   return (
     <>
@@ -88,7 +94,7 @@ function MemberRow({ member }: { member: SpaceMember }) {
         {actor && <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>}
       </div>
       {actor?.type === 'agent' && <Badge variant="outline">agent</Badge>}
-      {member.role !== 'member' && <Badge variant="secondary">{member.role}</Badge>}
+      {LISTED_FIRST.has(member.role) && <Badge variant="secondary">{member.role}</Badge>}
       {actor && actor.state !== 'active' && <Badge variant="secondary">{actor.state}</Badge>}
     </CommandItem>
   );

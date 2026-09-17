@@ -24,6 +24,7 @@ import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import * as p from './paths.ts';
 import { spaceName, type Space, type SpaceChat, type SpaceRoster } from '../shared/spaces.ts';
 import { readRoster } from './roster.ts';
+import { replicaChatParticipants } from './participants.ts';
 import type { Panel } from '../shared/panels.ts';
 import type { Document } from '../shared/documents.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
@@ -958,6 +959,11 @@ export class Storage {
   /** One space and its chats, or null. The same shape as `spaces()`, and as a local room's. */
   space(spaceId: string): Space | null {
     return this.#readSpaces(spaceId)[0] ?? null;
+  }
+
+  /** Who is in a chat, as far as this device can tell (`participants.ts`). */
+  chatParticipants(chatId: string): string[] {
+    return replicaChatParticipants(this.workspace, chatId);
   }
 
   /** Who is in a space, as this device holds it (SPACE-MEMBERSHIP-MARKERS.md, rosters). */

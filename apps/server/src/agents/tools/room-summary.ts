@@ -27,7 +27,8 @@ const memberOf = (
 const READ_DEFINITION: RunTool = {
   name: READ_ROOM_SUMMARY,
   description: 'Read the running summary of a room — what is going on in it, who is doing what, and what is open. '
-    + 'Without a space_id, the room you are in. With one, that room, if both you and the person who asked are in it. '
+    + 'Without a space_id, the room you are in — a side chat\'s room included. With one, that room, if both you and '
+    + 'the person who asked are in it. '
     + 'Use it to answer questions about what a room has covered, and to check what is happening elsewhere before '
     + 'answering.',
   parameters: {
@@ -69,9 +70,13 @@ export const readRoomSummary: AppTool = {
   handle: async (deps, run, args) => {
     const asked = asText(args['space_id']);
     // No space named: the room this run is in, found from its own chat rather
-    // than from anything the model said.
-    const spaceId = asked || (await deps.db.selectFrom('chats').select('space_id')
-      .where('id', '=', run.chatId).executeTakeFirst())?.space_id;
+    // than from anything the model said. A CHAT id is taken as its room — a
+    // model asked about "this room" from a side chat reaches for the chat it
+    // can see — and the access check below still decides.
+    const chatOf = asked.startsWith('cht_') ? asked : asked ? null : run.chatId;
+    const spaceId = chatOf
+      ? (await deps.db.selectFrom('chats').select('space_id').where('id', '=', chatOf).executeTakeFirst())?.space_id
+      : asked;
     if (!spaceId) {
       return { result: 'failed', message: `${READ_ROOM_SUMMARY} needs a space_id: this chat is not in a room.` };
     }
@@ -88,7 +93,14 @@ export const readRoomSummary: AppTool = {
       // One answer for "no such room", "you are not in it" and "I am not in
       // it". Telling them apart would say something about a room the asker may
       // not be entitled to know exists.
-      return { result: 'failed', message: 'That room is not one both of you can see, so its summary cannot be read.' };
+      // The way back is offered: a model that guessed an id retries without
+      // one rather than telling the person there is no summary. The id is not
+      // echoed — the answer must read the same whatever was asked about.
+      return {
+        result: 'failed',
+        message: 'That room is not one both of you can see, so its summary cannot be read. '
+          + 'For the room you are in, call this again without a space_id.',
+      };
     }
 
     const document = await deps.db.selectFrom('documents')

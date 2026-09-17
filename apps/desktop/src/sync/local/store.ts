@@ -19,6 +19,7 @@ import type { ReplicaMessage } from '../storage.ts';
 import type { LocalRoom, LocalRoomSettings } from '../../shared/local-rooms.ts';
 import { spaceName, type Space } from '../../shared/spaces.ts';
 import type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../../shared/panels.ts';
+import { currentUrlFrom } from './panel-meta.ts';
 import { DEFAULT_ROOM_TITLE, type TitleTurn } from './titles.ts';
 
 /** The two actors every local room holds (migrations/local.ts). */
@@ -667,8 +668,10 @@ function readMeta(text: string): PanelMeta {
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { return {}; }
   if (!parsed || typeof parsed !== 'object') return {};
-  const { pageTitle, iconBlob } = parsed as Record<string, unknown>;
+  const { currentUrl, pageTitle, iconBlob } = parsed as Record<string, unknown>;
+  const restoredUrl = currentUrlFrom(currentUrl);
   return {
+    ...(restoredUrl ? { currentUrl: restoredUrl } : {}),
     ...(typeof pageTitle === 'string' ? { pageTitle } : {}),
     ...(typeof iconBlob === 'string' && /^[0-9a-f]{64}$/.test(iconBlob) ? { iconBlob } : {}),
   };

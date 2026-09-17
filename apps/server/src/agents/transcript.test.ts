@@ -117,6 +117,8 @@ test('the byte budget drops the oldest lines first, but always keeps the trigger
   const text = await buildTranscript(db, trigger(chatId, ask), agent, invoker);
   assert.ok(Buffer.byteLength(text, 'utf8') <= SIZE_LIMIT_BYTES + 200, 'stays near the cap, not unbounded');
   assert.ok(text.endsWith(', request: status?'), 'the trigger survives regardless of the cap');
-  assert.ok(!text.includes('-0'), 'the earliest message was dropped to make room');
-  assert.ok(text.includes('-7'), 'the most recent context survives');
+  // The whole body, not a bare '-0': a fixture handle is `t-` and random
+  // characters, so a label can contain '-0' on its own.
+  assert.ok(!text.includes(`${long}-0`), 'the earliest message was dropped to make room');
+  assert.ok(text.includes(`${long}-7`), 'the most recent context survives');
 });

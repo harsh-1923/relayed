@@ -125,3 +125,11 @@ test('a room\'s summary is never an arrival, so closing the panels keeps them cl
   });
   assert.deepEqual(opened, { ids: ['pnl_page'], active: 'pnl_page' });
 });
+
+test('a side chat someone else started never opens by itself', () => {
+  const sideChat = { id: 'pnl_side', openedAt: 3000, scope: 'shared' as const, type: 'chat' };
+  assert.equal(panelArrivals({ seen: null, panels: [sideChat], open: closed, dismissed: new Set() }), null,
+    'not on arriving in the room');
+  assert.equal(panelArrivals({ seen: new Map(), panels: [sideChat], open: closed, dismissed: new Set() }), null,
+    'nor when it is started while here');
+});

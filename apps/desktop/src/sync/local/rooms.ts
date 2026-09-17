@@ -12,8 +12,9 @@ import type { AgentStream } from '../../shared/local-rooms.ts';
 import { isEffortLevel, isRoomMode, type ApprovalDecision, type RoomMode, type RunnerEvent } from '../../shared/claude.ts';
 import type { RunnerLink } from '../runner.ts';
 import { isContentPanelType } from '../../shared/panels.ts';
-import type { LocalStore } from './store.ts';
+import { LOCAL_AGENT, LOCAL_ME, type LocalStore } from './store.ts';
 import { metaPatch, type MetaReport } from './panel-meta.ts';
+import { localChatParticipants } from '../participants.ts';
 
 export interface LocalRoomsDeps {
   /** The account's store, or null when no account is open. */
@@ -40,6 +41,12 @@ export function createLocalRooms(deps: LocalRoomsDeps) {
 
   const handlers = {
     'local.rooms.list': () => deps.store()?.rooms() ?? [],
+    /** Who is in a local chat, for the faces beside it (`participants.ts`). */
+    'local.chat.participants': (params: unknown) => {
+      const chatId = (params as { chatId?: string } | undefined)?.chatId;
+      const store = deps.store();
+      return chatId && store ? localChatParticipants(store.db, chatId, [LOCAL_ME, LOCAL_AGENT]) : [];
+    },
 
     /** One local room as a space, in the replica's shape. One row, or none. */
     'local.space.get': (params: unknown) => {
@@ -91,16 +98,18 @@ export function createLocalRooms(deps: LocalRoomsDeps) {
     },
 
     /**
-     * A panel on screen reporting its page's title and icon. Wakes the room's
-     * readers only when something actually changed: a page reports on every
-     * navigation, and most navigations keep both.
+     * A panel on screen reporting its current location, title and icon. Wakes
+     * the room's readers only when something actually changed.
      */
     'local.panels.reportMeta': (params: unknown) => {
       const given = (params ?? {}) as { panelId?: unknown; spaceId?: unknown } & MetaReport;
       if (typeof given.panelId !== 'string' || typeof given.spaceId !== 'string') throw new Error('panelId and spaceId required');
       const store = required();
       const putBlob = deps.putBlob;
-      const patch = metaPatch(putBlob ? given : { pageTitle: given.pageTitle }, (id, bytes) => putBlob?.(id, bytes));
+      const patch = metaPatch(
+        putBlob ? given : { currentUrl: given.currentUrl, pageTitle: given.pageTitle },
+        (id, bytes) => putBlob?.(id, bytes),
+      );
       if (Object.keys(patch).length === 0) return null;
       if (store.mergePanelMeta(given.panelId, given.spaceId, patch)) deps.invalidate([topic.localPanels(given.spaceId)]);
       return null;

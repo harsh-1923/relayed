@@ -335,6 +335,10 @@ export interface RelayedApi {
    * is asked for by the read itself, and the read wakes when it lands.
    */
   query(op: "space.members", params: { spaceId: string }): Promise<SpaceRoster[]>;
+  /** Who is in a chat, as far as this device can tell: actor ids, starter first. */
+  query(op: "chat.participants", params: { chatId: string }): Promise<string[]>;
+  /** The same, for a local room's chat. */
+  query(op: "local.chat.participants", params: { chatId: string }): Promise<string[]>;
   /** One synced room's shared panels (PANELS.md). */
   query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** One space's documents — a room's running summary (DOCUMENTS.md). */
@@ -379,10 +383,10 @@ export interface RelayedApi {
   query(op: "local.panels.open", params: { spaceId: string; workspaceId?: string | null; type: ContentPanelType; payload: Record<string, unknown>; title?: string | null; openedFromChatId?: string | null }): Promise<{ id: string }>;
   /** Open an http(s) address in the system browser. */
   query(op: "web.openExternal", params: { url: string }): Promise<null>;
-  /** What this device learned about a room's panels by showing them: page titles and icons. */
+  /** What this device learned about a room's panels by showing them: last locations, page titles and icons. */
   query(op: "local.panels.meta", params: { spaceId: string }): Promise<PanelMetaRow[]>;
   /** A panel on screen reporting its page. `icon` is a small raster `data:` URL; anything else is ignored. */
-  query(op: "local.panels.reportMeta", params: { panelId: string; spaceId: string; pageTitle?: string; icon?: string }): Promise<null>;
+  query(op: "local.panels.reportMeta", params: { panelId: string; spaceId: string; currentUrl?: string; pageTitle?: string; icon?: string }): Promise<null>;
   /** Browsers on this Mac that web panels can import signed-in sessions from. */
   query(op: "browserImport.sources"): Promise<BrowserImportSource[]>;
   /** Copy one browser profile's cookies into this account's web panels. Never rejects for an expected failure. */
@@ -515,6 +519,11 @@ export interface RelayedApi {
     op: "spaces.addMember",
     params: { spaceId: string; actorId: string },
   ): Promise<CommandAnswer<{ space_id: string; actor_id: string; message_id: string }>>;
+  /** Start a side chat in a synced room (docs/SIDE-CHATS.md). Public only, for now. */
+  query(
+    op: "spaces.createChat",
+    params: { spaceId: string; name: string; kind: "public"; withActorIds: string[] },
+  ): Promise<CommandAnswer<{ space_id: string; chat_id: string; panel_id: string; created: boolean }>>;
   query(
     op: "agents.handle",
     params: { handle: string; except?: string },

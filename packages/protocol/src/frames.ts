@@ -409,6 +409,8 @@ export const PanelRow = z.object({
   id: z.string(),
   space_id: z.string(),
   type: z.string(),
+  /** The side chat a `chat` panel shows (SIDE-CHATS.md). Absent for every other type, and from an older server. */
+  chat_id: z.string().nullable().optional(),
   payload: z.record(z.string(), z.unknown()),
   title: z.string().nullable(),
   opened_from_chat_id: z.string().nullable(),

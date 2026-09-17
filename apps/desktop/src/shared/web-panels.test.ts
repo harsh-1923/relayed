@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, withoutFragmentDirective,
+  addressFromTyped, annotationAddress, isWebUrl, webPanelPartition, webPanelStartUrl, withoutFragmentDirective,
 } from './web-panels.ts';
 
 test('what is typed in an address bar becomes an address, or a search', () => {
@@ -29,6 +29,19 @@ test('a panel shows http and https pages, and no other scheme', () => {
 test('each account browses in its own persistent session', () => {
   assert.equal(webPanelPartition('acc_A'), 'persist:panels:acc_A');
   assert.notEqual(webPanelPartition('acc_A'), webPanelPartition('acc_B'));
+});
+
+test('a web panel resumes this device\'s last location without changing its origin', () => {
+  const origin = 'https://developer.mozilla.org/';
+  const current = 'https://developer.mozilla.org/en-US/docs/Web/API/Window';
+  assert.equal(webPanelStartUrl(origin, current), current);
+  assert.equal(webPanelStartUrl(origin, 'file:///etc/passwd'), origin);
+  assert.equal(webPanelStartUrl(origin, undefined), origin);
+  assert.equal(
+    webPanelStartUrl(origin, `${current}#:~:text=Window`),
+    current,
+    'a passage marker is how the page was reached, not where it was left',
+  );
 });
 
 // ─── Annotations (docs/ANNOTATIONS.md, navigating to an annotation) ──────────

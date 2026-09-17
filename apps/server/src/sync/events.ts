@@ -113,7 +113,7 @@ export interface MessageCreated {
    * three fields still renders every message it understood before they existed.
    */
   message_kind?: 'system';
-  system_kind?: 'space.member_added';
+  system_kind?: 'space.member_added' | 'chat.started';
   subject_actor_id?: string;
 }
 
@@ -248,9 +248,11 @@ export interface DocumentUpdated {
 export interface PanelOpened {
   id: string;
   space_id: string;
-  type: 'web' | 'doc';
-  /** `{ url }` for a page, `{ document_id }` for a document (DOCUMENTS.md §8.1). */
-  payload: { url: string } | { document_id: string };
+  type: 'web' | 'doc' | 'chat';
+  /** `{ url }` for a page, `{ document_id }` for a document (DOCUMENTS.md §8.1), `{}` for a side chat. */
+  payload: { url: string } | { document_id: string } | Record<string, never>;
+  /** The side chat a `chat` panel shows (PANELS.md §4.1). Absent for every other type. */
+  chat_id?: string;
   title: string | null;
   opened_from_chat_id: string | null;
   created_by_actor_id: string | null;

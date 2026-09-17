@@ -11,6 +11,7 @@ import { env } from '../env.ts';
 import { createChannel, createRoom, joinSpace } from '../sync/spaces.ts';
 import { provisionSystemAgents, systemAgentId, ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
 import { writeDocumentRevision } from '../sync/documents.ts';
+import { createSideChat } from '../sync/side-chats.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { send } from '../sync/ops.ts';
 import { signGrant } from './grant.ts';
@@ -499,6 +500,20 @@ test('post_message posts where the agent is a member, and says it is not where i
   await app.close();
 });
 
+test('post_message with no space_id posts in the room the run is in — from a side chat, its main chat', opts, async () => {
+  const { app } = await server();
+  const room = await createRoom(db, { workspaceId: wsp, name: `p-${ulid('x')}`, createdBy: alice });
+  await joinSpace(db, room.spaceId, triage);
+  const { r } = await sideChatRun(room.spaceId, 'post this in the room: we ship Friday');
+
+  const posted = await callAs(app, r, 'post_message', { text: 'We ship Friday.' });
+  assert.equal(posted.result, 'ok');
+  const main = await db.selectFrom('messages').select('body')
+    .where('chat_id', '=', room.chatId).orderBy('ord', 'desc').executeTakeFirst();
+  assert.equal(main?.body, 'We ship Friday.', 'the room\'s own conversation, not the side chat');
+  await app.close();
+});
+
 test('the same tool call sent twice posts one message', opts, async () => {
   const { app } = await server();
   const r = await run(triage);
@@ -620,6 +635,24 @@ test('write_room_summary refuses an empty body rather than blanking the panel', 
 
 // ── read_room_summary (DOCUMENTS.md §4, the cross-room read) ────────────────
 
+/** A run of triage, asked by Alice in a public side chat of this room. */
+async function sideChatRun(spaceId: string, ask: string) {
+  const sideChatId = ulid('cht');
+  await createSideChat(db, {
+    spaceId, chatId: sideChatId, panelId: ulid('pnl'), messageId: ulid('msg'),
+    name: 'Triage', kind: 'public', withActorIds: [triage], createdBy: alice,
+  });
+  const triggered = await send(db, {
+    opId: ulid('op'), chatId: sideChatId, actorId: alice, messageId: ulid('msg'),
+    body: `[Agent](actor:${triage}) ${ask}`, parentId: null,
+  });
+  const runId = triggered.runIds[0];
+  assert.ok(runId, 'a mention in a side chat starts a run');
+  await db.updateTable('agent_runs').set({ state: 'running' }).where('id', '=', runId).execute();
+  const grant = await signGrant({ invokerActorId: alice, agentActorId: triage, runId, chatId: sideChatId });
+  return { r: { runId, grant }, sideChatId };
+}
+
 /** A room Alice is in, with a summary, that `agent` may or may not be a member of. */
 async function roomWithSummary(body: string, joinedBy: readonly string[]) {
   const made = await createRoom(db, { workspaceId: wsp, name: `r-${ulid('x')}`, createdBy: alice });
@@ -681,6 +714,24 @@ test('a room the person is not in is refused, and says nothing about it', opts, 
   // whether a room the asker may not know about exists.
   const nowhere = await call(app, r, 'read_room_summary', { space_id: 'spc_nothing' }) as { message?: string };
   assert.equal(answer.message, nowhere.message);
+  await app.close();
+});
+
+test('from a side chat, "this room" is the room the side chat is in — by no id, or by the chat\'s own', opts, async () => {
+  const { app } = await server();
+  const made = await roomWithSummary('**Now.** Side chats are in.', [triage]);
+  const { r, sideChatId } = await sideChatRun(made.spaceId, 'whats happening in the room');
+
+  for (const args of [{}, { space_id: sideChatId }]) {
+    const answer = await call(app, r, 'read_room_summary', args) as
+      { result: string; data?: { space_id: string; summary: string | null } };
+    assert.deepEqual([answer.result, answer.data?.space_id, answer.data?.summary],
+      ['ok', made.spaceId, '**Now.** Side chats are in.'], JSON.stringify(args));
+  }
+
+  const guessed = await call(app, r, 'read_room_summary', { space_id: 'spc_guessed' }) as { result: string; message?: string };
+  assert.equal(guessed.result, 'failed');
+  assert.match(guessed.message ?? '', /call this again without a space_id/, 'a wrong guess is told how to get it right');
   await app.close();
 });
 

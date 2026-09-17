@@ -111,8 +111,12 @@ export async function postMessageFor(deps: MessagingDeps, run: RunContext, args:
   const text = textFrom(args['text']);
   if (!text) return failed(`post_message needs text of 1 to ${AGENT_MESSAGE_MAX} characters.`);
   const workspaceId = await workspaceOf(deps.db, run.chatId);
-  const target = typeof args['space_id'] === 'string' && workspaceId
-    ? await spaceInWorkspace(deps.db, args['space_id'], workspaceId) : undefined;
+  // No space named: the one this run is in, found from its own chat — so
+  // "post this in the room" from a side chat reaches the room's main chat.
+  const named = typeof args['space_id'] === 'string' && args['space_id'].length > 0 ? args['space_id'] : null;
+  const spaceId = named ?? (await deps.db.selectFrom('chats').select('space_id')
+    .where('id', '=', run.chatId).executeTakeFirst())?.space_id;
+  const target = spaceId && workspaceId ? await spaceInWorkspace(deps.db, spaceId, workspaceId) : undefined;
   if (!target) return failed('There is no such room, channel or conversation in this workspace.');
 
   const posted = await postAs(deps, run, target.chatId, text);
@@ -216,7 +220,7 @@ const PEOPLE = {
 const MESSAGING_PROMPT = `\n\nPeople in this conversation carry their actor id (act_…); use that id to reach them. `
   + `When the person asks you to message someone, use ${SEND_DM} — a direct message for one person, one group message `
   + `only when they ask for a group. To post in a room or channel, use ${POST_MESSAGE}; to add people to one, `
-  + `${ADD_TO_ROOM}. Do these LAST, after everything else the request needs. Never message or add anyone the person `
+  + `${ADD_TO_ROOM}. "Post this in the room" means ${POST_MESSAGE} without a space_id. Do these LAST, after everything else the request needs. Never message or add anyone the person `
   + 'did not ask for. If you are not a member where you were asked to post, say you could not, and why. Mentioning an '
   + 'agent in a message you send asks it to act.';
 
@@ -242,12 +246,17 @@ export const postMessage: AppTool = {
   name: POST_MESSAGE,
   definition: () => ({
     name: POST_MESSAGE,
-    description: 'Post a message in a room, channel or conversation you are a member of. If you are not a member, this '
-      + 'says so: tell the person you could not post there. Only when the person asks you to post somewhere.',
+    description: 'Post a message in a room, channel or conversation you are a member of — in its main conversation. '
+      + 'Without a space_id, the one you are in: from a side chat, its room. If you are not a member, this says so: '
+      + 'tell the person you could not post there. Only when the person asks you to post somewhere.',
     parameters: {
-      type: 'object', required: ['space_id', 'text'],
+      type: 'object', required: ['text'],
       properties: {
-        space_id: { type: 'string', description: 'The space, e.g. "spc_01M2…" — from a space link [name](space:spc_…) or a tool result.' },
+        space_id: {
+          type: 'string',
+          description: 'The space, e.g. "spc_01M2…" — from a space link [name](space:spc_…) or a tool result. Leave it '
+            + 'out to post in the room you are in.',
+        },
         text: { type: 'string', description: 'The message, in Markdown. Mention someone as [Name](actor:act_…).' },
       },
     },
