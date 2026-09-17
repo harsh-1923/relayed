@@ -326,6 +326,29 @@ export interface AgentToolCallsTable {
   created_at: Generated<Timestamp>;
 }
 
+/** One call to a tool the app itself answers (`agents/tools/`), for finding out what a run did (024). */
+export interface AgentAppToolCallsTable {
+  run_id: string;
+  tool_call_id: string;
+  tool: string;
+  result: string;
+  message: string | null;
+  arguments: unknown;
+  duration_ms: number | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** Who a person is in a service they connected, read from their own session (025). No email. */
+export interface ExternalIdentitiesTable {
+  actor_id: string;
+  toolkit: string;
+  connected_account_id: string;
+  external_id: string;
+  name: string | null;
+  username: string | null;
+  seen_at: Generated<Timestamp>;
+}
+
 /** One toolkit-per-run access card, once a maintainer's tool needs it (WORKSPACE-AGENTS.md §7.4). Not written until `access.ts` exists. */
 export interface AccessRequestsTable {
   id: string;
@@ -487,6 +510,8 @@ export interface DB {
   agent_permissions: AgentPermissionsTable;
   composio_webhook_deliveries: ComposioWebhookDeliveriesTable;
   agent_tool_calls: AgentToolCallsTable;
+  agent_app_tool_calls: AgentAppToolCallsTable;
+  external_identities: ExternalIdentitiesTable;
   access_requests: AccessRequestsTable;
   composio_sessions: ComposioSessionsTable;
   panels: PanelsTable;

@@ -87,5 +87,17 @@ the URL.
 | 5 | **Private chats on the client.** Private chats stored and listed for their members; a chat's own member list, kept like a room's (`chat_members`, fed by chat membership events). | `sync/effects.ts`, `sync/roster.ts` | By hand: a member sees the chat, a non-member on another client does not. |
 | 6 | **Docs.** PANELS.md §7.1/§7.2 and DESIGN.md §7 updated to what was built; the "side chats need the server" note in the new-panel screen removed. | `docs/` | — |
 
+### Agents starting one
+
+`start_side_chat` (`apps/server/src/agents/tools/side-chat.ts`) — "take Bob
+into a side chat about the flaky test". Offered in a room's main chat or a
+public side chat, public only. It makes the same write the form does, with the
+agent as starter and the asker as `on_behalf_of` on the panel; that panel
+arrives as a tab for the asker alone (`panelArrivals`, `me`), since the agent
+has no screen. The agent then posts the opening message, mentioning the people
+so they are told. Ids come from the run and tool call, so a retried call is the
+same chat. `room_members` lists a space's people and roles for the agent to pick
+from.
+
 Later, and not in this plan: adding people to an existing side chat,
 notifying the people picked, and making a private chat public.

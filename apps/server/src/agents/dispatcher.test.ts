@@ -10,7 +10,7 @@ import { env } from '../env.ts';
 import { createChannel, joinSpace } from '../sync/spaces.ts';
 import { send } from '../sync/ops.ts';
 import { Registry } from '../sync/registry.ts';
-import { startDispatcher, placePrompt } from './dispatcher.ts';
+import { startDispatcher, placePrompt, ACTIONS_PROMPT } from './dispatcher.ts';
 
 const up = await reachable();
 const opts = up && env.agentGrantSecret ? {}
@@ -332,4 +332,9 @@ test('a run is told where it is, and that a side chat\'s "this room" is the room
   assert.match(side, /You are in the room "Flaky test" \(spc_1\)\. You are in one of its side chats, "Triage"/);
   assert.match(side, /"this room" means the whole room, not the side chat/);
   assert.equal(placePrompt(undefined), '');
+});
+
+test('a run is told not to claim what it did not do', () => {
+  assert.match(ACTIONS_PROMPT, /Only say you did something .* when you called the tool for it and it answered ok/);
+  assert.match(ACTIONS_PROMPT, /Never invent links/);
 });

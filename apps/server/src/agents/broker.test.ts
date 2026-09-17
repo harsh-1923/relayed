@@ -17,6 +17,7 @@ import { send } from '../sync/ops.ts';
 import { signGrant } from './grant.ts';
 import { brokerRoutes, type BrokerComposio } from './broker.ts';
 import type { SearchResult } from './composio.ts';
+import { removeTestToolkits, sweepTestToolkits } from '../db/test-toolkits.ts';
 
 const up = await reachable();
 const opts = up && env.agentGrantSecret ? {}
@@ -42,6 +43,7 @@ const CATALOGUE_SCHEMA = { type: 'object', properties: { from: { type: 'string',
 
 before(async () => {
   if (!up) return;
+  await sweepTestToolkits(db);
   await db.insertInto('organizations').values({ id: org, workos_org_id: `test_${org}`, name: 'Broker' }).execute();
   await db.insertInto('workspaces').values({ id: wsp, org_id: org, name: 'Broker', slug: `b-${wsp.slice(-6).toLowerCase()}` }).execute();
   for (const [id, type, name] of [[alice, 'human', 'Alice'], [triage, 'agent', 'Triage'], [review, 'agent', 'Review']] as const) {
@@ -77,11 +79,12 @@ before(async () => {
 
 after(async () => {
   if (!up) return;
+  // First, and on its own: a toolkit left enabled breaks every real session.
+  await removeTestToolkits(db, [HUB, OFF]);
   await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();
   await db.deleteFrom('spaces').where('workspace_id', '=', wsp).execute();
   await db.deleteFrom('memberships').where('scope_id', '=', wsp).execute();
   await db.deleteFrom('organizations').where('id', '=', org).execute();
-  await db.deleteFrom('toolkits').where('slug', 'in', [HUB, OFF]).execute();
   await pool.end();
 });
 
@@ -210,7 +213,9 @@ test('find_tools refuses a toolkit that is not enabled, without searching', opts
   const { app, recorded } = await server();
   const r = await run(triage);
   assert.equal((await call(app, r, 'find_tools', { toolkit: OFF, use_case: 'anything' })).result, 'tool_not_allowed');
-  assert.equal((await call(app, r, 'find_tools', { toolkit: 'slack', use_case: 'post a message' })).result, 'tool_not_allowed');
+  // A toolkit this database has never heard of — not a real one like `slack`,
+  // which a dev database shared with these tests may well have enabled.
+  assert.equal((await call(app, r, 'find_tools', { toolkit: `nope${suffix}`, use_case: 'post a message' })).result, 'tool_not_allowed');
   assert.deepEqual(recorded.searches, []);
   await app.close();
 });
@@ -511,6 +516,153 @@ test('post_message with no space_id posts in the room the run is in — from a s
   const main = await db.selectFrom('messages').select('body')
     .where('chat_id', '=', room.chatId).orderBy('ord', 'desc').executeTakeFirst();
   assert.equal(main?.body, 'We ship Friday.', 'the room\'s own conversation, not the side chat');
+  await app.close();
+});
+
+// ── start_side_chat, room_members ─────────────────────────────────────────
+
+/** A room Alice made, with triage and these people in it, and a run of triage asked from its main chat. */
+async function roomRun(people: readonly string[]) {
+  const room = await createRoom(db, { workspaceId: wsp, name: `s-${ulid('x')}`, createdBy: alice });
+  for (const id of [triage, ...people]) await joinSpace(db, room.spaceId, id);
+  const triggered = await send(db, {
+    opId: ulid('op'), chatId: room.chatId, actorId: alice, messageId: ulid('msg'),
+    body: `[Agent](actor:${triage}) take them into a side chat`, parentId: null,
+  });
+  const runId = triggered.runIds[0];
+  assert.ok(runId);
+  await db.updateTable('agent_runs').set({ state: 'running' }).where('id', '=', runId).execute();
+  const grant = await signGrant({ invokerActorId: alice, agentActorId: triage, runId, chatId: room.chatId });
+  return { room, r: { runId, grant } };
+}
+
+test('start_side_chat starts a public side chat with the people asked for, opening it for the asker', opts, async () => {
+  const { app, recorded } = await server();
+  const bob = await person('Bob');
+  const { room, r } = await roomRun([bob]);
+  recorded.delivered.length = 0;
+
+  const opening = `[Bob](actor:${bob}) let's work out the flaky login test here.`;
+  const toolCallId = ulid('call');
+  const started = await callAs(app, r, 'start_side_chat', { name: 'Flaky login', people: [bob], message: opening }, toolCallId);
+  assert.equal(started.result, 'ok');
+  const chatId = started.data?.['chat_id'] as string;
+
+  const chat = await db.selectFrom('chats').select(['kind', 'name', 'space_id', 'created_by_actor_id'])
+    .where('id', '=', chatId).executeTakeFirstOrThrow();
+  assert.deepEqual({ ...chat }, { kind: 'public', name: 'Flaky login', space_id: room.spaceId, created_by_actor_id: triage });
+  const panel = await db.selectFrom('panels').select(['created_by_actor_id', 'on_behalf_of_actor_id'])
+    .where('chat_id', '=', chatId).executeTakeFirstOrThrow();
+  assert.deepEqual({ ...panel }, { created_by_actor_id: triage, on_behalf_of_actor_id: alice },
+    'the asker is on its panel, so it opens for them');
+
+  const rows = await db.selectFrom('messages').select(['body', 'message_kind', 'author_id', 'on_behalf_of_actor_id'])
+    .where('chat_id', '=', chatId).orderBy('ord').execute();
+  assert.deepEqual(rows.map(row => row.message_kind), ['system', 'actor']);
+  assert.equal(rows[1]?.body, opening);
+  assert.deepEqual([rows[1]?.author_id, rows[1]?.on_behalf_of_actor_id], [triage, alice]);
+  assert.deepEqual(recorded.delivered.map(event => event.type), ['chat.created', 'panel.opened', 'message.created', 'message.created']);
+
+  const again = await callAs(app, r, 'start_side_chat', { name: 'Flaky login', people: [bob], message: opening }, toolCallId);
+  assert.equal(again.data?.['chat_id'], chatId, 'the runtime retrying the call gets the same chat');
+  assert.equal((await db.selectFrom('messages').select('id').where('chat_id', '=', chatId).execute()).length, 2,
+    'and no second opening message');
+  await app.close();
+});
+
+test('start_side_chat refuses people outside the room, and is not offered outside one', opts, async () => {
+  const { app } = await server();
+  const outsider = await person('Olive');
+  const { r } = await roomRun([]);
+  const refused = await callAs(app, r, 'start_side_chat', { name: 'Nope', people: [outsider], message: 'hi' });
+  assert.equal(refused.result, 'failed');
+  assert.match(refused.message ?? '', /not in this room/);
+  const nobody = await callAs(app, r, 'start_side_chat', { name: 'Nope', people: [triage], message: 'hi' });
+  assert.match(nobody.message ?? '', /at least one person/);
+
+  const inChannel = await run(triage);
+  const offered = await callAs(app, inChannel, 'start_side_chat', { name: 'x', people: [alice], message: 'hi' });
+  assert.equal(offered.result, 'tool_not_allowed');
+  await app.close();
+});
+
+test('every app tool call is recorded with what it answered, once per call', opts, async () => {
+  const { app } = await server();
+  const bob = await person('Bob');
+  const { r } = await roomRun([bob]);
+  const recorded = () => db.selectFrom('agent_app_tool_calls').selectAll().where('run_id', '=', r.runId).orderBy('created_at').execute();
+
+  const toolCallId = ulid('call');
+  await callAs(app, r, 'room_members', {}, toolCallId);
+  await callAs(app, r, 'room_members', {}, toolCallId);
+  await callAs(app, r, 'start_side_chat', { name: 'x', people: [], message: 'hi' });
+  await callAs(app, r, 'write_room_summary', { body: 'not mine to write' });
+
+  const rows = await recorded();
+  assert.deepEqual(rows.map(row => [row.tool, row.result]), [
+    ['room_members', 'ok'], ['start_side_chat', 'failed'], ['write_room_summary', 'tool_not_allowed'],
+  ], 'a retried call is one row, and a refusal is recorded too');
+  assert.equal(rows[0]?.message, null);
+  assert.match(rows[1]?.message ?? '', /at least one person/, 'what the model was told');
+  assert.deepEqual(rows[1]?.arguments, { name: 'x', people: [], message: 'hi' });
+  await app.close();
+});
+
+test('a person\'s own search teaches who they are in the service, and external_identity answers from it', opts, async () => {
+  await connect();
+  await allow(triage, 'read');
+  const bob = await person('Bob');
+  const { app } = await server({
+    toolSlugs: [], schemas: {},
+    identities: [
+      { toolkit: HUB, connectedAccountId: 'ca_test', externalId: 'hub-user-alice', name: 'Alice A', username: 'alice' },
+      // An account that is not Alice's by our records is never kept as hers.
+      { toolkit: OFF, connectedAccountId: 'ca_someone_else', externalId: 'hub-user-x', name: null, username: null },
+    ],
+  });
+  const r = await run(triage);
+
+  const before = await callAs(app, r, 'external_identity', { toolkit: HUB, people: [alice, bob, 'act_nobody'] });
+  assert.equal(before.result, 'ok');
+  const beforePeople = before.data?.['people'] as { actor_id: string; found: boolean; reason?: string }[];
+  assert.deepEqual(beforePeople.map(p => [p.found, p.reason]),
+    [[false, 'not_known_yet'], [false, 'not_connected'], [false, 'not_in_workspace']]);
+
+  assert.equal((await callAs(app, r, 'find_tools', { toolkit: HUB, use_case: 'list issues' })).result, 'ok');
+  const after = await callAs(app, r, 'external_identity', { toolkit: HUB, people: [alice] });
+  assert.deepEqual((after.data?.['people'] as unknown[])[0],
+    { actor_id: alice, found: true, external_id: 'hub-user-alice', name: 'Alice A', username: 'alice' });
+  assert.equal(await db.selectFrom('external_identities').select('actor_id').where('toolkit', '=', OFF).executeTakeFirst(), undefined);
+
+  // Reconnected to another account: what was learned from the old one is not trusted.
+  await db.updateTable('connections').set({ composio_account_id: 'ca_new' }).where('actor_id', '=', alice).where('toolkit', '=', HUB).execute();
+  const stale = await callAs(app, r, 'external_identity', { toolkit: HUB, people: [alice] });
+  assert.equal((stale.data?.['people'] as { reason?: string }[])[0]?.reason, 'not_known_yet');
+  await db.updateTable('connections').set({ composio_account_id: 'ca_test' }).where('actor_id', '=', alice).where('toolkit', '=', HUB).execute();
+  await app.close();
+});
+
+test('room_members lists the room, owners and admins first, from a side chat as well', opts, async () => {
+  const { app } = await server();
+  const bob = await person('Bob');
+  const { room, r } = await roomRun([bob]);
+
+  const listed = await callAs(app, r, 'room_members', {});
+  assert.equal(listed.result, 'ok');
+  const members = listed.data?.['members'] as { actor_id: string; role: string; you?: boolean }[];
+  assert.equal(members[0]?.actor_id, alice, 'the admin who made it leads');
+  assert.equal(members[0]?.role, 'admin');
+  for (const id of [bob, triage]) assert.ok(members.some(member => member.actor_id === id));
+  assert.ok(members.find(member => member.actor_id === triage)?.you);
+  assert.equal(listed.data?.['count'], members.length);
+
+  const { r: fromSide, sideChatId } = await sideChatRun(room.spaceId, 'who is here?');
+  const viaChat = await callAs(app, fromSide, 'room_members', { space_id: sideChatId });
+  assert.equal(viaChat.data?.['space_id'], room.spaceId, 'a side chat\'s id is its room');
+
+  const elsewhere = await createRoom(db, { workspaceId: wsp, name: `e-${ulid('x')}`, createdBy: alice });
+  const refused = await callAs(app, r, 'room_members', { space_id: elsewhere.spaceId });
+  assert.equal(refused.result, 'failed', 'a room the agent is not in is not listed');
   await app.close();
 });
 

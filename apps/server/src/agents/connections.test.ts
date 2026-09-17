@@ -10,6 +10,7 @@ import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { Registry } from '../sync/registry.ts';
 import { connectionRoutes } from './connections.ts';
+import { removeTestToolkits, sweepTestToolkits } from '../db/test-toolkits.ts';
 
 const up = await reachable();
 const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
@@ -22,6 +23,7 @@ const toolkits: string[] = [];
 
 before(async () => {
   if (!up) return;
+  await sweepTestToolkits(db);
   await db.insertInto('organizations').values({ id: org, workos_org_id: `test_${org}`, name: 'Fail' }).execute();
   await db.insertInto('workspaces').values({ id: wsp, org_id: org, name: 'Fail', slug: `f-${wsp.slice(-8).toLowerCase()}` }).execute();
   for (const id of [alice, bob]) {
@@ -37,7 +39,7 @@ before(async () => {
 after(async () => {
   if (!up) return;
   await db.deleteFrom('connections').where('workspace_id', '=', wsp).execute();
-  if (toolkits.length > 0) await db.deleteFrom('toolkits').where('slug', 'in', toolkits).execute();
+  await removeTestToolkits(db, toolkits);
   await db.deleteFrom('memberships').where('scope_id', '=', wsp).execute();
   await db.deleteFrom('organizations').where('id', '=', org).execute();
   await pool.end();

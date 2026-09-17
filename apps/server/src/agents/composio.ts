@@ -345,12 +345,61 @@ export interface SearchResult {
   toolSlugs: string[];
   /** Schemas Composio included, by slug. It includes only the top few; the rest come from our catalogue. */
   schemas: Record<string, Record<string, unknown>>;
+  /**
+   * Who the session's own person is in each service it has an active account
+   * for — id, name and username, never the rest of the profile. For our
+   * records (`identities.ts`), never for a model.
+   */
+  identities?: SessionIdentity[];
+}
+
+export interface SessionIdentity {
+  toolkit: string;
+  connectedAccountId: string;
+  externalId: string;
+  name: string | null;
+  username: string | null;
+}
+
+const text = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() ? value.trim() : typeof value === 'number' ? String(value) : null;
+
+/**
+ * The person inside a service's `current_user_info`, or null. Shapes differ by
+ * service: Linear's is `{ data: { viewer: { id, name } } }`, GitHub's a flat
+ * profile with `login`, Notion's the integration's BOT user with the person
+ * who connected it as `bot.owner.user`. Email is never read out.
+ */
+export function identityFrom(info: unknown): { externalId: string; name: string | null; username: string | null } | null {
+  const record = (value: unknown): Record<string, unknown> | null =>
+    value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  const answered = record(info);
+  // Notion answers with its bot; the person is whoever owns it.
+  const owner = answered?.['type'] === 'bot' ? record(record(record(answered['bot'])?.['owner'])?.['user']) : null;
+  const top = owner ?? answered;
+  const data = record(top?.['data']);
+  const candidates = [record(data?.['viewer']), record(data?.['user']), record(top?.['viewer']), record(top?.['user']), data, top];
+  for (const candidate of candidates) {
+    const externalId = text(candidate?.['id']) ?? text(candidate?.['user_id']) ?? text(candidate?.['account_id']);
+    if (!candidate || !externalId) continue;
+    return {
+      externalId,
+      name: text(candidate['name']) ?? text(candidate['display_name']) ?? text(candidate['displayName']) ?? text(candidate['real_name']),
+      username: text(candidate['login']) ?? text(candidate['username']) ?? text(candidate['handle']) ?? text(candidate['displayName']),
+    };
+  }
+  return null;
 }
 
 export async function searchSessionTools(sessionId: string, useCase: string): Promise<SearchResult> {
   const body = await call<{
     results?: { primary_tool_slugs?: string[]; related_tool_slugs?: string[] }[];
     tool_schemas?: Record<string, { hasFullSchema?: boolean; input_schema?: Record<string, unknown> }>;
+    toolkit_connection_statuses?: {
+      toolkit?: string; has_active_connection?: boolean;
+      connection_details?: { connected_account_id?: string };
+      current_user_info?: unknown;
+    }[];
   }>('session_search', 'POST', `/tool_router/session/${encodeURIComponent(sessionId)}/search`, {
     queries: [{ use_case: useCase }],
   });
@@ -360,7 +409,13 @@ export async function searchSessionTools(sessionId: string, useCase: string): Pr
   for (const [slug, schema] of Object.entries(body.tool_schemas ?? {})) {
     if (schema.hasFullSchema && schema.input_schema) schemas[slug] = schema.input_schema;
   }
-  return { toolSlugs, schemas };
+  const identities: SessionIdentity[] = [];
+  for (const status of body.toolkit_connection_statuses ?? []) {
+    const accountId = status.connection_details?.connected_account_id;
+    const who = status.has_active_connection && status.toolkit && accountId ? identityFrom(status.current_user_info) : null;
+    if (who && status.toolkit && accountId) identities.push({ toolkit: status.toolkit, connectedAccountId: accountId, ...who });
+  }
+  return { toolSlugs, schemas, identities };
 }
 
 export type ExecuteResult =

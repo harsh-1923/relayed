@@ -15,6 +15,9 @@ import type { RunTool } from '@relayed/protocol';
 import { openPanel } from './open-panel.ts';
 import { readRoomSummary, writeRoomSummary } from './room-summary.ts';
 import { createRoomFor } from './create-room.ts';
+import { startSideChat } from './side-chat.ts';
+import { roomMembers } from './room-members.ts';
+import { externalIdentity } from './external-identity.ts';
 import { sendDm, postMessage, addToRoom } from './messaging.ts';
 import { findTools, serviceTools, servicesPrompt, CALL_TOOL } from './services.ts';
 import type { AppTool, OfferedToolkit, ToolContext, ToolDeps, ToolReply, Where } from './contract.ts';
@@ -24,6 +27,9 @@ export { asRecord } from './contract.ts';
 export { FIND_TOOLS, CALL_TOOL, serviceTools } from './services.ts';
 export { OPEN_PANEL } from './open-panel.ts';
 export { CREATE_ROOM } from './create-room.ts';
+export { START_SIDE_CHAT } from './side-chat.ts';
+export { ROOM_MEMBERS } from './room-members.ts';
+export { EXTERNAL_IDENTITY } from './external-identity.ts';
 export { SEND_DM, POST_MESSAGE, ADD_TO_ROOM } from './messaging.ts';
 export { READ_ROOM_SUMMARY, WRITE_ROOM_SUMMARY } from './room-summary.ts';
 
@@ -33,9 +39,12 @@ const APP_TOOLS: readonly AppTool[] = [
   findTools,
   openPanel,
   readRoomSummary,
+  roomMembers,
+  externalIdentity,
   writeRoomSummary,
   // Last: see the note on ordering above.
   createRoomFor,
+  startSideChat,
   sendDm,
   postMessage,
   addToRoom,

@@ -133,3 +133,13 @@ test('a side chat someone else started never opens by itself', () => {
   assert.equal(panelArrivals({ seen: new Map(), panels: [sideChat], open: closed, dismissed: new Set() }), null,
     'nor when it is started while here');
 });
+
+test('a side chat an agent started for somebody opens for them, and for nobody else', () => {
+  const forAlice = { id: 'pnl_side', openedAt: 3000, scope: 'shared' as const, type: 'chat', onBehalfOfActorId: 'act_alice' };
+  assert.deepEqual(
+    panelArrivals({ seen: new Map(), panels: [forAlice], open: closed, dismissed: new Set(), me: 'act_alice' }),
+    { ids: ['pnl_side'], active: 'pnl_side' });
+  assert.equal(panelArrivals({ seen: new Map(), panels: [forAlice], open: closed, dismissed: new Set(), me: 'act_bob' }), null);
+  assert.equal(panelArrivals({ seen: new Map(), panels: [forAlice], open: closed, dismissed: new Set() }), null,
+    'nobody is anybody when nobody is known');
+});

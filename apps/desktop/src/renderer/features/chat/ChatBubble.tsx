@@ -16,8 +16,10 @@ import { useAgentStream } from '@/lib/agent-stream';
 import { cn } from '@/lib/utils';
 import { CopyButton } from './CopyButton';
 import { MessageParts } from './MessageParts';
-import { showAnnotation } from '@/lib/panel-navigation';
+import { openLink as openInRoomPanel, showAnnotation } from '@/lib/panel-navigation';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
+import { isWebUrl, withoutFragmentDirective } from '../../../shared/web-panels.ts';
+import { call } from '@/lib/ipc';
 
 interface ChatBubbleProps {
   message: ReplicaMessage;
@@ -35,9 +37,12 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   // A restricted message always shows who it is for, mid-stack or not: that is
   // not detail to reveal on hover.
   const showFooter = message.state !== 'acked' || endsGroup || message.visibleTo !== null;
-  // An agent's reply with parts is laid out as a page, not a speech bubble:
-  // cards and tool calls inside a tinted bubble capped at 70% are cramped and
-  // read as quoted. Everyone else's message keeps its bubble.
+  // An agent's message is laid out as a page, not a speech bubble — cards and
+  // tool calls inside a tinted bubble capped at 70% are cramped and read as
+  // quoted — whether or not THIS message has parts: a tool posting plain text
+  // (`post_message`) is still the agent speaking, and must not read as a
+  // person's message just because it has no cards attached. Everyone else's
+  // message keeps its bubble.
   // A reply Claude is still writing in a local room (LOCAL-ROOMS.md §8.3): its
   // stored parts, plus the text of the block arriving now, which is pushed and
   // never stored.
@@ -52,18 +57,34 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   ];
   const arriving = liveParts.length > 0;
   const parts = streaming && arriving ? [...(message.parts ?? []), ...liveParts] : message.parts;
-  const unbubbled = !message.deleted && agentAuthored && (parts !== null || streaming);
+  const unbubbled = !message.deleted && agentAuthored;
   const navigate = useNavigate();
   const { state: session } = useSession();
-  // A passage someone marked opens beside the chat (docs/ANNOTATIONS.md); the
-  // room does the opening, because the panel list is its. Every OTHER web link
-  // still goes nowhere — where those open is phase 6, and an annotation must
-  // not settle that question on its way past.
+  // A passage someone marked opens beside the chat, at the passage
+  // (docs/ANNOTATIONS.md); an ordinary link opens beside it too, at its own
+  // address — both through the room, because the panel list is its.
   const { spaceId: roomId = '' } = useParams();
-  const openLink = (href: string): void => {
-    if (isAnnotationLink(href)) return showAnnotation(roomId, href);
+  // Command/Ctrl-click always goes to the system browser — the browser's own
+  // "open in a new tab" gesture, kept for a link in a message. A plain click
+  // opens it beside the chat: a room's tab (the pub/sub `openLink` a web
+  // panel's own links already use — WebPanel.tsx), or the passage it marks.
+  const openLink = (href: string, event?: React.MouseEvent): void => {
+    const external = event ? event.metaKey || event.ctrlKey : false;
+    if (isAnnotationLink(href)) {
+      if (external) void call(api => api.query('web.openExternal', { url: withoutFragmentDirective(href) }));
+      else showAnnotation(roomId, href);
+      return;
+    }
     const spaceId = spaceLinkTarget(href);
-    if (spaceId && session.workspaceId) void navigate(`/w/${session.workspaceId}/s/${spaceId}`);
+    if (spaceId) {
+      if (session.workspaceId) void navigate(`/w/${session.workspaceId}/s/${spaceId}`);
+      return;
+    }
+    if (!isWebUrl(href)) return;
+    if (external) void call(api => api.query('web.openExternal', { url: href }));
+    // Only a room has a panel to open it beside; elsewhere this link has
+    // nowhere to land yet and a plain click stays a no-op, as it already was.
+    else if (roomId) openInRoomPanel(roomId, { address: href, background: false });
   };
 
   return (

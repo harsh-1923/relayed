@@ -32,6 +32,8 @@ export interface NewSideChat {
   /** Who it is started with — room members, people or agents. The creator is implied. */
   withActorIds: readonly string[];
   createdBy: string;
+  /** The person an agent started it for: recorded on its panel, which then opens for them (SIDE-CHATS.md). */
+  onBehalfOf?: string | null;
 }
 
 export interface CreatedSideChat {
@@ -116,7 +118,7 @@ export async function createSideChat(db: Kysely<DB>, input: NewSideChat): Promis
 
     const panel = await insertChatPanel(trx, {
       panelId: input.panelId, workspaceId: space.workspace_id, spaceId: input.spaceId,
-      chatId: input.chatId, createdBy: input.createdBy,
+      chatId: input.chatId, createdBy: input.createdBy, onBehalfOf: input.onBehalfOf ?? null,
     });
     events.push(await appendEvent(trx, await allocateStream(trx, spaceStream(input.spaceId)),
       'panel.opened', panel, { kind: 'stream' }));

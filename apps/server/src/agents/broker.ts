@@ -11,12 +11,12 @@
 // `beforeToolCall`/`afterToolCall` — everything about whether a call may run,
 // and everything about recording what happened, is answered there.
 import type { FastifyInstance } from 'fastify';
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import type { FanoutResult } from '../sync/fanout.ts';
 import { verifyGrant, GrantError } from './grant.ts';
-import { beforeToolCall, afterToolCall } from './checkpoints.ts';
+import { beforeToolCall, afterToolCall, argumentsForAudit } from './checkpoints.ts';
 import { ComposioError } from './composio.ts';
 import { COMPOSIO, type BrokerComposio } from './composio-broker.ts';
 import { mapComposioError, mapExecuteResult } from './tool-errors.ts';
@@ -72,6 +72,28 @@ async function whereOf(db: Kysely<DB>, chatId: string, agentActorId: string): Pr
   };
 }
 
+/**
+ * Write down what an app tool call did (024). Never at the cost of the call:
+ * a failure to record is logged by the caller's error path, not surfaced to
+ * the model as the tool failing.
+ */
+async function recordAppCall(
+  db: Kysely<DB>, run: ToolContext, tool: string, args: Record<string, unknown>,
+  answered: { result: string; message?: string }, started: number,
+): Promise<void> {
+  const row = {
+    result: answered.result,
+    message: answered.result === 'ok' ? null : (answered.message ?? null),
+    arguments: sql`${JSON.stringify(argumentsForAudit(args))}::jsonb`,
+    duration_ms: Math.round(performance.now() - started),
+  };
+  await db.insertInto('agent_app_tool_calls')
+    .values({ run_id: run.runId, tool_call_id: run.toolCallId, tool, ...row })
+    .onConflict(oc => oc.columns(['run_id', 'tool_call_id']).doUpdateSet(row))
+    .execute()
+    .catch(() => { /* the audit is for us; the call already happened */ });
+}
+
 export function brokerRoutes(deps: BrokerRouteDeps) {
   const composio = deps.composio ?? COMPOSIO;
 
@@ -112,11 +134,18 @@ export function brokerRoutes(deps: BrokerRouteDeps) {
       // Every tool but `call_tool`, answered by the file that owns it.
       if (tool !== CALL_TOOL) {
         const where = await whereOf(deps.db, run.chat_id, agentActorId);
-        const answered = await handleAppTool(tool, {
-          db: deps.db, deliver: deps.deliver, composio,
-          ...(deps.dispatcher ? { dispatcher: deps.dispatcher } : {}),
-        }, context, where, args);
-        return reply.send(answered ?? { result: 'tool_not_allowed' });
+        let answered;
+        try {
+          answered = await handleAppTool(tool, {
+            db: deps.db, deliver: deps.deliver, composio,
+            ...(deps.dispatcher ? { dispatcher: deps.dispatcher } : {}),
+          }, context, where, args) ?? { result: 'tool_not_allowed' };
+        } catch (err) {
+          await recordAppCall(deps.db, context, tool, args, { result: 'error' }, started);
+          throw err;
+        }
+        await recordAppCall(deps.db, context, tool, args, answered, started);
+        return reply.send(answered);
       }
 
       const slug = typeof args['tool'] === 'string' ? args['tool'] : '';

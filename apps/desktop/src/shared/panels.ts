@@ -121,13 +121,17 @@ export type SeenPanels = ReadonlyMap<string, number>;
  *
  * So is a side chat's: it opens for whoever started it, and everyone else finds
  * it under "In this room" rather than having their tabs moved by somebody else's
- * conversation (SIDE-CHATS.md §1).
+ * conversation (SIDE-CHATS.md §1). One an agent started FOR somebody arrives for
+ * that person — `me` — since the agent that started it has no screen to open it on.
  */
-const arrivable = (panel: Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>): boolean =>
-  panel.scope === 'shared' && !isStructuralPanel(panel) && panel.type !== 'chat';
+type Arriving = Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'> & Partial<Pick<Panel, 'onBehalfOfActorId'>>;
 
-export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>[]): Map<string, number> =>
-  new Map(panels.filter(arrivable).map(panel => [panel.id, panel.openedAt]));
+const arrivable = (panel: Arriving, me: string | null): boolean =>
+  panel.scope === 'shared' && !isStructuralPanel(panel)
+  && (panel.type !== 'chat' || (me !== null && panel.onBehalfOfActorId === me));
+
+export const seenPanels = (panels: readonly Arriving[], me: string | null = null): Map<string, number> =>
+  new Map(panels.filter(panel => arrivable(panel, me)).map(panel => [panel.id, panel.openedAt]));
 
 /**
  * What a synced room's tabs become as its shared panels change (PANELS.md) —
@@ -153,11 +157,13 @@ export const seenPanels = (panels: readonly Pick<Panel, 'id' | 'openedAt' | 'sco
  */
 export function panelArrivals(input: {
   seen: SeenPanels | null;
-  panels: readonly Pick<Panel, 'id' | 'openedAt' | 'scope' | 'type'>[];
+  panels: readonly Arriving[];
   open: { containerOpen: boolean; ids: readonly string[]; active: string | null };
   dismissed: ReadonlySet<string>;
+  /** Who is looking: a side chat started on their behalf arrives for them. */
+  me?: string | null;
 }): { ids: string[]; active: string | null } | null {
-  const shared = input.panels.filter(arrivable);
+  const shared = input.panels.filter(panel => arrivable(panel, input.me ?? null));
 
   if (input.seen === null) {
     if (input.open.containerOpen) return null;

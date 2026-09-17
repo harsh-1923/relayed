@@ -177,12 +177,12 @@ export async function roomPanels(
 /** A side chat's panel, written with the chat it shows (PANELS.md §4.1). Inside the caller's transaction. */
 export async function insertChatPanel(
   trx: Transaction<DB>,
-  input: { panelId: string; workspaceId: string; spaceId: string; chatId: string; createdBy: string },
+  input: { panelId: string; workspaceId: string; spaceId: string; chatId: string; createdBy: string; onBehalfOf: string | null },
 ): Promise<PanelOpened> {
   const row = await trx.insertInto('panels').values({
     id: input.panelId, workspace_id: input.workspaceId, space_id: input.spaceId, type: 'chat',
     chat_id: input.chatId, payload: sql`'{}'::jsonb`, title: null, opened_from_chat_id: null,
-    created_by_actor_id: input.createdBy, on_behalf_of_actor_id: null, removed_at: null,
+    created_by_actor_id: input.createdBy, on_behalf_of_actor_id: input.onBehalfOf, removed_at: null,
   }).returning(PANEL_COLUMNS).executeTakeFirstOrThrow();
   return toPanelOpened(row as PanelRow);
 }

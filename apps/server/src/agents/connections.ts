@@ -22,6 +22,8 @@ import { caller as bearerCaller, type Caller } from '../auth/caller.ts';
 import { page } from '../web/landing.ts';
 import { link, completeAuth, revoke, deleteAccount, ComposioError } from './composio.ts';
 import { pushToActor } from '../sync/fanout.ts';
+import { learnIdentity } from './identities.ts';
+import { COMPOSIO } from './composio-broker.ts';
 import type { Registry } from '../sync/registry.ts';
 
 /** Ten minutes: the link and the attempt expire together (§6.5, §6.12). */
@@ -33,6 +35,8 @@ export interface ConnectionRouteDeps {
   registry: Registry;
   /** Injected so a test needs no signing key; production reads the bearer token. */
   caller?: (authorization: string | undefined) => Promise<Caller | null>;
+  /** Learns who the person is in the service they just connected (`identities.ts`). Injected by tests. */
+  learnIdentity?: (db: Kysely<DB>, actorId: string, toolkit: string) => Promise<void>;
 }
 
 interface ConnectionRow {
@@ -96,6 +100,7 @@ function refuseComposio(reply: FastifyReply, err: unknown): FastifyReply {
 
 export function connectionRoutes(deps: ConnectionRouteDeps) {
   const who = deps.caller ?? bearerCaller;
+  const learn = deps.learnIdentity ?? ((db, actorId, toolkit) => learnIdentity(db, COMPOSIO, actorId, toolkit));
 
   return async function register(app: FastifyInstance): Promise<void> {
     // ─── browsing (online-only) ────────────────────────────────────────────
@@ -324,6 +329,9 @@ export function connectionRoutes(deps: ConnectionRouteDeps) {
           status: 'active', status_reason: null, connected_at: sql`now()`, updated_at: sql`now()`,
         }).where('id', '=', conn.id).execute();
         count('connection.flow', { connect_scheme: scheme, connect_stage: 'complete', result: 'ok' });
+        // Who they are in it, from their own account, now that it is theirs.
+        // Not awaited: the connection is done whatever this learns.
+        void learn(deps.db, me.actorId, conn.toolkit);
         pushConnection(deps.registry, me.workspaceId, me.actorId,
           { id: conn.id, toolkit: conn.toolkit, status: 'active', status_reason: null, label: null });
         return reply.send({ connection_id: conn.id, status: 'active' });

@@ -24,10 +24,11 @@ import { ulid } from '../db/ulid.ts';
 import { fanout } from '../sync/fanout.ts';
 import type { Registry } from '../sync/registry.ts';
 import { visibleTo } from '../sync/visibility.ts';
-import { writeDocumentRevision, BODY_LIMIT_BYTES } from '../sync/documents.ts';
+import { writeDocumentRevision } from '../sync/documents.ts';
 import { callRuntime } from './runtime-client.ts';
 import { SIZE_LIMIT_BYTES } from './transcript.ts';
 import { PEOPLE_PROMPT, personLabel } from './people.ts';
+import { SUMMARY_SHAPE } from './writing.ts';
 
 /** How long a claim is held. A lease in the past means the server that took it is gone (§4.4). */
 const LEASE_SEC = 120;
@@ -270,24 +271,18 @@ function withinBudget(lines: readonly Line[]): Line[] {
  * decided yet must not render four empty headings, which is what a fixed
  * skeleton would produce on its first pass.
  */
-const RULES = [
+export const RULES = [
   'You are writing the running summary of one room, for the people in it.',
+  'It answers "what is going on here right now?" for somebody who has just arrived — the present first, the past',
+  'only as much as it still explains the present.',
   '',
-  'Answer the question "what is going on here?" for somebody who has just',
-  'arrived. Useful sections, when there is something to put in them:',
-  '',
-  '- **Now** — the current state, in a sentence or two.',
-  '- **Decided** — decisions, and who made them.',
-  '- **Open** — questions nobody has answered, blockers, what is waiting on whom.',
-  '- **Who’s on what** — names against work.',
-  '- **Links** — tickets, dashboards and documents named in the conversation.',
+  SUMMARY_SHAPE,
   '',
   'Rules:',
   '- Describe the STATE. Do not narrate the transcript: no "Alice said, then Bob said".',
   '- Say nothing you cannot support from the messages you were given.',
   '- Prefer dropping a section to padding it. A short true summary beats a full one.',
   '- Markdown, no top-level heading, no preamble, no sign-off. Output the summary and nothing else.',
-  `- Keep it under ${Math.floor(BODY_LIMIT_BYTES / 1024)} KB — short enough to read in under a minute.`,
   '',
   PEOPLE_PROMPT,
   // A summary is read, not sent: it names people and never pings them. The
@@ -295,7 +290,7 @@ const RULES = [
   'In the summary, only ever refer to people — never mention them.',
 ].join('\n');
 
-function buildPrompt(input: { previous: string; lines: readonly Line[]; rebuild: boolean }): string {
+export function buildPrompt(input: { previous: string; lines: readonly Line[]; rebuild: boolean }): string {
   const messages = input.lines.map(line => line.text).join('\n');
   if (input.rebuild || input.previous.trim().length === 0) {
     return `Recent messages in this room:\n\n${messages}\n\nWrite the room's summary.`;
@@ -303,8 +298,11 @@ function buildPrompt(input: { previous: string; lines: readonly Line[]; rebuild:
   return [
     'The room’s summary as it currently stands:', '', input.previous, '',
     'Messages since it was last written:', '', messages, '',
-    'Write the updated summary. Keep what is still true, drop what is no longer,',
-    'and fold in what is new.',
+    // NOT "keep what is true and fold in what is new": that is an instruction
+    // to append, and the summary only ever grew under it.
+    'Write the summary again, in the shape above. Put what is new at the top of its section; move what is no longer',
+    'current into Earlier as one line; shorten what is there if it is past the length limits. It must not be longer',
+    'than it needs to be just because the previous one was.',
   ].join('\n');
 }
 

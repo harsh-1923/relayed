@@ -78,7 +78,7 @@ async function spaceInWorkspace(db: Kysely<DB>, spaceId: string, workspaceId: st
  * it in. Once per tool call: a runtime that retries the same call gets the
  * first message back rather than a second.
  */
-async function postAs(deps: MessagingDeps, run: RunContext, chatId: string, text: string): Promise<{ messageId: string } | null> {
+export async function postAs(deps: MessagingDeps, run: RunContext, chatId: string, text: string): Promise<{ messageId: string } | null> {
   const [grants, placement] = await Promise.all([loadGrants(deps.db, run.agentActorId), chatPlacement(deps.db, chatId)]);
   if (!can(grants, 'post', chatTarget(chatId), placement)) return null;
 

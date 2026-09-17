@@ -16,12 +16,13 @@
 // inside one is inert until it opts out — and it still looks and hovers exactly
 // like a button that works.
 import { ArrowLeft, ArrowRight, SidebarDefault } from '@relayed/icons';
-import { useSession } from '../state';
+import { useActiveWorkspace, useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
 import { OfflineSwitch } from '@/features/dev/OfflineSwitch';
 import { RouteStrip } from '@/features/dev/RouteStrip';
 import { Button } from '@/components/ui/button';
+import { ActorAvatar } from '@/components/ActorAvatar';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
 import { cn } from '@/lib/utils';
@@ -35,6 +36,7 @@ const TRAFFIC_LIGHTS = 78;
 
 export function TopBar() {
   const { state } = useSession();
+  const activeWorkspace = useActiveWorkspace();
   const { isMobile, open, toggleSidebar } = useSidebar();
   const { canBack, canForward, back, forward } = useBackForward();
 
@@ -121,6 +123,22 @@ export function TopBar() {
 
         <RouteStrip />
         <OfflineSwitch />
+        {activeWorkspace && (
+          <div
+            role="img"
+            aria-label={`Current account: ${activeWorkspace.actorDisplayName}`}
+            title={activeWorkspace.actorDisplayName}
+            className="no-drag ml-1"
+          >
+            <ActorAvatar
+              id={activeWorkspace.actorId}
+              fallbackName={activeWorkspace.actorDisplayName}
+              fallbackBlob={activeWorkspace.actorAvatarBlob}
+              className="size-5"
+              fallbackClassName="rounded-lg text-[10px]"
+            />
+          </div>
+        )}
       </div>
     </header>
   );

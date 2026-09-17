@@ -12,6 +12,7 @@ import { onRunEnd } from './checkpoints.ts';
 import { Registry } from '../sync/registry.ts';
 import { claimReplyMessageId } from './dispatcher.ts';
 import { deliverReply } from './reply.ts';
+import { removeTestToolkits, sweepTestToolkits } from '../db/test-toolkits.ts';
 
 const up = await reachable();
 const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
@@ -26,6 +27,7 @@ const deliver = async (): Promise<FanoutResult> => ({ audience: 0, delivered: 0,
 
 before(async () => {
   if (!up) return;
+  await sweepTestToolkits(db);
   await db.insertInto('organizations').values({ id: org, workos_org_id: `test_${org}`, name: 'Access' }).execute();
   await db.insertInto('workspaces').values({ id: wsp, org_id: org, name: 'Access', slug: `a-${wsp.slice(-6).toLowerCase()}` }).execute();
   for (const [id, type] of [[invoker, 'human'], [agent, 'agent']] as const) {
@@ -47,11 +49,12 @@ before(async () => {
 
 after(async () => {
   if (!up) return;
+  // First, and on its own: a toolkit left enabled breaks every real session.
+  await removeTestToolkits(db, [toolkitSlug]);
   await db.deleteFrom('sync_events').where('workspace_id', '=', wsp).execute();
   await db.deleteFrom('spaces').where('workspace_id', '=', wsp).execute();
   await db.deleteFrom('memberships').where('scope_id', '=', wsp).execute();
   await db.deleteFrom('organizations').where('id', '=', org).execute();
-  await db.deleteFrom('toolkits').where('slug', '=', toolkitSlug).execute();
   await pool.end();
 });
 

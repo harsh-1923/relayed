@@ -4,25 +4,15 @@
 // asymmetry between them only reads as deliberate when they sit together:
 // ANYONE may read a summary, and only Roomkeeping may write one. Reading is
 // reading what the asker could already open; writing is speaking for the room.
-import { sql, type ExpressionBuilder } from 'kysely';
 import type { RunTool } from '@relayed/protocol';
-import type { DB } from '../../db/schema.ts';
 import { writeDocumentRevision } from '../../sync/documents.ts';
 import { ROOMKEEPER_HANDLE } from '../../provisioning/system-agents.ts';
 import { asText, iso, type AppTool } from './contract.ts';
+import { readableSpace, spaceAsked, unreadable } from './place.ts';
+import { SUMMARY_SHAPE } from '../writing.ts';
 
 export const READ_ROOM_SUMMARY = 'read_room_summary';
 export const WRITE_ROOM_SUMMARY = 'write_room_summary';
-
-/** An open membership of this space, as an EXISTS subquery — the access rule, written once. */
-const memberOf = (
-  eb: ExpressionBuilder<DB, 'spaces'>, spaceId: string, actorId: string,
-) => eb.selectFrom('memberships')
-  .select(sql`1`.as('one'))
-  .where('memberships.scope_type', '=', 'space')
-  .where('memberships.scope_id', '=', spaceId)
-  .where('memberships.actor_id', '=', actorId)
-  .where('memberships.left_at', 'is', null);
 
 const READ_DEFINITION: RunTool = {
   name: READ_ROOM_SUMMARY,
@@ -68,40 +58,12 @@ export const readRoomSummary: AppTool = {
     + 'A room you or the person cannot see is not readable, and saying so is the right answer.',
 
   handle: async (deps, run, args) => {
-    const asked = asText(args['space_id']);
-    // No space named: the room this run is in, found from its own chat rather
-    // than from anything the model said. A CHAT id is taken as its room — a
-    // model asked about "this room" from a side chat reaches for the chat it
-    // can see — and the access check below still decides.
-    const chatOf = asked.startsWith('cht_') ? asked : asked ? null : run.chatId;
-    const spaceId = chatOf
-      ? (await deps.db.selectFrom('chats').select('space_id').where('id', '=', chatOf).executeTakeFirst())?.space_id
-      : asked;
+    const spaceId = await spaceAsked(deps, run, asText(args['space_id']));
     if (!spaceId) {
       return { result: 'failed', message: `${READ_ROOM_SUMMARY} needs a space_id: this chat is not in a room.` };
     }
-
-    // Both memberships, in one query: a row comes back only if each of them
-    // has an open membership of this space.
-    const readable = await deps.db.selectFrom('spaces')
-      .select(['spaces.id', 'spaces.name', 'spaces.kind'])
-      .where('spaces.id', '=', spaceId)
-      .where(eb => eb.exists(memberOf(eb, spaceId, run.agentActorId)))
-      .where(eb => eb.exists(memberOf(eb, spaceId, run.invokerActorId)))
-      .executeTakeFirst();
-    if (!readable) {
-      // One answer for "no such room", "you are not in it" and "I am not in
-      // it". Telling them apart would say something about a room the asker may
-      // not be entitled to know exists.
-      // The way back is offered: a model that guessed an id retries without
-      // one rather than telling the person there is no summary. The id is not
-      // echoed — the answer must read the same whatever was asked about.
-      return {
-        result: 'failed',
-        message: 'That room is not one both of you can see, so its summary cannot be read. '
-          + 'For the room you are in, call this again without a space_id.',
-      };
-    }
+    const readable = await readableSpace(deps, run, spaceId);
+    if (!readable) return unreadable('its summary');
 
     const document = await deps.db.selectFrom('documents')
       .select(['body', 'rev', 'updated_at'])
@@ -161,10 +123,11 @@ export const writeRoomSummary: AppTool = {
     + 'does not change the summary — only that tool does, so putting the new text in your reply instead leaves the '
     + `panel exactly as it was. Give ${WRITE_ROOM_SUMMARY} the COMPLETE new summary: it replaces what is there, so `
     + 'anything you leave out is gone. Edit what is there rather than writing it again from nothing — keep the parts '
-    + 'nobody asked you to change, word for word. If they ask you to fold in something from elsewhere — a ticket, a '
+    + 'nobody asked you to change, word for word — and keep its shape (below). If they ask you to fold in something '
+    + 'from elsewhere — a ticket, a '
     + 'page — read it first with the tools you have, then write. Then reply in one or two sentences saying what you '
     + 'changed, without repeating the summary back. Never rewrite the summary on your own initiative, and never when '
-    + 'the person only asked you a question about it.',
+    + `the person only asked you a question about it.\n\n${SUMMARY_SHAPE}`,
 
   handle: async (deps, run, args) => {
     const agent = await deps.db.selectFrom('actors').select(['handle', 'provisioned_by'])

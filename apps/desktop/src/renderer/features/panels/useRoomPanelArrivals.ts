@@ -3,6 +3,7 @@
 // someone arriving sees what the room is working beside. The decision is
 // `panelArrivals`; this only feeds it and applies the answer to `?p=`.
 import { useEffect, useRef } from 'react';
+import { useSession } from '@/app/state';
 import type { Panel } from '../../../preload/api';
 import { panelArrivals, seenPanels, type SeenPanels } from '../../../shared/panels.ts';
 import type { OpenPanels } from './useOpenPanels';
@@ -23,6 +24,8 @@ export function useRoomPanelArrivals(input: {
   enabled: boolean; ready: boolean; spaceId: string; panels: readonly Panel[]; openPanels: OpenPanels;
 }): void {
   const { enabled, ready, spaceId, panels, openPanels } = input;
+  const { state } = useSession();
+  const me = state.workspaces.find(row => row.workspaceId === state.workspaceId)?.actorId ?? null;
   const lastOpen = useRef<{ spaceId: string; ids: readonly string[] } | null>(null);
 
   // A tab that was open and is not any more was closed by this person.
@@ -52,8 +55,9 @@ export function useRoomPanelArrivals(input: {
         active: choosing ? NEW_TAB : openPanels.active,
       },
       dismissed: dismissedByRoom.get(spaceId) ?? new Set(),
+      me,
     });
-    seenByRoom.set(spaceId, seenPanels(panels));
+    seenByRoom.set(spaceId, seenPanels(panels, me));
     // Replaced, not pushed: a page arriving is not the person navigating, so
     // Back must not walk through what the room opened.
     if (next) {

@@ -210,7 +210,7 @@ const isDuplicateCall = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505';
 
 /** 8 KB, like a refresh token's hash-not-value discipline: kept for the audit, never at the cost of the row it describes. */
-function argumentsForAudit(args: unknown): unknown {
+export function argumentsForAudit(args: unknown): unknown {
   const json = JSON.stringify(args ?? {});
   return Buffer.byteLength(json, 'utf8') <= 8192 ? args : { truncated: true, bytes: Buffer.byteLength(json, 'utf8') };
 }

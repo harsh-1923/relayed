@@ -14,6 +14,7 @@ import { checkAccess } from '../checkpoints.ts';
 import { raiseAccessRequest } from '../access.ts';
 import { ComposioError, type SearchResult } from '../composio.ts';
 import { mapComposioError } from '../tool-errors.ts';
+import { rememberIdentities } from '../identities.ts';
 import { asText, type AppTool, type OfferedToolkit } from './contract.ts';
 
 export const FIND_TOOLS = 'find_tools';
@@ -121,12 +122,19 @@ export const findTools: AppTool = {
     try {
       const sessionId = await deps.composio.session(deps.db, run.invokerActorId);
       found = await deps.composio.search(sessionId, `${offered.name}: ${useCase}`);
+      // The session is the asker's own: what it says about who they are is theirs to keep.
+      await rememberIdentities(deps.db, run.invokerActorId, found.identities).catch(() => { /* next search */ });
     } catch (err) {
       if (!(err instanceof ComposioError)) throw err;
       const mapped = mapComposioError(err);
+      // A refusal is not a hiccup: the same search will be refused again, and a
+      // model left to guess retries it — or reaches for whatever the error text
+      // names, as a real run did with two toolkit slugs from it.
+      const stop = mapped.code === 'refused' || mapped.code === 'failed'
+        ? ' Do not retry this search. Tell the person the service could not be reached.' : '';
       return {
         result: mapped.code === 'refused' ? 'failed' : mapped.code,
-        ...('message' in mapped ? { message: mapped.message } : {}),
+        ...('message' in mapped ? { message: `${mapped.message}${stop}` } : stop ? { message: stop.trim() } : {}),
       };
     }
 

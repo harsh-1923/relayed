@@ -10,9 +10,10 @@ const names = (tools: ReturnType<typeof runTools>) => tools.map(tool => tool.nam
 
 test('create_room and the messaging tools are offered to every run: no services, not in a room', () => {
   assert.deepEqual(names(runTools([], { inRoom: false, ...anyone })),
-    [READ_ROOM_SUMMARY, CREATE_ROOM, 'send_dm', 'post_message', 'add_to_room']);
+    [READ_ROOM_SUMMARY, 'room_members', 'external_identity', CREATE_ROOM, 'send_dm', 'post_message', 'add_to_room']);
   assert.deepEqual(names(runTools([{ slug: 'linear', name: 'Linear' }], { inRoom: true, ...anyone })),
-    ['find_tools', 'call_tool', 'open_panel', READ_ROOM_SUMMARY, CREATE_ROOM, 'send_dm', 'post_message', 'add_to_room']);
+    ['find_tools', 'call_tool', 'open_panel', READ_ROOM_SUMMARY, 'room_members', 'external_identity', CREATE_ROOM, 'start_side_chat',
+      'send_dm', 'post_message', 'add_to_room']);
 });
 
 test('the prompt says to create a room only when asked, and last', () => {

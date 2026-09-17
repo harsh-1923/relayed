@@ -37,7 +37,7 @@ export function AccessCard({ part, body, onOpenLink }: {
   part: AccessRequestPart;
   /** The message's own body — the public sentence, for every viewer who is not the actor. */
   body: string;
-  onOpenLink?: (href: string) => void;
+  onOpenLink?: (href: string, event?: React.MouseEvent) => void;
 }) {
   const myActorId = useMyActorId();
   const agentHandle = useActor(part.agent_id)?.handle ?? 'agent';

@@ -246,11 +246,32 @@
   }
 
   /* ── table: scrolls on its own, rows ruled, no cell boxes ── */
-  /* Full width; a table wider than that scrolls inside its own wrapper
-     (MarkdownText) rather than squeezing its columns. */
+  /* The bubble is the viewport. Columns keep their natural width instead of
+     wrapping their cells, and a wider table scrolls inside its own viewport. */
   & .md-table {
     width: 100%;
+  }
+  & .md-table-scroll {
+    width: 100%;
     overflow-x: auto;
+    container-name: markdown-table;
+    container-type: scroll-state;
+  }
+  &.ui-block .md-table {
+    width: 100%;
+    overflow-x: auto;
+  }
+  & .md-table-controls {
+    display: flex;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 100%;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+  }
+  & .md-table-controls [aria-pressed="true"] {
+    background: color-mix(in srgb, currentColor 8%, transparent);
   }
   & table {
     width: 100%;
@@ -271,6 +292,13 @@
     line-height: 1.5;
     text-align: left;
     vertical-align: top;
+  }
+  & .md-table[data-layout="scrollable"] table {
+    width: max-content;
+    min-width: 100%;
+  }
+  & .md-table[data-layout="scrollable"] :is(th, td) {
+    white-space: nowrap;
   }
   & th {
     font-weight: 500;
@@ -312,6 +340,15 @@
 
   & .md-mention-button:hover {
     background: color-mix(in srgb, var(--primary) 20%, transparent);
+  }
+}
+
+/* Chromium's scroll-state query hides the no-wrap control when the table fits.
+   Older engines ignore this rule and keep the harmless always-visible control,
+   rather than hiding a way back to the wrapped layout. */
+@container markdown-table not scroll-state(scrollable: inline-end) {
+  .markdown .md-table[data-layout="scrollable"] .md-table-controls {
+    display: none;
   }
 }
 

@@ -17,13 +17,14 @@
 //     one shows the whole address, with a copy button.
 //   - IMAGES are their description. The CSP allows no remote image, and a
 //     network fetch from message content is the tracking this app does not do.
-import { Children, Fragment, type ReactNode } from 'react';
+import { Children, Fragment, useState, type ReactNode } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { TextQuote } from '@relayed/icons';
+import { ListTextWrap, TextQuote } from '@relayed/icons';
 import { ActorAvatar } from '@/components/ActorAvatar';
 import { ActorHoverCard } from '@/components/ActorHoverCard';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
 import { parseSlashCommand } from '../../../shared/slash-commands.ts';
@@ -33,7 +34,7 @@ import './markdown.css';
 
 export function MarkdownText({
   text, className, onOpenLink,
-}: { text: string; className?: string; onOpenLink?: (url: string) => void }) {
+}: { text: string; className?: string; onOpenLink?: (url: string, event?: React.MouseEvent) => void }) {
   const slashCommand = parseSlashCommand(text);
   const components: Components = {
     p: ({ node, children }) => (
@@ -57,7 +58,7 @@ export function MarkdownText({
           type="button"
           className="md-mention md-mention-button"
           data-mention-kind="space"
-          onClick={() => { if (href) onOpenLink?.(href); }}
+          onClick={event => { if (href) onOpenLink?.(href, event); }}
         >
           #{children}
         </button>
@@ -65,7 +66,7 @@ export function MarkdownText({
       <HoverCard>
         <HoverCardTrigger
           delay={300}
-          render={<button type="button" className="md-link" onClick={() => { if (href) onOpenLink?.(href); }} />}
+          render={<button type="button" className="md-link" onClick={event => { if (href) onOpenLink?.(href, event); }} />}
         >
           {/* A passage someone marked reads as an ordinary link, because that is
               what it is (docs/ANNOTATIONS.md). The mark says it is a quotation
@@ -84,7 +85,7 @@ export function MarkdownText({
         )}
       </HoverCard>
     ),
-    table: ({ children }) => <div className="md-table"><table>{children}</table></div>,
+    table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
     img: ({ alt, src }) => (
       <span className="opacity-70" title={src}>[image{alt ? `: ${alt}` : ''}]</span>
     ),
@@ -100,6 +101,34 @@ export function MarkdownText({
       >
         {text}
       </Markdown>
+    </div>
+  );
+}
+
+/** Tables start wide and scroll; a reader can opt into compact, wrapped cells. */
+function MarkdownTable({ children }: { children: ReactNode }) {
+  const [wrapped, setWrapped] = useState(false);
+  const label = wrapped ? 'Keep text on one line' : 'Wrap table text';
+
+  return (
+    <div className="md-table" data-layout={wrapped ? 'wrapped' : 'scrollable'}>
+      <div className="md-table-scroll">
+        <div className="md-table-controls">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-pressed={wrapped}
+            aria-label={label}
+            title={label}
+            onClick={() => { setWrapped(current => !current); }}
+          >
+            <ListTextWrap />
+            {wrapped ? 'Keep lines' : 'Wrap text'}
+          </Button>
+        </div>
+        <table>{children}</table>
+      </div>
     </div>
   );
 }
