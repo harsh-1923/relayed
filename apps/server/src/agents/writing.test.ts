@@ -9,9 +9,14 @@ import { ACTIONS_PROMPT } from './dispatcher.ts';
 test('a reply is told to lead with the answer, stay short, and keep long material out of messages', () => {
   assert.match(WRITING_PROMPT, /Lead with the answer/);
   assert.match(WRITING_PROMPT, /under about 120 words/);
-  assert.match(WRITING_PROMPT, /No preamble/);
+  assert.match(WRITING_PROMPT, /Never open with "Here's\.\.\."/);
   assert.match(WRITING_PROMPT, /belongs in a document or ticket, not a message/);
   assert.ok(ACTIONS_PROMPT.length > 0, 'the actions rule is a separate line, not replaced');
+});
+
+test('a greeting or acknowledgement is answered briefly, without resuming old work', () => {
+  assert.match(WRITING_PROMPT, /Answer the last message only/);
+  assert.match(WRITING_PROMPT, /do not resume or report on earlier work/);
 });
 
 test('the summary puts the present first and the past last, compressed', () => {
