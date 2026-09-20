@@ -63,12 +63,13 @@ function Composer({ remap }) {
 
 function Harness() {
   const [overrides, setOverrides] = useState(new Map());
-  const remap = raw => setOverrides(current => {
-    const next = new Map(current);
-    if (raw === undefined) next.delete('composer.message.send');
-    else next.set('composer.message.send', raw);
-    return next;
-  });
+  const remap = raw =>
+    setOverrides(current => {
+      const next = new Map(current);
+      if (raw === undefined) next.delete('composer.message.send');
+      else next.set('composer.message.send', raw);
+      return next;
+    });
   return (
     <CommandProvider platform="darwin" overrides={overrides}>
       <Composer remap={remap} />

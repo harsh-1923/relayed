@@ -141,12 +141,13 @@ let root = null;
 
 function Harness({ platform }) {
   const [overrides, setOverrides] = useState(new Map());
-  window.bus.remap = (id, raw) => setOverrides(current => {
-    const next = new Map(current);
-    if (raw === undefined) next.delete(id);
-    else next.set(id, raw);
-    return next;
-  });
+  window.bus.remap = (id, raw) =>
+    setOverrides(current => {
+      const next = new Map(current);
+      if (raw === undefined) next.delete(id);
+      else next.set(id, raw);
+      return next;
+    });
   return (
     <CommandProvider platform={platform} overrides={overrides}>
       <Surface />

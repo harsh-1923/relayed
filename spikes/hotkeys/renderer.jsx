@@ -75,13 +75,16 @@ function rebuildIndex() {
 function physicalLetterChord(event) {
   const match = /^Key([A-Z])$/.exec(event.code);
   if (!match) return null;
-  return normalizeHotkeyFromEvent({
-    key: match[1],
-    ctrlKey: event.ctrlKey,
-    altKey: event.altKey,
-    shiftKey: event.shiftKey,
-    metaKey: event.metaKey,
-  }, PLATFORM);
+  return normalizeHotkeyFromEvent(
+    {
+      key: match[1],
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      metaKey: event.metaKey,
+    },
+    PLATFORM,
+  );
 }
 
 function dispatch(event) {
@@ -98,7 +101,11 @@ function dispatch(event) {
   if (definition.inputPolicy === 'deny-editable' && isEditableTarget(event))
     return skips.push('editable');
   event.preventDefault();
-  invocations.push({ id, chord: physicalId ? physicalChord : chord, prevented: event.defaultPrevented });
+  invocations.push({
+    id,
+    chord: physicalId ? physicalChord : chord,
+    prevented: event.defaultPrevented,
+  });
 }
 
 function Dispatcher() {

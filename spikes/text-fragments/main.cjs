@@ -45,7 +45,9 @@ const results = [];
 /** Each check gets a deadline, so one that hangs is named rather than stalling the run. */
 async function check(name, body, ms = 15_000) {
   let timer;
-  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms); });
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+  });
   try {
     await Promise.race([body(), deadline]);
     results.push({ name, ok: true });
@@ -55,7 +57,9 @@ async function check(name, body, ms = 15_000) {
     clearTimeout(timer);
   }
   const result = results.at(-1);
-  console.log(`${result.ok ? 'ok  ' : 'FAIL'} ${result.name}${result.detail ? `\n     ${result.detail}` : ''}`);
+  console.log(
+    `${result.ok ? 'ok  ' : 'FAIL'} ${result.name}${result.detail ? `\n     ${result.detail}` : ''}`,
+  );
 }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(predicate, ms = 8000) {
@@ -192,7 +196,8 @@ function serve() {
   return server;
 }
 
-const guests = () => webContents.getAllWebContents().filter(contents => contents.getType() === 'webview');
+const guests = () =>
+  webContents.getAllWebContents().filter(contents => contents.getType() === 'webview');
 const guestFor = id => guests().find(contents => contents.getURL().includes(`id=${id}`));
 
 /** A text fragment, in the spec's shape: [prefix-,]textStart[,textEnd][,-suffix]. */
@@ -207,7 +212,9 @@ async function settled(guest, id) {
   await until(() => !guest.isLoading());
   let last = null;
   for (let attempt = 0; attempt < 40; attempt++) {
-    const probe = await guest.executeJavaScript(`window.probe(${JSON.stringify(id)})`).catch(() => null);
+    const probe = await guest
+      .executeJavaScript(`window.probe(${JSON.stringify(id)})`)
+      .catch(() => null);
     if (probe && last && probe.scrollY === last.scrollY && probe.scrollY > 0) return probe;
     last = probe;
     await sleep(50);
@@ -221,8 +228,15 @@ app.whenReady().then(async () => {
   const base = `http://127.0.0.1:${server.address().port}`;
 
   const window_ = new BrowserWindow({
-    width: 900, height: 700, show: true,
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: true },
+    width: 900,
+    height: 700,
+    show: true,
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webviewTag: true,
+    },
   });
   guardWebPanels(window_, () => ACCOUNT);
   await window_.loadURL(`${base}/host`);
@@ -234,7 +248,10 @@ app.whenReady().then(async () => {
   let firstProbe = null;
   await check('a webview whose src carries a text fragment scrolls to it', async () => {
     await host(`spike.add('a', ${JSON.stringify(`${base}/page?id=a${uniqueFragment}`)})`);
-    const guest = await until(() => { const found = guestFor('a'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('a');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     firstProbe = await settled(guest, 'unique');
     assert.ok(firstProbe.scrollY > 100, `did not scroll: ${JSON.stringify(firstProbe)}`);
@@ -244,7 +261,10 @@ app.whenReady().then(async () => {
   // ── 2. The open-panel case: loadURL from the embedder, a different document ──
   await check('loadURL from main, to a different document, fires the directive', async () => {
     await host(`spike.add('b', ${JSON.stringify(`${base}/page?id=b`)})`);
-    const guest = await until(() => { const found = guestFor('b'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('b');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const before = await guest.executeJavaScript(`window.probe('unique')`);
     assert.equal(before.scrollY, 0, 'started scrolled');
@@ -261,7 +281,10 @@ app.whenReady().then(async () => {
   let sameDocument = null;
   await check('SAME-DOCUMENT: loadURL with only the fragment changed', async () => {
     await host(`spike.add('c', ${JSON.stringify(`${base}/page?id=c`)})`);
-    const guest = await until(() => { const found = guestFor('c'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('c');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     // Whether the DOCUMENT survived is the real question. `loadedAt` is stamped
     // once per parse, so an unchanged value means the page was never reloaded —
@@ -273,21 +296,31 @@ app.whenReady().then(async () => {
     const after = await guest.executeJavaScript('window.loadedAt');
     sameDocument = after === before;
     // Not asserted either way — this check RECORDS the answer, which the doc needs.
-    console.log(`     scrollY=${samePage.scrollY} inView=${samePage.inView} documentSurvived=${sameDocument}`);
+    console.log(
+      `     scrollY=${samePage.scrollY} inView=${samePage.inView} documentSurvived=${sameDocument}`,
+    );
   });
 
   // ── 3b. A true same-document change: the page's own script moves the hash ──
   let scripted = null;
   await check('SAME-DOCUMENT, from the page: assigning location.hash', async () => {
     await host(`spike.add('g', ${JSON.stringify(`${base}/page?id=g`)})`);
-    const guest = await until(() => { const found = guestFor('g'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('g');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const before = await guest.executeJavaScript('window.loadedAt');
-    await guest.executeJavaScript(`location.hash = ${JSON.stringify(uniqueFragment.slice(1))}`, true);
+    await guest.executeJavaScript(
+      `location.hash = ${JSON.stringify(uniqueFragment.slice(1))}`,
+      true,
+    );
     await sleep(700);
     scripted = await guest.executeJavaScript(`window.probe('unique')`);
     const after = await guest.executeJavaScript('window.loadedAt');
-    console.log(`     scrollY=${scripted.scrollY} inView=${scripted.inView} documentSurvived=${after === before}`);
+    console.log(
+      `     scrollY=${scripted.scrollY} inView=${scripted.inView} documentSurvived=${after === before}`,
+    );
   });
 
   // ── 3c. The same thing WITHOUT a user gesture ──
@@ -298,9 +331,15 @@ app.whenReady().then(async () => {
   let ungestured = null;
   await check('SAME-DOCUMENT, from the page, with NO user gesture', async () => {
     await host(`spike.add('h', ${JSON.stringify(`${base}/page?id=h`)})`);
-    const guest = await until(() => { const found = guestFor('h'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('h');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
-    await guest.executeJavaScript(`location.hash = ${JSON.stringify(uniqueFragment.slice(1))}`, false);
+    await guest.executeJavaScript(
+      `location.hash = ${JSON.stringify(uniqueFragment.slice(1))}`,
+      false,
+    );
     await sleep(700);
     ungestured = await guest.executeJavaScript(`window.probe('unique')`);
     console.log(`     scrollY=${ungestured.scrollY} inView=${ungestured.inView}`);
@@ -308,13 +347,23 @@ app.whenReady().then(async () => {
 
   // ── 4. prefix/suffix picks the right one of two identical phrases ──
   await check('prefix and suffix disambiguate two copies of the same text', async () => {
-    const target = fragment({ prefix: 'Zulu context leading.', exact: `${REPEATED}.`, suffix: 'Yankee trailing text.' });
+    const target = fragment({
+      prefix: 'Zulu context leading.',
+      exact: `${REPEATED}.`,
+      suffix: 'Yankee trailing text.',
+    });
     await host(`spike.add('d', ${JSON.stringify(`${base}/page?id=d${target}`)})`);
-    const guest = await until(() => { const found = guestFor('d'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('d');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const second = await settled(guest, 'second');
     const first = await guest.executeJavaScript(`window.probe('first')`);
-    assert.ok(second.inView, `landed on the wrong copy: second=${JSON.stringify(second)} first=${JSON.stringify(first)}`);
+    assert.ok(
+      second.inView,
+      `landed on the wrong copy: second=${JSON.stringify(second)} first=${JSON.stringify(first)}`,
+    );
     assert.ok(!first.inView, 'the first copy is also in view, so this proves nothing');
   });
 
@@ -322,7 +371,10 @@ app.whenReady().then(async () => {
   await check('text that does not match leaves the page at the top, not an error', async () => {
     const missing = fragment({ exact: 'Phrase that this page has never contained' });
     await host(`spike.add('e', ${JSON.stringify(`${base}/page?id=e${missing}`)})`);
-    const guest = await until(() => { const found = guestFor('e'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('e');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     await sleep(600);
     const probe = await guest.executeJavaScript(`window.probe('top')`);
@@ -331,21 +383,31 @@ app.whenReady().then(async () => {
   });
 
   // ── 6. What the URL looks like afterwards — the address bar shows getURL() ──
-  await check('the fragment directive is stripped from what the page and main read back', async () => {
-    const guest = guestFor('a');
-    const fromMain = guest.getURL();
-    assert.ok(firstProbe, 'the first check did not run');
-    console.log(`     main getURL(): ${fromMain}`);
-    console.log(`     page location.href: ${firstProbe.href}  hash: ${JSON.stringify(firstProbe.hash)}`);
-    console.log(`     document.fragmentDirective present: ${firstProbe.hasFragmentDirective}`);
-  });
+  await check(
+    'the fragment directive is stripped from what the page and main read back',
+    async () => {
+      const guest = guestFor('a');
+      const fromMain = guest.getURL();
+      assert.ok(firstProbe, 'the first check did not run');
+      console.log(`     main getURL(): ${fromMain}`);
+      console.log(
+        `     page location.href: ${firstProbe.href}  hash: ${JSON.stringify(firstProbe.hash)}`,
+      );
+      console.log(`     document.fragmentDirective present: ${firstProbe.hasFragmentDirective}`);
+    },
+  );
 
   // ── 7. The fallback, for whichever case above does not fire ──
   await check('the scripted fallback scrolls to the text and marks it', async () => {
     await host(`spike.add('f', ${JSON.stringify(`${base}/page?id=f`)})`);
-    const guest = await until(() => { const found = guestFor('f'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('f');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
-    const found = await guest.executeJavaScript(`window.scrollToText(${JSON.stringify(UNIQUE)}, null)`);
+    const found = await guest.executeJavaScript(
+      `window.scrollToText(${JSON.stringify(UNIQUE)}, null)`,
+    );
     assert.equal(found, true, 'the fallback did not find the text');
     await sleep(400);
     const probe = await guest.executeJavaScript(`window.probe('unique')`);
@@ -355,7 +417,8 @@ app.whenReady().then(async () => {
   await check('the fallback picks the right copy when given a prefix', async () => {
     const guest = guestFor('f');
     const found = await guest.executeJavaScript(
-      `window.scrollToText(${JSON.stringify(`${REPEATED}.`)}, ${JSON.stringify('Zulu context leading.')})`);
+      `window.scrollToText(${JSON.stringify(`${REPEATED}.`)}, ${JSON.stringify('Zulu context leading.')})`,
+    );
     assert.equal(found, true, 'the fallback did not find the text');
     await sleep(400);
     const second = await guest.executeJavaScript(`window.probe('second')`);
@@ -365,10 +428,15 @@ app.whenReady().then(async () => {
   // ── 9. The app's OWN helper, end to end ──
   await check('an address built by annotationAddress scrolls to the passage', async () => {
     const built = annotationAddress(`${base}/page?id=i`, {
-      prefix: 'Zulu context leading.', exact: `${REPEATED}.`, suffix: 'Yankee trailing text.',
+      prefix: 'Zulu context leading.',
+      exact: `${REPEATED}.`,
+      suffix: 'Yankee trailing text.',
     });
     await host(`spike.add('i', ${JSON.stringify(built)})`);
-    const guest = await until(() => { const found = guestFor('i'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('i');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const second = await settled(guest, 'second');
     const first = await guest.executeJavaScript(`window.probe('first')`);
@@ -384,7 +452,10 @@ app.whenReady().then(async () => {
     const directive = built.slice(built.indexOf('text=') + 'text='.length);
     assert.ok(directive.includes(','), `the helper did not abbreviate: ${directive}`);
     await host(`spike.add('j', ${JSON.stringify(built)})`);
-    const guest = await until(() => { const found = guestFor('j'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('j');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const probe = await settled(guest, 'long');
     assert.ok(probe.scrollY > 100, `did not scroll: ${JSON.stringify(probe)}`);
@@ -392,33 +463,50 @@ app.whenReady().then(async () => {
   });
 
   // ── 11. A page that already has a fragment of its own ──
-  await check('a directive appended to the page\'s own fragment still scrolls to the text', async () => {
-    // One `#`, then `:~:` — `#first:~:text=…`. The page's fragment says go to
-    // the first paragraph and the directive says go to the unique one; the
-    // directive is expected to win, and nothing is expected to break.
-    const built = annotationAddress(`${base}/page?id=k#first`, { exact: UNIQUE });
-    assert.ok(built.includes('#first:~:text='), `wrong shape: ${built}`);
-    await host(`spike.add('k', ${JSON.stringify(built)})`);
-    const guest = await until(() => { const found = guestFor('k'); return found && !found.isLoading() ? found : null; });
-    assert.ok(guest, 'the guest never attached');
-    const probe = await settled(guest, 'unique');
-    assert.ok(probe.inView, `the directive did not win over the element anchor: ${JSON.stringify(probe)}`);
-    assert.equal(withoutFragmentDirective(guest.getURL()), `${base}/page?id=k#first`,
-      'the page\'s own fragment survives for the address bar');
-  });
+  await check(
+    "a directive appended to the page's own fragment still scrolls to the text",
+    async () => {
+      // One `#`, then `:~:` — `#first:~:text=…`. The page's fragment says go to
+      // the first paragraph and the directive says go to the unique one; the
+      // directive is expected to win, and nothing is expected to break.
+      const built = annotationAddress(`${base}/page?id=k#first`, { exact: UNIQUE });
+      assert.ok(built.includes('#first:~:text='), `wrong shape: ${built}`);
+      await host(`spike.add('k', ${JSON.stringify(built)})`);
+      const guest = await until(() => {
+        const found = guestFor('k');
+        return found && !found.isLoading() ? found : null;
+      });
+      assert.ok(guest, 'the guest never attached');
+      const probe = await settled(guest, 'unique');
+      assert.ok(
+        probe.inView,
+        `the directive did not win over the element anchor: ${JSON.stringify(probe)}`,
+      );
+      assert.equal(
+        withoutFragmentDirective(guest.getURL()),
+        `${base}/page?id=k#first`,
+        "the page's own fragment survives for the address bar",
+      );
+    },
+  );
 
   // ── 12. CAPTURE: what a right-click on a selection actually delivers ──
   // The menu in `WebPanel.tsx` never appeared on any site. The wiring looked
   // right, which is the case for reading the event's shape rather than
   // assuming it (docs/ANNOTATIONS.md, capture).
   let delivered = null;
-  await check('a right-click on a selection reaches the renderer with the selected text', async () => {
-    await host(`spike.add('m', ${JSON.stringify(`${base}/page?id=m`)})`);
-    const guest = await until(() => { const found = guestFor('m'); return found && !found.isLoading() ? found : null; });
-    assert.ok(guest, 'the guest never attached');
+  await check(
+    'a right-click on a selection reaches the renderer with the selected text',
+    async () => {
+      await host(`spike.add('m', ${JSON.stringify(`${base}/page?id=m`)})`);
+      const guest = await until(() => {
+        const found = guestFor('m');
+        return found && !found.isLoading() ? found : null;
+      });
+      assert.ok(guest, 'the guest never attached');
 
-    // Select the unique paragraph inside the page, and find where it is.
-    const box = await guest.executeJavaScript(`(() => {
+      // Select the unique paragraph inside the page, and find where it is.
+      const box = await guest.executeJavaScript(`(() => {
       const element = document.getElementById('unique');
       element.scrollIntoView({ block: 'center' });
       const range = document.createRange();
@@ -430,32 +518,41 @@ app.whenReady().then(async () => {
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2),
                selected: String(window.getSelection()) };
     })()`);
-    assert.ok(box.selected.length > 0, 'nothing was selected in the page');
+      assert.ok(box.selected.length > 0, 'nothing was selected in the page');
 
-    // `sendInputEvent` needs the containing window focused (Electron's docs).
-    window_.focus();
-    guest.focus();
-    await sleep(200);
-    for (const type of ['mouseDown', 'mouseUp']) {
-      guest.sendInputEvent({ type, button: 'right', x: box.x, y: box.y, clickCount: 1 });
-    }
-    delivered = await until(async () => host('window.lastContextMenu'), 4000);
-    assert.ok(delivered, 'the renderer never saw a context-menu event at all');
-    console.log(`     on the event:  ${JSON.stringify(delivered.onEvent)}`);
-    console.log(`     event.params:  ${delivered.hasParams ? JSON.stringify(delivered.onParams) : 'ABSENT'}`);
+      // `sendInputEvent` needs the containing window focused (Electron's docs).
+      window_.focus();
+      guest.focus();
+      await sleep(200);
+      for (const type of ['mouseDown', 'mouseUp']) {
+        guest.sendInputEvent({ type, button: 'right', x: box.x, y: box.y, clickCount: 1 });
+      }
+      delivered = await until(async () => host('window.lastContextMenu'), 4000);
+      assert.ok(delivered, 'the renderer never saw a context-menu event at all');
+      console.log(`     on the event:  ${JSON.stringify(delivered.onEvent)}`);
+      console.log(
+        `     event.params:  ${delivered.hasParams ? JSON.stringify(delivered.onParams) : 'ABSENT'}`,
+      );
 
-    // THE SHAPE `WebPanel.tsx` DEPENDS ON. Every other webview event this app
-    // reads carries its fields directly on the DOM event; this one does not,
-    // and reading them there returned `undefined` — an empty selection, so the
-    // menu never opened on any page. Asserted so an upgrade that flattens it
-    // fails here rather than silently removing the feature.
-    assert.equal(delivered.hasParams, true, 'the payload is no longer under `params`');
-    assert.equal(delivered.onParams.selectionText, box.selected,
-      '`params.selectionText` is not the text that was selected');
-    assert.equal(typeof delivered.onParams.x, 'number', '`params` carries where the click was');
-    assert.equal(delivered.onEvent.selectionText, undefined,
-      'the event itself now carries the fields too — WebPanel may read either, and this note is stale');
-  });
+      // THE SHAPE `WebPanel.tsx` DEPENDS ON. Every other webview event this app
+      // reads carries its fields directly on the DOM event; this one does not,
+      // and reading them there returned `undefined` — an empty selection, so the
+      // menu never opened on any page. Asserted so an upgrade that flattens it
+      // fails here rather than silently removing the feature.
+      assert.equal(delivered.hasParams, true, 'the payload is no longer under `params`');
+      assert.equal(
+        delivered.onParams.selectionText,
+        box.selected,
+        '`params.selectionText` is not the text that was selected',
+      );
+      assert.equal(typeof delivered.onParams.x, 'number', '`params` carries where the click was');
+      assert.equal(
+        delivered.onEvent.selectionText,
+        undefined,
+        'the event itself now carries the fields too — WebPanel may read either, and this note is stale',
+      );
+    },
+  );
 
   // ── 13. WHICH ORIGIN are params.x and params.y measured from? ──
   // Check 12 could not answer this: its webview sits at the window's origin, so
@@ -465,12 +562,19 @@ app.whenReady().then(async () => {
   // which looks exactly like nothing happening (docs/ANNOTATIONS.md, capture).
   const OFFSET_LEFT = 250;
   const OFFSET_TOP = 120;
-  await check('params.x and params.y are WINDOW coordinates, and the surface\'s rect converts them', async () => {
-    await host(`window.lastContextMenu = null; spike.addOffset('n', ${JSON.stringify(`${base}/page?id=n`)}, ${OFFSET_LEFT}, ${OFFSET_TOP})`);
-    const guest = await until(() => { const found = guestFor('n'); return found && !found.isLoading() ? found : null; });
-    assert.ok(guest, 'the guest never attached');
+  await check(
+    "params.x and params.y are WINDOW coordinates, and the surface's rect converts them",
+    async () => {
+      await host(
+        `window.lastContextMenu = null; spike.addOffset('n', ${JSON.stringify(`${base}/page?id=n`)}, ${OFFSET_LEFT}, ${OFFSET_TOP})`,
+      );
+      const guest = await until(() => {
+        const found = guestFor('n');
+        return found && !found.isLoading() ? found : null;
+      });
+      assert.ok(guest, 'the guest never attached');
 
-    const box = await guest.executeJavaScript(`(() => {
+      const box = await guest.executeJavaScript(`(() => {
       const element = document.getElementById('unique');
       element.scrollIntoView({ block: 'center' });
       const range = document.createRange();
@@ -482,33 +586,40 @@ app.whenReady().then(async () => {
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
     })()`);
 
-    window_.focus();
-    guest.focus();
-    await sleep(200);
-    // Sent in the GUEST's own coordinates, which is what sendInputEvent takes.
-    for (const type of ['mouseDown', 'mouseUp']) {
-      guest.sendInputEvent({ type, button: 'right', x: box.x, y: box.y, clickCount: 1 });
-    }
-    const seen = await until(async () => host('window.lastContextMenu'), 4000);
-    assert.ok(seen, 'the offset webview never reported a context-menu event');
+      window_.focus();
+      guest.focus();
+      await sleep(200);
+      // Sent in the GUEST's own coordinates, which is what sendInputEvent takes.
+      for (const type of ['mouseDown', 'mouseUp']) {
+        guest.sendInputEvent({ type, button: 'right', x: box.x, y: box.y, clickCount: 1 });
+      }
+      const seen = await until(async () => host('window.lastContextMenu'), 4000);
+      assert.ok(seen, 'the offset webview never reported a context-menu event');
 
-    const asWebview = { x: box.x, y: box.y };
-    const asWindow = { x: box.x + OFFSET_LEFT, y: box.y + OFFSET_TOP };
-    console.log(`     sent, in the webview:    ${JSON.stringify(asWebview)}`);
-    console.log(`     params reported:         ${JSON.stringify(seen.onParams)}`);
-    console.log(`     surface rect:            ${JSON.stringify(seen.surface)}`);
-    console.log(`     params minus that rect:  ${JSON.stringify(seen.converted)}`);
+      const asWebview = { x: box.x, y: box.y };
+      const asWindow = { x: box.x + OFFSET_LEFT, y: box.y + OFFSET_TOP };
+      console.log(`     sent, in the webview:    ${JSON.stringify(asWebview)}`);
+      console.log(`     params reported:         ${JSON.stringify(seen.onParams)}`);
+      console.log(`     surface rect:            ${JSON.stringify(seen.surface)}`);
+      console.log(`     params minus that rect:  ${JSON.stringify(seen.converted)}`);
 
-    const near = (a, b) => Math.abs(a - b) <= 2;
-    assert.ok(near(seen.onParams.x, asWindow.x) && near(seen.onParams.y, asWindow.y),
-      `expected WINDOW coordinates ${JSON.stringify(asWindow)}, got ${JSON.stringify(seen.onParams)}`);
-    assert.ok(!near(seen.onParams.x, asWebview.x),
-      'the coordinate is no longer offset by the surface — the conversion below is now wrong');
-    // The invariant the app depends on: subtracting the surface's own rect
-    // recovers the point inside it, which is where the menu has to be drawn.
-    assert.ok(near(seen.converted.x, asWebview.x) && near(seen.converted.y, asWebview.y),
-      `the conversion did not recover the click: ${JSON.stringify(seen.converted)}`);
-  });
+      const near = (a, b) => Math.abs(a - b) <= 2;
+      assert.ok(
+        near(seen.onParams.x, asWindow.x) && near(seen.onParams.y, asWindow.y),
+        `expected WINDOW coordinates ${JSON.stringify(asWindow)}, got ${JSON.stringify(seen.onParams)}`,
+      );
+      assert.ok(
+        !near(seen.onParams.x, asWebview.x),
+        'the coordinate is no longer offset by the surface — the conversion below is now wrong',
+      );
+      // The invariant the app depends on: subtracting the surface's own rect
+      // recovers the point inside it, which is where the menu has to be drawn.
+      assert.ok(
+        near(seen.converted.x, asWebview.x) && near(seen.converted.y, asWebview.y),
+        `the conversion did not recover the click: ${JSON.stringify(seen.converted)}`,
+      );
+    },
+  );
 
   // ── 14. THE ANCHOR, end to end: capture a repeated phrase and go back to it ──
   // The whole point of prefix/suffix, run through the app's own code: the
@@ -517,7 +628,10 @@ app.whenReady().then(async () => {
   // capture).
   await check('an anchor read from the page sends you back to the right copy', async () => {
     await host(`spike.add('p', ${JSON.stringify(`${base}/page?id=p`)})`);
-    const guest = await until(() => { const found = guestFor('p'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('p');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
 
     // Select the SECOND copy, the way a person would.
@@ -556,7 +670,10 @@ app.whenReady().then(async () => {
   // because it is what a person gets rather than an error.
   await check('a quote with no anchor lands on the first copy, not nowhere', async () => {
     await host(`spike.add('q', ${JSON.stringify(`${base}/page?id=q`)})`);
-    const guest = await until(() => { const found = guestFor('q'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('q');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     await guest.loadURL(annotationAddress(`${base}/page?id=q&back=1`, { exact: REPEATED }));
     const first = await settled(guest, 'first');
@@ -590,15 +707,25 @@ app.whenReady().then(async () => {
 
     // Baseline: the same paragraph, scrolled into view WITHOUT a directive.
     await host(`spike.add('r', ${JSON.stringify(`${base}/page?id=r`)})`);
-    const plain = await until(() => { const found = guestFor('r'); return found && !found.isLoading() ? found : null; });
+    const plain = await until(() => {
+      const found = guestFor('r');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(plain, 'the guest never attached');
-    await plain.executeJavaScript(`document.getElementById('unique').scrollIntoView({ block: 'center' })`);
+    await plain.executeJavaScript(
+      `document.getElementById('unique').scrollIntoView({ block: 'center' })`,
+    );
     await sleep(500);
     const before = await coloured(plain, 'unique');
 
     // The same page, reached through an annotation address.
-    await host(`spike.add('s', ${JSON.stringify(annotationAddress(`${base}/page?id=s`, { exact: UNIQUE }))})`);
-    const marked = await until(() => { const found = guestFor('s'); return found && !found.isLoading() ? found : null; });
+    await host(
+      `spike.add('s', ${JSON.stringify(annotationAddress(`${base}/page?id=s`, { exact: UNIQUE }))})`,
+    );
+    const marked = await until(() => {
+      const found = guestFor('s');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(marked, 'the guest never attached');
     await settled(marked, 'unique');
     await sleep(500);
@@ -608,7 +735,9 @@ app.whenReady().then(async () => {
     await sleep(2500);
     const later = await coloured(marked, 'unique');
 
-    console.log(`     coloured pixels — plain: ${before}  annotated: ${after}  after 2.5s: ${later}`);
+    console.log(
+      `     coloured pixels — plain: ${before}  annotated: ${after}  after 2.5s: ${later}`,
+    );
     assert.ok(before >= 0 && after >= 0, 'the target box could not be captured');
     assert.ok(after > before + 50, `no paint appeared: plain ${before}, annotated ${after}`);
   });
@@ -621,7 +750,10 @@ app.whenReady().then(async () => {
   await check('re-opening the same passage scrolls back to it and paints it again', async () => {
     const address = annotationAddress(`${base}/page?id=t`, { exact: UNIQUE });
     await host(`spike.add('t', ${JSON.stringify(address)})`);
-    const guest = await until(() => { const found = guestFor('t'); return found && !found.isLoading() ? found : null; });
+    const guest = await until(() => {
+      const found = guestFor('t');
+      return found && !found.isLoading() ? found : null;
+    });
     assert.ok(guest, 'the guest never attached');
     const arrived = await settled(guest, 'unique');
     assert.ok(arrived.inView, 'did not arrive at the passage');
@@ -630,13 +762,19 @@ app.whenReady().then(async () => {
     const loadedAt = await guest.executeJavaScript('window.loadedAt');
     await guest.executeJavaScript('window.scrollTo(0, 0)');
     await sleep(300);
-    assert.equal((await guest.executeJavaScript(`window.probe('unique')`)).scrollY, 0, 'did not scroll away');
+    assert.equal(
+      (await guest.executeJavaScript(`window.probe('unique')`)).scrollY,
+      0,
+      'did not scroll away',
+    );
 
     // They click the same annotation again.
     await guest.loadURL(address);
     const back = await settled(guest, 'unique');
-    const same = await guest.executeJavaScript('window.loadedAt') === loadedAt;
-    console.log(`     back at the passage: ${back.inView}  scrollY=${back.scrollY}  document kept: ${same}`);
+    const same = (await guest.executeJavaScript('window.loadedAt')) === loadedAt;
+    console.log(
+      `     back at the passage: ${back.inView}  scrollY=${back.scrollY}  document kept: ${same}`,
+    );
     assert.ok(back.inView, `the identical address did not take them back: ${JSON.stringify(back)}`);
   });
 
@@ -645,7 +783,11 @@ app.whenReady().then(async () => {
     for (const id of ['a', 'b', 'c', 'd', 'e', 'f', 'i', 'j', 'k', 'm', 'p', 'q', 'r', 's', 't']) {
       const guest = guestFor(id);
       assert.ok(guest, `guest ${id} is gone`);
-      assert.equal(guest.session, session.fromPartition(PARTITION), `guest ${id} is in the wrong session`);
+      assert.equal(
+        guest.session,
+        session.fromPartition(PARTITION),
+        `guest ${id} is in the wrong session`,
+      );
       const node = await guest.executeJavaScript('typeof process').catch(() => 'undefined');
       assert.equal(node, 'undefined', `guest ${id} has Node`);
     }
@@ -653,9 +795,17 @@ app.whenReady().then(async () => {
 
   server.close();
   const failed = results.filter(result => !result.ok);
-  console.log(`\nElectron ${process.versions.electron}, Chromium ${process.versions.chrome}: ${results.length - failed.length} passed, ${failed.length} failed`);
-  console.log(`loadURL with only the fragment changed: ${samePage && samePage.scrollY > 100 ? 'scrolls' : 'does not scroll'}, document ${sameDocument ? 'SURVIVED' : 'was RELOADED'}`);
-  console.log(`location.hash, WITH a user gesture:    ${scripted && scripted.scrollY > 100 ? "scrolls" : "does not scroll"}`);
-  console.log(`location.hash, WITHOUT a user gesture: ${ungestured && ungestured.scrollY > 100 ? "scrolls" : "DOES NOT SCROLL — the gesture is the gate"}`);
+  console.log(
+    `\nElectron ${process.versions.electron}, Chromium ${process.versions.chrome}: ${results.length - failed.length} passed, ${failed.length} failed`,
+  );
+  console.log(
+    `loadURL with only the fragment changed: ${samePage && samePage.scrollY > 100 ? 'scrolls' : 'does not scroll'}, document ${sameDocument ? 'SURVIVED' : 'was RELOADED'}`,
+  );
+  console.log(
+    `location.hash, WITH a user gesture:    ${scripted && scripted.scrollY > 100 ? 'scrolls' : 'does not scroll'}`,
+  );
+  console.log(
+    `location.hash, WITHOUT a user gesture: ${ungestured && ungestured.scrollY > 100 ? 'scrolls' : 'DOES NOT SCROLL — the gesture is the gate'}`,
+  );
   app.exit(failed.length === 0 ? 0 : 1);
 });
