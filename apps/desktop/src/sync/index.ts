@@ -11,7 +11,7 @@
 import { syncUrl, workosClientId } from './config.ts';
 import { appVersion, checkVersion, type VersionState } from './version.ts';
 import {
-  emit, count, histogram, span, identify, useOtlpIfConfigured, type Identity,
+  emit, count, histogram, span, identify, useOtlpIfConfigured, tapTelemetry, type Identity,
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
@@ -40,6 +40,7 @@ import { createInvalidator } from './invalidate.ts';
 import { createLink } from './link.ts';
 import { createReauth } from './reauth.ts';
 import { relayTelemetry } from './telemetry-relay.ts';
+import { TelemetryUploader } from './telemetry-upload.ts';
 import { createRunnerLink } from './runner.ts';
 import { LocalStore } from './local/store.ts';
 import { createLocalRooms } from './local/rooms.ts';
@@ -56,7 +57,28 @@ type Reply =
   | { id: number; ok: true; data: unknown; epoch: number }
   | { id: number; ok: false; error: string; epoch: number };
 
+/**
+ * DEVELOPMENT ONLY. A packaged build has no collector configured and must not
+ * be given one: an ingest credential inside a distributable binary is trivially
+ * extractable (OBSERVABILITY.md §3). In production the uploader below carries
+ * telemetry to our own server instead, where it is scrubbed before it leaves.
+ */
 useOtlpIfConfigured('desktop');
+
+/**
+ * Client telemetry, posted to our own server (OBSERVABILITY.md §3).
+ *
+ * Fed by the same sink tee the console and OTLP use, so it sees every record
+ * this process produces — including the renderer's, which arrive through
+ * `telemetry-relay.ts` and are already catalogue-checked once by then.
+ *
+ * The token is resolved PER FLUSH rather than captured: a client signs in,
+ * signs out and switches workspaces, and a captured token would be stale at the
+ * first one of those.
+ */
+const uploader = new TelemetryUploader({ token: () => session.accessToken });
+tapTelemetry(record => uploader.add(record));
+uploader.start();
 
 /**
  * The BOUNDED half of the identity, known before anything is opened.

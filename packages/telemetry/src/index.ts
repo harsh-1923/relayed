@@ -164,6 +164,45 @@ export function useOtlpIfConfigured(service: 'desktop' | 'server' | 'agents'): O
 }
 
 /**
+ * Watch every record this process produces, without becoming a sink.
+ *
+ * FOR THE DESKTOP'S UPLOAD PATH (OBSERVABILITY.md §3), which cannot be a second
+ * SDK: the renderer is forbidden one by `renderer/no-telemetry-sdk`, and this
+ * process already owns the buffer and the flush policy. A tap wraps whatever is
+ * installed, so it composes with the console sink and with OTLP rather than
+ * replacing either.
+ *
+ * The callback MUST NOT THROW and must not be slow. It is called on the emitting
+ * path, and telemetry may never delay user data (§7) — so it is wrapped, and a
+ * callback that throws is ignored rather than surfacing into the caller.
+ */
+export function tapTelemetry(
+  onRecord: (r: { kind: 'event' | 'count' | 'histogram'; name: string;
+                  value?: number; fields?: Record<string, unknown>;
+                  labels?: Record<string, string> }) => void,
+): void {
+  const safe = (fn: () => void) => { try { fn(); } catch { /* never the caller's problem */ } };
+  const inner = sink;
+  sink = {
+    event: (n, f) => {
+      inner.event(n, f);
+      safe(() => onRecord({ kind: 'event', name: n, fields: f as Record<string, unknown> }));
+    },
+    count: (m, l, by) => {
+      inner.count(m, l, by);
+      safe(() => onRecord({ kind: 'count', name: m, labels: l as Record<string, string> }));
+    },
+    gauge: (m, v, l) => { inner.gauge(m, v, l); },
+    histogram: (m, v, l) => {
+      inner.histogram(m, v, l);
+      safe(() => onRecord({ kind: 'histogram', name: m, value: v, labels: l as Record<string, string> }));
+    },
+    recordSpan: (sp) => { inner.recordSpan?.(sp); },
+    identify: (who) => { inner.identify?.(who); },
+  };
+}
+
+/**
  * Emit a catalogued event. The name must exist in `events`, and the fields must
  * match its spec — so there is no argument position where a message body could
  * be passed. That is the privacy control, not a guideline (OBSERVABILITY.md §6).

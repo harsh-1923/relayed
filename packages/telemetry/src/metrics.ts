@@ -805,6 +805,15 @@ export const metrics = {
        + 'catalogue by the number of releases in the field. Join on it when a '
        + 'regression looks version-shaped.',
   },
+  'telemetry.ingested': {
+    kind: 'counter', labels: ['signal'],
+    doc: 'Records accepted from a CLIENT at the ingest endpoint (§3), after the '
+       + 'catalogue check. The number that says whether desktop telemetry is '
+       + 'arriving at all — a server reporting healthily while this sits at zero '
+       + 'means every client is silent, which is indistinguishable from no '
+       + 'clients running unless this metric exists. Counted per batch, not per '
+       + 'record, because that is the question it answers.',
+  },
   'telemetry.dropped': {
     kind: 'counter', labels: ['signal'],
     doc: 'Records the OTLP buffer refused because it was full. Answers the one '

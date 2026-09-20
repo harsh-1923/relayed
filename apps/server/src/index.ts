@@ -1,11 +1,12 @@
 import Fastify from 'fastify';
-import { emit, identify, useOtlpIfConfigured } from '@relayed/telemetry';
+import { emit, identify, useOtlpIfConfigured, OtlpSink } from '@relayed/telemetry';
 import { env } from './env.ts';
 import { migrate } from './db/migrate.ts';
 import { authRoutes } from './auth/routes.ts';
 import { invitationRoutes } from './auth/invitations.ts';
 import { landingRoutes } from './web/landing.ts';
 import { versionRoutes } from './web/version.ts';
+import { telemetryRoutes } from './web/telemetry.ts';
 import { pool, db } from './db/client.ts';
 import { startPoller } from './workos/poller.ts';
 import { attachSyncSocket, SYNC_PATH } from './sync/socket.ts';
@@ -61,6 +62,20 @@ await app.register(landingRoutes);
 // Public, and registered beside /health for the same reason: it must answer a
 // client that cannot yet authenticate.
 await app.register(versionRoutes);
+
+/**
+ * Where desktop telemetry lands (OBSERVABILITY.md §3).
+ *
+ * A SECOND SINK, with `service: 'desktop'`. The same event from a laptop and
+ * from this process are different series — merging them under `relayed-server`
+ * would make "the server is fine" and "every client is broken" the same shape
+ * on a dashboard. Null when no collector is configured, which makes the route
+ * a validating no-op rather than an error.
+ */
+const clientTelemetry = process.env['OTEL_EXPORTER_OTLP_ENDPOINT']
+  ? new OtlpSink({ endpoint: process.env['OTEL_EXPORTER_OTLP_ENDPOINT'], service: 'desktop' })
+  : null;
+await app.register(telemetryRoutes({ sink: clientTelemetry }));
 
 // The sync socket, on Fastify's own HTTP server rather than a second listener:
 // one port, one TLS terminator, and an upgrade that a proxy already knows how
