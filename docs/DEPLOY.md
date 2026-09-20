@@ -15,7 +15,9 @@ This is the runbook. The *reasoning* behind hosting choices is in
 | | |
 |---|---|
 | **Host** | Railway — the server and Postgres as two services in one project |
-| **API address** | `https://api.relayed.imharsh.in` |
+| **API address** | `https://api.relayed.imharsh.in` — **live** |
+| **Project** | `relayed`, `9962b6e0-c7d1-49a1-b703-d84a09d0af44` |
+| **Region** | `asia-southeast1`, both services |
 | **Instances** | **Exactly one.** Never more (§2) |
 | **Build** | A plain Dockerfile, so the same image runs anywhere |
 | **Migrations** | In-process at boot. No separate deploy step |
@@ -109,21 +111,47 @@ repo**. Authorise the Railway GitHub app for the repo if prompted. Pick
 repo, and it will guess wrong: this is a pnpm workspace whose server imports
 source `.ts` from `packages/`. In **Settings → Build**:
 
-| Setting | Value | Why |
-|---|---|---|
-| Root Directory | `/` | The build context needs the lockfile and `packages/` |
-| Dockerfile Path | `apps/server/Dockerfile` | Set via `RAILWAY_DOCKERFILE_PATH` |
+```bash
+railway variable set RAILWAY_DOCKERFILE_PATH=apps/server/Dockerfile --service relayed-server
+```
+
+**`railway.json` was not enough, and said nothing about it.** The service sat at
+`builder: RAILPACK` with `railwayConfigFile: null` — Railway never picked the
+file up — so it auto-detected an Electron monorepo as a generic Node app and
+failed. The service variable is what actually selects the Dockerfile.
+
+Leave **Root Directory at `/`**. Setting it to `apps/server` is the tempting
+mistake: it excludes `pnpm-lock.yaml` and every workspace package, and the
+install dies on an unresolvable `workspace:*`. Root Directory is the build
+*context*; `RAILWAY_DOCKERFILE_PATH` is the *selection*.
 
 Leaving Root Directory at `/` is the part people get wrong. Setting it to
 `apps/server` would exclude `pnpm-lock.yaml` and every workspace package, and
 the install would fail on an unresolvable `workspace:*`.
 
 **3 — Name it and set the region.** Rename the service to `relayed-server`.
-In **Settings → Deploy**, set the region, and set **Replicas to 1** (§2).
 
-**4 — Add Postgres.** In the project canvas, **New → Database → Add
-PostgreSQL**. Put it in **the same region as the server** — region is
-per-service, and a split lands cross-region latency on every query.
+```bash
+railway service scale --service relayed-server southeast-asia=1 sfo=0
+```
+
+**`sfo=0` IS THE LOAD-BEARING HALF.** Scaling to a region *adds* it and leaves
+the default in place: naming only `southeast-asia=1` returns
+`{"asia-southeast1": {"numReplicas": 1}, "sfo": {"numReplicas": 1}}` — two
+replicas in two regions, which is exactly the split §2 forbids, arrived at by a
+command that reads like it sets one. Read the output, do not assume it.
+
+**4 — Add Postgres**, then put it in the same region:
+
+```bash
+railway add --database postgres
+railway service scale --service Postgres southeast-asia=1 sfo=0
+```
+
+A new Postgres has `region: null`, meaning the platform default. Left alone it
+sits in the US while the server runs in Singapore, and every membership query —
+one per delivered event (§2) — crosses the Pacific. Cheap to fix before there
+is data; not after.
 
 **5 — Set the environment variables** (§5), then deploy.
 
@@ -213,13 +241,22 @@ Railway would strand every installed client the day you move. A hostname you own
 makes that move a DNS change nobody notices.
 
 1. Service → **Settings → Networking → Custom Domain** → `api.relayed.imharsh.in`
-2. Railway shows a CNAME target. Add it at your DNS provider for `imharsh.in`:
+2. Railway returns **two** records. Both are required — the TXT proves
+   ownership and no certificate is issued without it:
 
-   ```
-   api.relayed   CNAME   <target>.railway.app
-   ```
+   | Type | Name | Value |
+   |---|---|---|
+   | CNAME | `api.relayed` | `<target>.up.railway.app` |
+   | TXT | `_railway-verify.api.relayed` | `railway-verify=<token>` |
 
-3. Wait for propagation. TLS is issued automatically.
+   GoDaddy appends the zone itself, so the Name is `api.relayed`, never
+   `api.relayed.imharsh.in` — the full form creates `…imharsh.in.imharsh.in`
+   and resolves nowhere.
+
+3. Verification took about three minutes, then the certificate issued in under
+   one. `dig +short TXT _railway-verify.api.relayed.imharsh.in` can return
+   empty from a public resolver while already correct at the authoritative
+   nameserver; query the NS directly before concluding a record is missing.
 
 Set the health check path to `/health` in **Settings → Deploy** so a failed boot
 is caught before traffic reaches it.
@@ -234,7 +271,7 @@ Green means all four, in order.
 curl https://api.relayed.imharsh.in/health
 ```
 
-Expect `{"ok":true,"service":"relayed-server"}`.
+Expect `{"ok":true,"service":"relayed-server"}`. Confirmed 2026-09-20.
 
 **2 — Migrations ran.** The deploy log should carry a `migrations applied` line
 on first boot, listing the files. Absent on later deploys, which is correct.
@@ -252,6 +289,19 @@ Sign in, send a message, reload, confirm it is still there.
 another message. This is the one Railway behaviour worth confirming by hand: a
 proxy that closes idle WebSockets would make clients look flaky in a way that is
 genuinely hard to diagnose later.
+
+**Testing the upgrade with curl: force HTTP/1.1.** Railway serves HTTP/2, which
+has no `Upgrade` mechanism, so a plain `curl` websocket probe returns **404 and
+looks like a broken route**:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" --http1.1 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  https://api.relayed.imharsh.in/sync
+```
+
+`101` is correct. The client is unaffected either way — `ws` speaks HTTP/1.1.
 
 Then take a manual backup from the Postgres service's **Backups** tab, and
 confirm PITR is on.
@@ -304,3 +354,21 @@ offline (R3), then reconnect and catch up.
 **The one thing that would make a move expensive** is letting the API address
 change. Keep it on `imharsh.in` and no client ever learns where the server
 lives.
+
+---
+
+## 10. Known follow-ups
+
+**`railway.json` is deprecated**, and the CLI warns on every command: Config as
+Code stops working **2026-12-01**. `railway config migrate` produces
+`.railway/railway.ts` but **drops `dockerfilePath` and `builder` into
+comments** rather than translating them, so applying it as-is would leave the
+service with no Dockerfile selection. Since `RAILWAY_DOCKERFILE_PATH` is now set
+as a service variable, the build does not actually depend on `railway.json` any
+more — but the healthcheck and replica count still do. Migrate by hand before
+December.
+
+**Telemetry is dark.** `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so the server
+reports nothing anywhere. Grafana Cloud's free tier accepts OTLP and the
+dashboards in `infra/grafana/` already exist. Worth wiring before the first
+outside user, not after.
