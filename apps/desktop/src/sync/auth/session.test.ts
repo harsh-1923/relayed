@@ -216,7 +216,9 @@ test('state changes are observable', async () => {
  * Everything above tests the paths that fail. Nothing tested the one that
  * succeeds, which is why the ordering below could regress unnoticed.
  */
-async function mintingServer(): Promise<{ url: string; close(): Promise<void> }> {
+async function mintingServer(
+  extra: Record<string, unknown> = {},
+): Promise<{ url: string; close(): Promise<void> }> {
   const { createServer } = await import('node:http');
   const server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
@@ -227,7 +229,7 @@ async function mintingServer(): Promise<{ url: string; close(): Promise<void> }>
     }
     req.on('data', () => {});
     req.on('end', () => res.end(JSON.stringify({
-      access_token: 'new_access', refresh_token: 'rt_new', expires_in: 900 })));
+      access_token: 'new_access', refresh_token: 'rt_new', expires_in: 900, ...extra })));
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
   const port = (server.address() as { port: number }).port;
@@ -236,6 +238,38 @@ async function mintingServer(): Promise<{ url: string; close(): Promise<void> }>
     close: () => new Promise<void>(r => server.close(() => r())),
   };
 }
+
+test('an ACCEPTED INVITATION survives into the authenticated state', async () => {
+  // The regression this file did not have. `pendingJoins` lived only on
+  // `needs_workspace`, so the one construction of `authenticated` dropped it —
+  // and the renderer, reading a type that could not hold it, gated every use on
+  // `needs_workspace`.
+  //
+  // The effect was that anyone who made a workspace BEFORE being invited to
+  // another could never join the second: the handle picker was the only thing
+  // that could complete a join, and nothing could reach it. The server sent the
+  // field the whole time, on every refresh.
+  const server = await mintingServer({ pending_joins: [
+    { workspace_id: 'wsp_relay', org_id: 'org_relay', name: 'Relay',
+      handle_suggestions: ['harsh'] },
+  ] });
+  process.env['RELAYED_SERVER_URL'] = server.url;
+  try {
+    const vault = fakeVault();
+    await vault.store(WSP_A, 'rt_old');
+    const s: Session = new Session(deps({ vault }));
+    await s.activate(WSP_A);
+    assert.equal(s.state.status, 'authenticated');
+    if (s.state.status !== 'authenticated') return;
+    assert.deepEqual(
+      s.state.pendingJoins.map(j => j.workspaceId), ['wsp_relay'],
+      'a workspace WorkOS admitted us to, with no actor here yet',
+    );
+  } finally {
+    delete process.env['RELAYED_SERVER_URL'];
+    await server.close();
+  }
+});
 
 test('onSession sees the access token it is about to persist', async () => {
   // onSession lands the session in storage and then starts fillActors, which

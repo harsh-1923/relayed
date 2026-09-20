@@ -4,6 +4,7 @@
 import { Link, useLocation } from 'react-router';
 import {
   ArrowLeft, Bot, Code, ColorPalette, FilterHorizontal, Globe, KeyboardWired, NotificationBellOn, Tools,
+  UserPlus,
 } from '@relayed/icons';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useAnnounceSidebar } from './use-sidebar-presence';
@@ -17,6 +18,7 @@ import { cn } from '@/lib/utils';
 const SETTINGS_NAVIGATION = [
   { to: '/settings/general', label: 'General', icon: FilterHorizontal },
   { to: '/settings/appearance', label: 'Appearance', icon: ColorPalette },
+  { to: '/settings/invitations', label: 'Invitations', icon: UserPlus },
   { to: '/settings/agent', label: 'Claude Agent', icon: Bot },
   { to: '/settings/notifications', label: 'Notifications', icon: NotificationBellOn },
   { to: '/settings/shortcuts', label: 'Keyboard shortcuts', icon: KeyboardWired },

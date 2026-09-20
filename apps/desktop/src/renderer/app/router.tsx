@@ -31,6 +31,7 @@ import { AccountSettings } from '@/routes/AccountSettings';
 import { AccountSettingsAdvanced } from '@/routes/AccountSettingsAdvanced';
 import { AccountSettingsBrowsers } from '@/routes/AccountSettingsBrowsers';
 import { AccountSettingsAppearance } from '@/routes/AccountSettingsAppearance';
+import { AccountSettingsInvitations } from '@/routes/AccountSettingsInvitations';
 import { AccountSettingsAgent } from '@/routes/AccountSettingsAgent';
 import { AccountSettingsDevelopers } from '@/routes/AccountSettingsDevelopers';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
@@ -68,6 +69,7 @@ export function Router() {
           <Route index element={<Navigate to="general" replace />} />
           <Route path="general" element={<AccountSettingsGeneral />} />
           <Route path="appearance" element={<AccountSettingsAppearance />} />
+          <Route path="invitations" element={<AccountSettingsInvitations />} />
           <Route path="agent" element={<AccountSettingsAgent />} />
           <Route path="notifications" element={<AccountSettingsNotifications />} />
           <Route path="shortcuts" element={<AccountSettingsShortcuts />} />

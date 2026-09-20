@@ -232,7 +232,14 @@ export type AuthState =
       handleSuggestions: string[];
       pendingJoins: PendingJoin[];
     }
-  | { status: "authenticated"; actor: Actor | null; expiresAt: number }
+  /** `pendingJoins`: invitations accepted at WorkOS with no actor here yet.
+      Present when authenticated too, not only on first run — see session.ts. */
+  | {
+      status: "authenticated";
+      actor: Actor | null;
+      expiresAt: number;
+      pendingJoins: PendingJoin[];
+    }
   | { status: "stale"; actor: Actor | null; reason: string };
 
 /**

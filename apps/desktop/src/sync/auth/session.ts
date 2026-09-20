@@ -42,7 +42,25 @@ export type AuthState =
   /** Signed in with WorkOS but no org yet — onboarding must run (§9). */
   | { status: 'needs_workspace'; identity: { email: string; displayName: string };
       handleSuggestions: string[]; pendingJoins: PendingJoin[] }
-  | { status: 'authenticated'; actor: Actor | null; expiresAt: number }
+  /**
+   * `pendingJoins` IS CARRIED HERE TOO, not only on `needs_workspace`.
+   *
+   * A pending join is a workspace WorkOS says you belong to and we have no
+   * actor for — an accepted invitation, seen for the first time. That is not
+   * only a first-run condition: somebody who signed up on their own and was
+   * invited afterwards is authenticated AND has one. The server has always sent
+   * it in both branches and recomputes it on every refresh, precisely so an
+   * invitation accepted while signed in appears without signing out.
+   *
+   * It used to stop here. The field existed on `needs_workspace` alone, so the
+   * only construction of this state dropped it, and every renderer that read it
+   * had to gate on `needs_workspace` — correctly, given the type. The effect was
+   * that anyone who created a workspace before being invited to another could
+   * never join the second one: the handle picker was the only thing that could
+   * complete a join, and it was unreachable.
+   */
+  | { status: 'authenticated'; actor: Actor | null; expiresAt: number;
+      pendingJoins: PendingJoin[] }
   /** Signed in, but the token could not be refreshed. Reads still work. */
   | { status: 'stale'; actor: Actor | null; reason: string };
 
@@ -408,6 +426,7 @@ export class Session {
     // successful sign-in.
     let actor = session.actor;
     try { actor = await fetchMe(session.accessToken); } catch { /* keep the ids we have */ }
-    this.#set({ status: 'authenticated', actor, expiresAt: session.expiresAt });
+    this.#set({ status: 'authenticated', actor, expiresAt: session.expiresAt,
+                pendingJoins: session.pendingJoins });
   }
 }

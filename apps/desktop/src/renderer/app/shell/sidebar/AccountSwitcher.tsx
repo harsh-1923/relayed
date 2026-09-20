@@ -14,7 +14,7 @@
 // reasoning in a dropdown is a second place for it to drift.
 import { Link, useParams } from 'react-router';
 import {
-  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo, Bot,
+  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo, Bot, UserPlus,
 } from '@relayed/icons';
 import { useSession } from '../../state';
 import {
@@ -28,6 +28,11 @@ import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function AccountSwitcher() {
   const { state } = useSession();
+  // Present on `authenticated` as well as `needs_workspace`: an invitation
+  // accepted after you already had a workspace of your own (session.ts).
+  const pendingJoins = state.auth.status === 'authenticated' || state.auth.status === 'needs_workspace'
+    ? state.auth.pendingJoins
+    : [];
   const { wsId } = useParams();
   const me = state.workspaces.find(w => w.workspaceId === (wsId ?? state.workspaceId));
 
@@ -85,6 +90,18 @@ export function AccountSwitcher() {
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 {others.length > 0 ? `Account · ${others.length} more on this device` : 'Account'}
               </DropdownMenuLabel>
+              {/* A workspace admitted you and you have no actor in it yet. It
+                  cannot live under /w/ — it is about a workspace you are not in
+                  — and it is easy to have no idea it is waiting, so it is
+                  surfaced HERE rather than only inside settings. */}
+              {pendingJoins.length > 0 && (
+                <DropdownMenuItem render={<Link to="/settings/invitations" />}>
+                  <UserPlus className="size-4 text-muted-foreground" />
+                  {pendingJoins.length === 1
+                    ? `Join ${pendingJoins[0]?.name ?? 'workspace'}`
+                    : `${pendingJoins.length} pending invitations`}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem render={<Link to="/settings/general" />}>
                 <Settings01 className="size-4 text-muted-foreground" />
                 Settings
