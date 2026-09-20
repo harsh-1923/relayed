@@ -1,0 +1,26 @@
+{
+  "id": "baea8359-76a4-4b65-a1d4-a7f9db9990fb",
+  "text": "Mei Lin owns the QUARTZ runbook and is responsible for keeping it current. | When: 2026-09-01 | Involving: Mei Lin",
+  "context": "A conversation between people in a workspace. None of them owns this memory bank.",
+  "date": "2026-09-01T10:00:00.010000+00:00",
+  "fact_type": "world",
+  "document_id": "b-1",
+  "mentioned_at": "2026-09-01T10:00:00.010000+00:00",
+  "occurred_start": null,
+  "occurred_end": null,
+  "entities": "Mei Lin, QUARTZ runbook",
+  "chunk_id": "spike-scopes-mu861qey_b-1_0",
+  "proof_count": 1,
+  "tags": ["space:spc_bbb"],
+  "metadata": {
+    "spike": "scopes"
+  },
+  "consolidated_at": "2026-09-19T09:09:39.583252+00:00",
+  "consolidation_failed_at": null,
+  "state": "valid",
+  "invalidation_reason": null,
+  "invalidated_at": null,
+  "edited_at": null,
+  "updated_at": "2026-09-19T09:09:37.401961+00:00",
+  "source_memory_ids": []
+}

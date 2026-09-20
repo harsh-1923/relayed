@@ -1,0 +1,6 @@
+[
+  {
+    "description": "every returned fact carries its documentId",
+    "detail": "without it a recalled fact cannot be traced to its messages, and §7.2 citations are unbuildable"
+  }
+]

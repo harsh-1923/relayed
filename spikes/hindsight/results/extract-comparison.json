@@ -1,0 +1,41 @@
+[
+  {
+    "name": "per-message",
+    "bank": "spike-per-message-mu86dq7e",
+    "calls": 45,
+    "retainSeconds": 101,
+    "tokensApprox": 2527,
+    "costApproxUsd": 0.0253,
+    "factsExtracted": 37,
+    "groundTruthFound": 10,
+    "crossTurnFound": 6,
+    "selfContainedFound": 4,
+    "missed": ["rebuild-progress", "runbook-stale", "pr-link", "blast-radius"]
+  },
+  {
+    "name": "window-20",
+    "bank": "spike-window-20-mu86ggpz",
+    "calls": 3,
+    "retainSeconds": 8,
+    "tokensApprox": 1151,
+    "costApproxUsd": 0.0115,
+    "factsExtracted": 13,
+    "groundTruthFound": 13,
+    "crossTurnFound": 7,
+    "selfContainedFound": 6,
+    "missed": ["pr-link"]
+  },
+  {
+    "name": "episode",
+    "bank": "spike-episode-mu86h6nf",
+    "calls": 4,
+    "retainSeconds": 28,
+    "tokensApprox": 1184,
+    "costApproxUsd": 0.0118,
+    "factsExtracted": 15,
+    "groundTruthFound": 14,
+    "crossTurnFound": 7,
+    "selfContainedFound": 7,
+    "missed": []
+  }
+]

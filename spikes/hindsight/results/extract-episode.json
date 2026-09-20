@@ -1,0 +1,32 @@
+{
+  "outcome": {
+    "name": "episode",
+    "bank": "spike-episode-mu86h6nf",
+    "calls": 4,
+    "retainSeconds": 28,
+    "tokensApprox": 1184,
+    "costApproxUsd": 0.0118,
+    "factsExtracted": 15,
+    "groundTruthFound": 14,
+    "crossTurnFound": 7,
+    "selfContainedFound": 7,
+    "missed": []
+  },
+  "facts": [
+    "Kiran Shah, Mei Lin, and Dev Anand are experiencing frequent session timeouts, being logged out every twenty minutes. | When: on September 15, 2026 | Involving: Kiran Shah, Mei Lin, Dev Anand",
+    "Mei Lin filed ticket PLAT-2291 to conduct an audit of the scheduler. | When: on September 15, 2026 | Involving: Mei Lin",
+    "Dev Anand committed to modifying the job to exit with a non-zero status on lock timeouts by September 15, 2026. | When: on September 15, 2026 | Involving: Dev Anand, Priya Rao",
+    "The billing export and search reindex jobs are also running on the same scheduler and are susceptible to silent failures. | When: on September 15, 2026 | Involving: Kiran Shah, Priya Rao",
+    "The nightly job for refreshing the statistics table has been failing silently since September 12, 2026, because it exits with a 0 status code on lock timeouts. | When: since September 12, 2026 | Involving: Dev Anand",
+    "The database rebuild is slow because the statistics table has not been refreshed since June 2026. | When: on September 15, 2026 | Involving: Dev Anand",
+    "Sam Oyelaran is inquiring if the database cutover is confirmed for Thursday, September 17, 2026. | When: on September 15, 2026 | Involving: Sam Oyelaran",
+    "Priya Rao approved the rollback PR with a non-blocking comment regarding the dry-run flag. | When: 2026-09-15 | Involving: Priya Rao, Dev Anand",
+    "Dev Anand created a rollback PR at https://github.com/acme/platform/pull/4471. | When: 2026-09-15 | Involving: Dev Anand",
+    "Kiran Shah committed to updating the QUARTZ runbook by September 17, 2026. | When: 2026-09-15 | Involving: Kiran Shah | The current runbook is out of date.",
+    "The QUARTZ runbook, section 4, contains the rollback procedure but is currently out of date with old replica names. | When: 2026-09-15 | Involving: Mei Lin, Kiran Shah",
+    "The new cutover window is scheduled for Thursday, September 17, 2026, at 22:00. | When: 2026-09-17 | Involving: Priya Rao, Kiran Shah",
+    "Dev Anand committed to creating the rollback script and submitting a PR within one hour. | When: 2026-09-15 | Involving: Dev Anand",
+    "The team decided to roll back the current index rebuild and retry the cutover later, accepting that reporting queries will remain slow for one week. | When: 2026-09-15 | Involving: Priya Rao, Dev Anand, Mei Lin, Kiran Shah | A half-finished rebuild during cutover is considered too risky.",
+    "The index rebuild is running slowly, having completed only 40% in six hours, which will not finish before the scheduled cutover window. | When: 2026-09-15 | Involving: Priya Rao, Dev Anand"
+  ]
+}

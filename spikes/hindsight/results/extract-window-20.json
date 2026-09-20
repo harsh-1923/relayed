@@ -1,0 +1,30 @@
+{
+  "outcome": {
+    "name": "window-20",
+    "bank": "spike-window-20-mu86ggpz",
+    "calls": 3,
+    "retainSeconds": 8,
+    "tokensApprox": 1151,
+    "costApproxUsd": 0.0115,
+    "factsExtracted": 13,
+    "groundTruthFound": 13,
+    "crossTurnFound": 7,
+    "selfContainedFound": 6,
+    "missed": ["pr-link"]
+  },
+  "facts": [
+    "Dev Anand committed to modifying the job to exit with a non-zero status on lock timeouts. | When: on September 15, 2026 | Involving: Dev Anand, Priya Rao | Priya Rao requested this fix be implemented today, separate from the cutover work.",
+    "The billing export and search reindex jobs are also running on the same scheduler and are likely failing silently due to the same lock timeout issue. | When: on September 15, 2026 | Involving: Kiran Shah, Priya Rao",
+    "Users are experiencing frequent logouts every twenty minutes. | When: 2026-09-15T16:50:00Z | Involving: Kiran Shah, Mei Lin",
+    "The database statistics table has not been refreshed since June because the nightly job has been failing silently since September 12, 2026. | When: on September 15, 2026 | Involving: Dev Anand | The job exits with a 0 status code on a lock timeout, causing the scheduler to incorrectly report success.",
+    "Mei Lin filed ticket PLAT-2291 for the scheduler audit. | When: 2026-09-15T14:24:00Z | Involving: Mei Lin",
+    "Kiran Shah committed to notifying the support team about the new cutover date. | When: 2026-09-15 | Involving: Kiran Shah",
+    "The new cutover window is scheduled for Thursday, September 17, 2026, at 22:00. | When: 2026-09-17 | Involving: Priya Rao",
+    "Dev Anand committed to owning the rollback script and providing a PR within one hour. | When: 2026-09-15 | Involving: Dev Anand",
+    "Dev Anand created a rollback PR for the platform. | When: 2026-09-15 | Involving: Dev Anand",
+    "The team decided to roll back the index rebuild and retry the cutover later, accepting a week of slow reporting queries. | When: 2026-09-15 | Involving: Priya Rao, Dev Anand, Mei Lin, Kiran Shah | A half-finished rebuild during cutover is considered too risky.",
+    "Kiran Shah committed to updating the QUARTZ runbook by September 17, 2026. | When: 2026-09-15 | Involving: Kiran Shah | The runbook was identified as out of date.",
+    "The QUARTZ runbook, specifically section 4, is outdated and contains incorrect replica names. | When: 2026-09-15 | Involving: Mei Lin",
+    "The index rebuild is only 40% complete after six hours, making it impossible to finish before the scheduled cutover window. | When: 2026-09-15 | Involving: Priya Rao, Dev Anand"
+  ]
+}

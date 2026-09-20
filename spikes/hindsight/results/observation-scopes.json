@@ -1,0 +1,19 @@
+{
+  "status": 200,
+  "body": {
+    "scopes": [
+      {
+        "tags": ["space:spc_aaa"],
+        "count": 3
+      },
+      {
+        "tags": ["space:spc_bbb"],
+        "count": 2
+      },
+      {
+        "tags": [],
+        "count": 1
+      }
+    ]
+  }
+}

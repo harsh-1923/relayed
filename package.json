@@ -37,6 +37,7 @@
     "verify:hotkeys": "npm --prefix spikes/hotkeys test && npm --prefix spikes/hotkeys run test:bus && npm --prefix spikes/hotkeys run test:menu && npm --prefix spikes/hotkeys run test:composer",
     "verify:web-panels": "npm --prefix spikes/web-panels test",
     "verify:text-fragments": "npm --prefix spikes/text-fragments test",
+    "verify:hindsight": "npm --prefix spikes/hindsight test",
     "test": "pnpm -r test",
     "mock": "node --env-file-if-exists=.env scripts/mock/run.ts",
     "mock:wipe": "node --env-file-if-exists=.env scripts/mock/run.ts --wipe",

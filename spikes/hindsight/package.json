@@ -1,0 +1,14 @@
+{
+  "name": "@relayed/spike-hindsight",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bank": "node --env-file=../../.env 0-bank.mjs",
+    "scopes": "node --env-file=../../.env 1-scopes.mjs",
+    "test": "npm run bank && npm run scopes",
+    "extract": "node --env-file=../../.env 2-extract.mjs"
+  },
+  "dependencies": {
+    "@vectorize-io/hindsight-client": "0.10.0"
+  }
+}

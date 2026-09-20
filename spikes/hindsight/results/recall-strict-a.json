@@ -1,0 +1,165 @@
+{
+  "results": [
+    {
+      "id": "68482a17-c379-4df2-b7cc-95115625bfc8",
+      "text": "The Northwind migration is no longer blocked, as Dev Anand completed the required vault rotation on September 2, 2026.",
+      "type": "observation",
+      "entities": ["vault rotation", "Dev Anand", "Priya Rao", "Northwind"],
+      "occurred_start": "2026-09-01T10:00:00+00:00",
+      "occurred_end": "2026-09-02T09:10:00+00:00",
+      "mentioned_at": "2026-09-01T10:00:00+00:00",
+      "metadata": {},
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 1.0113854919974838,
+        "reranker": 0.9213576,
+        "semantic": 0.5546932220459024,
+        "keyword": 0.10000000149011612
+      }
+    },
+    {
+      "id": "5e0c5aab-c174-4e7c-8f04-29e6e7e635ba",
+      "text": "Priya Rao plans to start the Northwind cutover on September 3, 2026.",
+      "type": "observation",
+      "entities": ["Northwind", "Priya Rao"],
+      "occurred_start": "2026-09-03T00:00:00.010000+00:00",
+      "occurred_end": "2026-09-03T23:59:59.010000+00:00",
+      "mentioned_at": "2026-09-01T10:00:00.010000+00:00",
+      "metadata": {},
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.9786213784000903,
+        "reranker": 0.8969756,
+        "semantic": 0.5934393340443972,
+        "keyword": 0.10000000149011612
+      }
+    },
+    {
+      "id": "97684a54-a3c7-40fb-b8c5-1d11a824d260",
+      "text": "Northwind migration is blocked due to vault rotation. | When: 2026-09-01 | Involving: Priya Rao",
+      "type": "world",
+      "entities": ["Priya Rao", "vault rotation", "Northwind"],
+      "context": "A conversation between people in a workspace. None of them owns this memory bank.",
+      "occurred_start": "2026-09-01T10:00:00+00:00",
+      "occurred_end": "2026-09-01T10:00:00+00:00",
+      "mentioned_at": "2026-09-01T10:00:00+00:00",
+      "document_id": "a-1",
+      "metadata": {
+        "spike": "scopes"
+      },
+      "chunk_id": "spike-scopes-mu861qey_a-1_0",
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.903672509718254,
+        "reranker": 0.82893884,
+        "semantic": 0.7040451588657606,
+        "keyword": 0.20000000298023224
+      }
+    },
+    {
+      "id": "188eeacf-eaba-4288-8464-ea8df50f7de5",
+      "text": "Priya Rao plans to start the Northwind cutover. | When: 2026-09-03 | Involving: Priya Rao",
+      "type": "world",
+      "entities": ["Northwind", "Priya Rao"],
+      "context": "A conversation between people in a workspace. None of them owns this memory bank.",
+      "occurred_start": "2026-09-03T00:00:00.010000+00:00",
+      "occurred_end": "2026-09-03T23:59:59.010000+00:00",
+      "mentioned_at": "2026-09-01T10:00:00.010000+00:00",
+      "document_id": "a-2",
+      "metadata": {
+        "spike": "scopes"
+      },
+      "chunk_id": "spike-scopes-mu861qey_a-2_0",
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.9004306763205546,
+        "reranker": 0.8253083,
+        "semantic": 0.6875451225827747,
+        "keyword": 0.20000000298023224
+      }
+    },
+    {
+      "id": "b154d4c8-767b-4055-a64b-3bda5549792b",
+      "text": "Dev Anand completed the vault rotation, which unblocked the Northwind project. | When: 2026-09-02 | Involving: Dev Anand",
+      "type": "world",
+      "entities": ["Dev Anand", "vault rotation", "Northwind"],
+      "context": "A conversation between people in a workspace. None of them owns this memory bank.",
+      "occurred_start": "2026-09-02T09:10:00+00:00",
+      "occurred_end": "2026-09-02T09:10:00+00:00",
+      "mentioned_at": "2026-09-01T10:00:00+00:00",
+      "document_id": "a-2",
+      "metadata": {
+        "spike": "scopes"
+      },
+      "chunk_id": "spike-scopes-mu861qey_a-2_0",
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.7773662068353846,
+        "reranker": 0.71273226,
+        "semantic": 0.6832804491091055,
+        "keyword": 0.20000000298023224
+      }
+    },
+    {
+      "id": "3e58c10c-7dbf-4249-833c-0b6e5ff90f93",
+      "text": "Dev Anand completed the vault rotation on September 2, 2026, which unblocked the Northwind project.",
+      "type": "observation",
+      "entities": ["Dev Anand", "vault rotation", "Northwind"],
+      "occurred_start": "2026-09-01T10:04:00.010000+00:00",
+      "occurred_end": "2026-09-03T23:59:59.010000+00:00",
+      "mentioned_at": "2026-09-01T10:00:00.010000+00:00",
+      "metadata": {},
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.7653225122727666,
+        "reranker": 0.6971968,
+        "semantic": 0.5753508128539457,
+        "keyword": 0.10000000149011612
+      }
+    },
+    {
+      "id": "0dbd3412-cb7d-490e-bb18-8110648d593e",
+      "text": "Dev Anand committed to completing the vault rotation by September 3, 2026. | When: 2026-09-03 | Involving: Dev Anand | To unblock the Northwind migration.",
+      "type": "world",
+      "entities": ["vault rotation", "Northwind", "Dev Anand"],
+      "context": "A conversation between people in a workspace. None of them owns this memory bank.",
+      "occurred_start": "2026-09-01T10:04:00.010000+00:00",
+      "occurred_end": "2026-09-03T23:59:59.010000+00:00",
+      "mentioned_at": "2026-09-01T10:00:00.010000+00:00",
+      "document_id": "a-1",
+      "metadata": {
+        "spike": "scopes"
+      },
+      "chunk_id": "spike-scopes-mu861qey_a-1_0",
+      "tags": ["space:spc_aaa"],
+      "scores": {
+        "final": 0.44347935791500753,
+        "reranker": 0.40680307,
+        "semantic": 0.6657278337669128,
+        "keyword": 0.20000000298023224
+      }
+    }
+  ],
+  "entities": {
+    "vault rotation": {
+      "entity_id": "a1bfbf8f-3eaa-4d90-a5d7-931b61c33507",
+      "canonical_name": "vault rotation",
+      "observations": []
+    },
+    "Dev Anand": {
+      "entity_id": "e4eb5863-71df-421a-a4d6-c13c5c9bd492",
+      "canonical_name": "Dev Anand",
+      "observations": []
+    },
+    "Priya Rao": {
+      "entity_id": "c511f48a-dc68-4b5f-a5d7-2950ea5ea321",
+      "canonical_name": "Priya Rao",
+      "observations": []
+    },
+    "Northwind": {
+      "entity_id": "3e4c5fb3-55e8-49e8-9871-7a3988a49fea",
+      "canonical_name": "Northwind",
+      "observations": []
+    }
+  }
+}
