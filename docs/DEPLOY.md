@@ -186,9 +186,16 @@ install, and the install fails with `husky: not found`.
 Result: **577MB**, no Electron, no compiler, no dependency postinstall executed
 during the build.
 
-`railway.json` at the repo root carries the rest — Dockerfile path, health check
-on `/health`, and `numReplicas: 1` (§2). Config lives in the repo rather than
-only in the dashboard, so it survives a project being recreated.
+`railway.json` at the repo root carries the health check on `/health` and
+`numReplicas: 1` (§2), which are true of every service this repo deploys.
+
+**IT CARRIES NO `dockerfilePath`, AND MUST NOT.** That file is per-repository,
+not per-service, and both `relayed-server` and `relayed-agent` deploy from this
+one — so a Dockerfile named there is built for all of them. It was, once: the
+agent service's first deploy built the SERVER's image and died on
+`missing required env var: DATABASE_URL`, which reads like a missing variable
+rather than the wrong image entirely. Each service names its own Dockerfile
+through its own `RAILWAY_DOCKERFILE_PATH` variable.
 
 ## 4b. The same setup from the CLI
 
