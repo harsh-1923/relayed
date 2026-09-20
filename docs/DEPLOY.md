@@ -69,9 +69,19 @@ in production.
 2. Copy the **Client ID** (`client_...`) and create an **API key** (`sk_...`).
    The client id is a public identifier; the API key is a secret and is only
    needed for Management API calls — organisations and invitations.
-3. Under **Redirects**, add:
+3. Under **Redirects**, add both:
    - `http://127.0.0.1:*/auth/callback` — the real sign-in path
    - `relayed://auth/callback` — the packaged-app fallback
+
+   **The wildcard cannot be the default**, and WorkOS refuses the whole save if
+   it is: *"A wildcard URI can not be the default Redirect URI."* Add
+   `relayed://auth/callback` as well and mark **that** one default.
+
+   The wildcard is not negotiable — `loopback.ts` calls `server.listen(0, …)`,
+   so the OS picks a fresh port per sign-in and no fixed port would match more
+   than by luck. The default, meanwhile, does nothing here: `workos.ts` sends
+   `redirect_uri` explicitly on every authorization request, and the default is
+   only consulted when a request omits it. It has to exist, not to be right.
 4. Configure whichever social providers you intend to offer.
 
 ### 3b. Session keys

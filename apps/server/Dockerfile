@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # The server image. Built by Railway, but deliberately plain: nothing in here is
 # Railway-specific, so the same image runs on a VPS, Fly or anything else
 # (docs/DEPLOY.md, "Moving out").
@@ -48,6 +49,13 @@ COPY packages/telemetry/package.json packages/telemetry/
 # production build — the same stance pnpm-workspace.yaml already takes by
 # allowlisting build scripts by name.
 #
+# NO BUILDKIT CACHE MOUNT. `RUN --mount=type=cache` builds locally and is
+# rejected by Railway's builder with "The Dockerfile failed validation", before
+# any Docker output exists to explain it. It only ever saved time on a repeat
+# build on the same builder, which a hosted builder rarely is. The `# syntax`
+# directive on line 1 is what makes any such flag legal at all, and it must be
+# the FIRST line — a comment above it and it is read as an ordinary comment.
+#
 # PLAIN `pnpm install`, NEVER `pnpm deploy`. Node refuses to strip types from a
 # TypeScript file that physically lives under node_modules
 # (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING, verified). pnpm's default layout
@@ -55,8 +63,7 @@ COPY packages/telemetry/package.json packages/telemetry/
 # and stripping applies. `pnpm deploy` — and `node-linker=hoisted` — copy real
 # files into node_modules instead, and the server dies on its first import with
 # an error that names none of this.
-RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --prod --ignore-scripts --frozen-lockfile --filter "@relayed/server..."
+RUN pnpm install --prod --ignore-scripts --frozen-lockfile --filter "@relayed/server..."
 
 # ── Source ──
 # Only what the server loads. The renderer, the spikes and the tooling are not
