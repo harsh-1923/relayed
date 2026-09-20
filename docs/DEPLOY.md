@@ -17,7 +17,7 @@ This is the runbook. The *reasoning* behind hosting choices is in
 | **Host** | Railway — the server and Postgres as two services in one project |
 | **API address** | `https://api.relayed.imharsh.in` — **live** |
 | **Project** | `relayed`, `9962b6e0-c7d1-49a1-b703-d84a09d0af44` |
-| **Region** | `asia-southeast1`, both services |
+| **Region** | `asia-southeast1` (Singapore, Equinix SG3), both services. ~45ms TCP from India |
 | **Instances** | **Exactly one.** Never more (§2) |
 | **Build** | A plain Dockerfile, so the same image runs anywhere |
 | **Migrations** | In-process at boot. No separate deploy step |
@@ -357,6 +357,35 @@ lives.
 
 ---
 
+## 9a. Taking the server down, and why you probably should not
+
+Flows 2 and 3 of the sync milestone want the server gone. **Use the client's own
+offline switch, in the top bar of a development build** — "the aeroplane without
+the aeroplane" (`dev.setOffline`). It drops the live socket rather than refusing
+the next one, and lifting it re-activates the session and reconnects, so it
+exercises the same paths. It is also per-client, which killing a shared server
+cannot be: taking exactly one of two clients offline is the more interesting
+test.
+
+Two ways of stopping the Railway service were tried and both misfired.
+
+**`railway service scale <region>=0` does not stop it.** It removes the region,
+and the platform reschedules the service somewhere else — here into `us-west2`.
+Re-adding the intended region then leaves **two replicas in two regions**, which
+is the split §2 forbids, reached by a command that reads like a pause. Always
+read the returned `regions` map; to remove a region pass `<other>=0` explicitly
+in the same call.
+
+**`railway down` races a redeploy.** It removes the most recent deployment — but
+any configuration change already in flight is building a new one, which then
+takes over. The observed result was `/health` returning 404 for a few seconds
+and then 200 again, which reads exactly like a flaky server rather than a
+deployment that was replaced under us.
+
+If the service genuinely has to stop, make sure no deploy is in flight first
+(`railway deployment list`), then `railway down`, then confirm 404 for longer
+than a build takes.
+
 ## 10. Known follow-ups
 
 **`railway.json` is deprecated**, and the CLI warns on every command: Config as
@@ -372,3 +401,32 @@ December.
 reports nothing anywhere. Grafana Cloud's free tier accepts OTLP and the
 dashboards in `infra/grafana/` already exist. Worth wiring before the first
 outside user, not after.
+
+---
+
+## 11. What the first two-client run found
+
+Step 14's flows were run against this deployment on 2026-09-20. Flow 1 passed on
+the first attempt — `audience=2, delivered=2, dropped=0`, about 20ms end to end
+— and flow 2 passed through the offline switch.
+
+Getting a second person into the workspace took three fixes, and all three sat
+on the same path: **somebody invited AFTER they had already signed up**. That is
+not an edge case for an alpha, where people download the app and sign in before
+anyone thinks to invite them.
+
+| What broke | Why it was invisible |
+|---|---|
+| `pendingJoins` dropped from the `authenticated` state | The field existed only on `needs_workspace`, so every reader gated on it — correctly, given the type |
+| `/auth/join` accepted only a WorkOS token | That token is held between sign-in and onboarding and dropped after, so the endpoint was reachable only by callers who did not need it |
+| The socket stayed on the previous workspace after a join | `adoptSession` ended with `link.start()`, and `connection.start()` is idempotent — on a live socket it did nothing |
+
+The third is the one to remember: the symptom was an empty People list, and the
+hazard underneath was the old workspace's events being delivered **into the new
+replica**, which `workspace.switch` guards against and no other path did.
+
+**Also worth knowing before inviting anyone:** self-signup is ungated, and
+invitation email delivery is unproven — nothing arrived at a `juspay.in` address,
+and a corporate mail gateway is the likely reason. Until a sending domain is
+configured in WorkOS, an invitation's accept link has to be fetched from the
+WorkOS API by hand.
