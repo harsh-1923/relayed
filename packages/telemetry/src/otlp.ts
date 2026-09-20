@@ -14,6 +14,33 @@ import type { FinishedSpan } from './trace.ts';
 
 const nano = () => String(Date.now() * 1e6);
 
+/**
+ * Extra headers for the exporter, from `OTEL_EXPORTER_OTLP_HEADERS`.
+ *
+ * THE SPEC'S OWN VARIABLE AND FORMAT — `key=value,key2=value2`, W3C Baggage
+ * style — rather than a name of our own, so a collector's documentation can be
+ * followed literally. Every hosted OTLP endpoint needs one: Grafana Cloud wants
+ * Basic auth built from an instance id and a token, and a collector that
+ * receives no credential answers 401 and drops everything, silently, because
+ * the sink deliberately swallows transport errors.
+ *
+ * Values are NOT url-decoded. The spec allows percent-encoding and nobody
+ * writing a Basic header by hand expects it, so decoding would corrupt a token
+ * containing a literal `%`.
+ */
+export function parseOtlpHeaders(raw: string | undefined): Record<string, string> {
+  if (!raw) return {};
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const key = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
 type AnyValue = { stringValue: string } | { intValue: string } | { boolValue: boolean } | { doubleValue: number };
 const value = (v: unknown): AnyValue =>
   typeof v === 'boolean' ? { boolValue: v }
@@ -28,6 +55,8 @@ const clean = (o: Record<string, unknown>): Record<string, unknown> =>
 
 export interface OtlpOptions {
   endpoint?: string;
+  /** Sent on every export. Defaults to `OTEL_EXPORTER_OTLP_HEADERS`. */
+  headers?: Record<string, string>;
   service: 'desktop' | 'server' | 'agents';
   /** Bounded, lossy. Telemetry must never delay user data (OBSERVABILITY.md §7). */
   maxQueue?: number;
@@ -84,6 +113,8 @@ export class OtlpSink implements Sink {
   #who: Record<string, unknown> = {};
   /** Records the buffer refused since the last flush, by signal. */
   #dropped = { logs: 0, spans: 0 };
+  /** Merged into every export. Empty for a local collector that wants none. */
+  readonly #headers: Record<string, string>;
 
   constructor(opts: OtlpOptions) {
     const base = opts.endpoint ?? 'http://localhost:4318';
@@ -92,6 +123,8 @@ export class OtlpSink implements Sink {
     // them to /v1/logs would store span-shaped log lines that no trace view can
     // read, which is what the old `span()` was doing.
     this.#tracesEndpoint = `${base}/v1/traces`;
+    this.#headers = opts.headers
+      ?? parseOtlpHeaders(globalThis.process?.env?.['OTEL_EXPORTER_OTLP_HEADERS']);
     this.#max = opts.maxQueue ?? MAX_QUEUE;
     this.#service = `relayed-${opts.service}`;
     this.#resource = { attributes: attrs({ 'service.name': this.#service }) };
@@ -240,7 +273,8 @@ export class OtlpSink implements Sink {
   async #post(endpoint: string, body: object): Promise<void> {
     try {
       await fetch(endpoint, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...this.#headers },
         body: JSON.stringify(body),
       });
     } catch {
