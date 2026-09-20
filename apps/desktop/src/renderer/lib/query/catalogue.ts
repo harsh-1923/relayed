@@ -11,6 +11,7 @@
 import type {
   AgentPermissionRow, ClaudeCommand, ClaudeStatus, ComposerDraft, ConnectionRow, LocalRoom, LocalRoomSettings,
   Document, PendingApproval, ReplicaActor, ReplicaMessage, Panel, ToolkitLogo, PanelMetaRow, PreferenceRow, Space, SpaceRoster,
+  TimelineEntry,
 } from '../../../preload/api';
 import { topic } from '../../../shared/topics.ts';
 
@@ -31,6 +32,7 @@ export interface Queries {
   'local.panels.list': { args: { spaceId: string }; rows: Panel[] };
   'local.panels.meta': { args: { spaceId: string }; rows: PanelMetaRow[] };
   'documents.list': { args: { spaceId: string }; rows: Document[] };
+  'timeline.list': { args: { spaceId: string }; rows: TimelineEntry[] };
   'panels.list': { args: { spaceId: string }; rows: Panel[] };
   'local.messages.list': { args: { chatId: string }; rows: ReplicaMessage[] };
   'local.approvals.list': { args: { chatId: string }; rows: PendingApproval[] };
@@ -87,6 +89,8 @@ export const TOPICS: TopicsFor = {
   'panels.list': ({ spaceId }) => [topic.panels(spaceId), topic.spaces()],
   // `spaces` for the same reason: a `welcome` replaces every document wholesale.
   'documents.list': ({ spaceId }) => [topic.documents(spaceId), topic.spaces()],
+  // `spaces` for the same reason: a `welcome` replaces every room's timeline page.
+  'timeline.list': ({ spaceId }) => [topic.timeline(spaceId), topic.spaces()],
   'local.messages.list': ({ chatId }) => [topic.localMessages(chatId)],
   'local.approvals.list': ({ chatId }) => [topic.localApprovals(chatId)],
   'local.commands.list': () => [topic.localCommands()],

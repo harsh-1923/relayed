@@ -21,6 +21,7 @@ import { DocumentMention } from '@/features/chat/composer/ComposerMention';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { TimelinePanel } from './TimelinePanel.tsx';
 import './document.css';
 
 /**
@@ -83,6 +84,13 @@ function DocBody({ document, spaceId, onOpenPanel }: {
 
   const author = useActor(document.updatedByActorId) ?? null;
 
+  // Two answers to two different questions, in one panel because they are two
+  // readings of the same room: the summary says what is true NOW and is
+  // rewritten; the timeline says how the room GOT here and never changes
+  // (MEMORY.md §14.1). Which one is showing is this device's choice, not
+  // anything the room shares.
+  const [view, setView] = useState<'summary' | 'timeline'>('summary');
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 border-b border-border/60 px-12 py-3">
@@ -100,11 +108,17 @@ function DocBody({ document, spaceId, onOpenPanel }: {
               </>
             )}
           </p>
-          <Refresh spaceId={spaceId} />
+          <div className="ml-auto flex items-center gap-1">
+            <ViewTab active={view === 'summary'} onClick={() => setView('summary')}>Summary</ViewTab>
+            <ViewTab active={view === 'timeline'} onClick={() => setView('timeline')}>Timeline</ViewTab>
+            {view === 'summary' && <Refresh spaceId={spaceId} />}
+          </div>
         </div>
       </header>
 
-      {empty
+      {view === 'timeline'
+        ? <TimelinePanel spaceId={spaceId} />
+        : empty
         ? (
           <Waiting>
             Nothing yet — a room’s summary fills in as people talk in it.
@@ -122,6 +136,23 @@ function DocBody({ document, spaceId, onOpenPanel }: {
           </div>
         )}
     </div>
+  );
+}
+
+/** One of the panel's two readings. A button, not a link: nothing about it is addressable. */
+function ViewTab({ active, onClick, children }: {
+  active: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn('text-xs', active ? 'text-foreground' : 'text-muted-foreground')}
+    >
+      {children}
+    </Button>
   );
 }
 

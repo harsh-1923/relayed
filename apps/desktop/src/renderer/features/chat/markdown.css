@@ -361,3 +361,23 @@
   background: var(--primary);
   border-radius: 4px;
 }
+
+/*
+ * Markdown at a supporting size, for prose that is not the main thing on the
+ * screen — a timeline entry beside its title and faces (MEMORY.md §14).
+ *
+ * TWO CLASSES, so it actually wins. `.markdown` sets its own `font-size` here
+ * in plain, unlayered CSS, and Tailwind's utilities live in `@layer utilities`
+ * — which the cascade ranks BELOW unlayered rules whatever the source order.
+ * So a `text-sm` passed as a className is silently ignored, and the entry
+ * renders at 16px against a 14px title. `.markdown.markdown-compact` is
+ * (0,2,0) and beats it honestly.
+ */
+.markdown.markdown-compact {
+  --md-space: 8px;
+  --md-space-small: 6px;
+  --md-space-large: 12px;
+
+  font-size: 14px;
+  line-height: 22px;
+}

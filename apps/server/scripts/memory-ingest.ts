@@ -56,6 +56,22 @@ for (const chat of due) {
           console.log('      no facts — extraction found nothing worth remembering here');
         }
         for (const fact of facts) console.log(`      · ${fact.text}`);
+
+        // The timeline entry the same episode produced (MEMORY.md §14.2) —
+        // printed here because the facts above and the prose below are the two
+        // halves of the same pass, and reading them apart hides which one is
+        // the weak link when an entry comes out wrong.
+        const entry = await db.selectFrom('room_timeline_entries')
+          .select(['title', 'summary'])
+          .where('chat_id', '=', chat.chatId)
+          .where('ord_end', '=', outcome.through)
+          .executeTakeFirst();
+        if (entry) {
+          console.log(`\n      ▸ ${entry.title}`);
+          if (entry.summary) console.log(`        ${entry.summary}`);
+          else console.log('        (no narrative — the runtime was unreachable, so the ' +
+                           'entry fell back to its facts)');
+        }
         break;
       }
     }

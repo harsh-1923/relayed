@@ -6,6 +6,7 @@ import type { Space, SpaceRoster } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
 import type { Document } from '../shared/documents.ts';
+import type { TimelineEntry } from '../shared/timeline.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
 import type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
@@ -17,6 +18,7 @@ export type { AgentActivity } from '../shared/agent-activity.ts';
 export type { Space, SpaceChat, SpaceMember, SpaceRoster, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
 export type { Document } from '../shared/documents.ts';
+export type { TimelineEntry, TimelineFact } from '../shared/timeline.ts';
 export type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export interface DbInfo {
@@ -343,6 +345,7 @@ export interface RelayedApi {
   query(op: "panels.list", params: { spaceId: string }): Promise<Panel[]>;
   /** One space's documents — a room's running summary (DOCUMENTS.md). */
   query(op: "documents.list", params: { spaceId: string }): Promise<Document[]>;
+  query(op: "timeline.list", params: { spaceId: string }): Promise<TimelineEntry[]>;
   /**
    * Refresh this room's summary now (DOCUMENTS.md §4.4). Online only, and rate
    * limited: `too_soon` means one was written within the last minute.

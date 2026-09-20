@@ -97,8 +97,8 @@ test('an EXISTING version 1 replica upgrades all the way, keeping its rows', () 
   const second = openDatabase(file);
   const result = migrate(second, workspaceMigrations);
   assert.deepEqual(result,
-    { from: 1, to: 20,
-      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts', '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members', '18:documents', '19:system_agents', '20:space_rosters'] });
+    { from: 1, to: 22,
+      applied: ['2:sync', '3:frontier', '4:trace', '5:stall', '6:workspace-membership', '7:drafts', '8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts', '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members', '18:documents', '19:system_agents', '20:space_rosters', '21:room_timeline', '22:timeline_summary'] });
   // Spread: node:sqlite returns null-prototype rows, and assert/strict compares
   // prototypes as well as contents.
   const kept = (second.prepare('SELECT handle FROM actors').all() as { handle: string }[])
@@ -397,7 +397,7 @@ test('a replica that reports version 7 without a drafts table gets one, and a co
     assert.deepEqual(migrate(stale, workspaceMigrations).applied,
       ['8:drafts-repair', '9:gap-repair', '10:restricted-messages', '11:agent-summaries', '12:message-parts',
        '13:space-membership-markers', '14:connections', '15:room_panels', '16:space_attribution', '17:dm_members',
-       '18:documents', '19:system_agents', '20:space_rosters'],
+       '18:documents', '19:system_agents', '20:space_rosters', '21:room_timeline', '22:timeline_summary'],
       'including 12, over the parts column this stale replica already has');
     stale.prepare("INSERT INTO drafts (chat_id, body, revision, updated_at) VALUES ('cht_1', 'hi', 1, 0)").run();
     stale.close();

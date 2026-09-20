@@ -216,6 +216,8 @@ export interface SpaceMemberAdded {
     panels?: PanelOpened[];
     /** The space's documents — a room's summary, so somebody arriving has it before reading a message (DOCUMENTS.md §7.3). Absent for a space with none. */
     documents?: DocumentUpdated[];
+    /** The room's timeline, so a new member has it before reading a message. Absent from a server that predates it. */
+    timeline_entries?: TimelineEntry[];
   };
 }
 export interface SpaceMemberRemoved { actor_id: string }
@@ -242,6 +244,46 @@ export interface DocumentUpdated {
   updated_by_actor_id: string | null;
   /** `{ [chatId]: ord }` — how far its writer had read. Null for a document not derived from messages. */
   covered_through: Record<string, number> | null;
+  updated_at: string;
+}
+
+/**
+ * One entry of a room's timeline (MEMORY.md §14.3) — an episode written down
+ * for people to read.
+ *
+ * On the SPACE stream, because a timeline is the room's, not any one chat's —
+ * the same audience `document.updated` has, and the same reason.
+ *
+ * THE COMPLETE ROW, so applying it is one upsert and a client that missed an
+ * earlier one is corrected by this. `deleted` is what the forget path sends:
+ * an episode re-retained without a deleted message comes back as an update,
+ * and one left with nothing comes back tombstoned. A removal carried as a flag
+ * on the row rather than its own event type is what keeps `rev` monotonic
+ * across it — two event types would race a rebuild's delete against its
+ * re-insert, and the loser would be a resurrected entry nobody could remove.
+ */
+export interface TimelineEntry {
+  id: string;
+  space_id: string;
+  chat_id: string;
+  ord_start: number;
+  ord_end: number;
+  anchor_message_id: string | null;
+  /** The MESSAGES' time, never the ingest time. */
+  occurred_start: string;
+  occurred_end: string;
+  title: string;
+  /** Two or three sentences over the facts. Empty when narration failed (030). */
+  summary: string;
+  facts: { text: string; message_id: string | null; kind: string | null }[];
+  /** Actor ids, for the faces. */
+  participants: string[];
+  /** The highest-ranked fact kind; `episode` means unclassified (§14.5). */
+  kind: string;
+  significance: number;
+  deleted: boolean;
+  /** Monotonic per entry: a reader keeps the highest it has seen. */
+  rev: number;
   updated_at: string;
 }
 
@@ -317,6 +359,7 @@ interface EventCatalogue {
   'chat.created': { stream: SpaceStream; payload: ChatCreated };
   'panel.opened': { stream: SpaceStream; payload: PanelOpened };
   'document.updated': { stream: SpaceStream; payload: DocumentUpdated };
+  'timeline.entry': { stream: SpaceStream; payload: TimelineEntry };
 
   'actor.created': { stream: WorkspaceStream; payload: ActorChanged };
   'actor.updated': { stream: WorkspaceStream; payload: ActorChanged };
@@ -366,6 +409,7 @@ const TOUCHES: { [T in EventType]: (payload: PayloadOf<T>) => string[] } = {
   'chat.created': () => [],
   'panel.opened': () => [],
   'document.updated': () => [],
+  'timeline.entry': () => [],
   'actor.created': () => [],
   'actor.updated': () => [],
 };

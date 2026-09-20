@@ -65,6 +65,8 @@ export const topic = {
   localPanels: (spaceId: string): string => `local:space:${spaceId}:panels`,
   /** One space's documents — a room's running summary (DOCUMENTS.md). */
   documents: (spaceId: string): string => `space:${spaceId}:documents`,
+  /** One room's timeline — the episodes memory has written down (MEMORY.md §14). */
+  timeline: (spaceId: string): string => `space:${spaceId}:timeline`,
   /** Every local room's slash commands. One topic: lists change rarely, and a read is a map lookup. */
   localCommands: (): string => 'local:commands',
   /** What Claude Code is waiting on the person for in one local chat. */

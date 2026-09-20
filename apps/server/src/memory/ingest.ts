@@ -21,7 +21,14 @@ import {
   bankForSpace, ensureBank, workspaceBank, MEMORY_MISSION, type SpacePlacement,
 } from './banks.ts';
 import { documentIdFor, recordDocument } from './documents.ts';
-import { memoryConfigured, retain } from './client.ts';
+import { factsForDocument, memoryConfigured, retain } from './client.ts';
+import { narrate, type Narration } from './narrate.ts';
+import { cleanFactText } from './recall.ts';
+import {
+  spaceHasTimeline, writeTimelineEntry, type TimelineEntryInput, type TimelineFact,
+} from '../sync/timeline.ts';
+import { fanout } from '../sync/fanout.ts';
+import type { Registry } from '../sync/registry.ts';
 import { forgetSweep } from './forget.ts';
 import {
   buildEpisodeText, firstEpisode, readyToIngest, revMax, MAX_EPISODE, QUIET_MINUTES,
@@ -50,6 +57,8 @@ export interface DueChat {
   spaceId: string;
   workspaceId: string;
   spaceName: string | null;
+  /** `room`, `channel`, `dm`, `group_dm` — only a room gets a timeline (`spaceHasTimeline`). */
+  spaceKind: string;
   /** For naming the workspace bank after the workspace, not after a room in it. */
   workspaceName: string | null;
   visibility: 'public' | 'private' | null;
@@ -81,13 +90,14 @@ export async function dueChats(db: Kysely<DB>, limit = BATCH): Promise<DueChat[]
   const allowed = env.memoryIngestSpaces;
   const rows = await sql<{
     chat_id: string; space_id: string; workspace_id: string; space_name: string | null;
-    workspace_name: string | null;
+    space_kind: string; workspace_name: string | null;
     visibility: 'public' | 'private' | null; writer_actor_id: string; watermark: number;
   }>`
     SELECT c.id            AS chat_id,
            c.space_id      AS space_id,
            c.workspace_id  AS workspace_id,
            s.name          AS space_name,
+           s.kind          AS space_kind,
            ws.name         AS workspace_name,
            s.visibility    AS visibility,
            keeper.id       AS writer_actor_id,
@@ -118,7 +128,8 @@ export async function dueChats(db: Kysely<DB>, limit = BATCH): Promise<DueChat[]
 
   return rows.rows.map((row) => ({
     chatId: row.chat_id, spaceId: row.space_id, workspaceId: row.workspace_id,
-    spaceName: row.space_name, workspaceName: row.workspace_name, visibility: row.visibility,
+    spaceName: row.space_name, spaceKind: row.space_kind,
+    workspaceName: row.workspace_name, visibility: row.visibility,
     writerActorId: row.writer_actor_id, watermark: Number(row.watermark),
   }));
 }
@@ -189,8 +200,131 @@ const bankName = (due: DueChat): string =>
     ? `${due.workspaceName ?? 'Workspace'} — shared rooms and channels`
     : due.spaceName ?? due.spaceId;
 
+/**
+ * The timeline entry for the episode just retained (§14.4).
+ *
+ * A PROJECTION, WRITTEN AFTER THE FACTS EXIST. It reads back what extraction
+ * actually produced rather than guessing from the messages — so the entry says
+ * what memory knows, not what we hoped it would learn. One extra call, on a
+ * path where nobody is waiting.
+ *
+ * AN EPISODE THAT PRODUCED NOTHING GETS NO ENTRY, and that is the honest
+ * outcome rather than a gap: extraction was handed the conversation and decided
+ * there was nothing to remember, so there is nothing to show. §14.6 counts
+ * those as the yield metric.
+ *
+ * Failure here is NOT swallowed — it propagates, so the watermark does not move
+ * and the episode is tried again. Both halves of the retry are idempotent: the
+ * document id is derived from the range and replaces, and the entry is an
+ * upsert keyed on that same range. The one exception is fanout, which is
+ * allowed to fail because an event that is durable but undelivered is repaired
+ * by the next heartbeat's head comparison.
+ */
+/**
+ * What an episode and its facts become, as a row — the decisions, with no
+ * network in them so a test can hold them still.
+ *
+ * `narration` is passed in rather than fetched because it is the one part that
+ * may legitimately be missing, and the caller is what knows whether it fell
+ * back.
+ */
+export function entryFor(
+  due: DueChat, episode: readonly EpisodeMessage[],
+  facts: readonly TimelineFact[], narration: Narration,
+): TimelineEntryInput {
+  const first = episode[0]!;
+  const last = episode.at(-1)!;
+  return {
+    workspaceId: due.workspaceId, spaceId: due.spaceId, chatId: due.chatId,
+    ordStart: first.ord, ordEnd: last.ord,
+    // The episode's first message, which is where the conversation starts —
+    // the same anchor a recalled fact cites (§7.2).
+    anchorMessageId: first.id,
+    // The MESSAGES' time. A timeline stamped with when ingestion happened to
+    // run would reorder itself after a backfill, and ingestion is explicitly
+    // allowed to lag.
+    occurredStart: first.createdAt,
+    occurredEnd: last.createdAt,
+    title: narration.title, summary: narration.summary,
+    facts: [...facts],
+    // Distinct, in the order they spoke: the faces read as "who was in this".
+    participants: [...new Set(episode.map((message) => message.authorId))],
+    // BREADTH ONLY, for now. §14.5 ranks on fact kind first, and nothing
+    // classifies a fact; recall hits are the honest signal and need the
+    // pipeline to have been used first. How much was established is what is
+    // left, and it is not nothing.
+    significance: facts.length,
+  };
+}
+
+/**
+ * The timeline entry for the episode just retained (§14.4).
+ *
+ * A PROJECTION, WRITTEN AFTER THE FACTS EXIST. It reads back what extraction
+ * actually produced rather than guessing from the messages — so the entry says
+ * what memory knows, not what we hoped it would learn. One extra call, on a
+ * path where nobody is waiting.
+ *
+ * AN EPISODE THAT PRODUCED NOTHING GETS NO ENTRY, and that is the honest
+ * outcome rather than a gap: extraction was handed the conversation and decided
+ * there was nothing to remember, so there is nothing to show. §14.6 counts
+ * those as the yield metric.
+ *
+ * Failure here propagates, so the watermark does not move and the episode is
+ * tried again. Both halves of that retry are idempotent: the document id is
+ * derived from the range and replaces, and the entry is an upsert keyed on the
+ * same range. The one exception is fanout, which is allowed to fail because an
+ * event that is durable but undelivered is repaired by the next heartbeat's
+ * head comparison.
+ */
+async function writeEntry(
+  db: Kysely<DB>, registry: Registry | null, due: DueChat,
+  episode: readonly EpisodeMessage[], bankId: string, documentId: string,
+): Promise<number> {
+  // A channel or a DM has nowhere to draw this: the panel is structural to a
+  // room. Checked BEFORE the read-back, so a DM costs neither a list call nor
+  // a narration (§14.7 — the tables are not room-specific; only the panel is).
+  if (!spaceHasTimeline(due.spaceKind)) return 0;
+
+  const extracted = await factsForDocument(bankId, documentId);
+  if (extracted.length === 0) return 0;
+
+  const facts: TimelineFact[] = extracted.map((fact) => ({
+    // THE SAME CLEANING A RECALL DOES. Extraction appends `| When: …` and
+    // `| Involving: …` to a fact, which a person reading the panel should never
+    // see — the entry already carries its time and its faces. Found by running
+    // a real episode through narration and reading the prompt it built.
+    // Display only: what is STORED in the bank is never rewritten (§9).
+    text: cleanFactText(fact.text),
+    // NOT a per-fact anchor, because there is no such thing: Hindsight extracts
+    // from a conversation rather than from a line of it, so the jump target is
+    // the entry's own `anchor_message_id`. The field stays because a future
+    // that does carry provenance fills it with no migration (§14.3).
+    message_id: null,
+    // Nothing labels a fact `decision` or `reference` — see `UNCLASSIFIED`.
+    kind: null,
+  }));
+
+  const narration = await narrate({
+    roomName: due.spaceName ?? 'a room',
+    // Distinct, with their ids: the prose names who decided what, and each
+    // name is written as a chip a reader can hover (`mention`).
+    people: [...new Map(
+      episode.map((message) => [message.authorId, {
+        id: message.authorId, name: message.authorDisplayName,
+      }]),
+    ).values()],
+    facts: facts.map((fact) => fact.text),
+  });
+
+  const { event } = await writeTimelineEntry(db, entryFor(due, episode, facts, narration));
+  // Never fatal: see above.
+  if (registry) await fanout(db, registry, event).catch(() => {});
+  return facts.length;
+}
+
 export type IngestOutcome =
-  | { state: 'ingested'; documentId: string; messages: number; through: number }
+  | { state: 'ingested'; documentId: string; messages: number; through: number; facts: number }
   | { state: 'waiting' }
   | { state: 'failed'; reason: string };
 
@@ -211,7 +345,9 @@ export type IngestOutcome =
  * again — with the same derived document id, which replaces rather than
  * duplicates.
  */
-export async function ingestEpisode(db: Kysely<DB>, due: DueChat, now = new Date()): Promise<IngestOutcome> {
+export async function ingestEpisode(
+  db: Kysely<DB>, due: DueChat, now = new Date(), registry: Registry | null = null,
+): Promise<IngestOutcome> {
   const pending = await episodeFor(db, due);
   const episode = firstEpisode(pending);
   if (episode.length === 0) return { state: 'waiting' };
@@ -223,6 +359,7 @@ export async function ingestEpisode(db: Kysely<DB>, due: DueChat, now = new Date
   const bankId = bankForSpace(space);
   const documentId = documentIdFor(due.chatId, episode[0]!.ord, through);
 
+  let facts: number;
   try {
     // NAMED FOR WHAT THE BANK IS, not for whichever space happened to write to
     // it last. `ensureBank` applies the name every time, so passing the space
@@ -251,13 +388,18 @@ export async function ingestEpisode(db: Kysely<DB>, due: DueChat, now = new Date
       tags: [`space:${due.spaceId}`, `chat:${due.chatId}`],
       metadata: { space_id: due.spaceId, chat_id: due.chatId },
     });
+    // AFTER the retain and BEFORE the watermark, inside the same guard: a
+    // failure here leaves the watermark where it was, so the episode is tried
+    // again rather than leaving a room with facts and no timeline. Both halves
+    // of that retry are idempotent (`writeEntry`).
+    facts = await writeEntry(db, registry, due, episode, bankId, documentId);
   } catch (error) {
     await recordFailure(db, due.chatId);
     return { state: 'failed', reason: (error as Error).message };
   }
 
   await advanceWatermark(db, due.chatId, through);
-  return { state: 'ingested', documentId, messages: episode.length, through };
+  return { state: 'ingested', documentId, messages: episode.length, through, facts };
 }
 
 /**
@@ -268,11 +410,13 @@ export async function ingestEpisode(db: Kysely<DB>, due: DueChat, now = new Date
  * two unrelated conversations will find a relation. They simply go in the same
  * pass rather than a minute apart.
  */
-export async function ingestChat(db: Kysely<DB>, due: DueChat, now = new Date()): Promise<IngestOutcome[]> {
+export async function ingestChat(
+  db: Kysely<DB>, due: DueChat, now = new Date(), registry: Registry | null = null,
+): Promise<IngestOutcome[]> {
   const outcomes: IngestOutcome[] = [];
   let watermark = due.watermark;
   for (let taken = 0; taken < EPISODES_PER_PASS; taken++) {
-    const outcome = await ingestEpisode(db, { ...due, watermark }, now);
+    const outcome = await ingestEpisode(db, { ...due, watermark }, now, registry);
     if (outcome.state !== 'ingested') {
       // `waiting` on the first look means nothing is ready; after one or more
       // episodes it means the backlog is drained. Either way there is no more
@@ -305,12 +449,14 @@ async function recordFailure(db: Kysely<DB>, chatId: string): Promise<void> {
 }
 
 /** One pass. Returns what it did, so a script can print it and a test can assert it. */
-export async function ingestOnce(db: Kysely<DB>, limit = BATCH): Promise<IngestOutcome[]> {
+export async function ingestOnce(
+  db: Kysely<DB>, limit = BATCH, registry: Registry | null = null,
+): Promise<IngestOutcome[]> {
   if (!env.memoryIngest || !memoryConfigured()) return [];
   const outcomes: IngestOutcome[] = [];
   for (const due of await dueChats(db, limit)) {
     if (!await claimChat(db, due)) continue;
-    outcomes.push(...await ingestChat(db, due));
+    outcomes.push(...await ingestChat(db, due, new Date(), registry));
   }
   return outcomes;
 }
@@ -324,7 +470,7 @@ export interface Ingest { stop(): void }
  * it was missing rather than starting silently — a server that quietly declines
  * to build memory looks exactly like one where extraction is producing nothing.
  */
-export function startIngest(db: Kysely<DB>): Ingest {
+export function startIngest(db: Kysely<DB>, registry: Registry | null = null): Ingest {
   const missing = [
     ...(env.memoryIngest ? [] : ['MEMORY_INGEST=1']),
     ...(memoryConfigured() ? [] : ['HINDSIGHT_BASE_URL', 'HINDSIGHT_API_KEY']),
@@ -344,7 +490,7 @@ export function startIngest(db: Kysely<DB>): Ingest {
   const tick = async (): Promise<void> => {
     if (stopped) return;
     try {
-      await ingestOnce(db);
+      await ingestOnce(db, BATCH, registry);
       // The sweep rides the same tick. Forgetting has to keep up with
       // ingesting, and a second timer would be a second thing to reason about
       // for no gain (MEMORY.md §14.4).

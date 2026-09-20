@@ -18,7 +18,8 @@
     "memory-recall": "node --env-file-if-exists=../../.env scripts/memory-recall.ts",
     "memory-forget": "node --env-file-if-exists=../../.env scripts/memory-forget.ts",
     "memory-person": "node --env-file-if-exists=../../.env scripts/memory-person.ts",
-    "memory-watch": "node --env-file-if-exists=../../.env scripts/memory-watch.ts"
+    "memory-watch": "node --env-file-if-exists=../../.env scripts/memory-watch.ts",
+    "memory-backfill-timeline": "node --env-file-if-exists=../../.env scripts/memory-backfill-timeline.ts"
   },
   "dependencies": {
     "@relayed/authz": "workspace:*",

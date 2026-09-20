@@ -796,4 +796,66 @@ export const workspaceMigrations: readonly Migration[] = [
       ALTER TABLE spaces ADD COLUMN member_count INTEGER;
     `,
   },
+  {
+    version: 21,
+    name: 'room_timeline',
+    // A room's timeline (MEMORY.md §14.3): one entry per episode, written once
+    // and never regenerated. Rows rather than markdown inside the summary's
+    // body, because `document.updated` carries the COMPLETE body and
+    // `document_revisions` keeps fifty snapshots of it — appending an entry
+    // there would re-send the whole timeline to every member, every time.
+    //
+    // Rows also give what a body cannot: paging, the kind filter, a delete per
+    // entry, and an identity for the forget path to find.
+    //
+    // No CHECK on `kind`, the rule `documents` and `panels` hold — a kind a
+    // newer server sends is KEPT and drawn as a placeholder, never dropped. A
+    // replica CHECK that can refuse what the server legitimately wrote stops
+    // the cursor advancing for ever (version 19 is the cautionary example).
+    //
+    // `deleted` is a tombstone, so `rev` stays monotonic across a removal and
+    // an update still in flight cannot resurrect an entry.
+    up: `
+      CREATE TABLE room_timeline_entries (
+        id                TEXT PRIMARY KEY,
+        space_id          TEXT NOT NULL,
+        chat_id           TEXT NOT NULL,
+        ord_start         INTEGER NOT NULL,
+        ord_end           INTEGER NOT NULL,
+        anchor_message_id TEXT,
+        -- Epoch ms, and the MESSAGES' time — never when ingestion ran.
+        occurred_start    INTEGER NOT NULL,
+        occurred_end      INTEGER NOT NULL,
+        title             TEXT NOT NULL,
+        -- JSON: [{ text, message_id, kind }].
+        facts             TEXT NOT NULL DEFAULT '[]',
+        -- JSON: actor ids, for the faces.
+        participants      TEXT NOT NULL DEFAULT '[]',
+        kind              TEXT NOT NULL DEFAULT 'episode',
+        significance      INTEGER NOT NULL DEFAULT 0,
+        deleted           INTEGER NOT NULL DEFAULT 0,
+        -- The highest revision this replica has seen. An event carrying a
+        -- lower one is older news and never applied.
+        rev               INTEGER NOT NULL DEFAULT 1,
+        updated_at        INTEGER NOT NULL
+      );
+      CREATE INDEX room_timeline_by_space
+        ON room_timeline_entries(space_id, occurred_start DESC);
+    `,
+  },
+  {
+    version: 22,
+    name: 'timeline_summary',
+    // The two or three sentences an entry reads as (MEMORY.md §14.2). Its own
+    // column rather than a fact, because the facts are what was established and
+    // each carries the message that established it — this is prose about them.
+    //
+    // Additive rather than folded into version 21, which is one migration
+    // fewer and would have left every replica already at 21 inserting into a
+    // table without the column: a throw inside `applyCatchup`, the cursor never
+    // advancing, and the same hot loop version 19 exists to describe.
+    up: `
+      ALTER TABLE room_timeline_entries ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

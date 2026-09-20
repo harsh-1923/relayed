@@ -25,6 +25,7 @@ import { writeMessage } from './ops.ts';
 import { ulid } from '../db/ulid.ts';
 import { roomPanels } from './panels.ts';
 import { createRoomSummary, spaceDocuments } from './documents.ts';
+import { spaceTimelineEntries } from './timeline.ts';
 import { systemAgentId, ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
 
 export interface NewChannel {
@@ -660,6 +661,7 @@ async function hydrationSnapshot(
   // already working beside — the same set `welcome` would give them.
   const panels = space.kind === 'room' ? await roomPanels(trx, [spaceId]) : [];
   const documents = await spaceDocuments(trx, [spaceId]);
+  const timelineEntries = await spaceTimelineEntries(trx, [spaceId]);
 
   const count = await trx.selectFrom('memberships')
     .select(eb => eb.fn.countAll<number>().as('n'))
@@ -676,6 +678,7 @@ async function hydrationSnapshot(
     })),
     ...(panels.length > 0 ? { panels } : {}),
     ...(documents.length > 0 ? { documents } : {}),
+    ...(timelineEntries.length > 0 ? { timeline_entries: timelineEntries } : {}),
   };
 }
 

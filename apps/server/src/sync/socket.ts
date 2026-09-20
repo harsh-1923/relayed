@@ -764,6 +764,7 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // Already the wire shape: a panel row is stored and sent as its event payload.
       panels: payload.panels,
       documents: payload.documents,
+      timeline_entries: payload.timelineEntries,
     });
 
     // The two numbers §9.9's ceiling is made of, recorded together because

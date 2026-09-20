@@ -1,0 +1,21 @@
+-- The two or three sentences a timeline entry reads as (docs/MEMORY.md §14.2).
+--
+-- §14.2 claimed an entry needs no model — "facts are the bullets, entities give
+-- the title". That was wrong about what the surface actually is. Hindsight
+-- returns flat statements ("Decided to roll back the index rebuild first") and
+-- nothing titles or connects them, so an entry built from facts alone reads as
+-- a changelog rather than as an account of what happened.
+--
+-- So one small call per episode writes a title and this. It is summarising the
+-- five facts already extracted, not four hundred messages, which is why it
+-- costs a fraction of the summariser it replaces — and it still runs once, on a
+-- path where nobody is waiting, and is never regenerated.
+--
+-- A SEPARATE COLUMN, not a fact. The facts are what was established and each
+-- still carries the message that established it; this is prose about them, and
+-- putting it in the array would make one entry of it citable that is not.
+--
+-- DEFAULT '' because narration is allowed to fail. An entry whose facts landed
+-- but whose prose did not is written anyway, with a mechanical title — losing
+-- the record of an episode over a flaky runtime would be the wrong trade.
+ALTER TABLE room_timeline_entries ADD COLUMN summary TEXT NOT NULL DEFAULT '';

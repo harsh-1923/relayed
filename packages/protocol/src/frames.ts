@@ -442,6 +442,47 @@ export const DocumentRow = z.object({
 });
 export type DocumentRow = z.infer<typeof DocumentRow>;
 
+/**
+ * One entry of a room's timeline (MEMORY.md §14.3), as `welcome`,
+ * `timeline.entry` and a newly added member's hydration all carry it.
+ *
+ * The complete row, for the reason `DocumentRow` is: applying it is one upsert
+ * and a client that missed an earlier one is corrected by this. `kind` stays an
+ * open string, the rule `PanelRow.type` and `DocumentRow.kind` hold — a newer
+ * server may send one this client keeps without knowing how to draw it.
+ *
+ * A fact's `message_id` is NULLABLE because the message it cited can be
+ * deleted; the entry outlives it, and a bullet that cannot be jumped to is
+ * better than losing the fact.
+ */
+export const TimelineEntryRow = z.object({
+  id: z.string(),
+  space_id: z.string(),
+  chat_id: z.string(),
+  ord_start: z.number().int(),
+  ord_end: z.number().int(),
+  anchor_message_id: z.string().nullable(),
+  /** ISO, and the MESSAGES' time — never when ingestion happened to run. */
+  occurred_start: z.string(),
+  occurred_end: z.string(),
+  title: z.string(),
+  /** Two or three sentences over the facts. Empty when narration failed — the entry still stands. */
+  summary: z.string(),
+  facts: z.array(z.object({
+    text: z.string(),
+    message_id: z.string().nullable(),
+    kind: z.string().nullable(),
+  })),
+  participants: z.array(z.string()),
+  kind: z.string(),
+  significance: z.number().int(),
+  /** Tombstoned by the forget path. A reader draws it as gone, never as absent. */
+  deleted: z.boolean(),
+  rev: z.number().int().positive(),
+  updated_at: z.string(),
+});
+export type TimelineEntryRow = z.infer<typeof TimelineEntryRow>;
+
 export const Welcome = z.object({
   protocol: z.number().int(),
   now: z.number().int(),
@@ -543,6 +584,11 @@ export const Welcome = z.object({
    * running summary. Absent from a server that predates them.
    */
   documents: z.array(DocumentRow).optional(),
+  /**
+   * The timeline of every room the caller has joined (MEMORY.md §14). Absent
+   * from a server that predates it, and from one with memory switched off.
+   */
+  timeline_entries: z.array(TimelineEntryRow).optional(),
 });
 export type Welcome = z.infer<typeof Welcome>;
 

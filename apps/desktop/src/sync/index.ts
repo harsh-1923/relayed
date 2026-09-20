@@ -660,6 +660,11 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     return spaceId && storage.hasWorkspace ? storage.documents(spaceId) : [];
   },
+  /** One room's timeline — the episodes memory has written down (MEMORY.md §14.4). */
+  'timeline.list': (params) => {
+    const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
+    return spaceId && storage.hasWorkspace ? storage.timelineEntries(spaceId) : [];
+  },
   'panels.list': (params) => {
     const spaceId = (params as { spaceId?: string } | undefined)?.spaceId;
     return spaceId && storage.hasWorkspace ? storage.panels(spaceId) : [];

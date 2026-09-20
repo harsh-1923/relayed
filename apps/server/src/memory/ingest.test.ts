@@ -8,7 +8,7 @@ import { sql } from 'kysely';
 import { db, pool, reachable } from '../db/client.ts';
 import { ulid } from '../db/ulid.ts';
 import { ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
-import { dueChats, claimChat, episodeFor, advanceWatermark, type DueChat } from './ingest.ts';
+import { dueChats, claimChat, episodeFor, advanceWatermark, entryFor, type DueChat } from './ingest.ts';
 import { firstEpisode } from './episode.ts';
 import { bankForSpace, workspaceBank } from './banks.ts';
 
@@ -155,7 +155,8 @@ test('advancing the watermark releases the lease and clears the failures', opts,
 
 const watchedChat = (watermark: number): DueChat => ({
   chatId: watchedDefault, spaceId: watched, workspaceId: workspace,
-  spaceName: 'cutover', workspaceName: 'Memory', visibility: 'private', writerActorId: keeper, watermark,
+  spaceName: 'cutover', spaceKind: 'room', workspaceName: 'Memory',
+  visibility: 'private', writerActorId: keeper, watermark,
 });
 
 test('only messages after the watermark are read', opts, async () => {
@@ -226,7 +227,8 @@ test('two conversations separated by a long gap go as two episodes, not one', op
   }
 
   const due: DueChat = {
-    chatId, spaceId: watched, workspaceId: workspace, spaceName: 'cutover', workspaceName: 'Memory',
+    chatId, spaceId: watched, workspaceId: workspace, spaceName: 'cutover', spaceKind: 'room',
+    workspaceName: 'Memory',
     visibility: 'private', writerActorId: keeper, watermark: 0,
   };
 
@@ -303,4 +305,62 @@ test('the shared bank is named for the WORKSPACE, not for the room that last wro
   const row = (await due()).find((candidate) => candidate.chatId === sole);
   assert.equal(row?.workspaceName, 'Memory', 'the workspace name rides on the row');
   assert.equal(row?.spaceName, 'launch');
+});
+
+// ── what an episode becomes on the timeline (§14.3) ─────────────────────────
+
+const someone = (id: string, name: string, ord: number, at: string) => ({
+  id: `msg_${ord}`, ord, rev: ord, body: 'said something', createdAt: new Date(at),
+  authorId: id, authorDisplayName: name, authorHandle: name.toLowerCase(), authorType: 'human',
+});
+
+const place: DueChat = {
+  chatId: 'cht_x', spaceId: 'spc_x', workspaceId: 'wsp_x', spaceName: '#db-cutover', spaceKind: 'room',
+  workspaceName: 'Acme', visibility: 'private', writerActorId: 'act_keeper', watermark: 0,
+};
+
+test('an entry is stamped with the MESSAGES\' time and anchored to where the conversation starts', () => {
+  // Never the ingest time: ingestion is allowed to lag, and a timeline that
+  // reorders itself after a backfill is not a timeline.
+  const entry = entryFor(place, [
+    someone('act_a', 'Alice', 14, '2026-09-18T14:31:00Z'),
+    someone('act_b', 'Bob', 15, '2026-09-18T14:49:00Z'),
+  ], [{ text: 'Rolled back first', message_id: null, kind: null }],
+    { title: 'Rollback before retry', summary: 'They rolled back.' });
+
+  assert.equal(entry.occurredStart.toISOString(), '2026-09-18T14:31:00.000Z');
+  assert.equal(entry.occurredEnd.toISOString(), '2026-09-18T14:49:00.000Z');
+  assert.equal(entry.anchorMessageId, 'msg_14', 'the first message, so a click needs no lookup');
+  assert.equal(entry.ordStart, 14);
+  assert.equal(entry.ordEnd, 15);
+});
+
+test('participants are each person once, in the order they spoke', () => {
+  const entry = entryFor(place, [
+    someone('act_b', 'Bob', 1, '2026-09-18T10:00:00Z'),
+    someone('act_a', 'Alice', 2, '2026-09-18T10:01:00Z'),
+    someone('act_b', 'Bob', 3, '2026-09-18T10:02:00Z'),
+  ], [{ text: 'a fact', message_id: null, kind: null }], { title: 'T', summary: 'S' });
+
+  assert.deepEqual(entry.participants, ['act_b', 'act_a'], 'the faces, not a message count');
+});
+
+test('significance is how much was established, and nothing pretends otherwise', () => {
+  // §14.5 ranks on fact kind first — but nothing classifies a fact, and recall
+  // hits need the pipeline to have been used. Breadth is what is honest today.
+  const facts = [1, 2, 3].map(n => ({ text: `fact ${n}`, message_id: null, kind: null }));
+  const entry = entryFor(place, [someone('act_a', 'Alice', 1, '2026-09-18T10:00:00Z')],
+    facts, { title: 'T', summary: 'S' });
+  assert.equal(entry.significance, 3);
+  assert.equal(entry.facts.length, 3);
+});
+
+test('a fact carries no per-message anchor, because there is no such thing', () => {
+  // Hindsight extracts from a conversation, not from a line of it. The jump
+  // target is the entry's own anchor; a per-fact id would claim a precision
+  // nothing has.
+  const entry = entryFor(place, [someone('act_a', 'Alice', 1, '2026-09-18T10:00:00Z')],
+    [{ text: 'a fact', message_id: null, kind: null }], { title: 'T', summary: 'S' });
+  assert.equal(entry.facts[0]?.message_id, null);
+  assert.ok(entry.anchorMessageId);
 });

@@ -660,6 +660,73 @@ test('a document arrives with the room somebody is added to', () => {
   db.close();
 });
 
+// ── the room timeline (MEMORY.md §14.3) ─────────────────────────────────────
+
+const timelineEntry = (rev: number, title: string, deleted = false): Envelope => ({
+  rev, type: 'timeline.entry',
+  payload: {
+    id: 'tle_1', space_id: 'spc_new', chat_id: 'cht_new', ord_start: 1, ord_end: 9,
+    anchor_message_id: 'msg_1',
+    occurred_start: '2026-09-18T10:00:00.000Z', occurred_end: '2026-09-18T10:18:00.000Z',
+    title, facts: [{ text: 'Decided to roll back first', message_id: 'msg_1', kind: null }],
+    participants: ['act_me'], kind: 'episode', significance: 0, deleted, rev,
+    updated_at: '2026-09-18T10:20:00.000Z',
+  },
+});
+
+const entryOf = (db: DatabaseSync) =>
+  db.prepare('SELECT title, rev, deleted, facts, occurred_start FROM room_timeline_entries WHERE id = ?')
+    .get('tle_1') as
+    { title: string; rev: number; deleted: number; facts: string; occurred_start: number } | undefined;
+
+test('a timeline entry is stored, and an older revision NEVER replaces a newer one', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
+
+  const first = applyEvent(deps, space, timelineEntry(1, 'Rollback before retry'));
+  assert.deepEqual(first.topics, ['space:spc_new:timeline']);
+  assert.equal(entryOf(db)?.title, 'Rollback before retry');
+  assert.equal(entryOf(db)?.facts, '[{"text":"Decided to roll back first","message_id":"msg_1","kind":null}]');
+  // ISO on the wire, epoch ms in the replica.
+  assert.equal(entryOf(db)?.occurred_start, Date.parse('2026-09-18T10:00:00.000Z'));
+
+  applyEvent(deps, space, timelineEntry(2, 'Rollback before retry (corrected)'));
+  applyEvent(deps, space, timelineEntry(1, 'the old title again'));
+  assert.equal(entryOf(db)?.title, 'Rollback before retry (corrected)', 'the newer text stands');
+  assert.equal(entryOf(db)?.rev, 2);
+  db.close();
+});
+
+test('a tombstone is a revision like any other, and cannot be undone by a late update', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
+
+  applyEvent(deps, space, timelineEntry(1, 'Rollback before retry'));
+  applyEvent(deps, space, timelineEntry(2, 'Rollback before retry', true));
+  assert.equal(entryOf(db)?.deleted, 1, 'the row stays, marked gone');
+
+  // The reason removal rides on the row rather than getting its own event type:
+  // an update still in flight lands afterwards and must not bring it back.
+  applyEvent(deps, space, timelineEntry(1, 'Rollback before retry'));
+  assert.equal(entryOf(db)?.deleted, 1);
+  db.close();
+});
+
+test('a room timeline arrives with the room somebody is added to', () => {
+  const db = replica();
+  const space: Stream = { kind: 'space', id: 'spc_new' };
+  const deps = { db, effect: replicaEffect(undefined, () => 'act_me', () => 'wsp_1') };
+  const added = memberAdded(1, 'act_me', 'admin');
+  const hydration = (added.payload as { hydration: Record<string, unknown> }).hydration;
+  hydration['timeline_entries'] = [timelineEntry(4, 'from the hydration').payload];
+
+  applyEvent(deps, space, added);
+  assert.equal(entryOf(db)?.title, 'from the hydration', 'history before a single message is read');
+  db.close();
+});
+
 test('a hydrated space and its chats belong to the workspace, not to the space stream they arrived on', () => {
   const db = replica();
   const space: Stream = { kind: 'space', id: 'spc_new' };

@@ -27,6 +27,7 @@ import { readRoster } from './roster.ts';
 import { replicaChatParticipants } from './participants.ts';
 import type { Panel } from '../shared/panels.ts';
 import type { Document } from '../shared/documents.ts';
+import type { TimelineEntry, TimelineFact } from '../shared/timeline.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
 import { storePanel, storeDocument, type PanelRow, type DocumentRow } from './effects.ts';
 
@@ -305,6 +306,35 @@ export interface AgentPermissionRow {
   toolkit: string;
   effect: 'read' | 'write' | 'destructive';
   revoked: boolean;
+}
+
+/**
+ * Stored JSON, read leniently — the rule `documents.coveredThrough` already
+ * holds: a shape this build does not recognise is nothing, never a failed read.
+ * A malformed row must not be able to blank a whole room's timeline.
+ */
+function readFacts(raw: string): TimelineFact[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry): TimelineFact[] => {
+      if (!entry || typeof entry !== 'object') return [];
+      const fact = entry as Record<string, unknown>;
+      if (typeof fact['text'] !== 'string' || fact['text'].length === 0) return [];
+      return [{
+        text: fact['text'],
+        messageId: typeof fact['message_id'] === 'string' ? fact['message_id'] : null,
+        kind: typeof fact['kind'] === 'string' ? fact['kind'] : null,
+      }];
+    });
+  } catch { return []; }
+}
+
+function readParticipants(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch { return []; }
 }
 
 export class Storage {
@@ -835,6 +865,44 @@ export class Storage {
    * `body` comes back whole: a summary is kilobytes, and a panel that renders
    * half a document while it pages the rest would be worse than one that waits.
    */
+  /**
+   * One room's timeline, newest first (MEMORY.md §14.4).
+   *
+   * ENTIRELY LOCAL — no Hindsight call, no network, works offline. That is the
+   * whole reason the entries are rows we replicate rather than a view we fetch.
+   *
+   * Tombstones come back too, and `visibleEntries` drops them at the draw. The
+   * replica holds them so a late update cannot resurrect one; a reader that
+   * filtered them out here would be hiding the row that says an entry is gone.
+   */
+  timelineEntries(spaceId: string, limit = 200): TimelineEntry[] {
+    const rows = this.workspace.prepare(`
+      SELECT id, space_id, chat_id, ord_start, ord_end, anchor_message_id,
+             occurred_start, occurred_end, title, summary, facts, participants,
+             kind, significance, deleted, rev, updated_at
+        FROM room_timeline_entries
+       WHERE space_id = ?
+       ORDER BY occurred_start DESC, id DESC
+       LIMIT ?
+    `).all(spaceId, limit) as {
+      id: string; space_id: string; chat_id: string; ord_start: number; ord_end: number;
+      anchor_message_id: string | null; occurred_start: number; occurred_end: number;
+      title: string; summary: string; facts: string; participants: string;
+      kind: string; significance: number; deleted: number; rev: number; updated_at: number;
+    }[];
+
+    return rows.map(row => ({
+      id: row.id, spaceId: row.space_id, chatId: row.chat_id,
+      ordStart: Number(row.ord_start), ordEnd: Number(row.ord_end),
+      anchorMessageId: row.anchor_message_id,
+      occurredStart: Number(row.occurred_start), occurredEnd: Number(row.occurred_end),
+      title: row.title, summary: row.summary,
+      facts: readFacts(row.facts), participants: readParticipants(row.participants),
+      kind: row.kind, significance: Number(row.significance),
+      deleted: row.deleted === 1, rev: Number(row.rev), updatedAt: Number(row.updated_at),
+    }));
+  }
+
   documents(spaceId: string): Document[] {
     const rows = this.workspace.prepare(`
       SELECT id, space_id, kind, title, body, format, rev,

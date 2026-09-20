@@ -10,11 +10,12 @@ import type { DB } from '../db/schema.ts';
 import { type Stream } from './events.ts';
 import { dmMembers, spaceMembers } from './spaces.ts';
 import { spaceDocuments } from './documents.ts';
+import { spaceTimelineEntries } from './timeline.ts';
 import { retainedFrom } from './retention.ts';
 import { visibleTo, redactEvent } from './visibility.ts';
 import { mentionPattern } from './mentions.ts';
 import { agentSummaries } from '../agents/summary.ts';
-import type { AgentSummary, DocumentUpdated, PanelOpened } from './events.ts';
+import type { AgentSummary, DocumentUpdated, PanelOpened, TimelineEntry } from './events.ts';
 import { roomPanels } from './panels.ts';
 
 /**
@@ -586,6 +587,8 @@ export interface WelcomePayload {
   panels: PanelOpened[];
   /** The documents of every space this actor has joined — a room's running summary (DOCUMENTS.md §7.3). */
   documents: DocumentUpdated[];
+  /** The newest page of each joined room's timeline (MEMORY.md §14.3). Empty where memory has written nothing. */
+  timelineEntries: TimelineEntry[];
 }
 
 
@@ -641,9 +644,12 @@ export async function welcome(
   // once, never one read per room.
   const panels = await roomPanels(db, spaces.filter(space => space.kind === 'room').map(space => space.id));
   const documents = await spaceDocuments(db, spaces.map(space => space.id));
+  // The newest page of each room's timeline (MEMORY.md §14). Capped per space,
+  // unlike documents: a summary is one row and a timeline grows for ever.
+  const timelineEntries = await spaceTimelineEntries(db, spaces.map(space => space.id));
 
   return {
-    spaces, chats, memberships, connections, agentPermissions, panels, documents,
+    spaces, chats, memberships, connections, agentPermissions, panels, documents, timelineEntries,
     // Only the workspace stream. There is no actor cursor: an actor is a
     // delivery address rather than an ordered stream, so there is nothing to
     // be behind on (docs/SYNC-FLOWS.md §5). Space cursors ride on the space

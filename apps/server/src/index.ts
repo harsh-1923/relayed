@@ -126,7 +126,7 @@ const summariser = startSummariser(db, sync.registry);
 // same reason — nobody asked for it, so it has no invoker whose authority it
 // could spend — but it needs no registry: it writes nothing a client syncs.
 // Off unless MEMORY_INGEST=1, and it says so rather than starting silently.
-const ingest = startIngest(db);
+const ingest = startIngest(db, sync.registry);
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.once(sig, () => {

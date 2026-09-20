@@ -539,6 +539,43 @@ export interface MemoryWatermarksTable {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * One episode, written down for people to read (§14.3).
+ *
+ * 1:1 with `memory_documents` and deliberately a separate table: that one holds
+ * a vendor's identifiers and never leaves the server, this one is replicated
+ * member data. Append-only — an entry describes a stretch of time that has
+ * already happened, so there is nothing for it to drift from.
+ */
+export interface RoomTimelineEntriesTable {
+  id: string;
+  workspace_id: string;
+  space_id: string;
+  chat_id: string;
+  ord_start: number;
+  ord_end: number;
+  anchor_message_id: string | null;
+  /** The MESSAGES' time, never the ingest time (029). */
+  occurred_start: Timestamp;
+  occurred_end: Timestamp;
+  title: string;
+  /** Two or three sentences over the facts — what the entry READS as (030). */
+  summary: Generated<string>;
+  /** `[{ text, message_id, kind }]` — the facts as bullets, each still citable. */
+  facts: Generated<unknown>;
+  /** Actor ids, for the faces. */
+  participants: Generated<unknown>;
+  /** The highest-ranked fact kind; `episode` means unclassified (§14.5). */
+  kind: Generated<string>;
+  significance: Generated<number>;
+  /** A tombstone, so `rev` stays monotonic across a removal (029). */
+  deleted: Generated<boolean>;
+  /** Monotonic per entry; a reader keeps the highest it has seen. */
+  rev: Generated<number>;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
   organizations: OrganizationsTable;
   workspaces: WorkspacesTable;
@@ -572,4 +609,5 @@ export interface DB {
   memory_documents: MemoryDocumentsTable;
   memory_watermarks: MemoryWatermarksTable;
   memory_person_notes: MemoryPersonNotesTable;
+  room_timeline_entries: RoomTimelineEntriesTable;
 }

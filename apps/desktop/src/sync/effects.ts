@@ -102,6 +102,63 @@ export function storeDocument(db: DatabaseSync, row: DocumentRow): void {
          Date.parse(row.updated_at) || Date.now());
 }
 
+export interface TimelineEntryRow {
+  id: string;
+  space_id: string;
+  chat_id: string;
+  ord_start: number;
+  ord_end: number;
+  anchor_message_id: string | null;
+  occurred_start: string;
+  occurred_end: string;
+  title: string;
+  summary: string;
+  facts: { text: string; message_id: string | null; kind: string | null }[];
+  participants: string[];
+  kind: string;
+  significance: number;
+  deleted: boolean;
+  rev: number;
+  updated_at: string;
+}
+
+/**
+ * One timeline entry, upserted and never wound back (MEMORY.md §14.3).
+ *
+ * `storeDocument`'s rule, for the same reason: `rev` is monotonic per entry, so
+ * an event arriving late or twice must not replace newer text with older. The
+ * guard is in the statement rather than a read-then-write, so two applies
+ * racing cannot both win.
+ *
+ * A TOMBSTONE IS STORED LIKE ANY OTHER REVISION. `deleted` rides in as a
+ * column, so removing an entry and correcting one are the same write and stay
+ * ordered by the same `rev` — which is why the forget path needs no second
+ * event type.
+ */
+export function storeTimelineEntry(db: DatabaseSync, row: TimelineEntryRow): void {
+  db.prepare(`
+    INSERT INTO room_timeline_entries (id, space_id, chat_id, ord_start, ord_end,
+                                       anchor_message_id, occurred_start, occurred_end,
+                                       title, summary, facts, participants, kind,
+                                       significance, deleted, rev, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      anchor_message_id = excluded.anchor_message_id,
+      occurred_start = excluded.occurred_start, occurred_end = excluded.occurred_end,
+      title = excluded.title, summary = excluded.summary, facts = excluded.facts,
+      participants = excluded.participants, kind = excluded.kind,
+      significance = excluded.significance, deleted = excluded.deleted,
+      rev = excluded.rev, updated_at = excluded.updated_at
+    WHERE excluded.rev > room_timeline_entries.rev
+  `).run(row.id, row.space_id, row.chat_id, row.ord_start, row.ord_end,
+         row.anchor_message_id,
+         Date.parse(row.occurred_start) || 0, Date.parse(row.occurred_end) || 0,
+         row.title, row.summary ?? '',
+         JSON.stringify(row.facts ?? []), JSON.stringify(row.participants ?? []),
+         row.kind, row.significance, row.deleted ? 1 : 0, row.rev,
+         Date.parse(row.updated_at) || Date.now());
+}
+
 interface SpaceMemberAddedHydration {
   space: {
     id: string; kind: string; name: string | null; slug: string | null;
@@ -121,6 +178,8 @@ interface SpaceMemberAddedHydration {
   panels?: PanelRow[];
   /** The space's documents — absent from a server that predates them, and for a space with none. */
   documents?: DocumentRow[];
+  /** The room's timeline — absent from a server that predates it, and from one with memory off. */
+  timeline_entries?: TimelineEntryRow[];
 }
 
 interface SpaceMemberAdded {
@@ -236,6 +295,14 @@ export function replicaEffect(
       case 'document.updated': {
         storeDocument(db, event.payload as DocumentRow);
         return [topic.documents(stream.id)];
+      }
+
+      // One entry of a room's timeline, written or corrected (MEMORY.md §14.4).
+      // A tombstone arrives as the same event with `deleted` set, which is why
+      // there is one case here and not two.
+      case 'timeline.entry': {
+        storeTimelineEntry(db, event.payload as TimelineEntryRow);
+        return [topic.timeline(stream.id)];
       }
 
       // A page opened for everyone in a room, or brought forward (PANELS.md).
@@ -413,6 +480,7 @@ function spaceMemberAdded(
   }
   for (const panel of body.hydration.panels ?? []) storePanel(db, { ...panel, space_id: stream.id });
   for (const document of body.hydration.documents ?? []) storeDocument(db, { ...document, space_id: stream.id });
+  for (const entry of body.hydration.timeline_entries ?? []) storeTimelineEntry(db, { ...entry, space_id: stream.id });
 
   db.prepare(`
     INSERT INTO memberships (scope_type, scope_id, actor_id, role, joined_at, left_at)
