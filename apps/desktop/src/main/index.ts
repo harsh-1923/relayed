@@ -92,9 +92,33 @@ const clientName = devClient
   ? process.env['RELAYED_CLIENT_NAME'] || `Relayed ${devClient}`
   : 'Relayed';
 
+/**
+ * Where this client's data lives.
+ *
+ * THREE CASES, AND THE THIRD IS THE ONE THAT BIT US. A numbered dev client gets
+ * its own directory so several can run at once (MULTI-CLIENT-DEV.md). A
+ * packaged build gets Electron's default, derived from `appId` — permanent, and
+ * never to be changed once anything has shipped (RELEASE.md §6).
+ *
+ * An UNPACKAGED, UNNUMBERED build used to get that same default, which means
+ * `pnpm dev` and an installed Relayed shared one database. Found by running the
+ * first packaged build: it opened the dev account and migrated its workspace
+ * from schema 20 to 22 — a real write to real local data, by a binary that was
+ * only supposed to be smoke-tested. It also makes a clean first-run impossible
+ * to see on a machine that has ever run the app in development, which is every
+ * machine we have.
+ *
+ * The `-dev` suffix RELEASE.md §6 asks for, applied where it was missing.
+ */
 if (devClient) {
   app.setName(clientName);
-  const dir = join(app.getPath('appData'), `relayed-client-${devClient}`);
+  setUserData(`relayed-client-${devClient}`);
+} else if (!app.isPackaged) {
+  setUserData('relayed-dev');
+}
+
+function setUserData(name: string): void {
+  const dir = join(app.getPath('appData'), name);
   // `setPath` requires a directory that already exists, and the failure would
   // land before any of our error handling.
   mkdirSync(dir, { recursive: true });

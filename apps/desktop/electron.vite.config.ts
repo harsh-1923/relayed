@@ -22,6 +22,32 @@ import type { Plugin } from 'vite';
  * Main and preload are separate builds with separate hooks, so the file is
  * touched twice per edit; the launcher debounces rather than restarting twice.
  */
+/**
+ * EVERY workspace package, not just the one that broke first.
+ *
+ * These are source, and `exclude` here means "exclude from externalizing" —
+ * bundle them. The list was `['@relayed/telemetry']` because that is the one
+ * that failed in development, where `node_modules/@relayed/*` are pnpm
+ * SYMLINKS: the realpath lands in `packages/`, outside node_modules, and Node
+ * strips types happily. The others looked fine for exactly that reason.
+ *
+ * Packaging removes the symlink. electron-builder copies the real files into
+ * `node_modules` inside the asar, and Node then refuses to strip types from a
+ * path under node_modules — ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING. The
+ * sync engine crash-looped, the renderer never got its MessagePort, and the
+ * window was simply blank. Nothing in the build said a word.
+ *
+ * The same trap, from the same rule, is why the server's Dockerfile installs
+ * with plain `pnpm install` rather than `pnpm deploy` (docs/DEPLOY.md §4a).
+ */
+const WORKSPACE_PACKAGES = [
+  '@relayed/authz',
+  '@relayed/genui',
+  '@relayed/icons',
+  '@relayed/protocol',
+  '@relayed/telemetry',
+];
+
 function signalBuild(): Plugin {
   const target = process.env['RELAYED_BUILD_SIGNAL'];
   return {
@@ -68,8 +94,8 @@ export default defineConfig({
   main: {
     // Workspace packages are SOURCE and must be bundled; only real node_modules
     // dependencies get externalized. Without the exclude, Electron tries to
-    // load @relayed/telemetry's raw .ts at runtime and fails to resolve it.
-    plugins: [externalizeDepsPlugin({ exclude: ['@relayed/telemetry'] }), signalBuild()],
+    // load their raw .ts at runtime and cannot.
+    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_PACKAGES }), signalBuild()],
     // The sync engine is one of this build's entries, so its `config.ts` is
     // substituted here rather than in the renderer — the renderer never learns
     // the server URL and has no business holding it.
@@ -88,7 +114,7 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: ['@relayed/telemetry'] }), signalBuild()],
+    plugins: [externalizeDepsPlugin({ exclude: WORKSPACE_PACKAGES }), signalBuild()],
     build: { rollupOptions: { input: resolve('src/preload/index.ts') } },
   },
   renderer: {
