@@ -60,7 +60,8 @@ type Part =
   | { kind: 'tool'; toolUseId: string; name: string; ok: boolean; ms: number;
       input: unknown; outputPreview?: string; outputBytes?: number }
   | { kind: 'ui'; lang: 'openui-lang@0.5'; library: `relayed-ui@${number}`; source: string }
-  | { kind: 'reply_to_ui'; messageId: string; label: string };   // on the clicker's message, §6.3
+  | { kind: 'reply_to_ui'; messageId: string; label: string }    // on the clicker's message, §6.3
+  | { kind: 'memory'; used: { text: string; messageId: string; label: string }[] };  // MEMORY.md §7.2
 
 // Approvals are NOT parts. They are rows in their own table, rendered by the system.
 ```
@@ -72,6 +73,7 @@ type Part =
 | `markdown` | the model, as text | nothing to fake |
 | `tool` | the **runtime**, from a tool that really ran | no |
 | `ui` | the model, **only from relayed's library** | only within the library, which has nothing that looks like system UI |
+| `memory` | the **server**, from the facts it injected intersected with the citations the reply kept | no — a model writes text, never parts |
 | approval | the **system** | no — a separate table and a look `ui` cannot produce |
 
 Unknown `kind`s are skipped by the renderer, which shows `body` in their place.

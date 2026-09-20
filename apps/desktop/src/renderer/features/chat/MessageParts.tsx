@@ -64,6 +64,11 @@ export function MessageParts({
                 Chose <span className="font-medium text-foreground">{part.label}</span>
               </p>
             );
+          case 'memory':
+            // Drawn in the footer as a hover card, not in the reply
+            // (`MemoryHoverCard`). Provenance is reached for when an answer is
+            // doubted; under every answer it competes with the answer.
+            return null;
           case 'access_request':
             return <AccessCard key={index} part={part} body={body} onOpenLink={handlers.onOpenLink} />;
         }

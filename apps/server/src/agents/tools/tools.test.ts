@@ -1,19 +1,34 @@
 // What a run is offered (run-tools.ts). The broker's answers are broker.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runTools, toolsPrompt, CREATE_ROOM, WRITE_ROOM_SUMMARY, READ_ROOM_SUMMARY } from './index.ts';
+import { runTools, toolsPrompt, CREATE_ROOM, WRITE_ROOM_SUMMARY, READ_ROOM_SUMMARY, REMEMBER } from './index.ts';
+import { env } from '../../env.ts';
 
 /** Every run that is not Roomkeeping's, which is every run but one agent's. */
 const anyone = { isRoomkeeper: false };
 
-const names = (tools: ReturnType<typeof runTools>) => tools.map(tool => tool.name);
-
+/**
+ * Tool names, minus the ones whose OFFER depends on deployment configuration.
+ *
+ * `remember` follows `MEMORY_RECALL` (MEMORY.md §5.5), so pinning the full list
+ * would make this test pass or fail on whether the machine running it has
+ * memory switched on — which it did, in both directions, before this filter
+ * existed. The gate itself is asserted below, on its own terms.
+ */
+const names = (tools: ReturnType<typeof runTools>) =>
+  tools.map(tool => tool.name).filter(name => name !== REMEMBER);
 test('create_room and the messaging tools are offered to every run: no services, not in a room', () => {
   assert.deepEqual(names(runTools([], { inRoom: false, ...anyone })),
     [READ_ROOM_SUMMARY, 'room_members', 'external_identity', CREATE_ROOM, 'send_dm', 'post_message', 'add_to_room']);
   assert.deepEqual(names(runTools([{ slug: 'linear', name: 'Linear' }], { inRoom: true, ...anyone })),
     ['find_tools', 'call_tool', 'open_panel', READ_ROOM_SUMMARY, 'room_members', 'external_identity', CREATE_ROOM, 'start_side_chat',
       'send_dm', 'post_message', 'add_to_room']);
+});
+
+test('remember is offered exactly when recall is, and never otherwise', () => {
+  // A preference nothing will ever read is not worth asking somebody to state.
+  const offered = runTools([], { inRoom: false, ...anyone }).map(tool => tool.name);
+  assert.equal(offered.includes(REMEMBER), env.memoryRecall);
 });
 
 test('the prompt says to create a room only when asked, and last', () => {

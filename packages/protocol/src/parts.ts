@@ -5,6 +5,7 @@
 //   tool         the runtime, from a tool that really ran — a model cannot fake it
 //   ui           the model, but only from @relayed/genui's library
 //   reply_to_ui  the person who clicked a Reply, on their own message
+//   memory       the SERVER, from what it actually recalled — see MemoryPart
 // Approvals are deliberately not parts: the system renders those, from their own table.
 //
 // KEYS ARE snake_case, like every other key on the wire and in storage. Parts
@@ -33,6 +34,8 @@ export const PART_LIMITS = {
   maxToolInputBytes: 8_000,
   /** The start of a tool's output. The rest is not kept. */
   maxOutputPreviewChars: 2_000,
+  /** Facts one reply may be handed. Recall returns at most six; twice that is slack, not a target. */
+  maxMemoriesRecalled: 12,
 } as const;
 
 const byteLength = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value) ?? '').length;
@@ -98,7 +101,57 @@ export const AccessRequestPart = z.object({
 });
 export type AccessRequestPart = z.infer<typeof AccessRequestPart>;
 
-export const MessagePart = z.discriminatedUnion('kind', [MarkdownPart, ToolPart, UiPart, ReplyToUiPart, AccessRequestPart]);
+/**
+ * What this reply actually drew on from memory (docs/MEMORY.md §7.2).
+ *
+ * BUILT BY THE SERVER, from the facts it injected intersected with the
+ * citations the reply kept — never from anything the model emits. A model
+ * produces text; parts are assembled in `reply.ts` from our own data, which is
+ * why this can be trusted the way a `tool` part can.
+ *
+ * NOT `SERVER_ONLY`, and the reason is worth writing down because the
+ * definition there fits it. `SERVER_ONLY` is enforced by refusing the ordinary
+ * write path, and its one user (`access.ts`) writes through `trustedParts`
+ * instead — which skips `Parts` validation and the `ui` check entirely. An
+ * agent's reply routinely carries `ui` parts, so moving every reply onto the
+ * trusted path to admit this one kind would trade a real validation for a
+ * theoretical write nothing performs. `AGENT_ONLY` blocks the case that
+ * actually matters: a PERSON's message claiming to have cited memory.
+ *
+ * What is NEVER inferred is `used`: it is set from the citation link the reply
+ * kept, not from a fact resembling something the model wrote. A footer that
+ * over-claims is worse than one that stays quiet.
+ */
+export const MemoryPart = z.object({
+  kind: z.literal('memory'),
+  /**
+   * Everything the run was handed, each marked with whether the reply cited it.
+   *
+   * ONE LIST WITH A FLAG rather than two lists: `used` is a subset of
+   * `offered`, and storing both would duplicate every fact's text in a row
+   * replicated to every member's disk.
+   *
+   * SHOWING THE UNUSED ONES IS TEMPORARY. While this is being built, seeing
+   * what was offered and ignored is the fastest way to tell a bad recall from a
+   * model that did not need it — a distinction nothing else surfaces yet. Once
+   * `memory.facts.cited` exists (§14.6) the unused ones become noise under
+   * every reply, and the renderer should stop drawing them.
+   */
+  recalled: z.array(z.object({
+    /** The fact, as it was injected — not the model's paraphrase of it. */
+    text: z.string().min(1),
+    /** The message its episode starts at, so the reader can go and check. */
+    message_id: z.string().min(1),
+    /** What the citation read as, e.g. `db-cutover, 19 Sep`. */
+    label: z.string().min(1),
+    /** The reply kept this one's citation link. */
+    used: z.boolean(),
+  })).min(1).max(PART_LIMITS.maxMemoriesRecalled),
+});
+export type MemoryPart = z.infer<typeof MemoryPart>;
+
+export const MessagePart = z.discriminatedUnion('kind',
+  [MarkdownPart, ToolPart, UiPart, ReplyToUiPart, AccessRequestPart, MemoryPart]);
 export type MessagePart = z.infer<typeof MessagePart>;
 
 /** The strict reading: what a server accepts on write. */
@@ -115,10 +168,12 @@ export const PART_KINDS: ReadonlySet<string> = new Set(MessagePart.options.map(o
  *
  * A `tool` part says a tool really ran; only an agent's runtime observes that.
  * A `ui` part draws cards and buttons; on a person's message it is a costume.
+ * A `memory` part says the reply drew on something remembered; on a person's
+ * message it is a claim about provenance they did not earn.
  * The server refuses both on anything but an agent's message, and the renderer
  * refuses to draw them there too (docs/AGENT-RESPONSES.md, rules for rooms).
  */
-const AGENT_ONLY: ReadonlySet<string> = new Set(['tool', 'ui']);
+const AGENT_ONLY: ReadonlySet<string> = new Set(['tool', 'ui', 'memory']);
 
 /**
  * Structure ONLY the server may write — decided from its own state

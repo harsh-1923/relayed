@@ -18,6 +18,7 @@ import { createRoomFor } from './create-room.ts';
 import { startSideChat } from './side-chat.ts';
 import { roomMembers } from './room-members.ts';
 import { externalIdentity } from './external-identity.ts';
+import { rememberPreference } from './remember.ts';
 import { sendDm, postMessage, addToRoom } from './messaging.ts';
 import { findTools, serviceTools, servicesPrompt, CALL_TOOL } from './services.ts';
 import type { AppTool, OfferedToolkit, ToolContext, ToolDeps, ToolReply, Where } from './contract.ts';
@@ -30,6 +31,7 @@ export { CREATE_ROOM } from './create-room.ts';
 export { START_SIDE_CHAT } from './side-chat.ts';
 export { ROOM_MEMBERS } from './room-members.ts';
 export { EXTERNAL_IDENTITY } from './external-identity.ts';
+export { REMEMBER } from './remember.ts';
 export { SEND_DM, POST_MESSAGE, ADD_TO_ROOM } from './messaging.ts';
 export { READ_ROOM_SUMMARY, WRITE_ROOM_SUMMARY } from './room-summary.ts';
 
@@ -41,6 +43,7 @@ const APP_TOOLS: readonly AppTool[] = [
   readRoomSummary,
   roomMembers,
   externalIdentity,
+  rememberPreference,
   writeRoomSummary,
   // Last: see the note on ordering above.
   createRoomFor,

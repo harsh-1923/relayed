@@ -30,8 +30,15 @@ const ROW_COLUMNS = [
   'a.type as author_type',
 ] as const;
 
-/** Strip only THIS agent's mention from a body; mentions of anyone else stay. */
-function stripOwnMention(body: string, agentActorId: string): string {
+/**
+ * Strip only THIS agent's mention from a body; mentions of anyone else stay.
+ *
+ * Exported because the recall query needs the same rule (`memory/recall.ts`).
+ * A mention that exists to SUMMON the agent is not part of what was asked —
+ * and left in a retrieval query it is worse than noise: it matches every fact
+ * that names the agent, which on a vague question is most of them.
+ */
+export function stripOwnMention(body: string, agentActorId: string): string {
   return body
     .replaceAll(new RegExp(`\\[[^\\]]*\\]\\(actor:${agentActorId}\\)`, 'g'), '')
     .replace(/[ \t]{2,}/g, ' ')

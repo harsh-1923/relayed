@@ -485,6 +485,60 @@ export interface SyncEventsTable {
   created_at: Generated<Timestamp>;
 }
 
+// ── Memory (docs/MEMORY.md) ─────────────────────────────────────────────────
+
+/**
+ * What memory has ingested, and the handle that forgets it (§8.3).
+ *
+ * `document_id` is ours, chosen before the retain, which is the whole reason
+ * deletion is one cascading call rather than a workaround.
+ */
+export interface MemoryDocumentsTable {
+  bank_id: string;
+  document_id: string;
+  workspace_id: string;
+  space_id: string;
+  chat_id: string;
+  ord_start: number;
+  ord_end: number;
+  /**
+   * The highest `messages.rev` inside the range when this was retained.
+   *
+   * `deleted` is a tombstone, so it cannot say whether a change has already
+   * been dealt with. `rev` can: the version rule raises it on any change, so
+   * `max(rev) > source_rev_max` means "changed since", and a rebuild makes the
+   * two match again (027).
+   */
+  source_rev_max: Generated<number>;
+  retained_at: Generated<Timestamp>;
+}
+
+/**
+ * One `remember` call: what a person asked to be kept about how they work.
+ *
+ * Here so an EMPTY person bank can be told from a full one without a network
+ * call — a recall against a never-written bank costs ~7.5 s to return nothing
+ * (028).
+ */
+export interface MemoryPersonNotesTable {
+  actor_id: string;
+  document_id: string;
+  run_id: string | null;
+  created_at: Generated<Timestamp>;
+}
+
+/** How far memory has read in a chat, and the claim on doing more (§6.1). */
+export interface MemoryWatermarksTable {
+  chat_id: string;
+  space_id: string;
+  workspace_id: string;
+  /** Advances on a skipped episode too — read is read, facts or not. */
+  ingested_through_ord: Generated<number>;
+  lease_until: Timestamp | null;
+  failures: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
   organizations: OrganizationsTable;
   workspaces: WorkspacesTable;
@@ -515,4 +569,7 @@ export interface DB {
   access_requests: AccessRequestsTable;
   composio_sessions: ComposioSessionsTable;
   panels: PanelsTable;
+  memory_documents: MemoryDocumentsTable;
+  memory_watermarks: MemoryWatermarksTable;
+  memory_person_notes: MemoryPersonNotesTable;
 }

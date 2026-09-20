@@ -12,7 +12,13 @@
     "backfill-room-summaries": "node --env-file-if-exists=../../.env scripts/backfill-room-summaries.ts",
     "backfill-system-agents": "node --env-file-if-exists=../../.env scripts/backfill-system-agents.ts",
     "test": "node --env-file-if-exists=../../.env --test src/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "memory-smoke": "node --env-file-if-exists=../../.env scripts/memory-smoke.ts",
+    "memory-ingest": "node --env-file-if-exists=../../.env scripts/memory-ingest.ts",
+    "memory-recall": "node --env-file-if-exists=../../.env scripts/memory-recall.ts",
+    "memory-forget": "node --env-file-if-exists=../../.env scripts/memory-forget.ts",
+    "memory-person": "node --env-file-if-exists=../../.env scripts/memory-person.ts",
+    "memory-watch": "node --env-file-if-exists=../../.env scripts/memory-watch.ts"
   },
   "dependencies": {
     "@relayed/authz": "workspace:*",
@@ -20,6 +26,7 @@
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
     "@composio/core": "0.18.1",
+    "@vectorize-io/hindsight-client": "0.10.0",
     "fastify": "^5.2.0",
     "jose": "^6.0.0",
     "kysely": "^0.28.3",

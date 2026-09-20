@@ -15,7 +15,9 @@ import { ThinkingOrb } from 'thinking-orbs';
 import { useAgentStream } from '@/lib/agent-stream';
 import { cn } from '@/lib/utils';
 import { CopyButton } from './CopyButton';
+import type { MemoryPart } from '@relayed/protocol';
 import { MessageParts } from './MessageParts';
+import { MemoryHoverCard } from './MemoryHoverCard';
 import { openLink as openInRoomPanel, showAnnotation } from '@/lib/panel-navigation';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
 import { isWebUrl, withoutFragmentDirective } from '../../../shared/web-panels.ts';
@@ -58,6 +60,12 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   const arriving = liveParts.length > 0;
   const parts = streaming && arriving ? [...(message.parts ?? []), ...liveParts] : message.parts;
   const unbubbled = !message.deleted && agentAuthored;
+  // Only an agent's own reply may claim to have cited memory; on anyone else's
+  // message the part is a costume, and the protocol refuses to draw it there
+  // (`undrawablePartKind`).
+  const memoryPart = agentAuthored
+    ? (parts ?? []).find((part): part is MemoryPart => part.kind === 'memory')
+    : undefined;
   const navigate = useNavigate();
   const { state: session } = useSession();
   // A passage someone marked opens beside the chat, at the passage
@@ -180,6 +188,12 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 // Said, not implied: somebody replying out loud to a message
                 // nobody else can see would otherwise be talking to themselves.
                 <span className="flex items-center gap-1">· {visibleToLabel(message.visibleTo)}</span>
+              )}
+              {memoryPart && !message.deleted && !streaming && (
+                // Beside the copy button, because both answer "what is behind
+                // this reply" — one gives you the text, the other where it came
+                // from (MEMORY.md §7.2).
+                <MemoryHoverCard part={memoryPart} onOpenLink={openLink} />
               )}
               {!mine && !message.deleted && !streaming && message.body && (
                 // As its Markdown source. An agent's body is derived from its

@@ -9,7 +9,8 @@
 // nothing.
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../db/schema.ts';
-import type { RunResultBody, MessagePart } from '@relayed/protocol';
+import { PART_LIMITS, type RunResultBody, type MessagePart } from '@relayed/protocol';
+import { citedFacts, type RecalledFact } from '../memory/recall.ts';
 import { writeMessage, type Ack } from '../sync/ops.ts';
 import type { AppendedEvent } from '../sync/events.ts';
 import { applyOnce } from '../sync/allocate.ts';
@@ -68,10 +69,32 @@ async function remoteCallParts(db: Kysely<DB>, runId: string): Promise<MessagePa
   }));
 }
 
-async function answerParts(db: Kysely<DB>, runId: string, result: RunResultBody): Promise<MessagePart[]> {
+async function answerParts(
+  db: Kysely<DB>, runId: string, result: RunResultBody, remembered: readonly RecalledFact[],
+): Promise<MessagePart[]> {
   const parts: MessagePart[] = [];
   if (result.text.trim().length > 0) parts.push({ kind: 'markdown', text: result.text });
   parts.push(...await remoteCallParts(db, runId));
+
+  // Everything the run was handed, marked with what it actually drew on. Built
+  // from OUR record of what we offered — the model writes text, never parts,
+  // which is what makes this trustworthy in the way a `tool` part is
+  // (@relayed/protocol, MemoryPart).
+  //
+  // Emitted whenever anything was OFFERED, not only when something was cited:
+  // "six recalled, none used" is the diagnostic, and it is invisible if the
+  // part only appears on a hit.
+  const cited = new Set(citedFacts(result.text, remembered).map((fact) => fact.citation!.messageId));
+  const recalled = remembered
+    .filter((fact) => fact.citation !== null)
+    .slice(0, PART_LIMITS.maxMemoriesRecalled)
+    .map((fact) => ({
+      text: fact.text,
+      message_id: fact.citation!.messageId,
+      label: fact.citation!.label,
+      used: cited.has(fact.citation!.messageId),
+    }));
+  if (recalled.length > 0) parts.push({ kind: 'memory', recalled });
   return parts;
 }
 
@@ -136,9 +159,13 @@ async function writeRunMessage(
 }
 
 /** The run's terminal message: the model's answer, or a one-line notice (§5.7). */
-export async function deliverReply(db: Kysely<DB>, run: FinishedRun, outcome: RunOutcome): Promise<WriteOutcome> {
+export async function deliverReply(
+  db: Kysely<DB>, run: FinishedRun, outcome: RunOutcome,
+  /** What the run was offered from memory. Only the cited ones reach the reply. */
+  remembered: readonly RecalledFact[] = [],
+): Promise<WriteOutcome> {
   if (outcome.state === 'completed') {
-    const parts = await answerParts(db, run.id, outcome.result);
+    const parts = await answerParts(db, run.id, outcome.result, remembered);
     return writeRunMessage(db, run, () => ({ parts, nextState: 'completed' }));
   }
   const text = outcome.state === 'refused' ? noticeFor({ state: 'refused', code: outcome.code })

@@ -18,6 +18,7 @@ import { accessRoutes } from './agents/access.ts';
 import { startCatalogueRefresh } from './agents/catalogue.ts';
 import { startDispatcher, type Dispatcher } from './agents/dispatcher.ts';
 import { startSummariser } from './agents/summariser.ts';
+import { startIngest } from './memory/ingest.ts';
 import { spaceRoutes } from './sync/routes.ts';
 
 useOtlpIfConfigured('server');
@@ -121,9 +122,15 @@ const stopCatalogue = startCatalogueRefresh(db);
 // registry only to fan out the revision it writes.
 const summariser = startSummariser(db, sync.registry);
 
+// Memory ingestion (docs/MEMORY.md §6). A job like the summariser and for the
+// same reason — nobody asked for it, so it has no invoker whose authority it
+// could spend — but it needs no registry: it writes nothing a client syncs.
+// Off unless MEMORY_INGEST=1, and it says so rather than starting silently.
+const ingest = startIngest(db);
+
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.once(sig, () => {
-    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); dispatcher?.stop();
+    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); ingest.stop(); dispatcher?.stop();
     void pool.end(); process.exit(0);
   });
 }

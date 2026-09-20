@@ -33,6 +33,48 @@ export const env = {
   /** Registers `/dev` routes (web/dev.ts). Never set outside a developer's machine. */
   devRoutes: devRoutes(),
 
+  // ── Memory (docs/MEMORY.md) ─────────────────────────────────────────────
+  //
+  // OPTIONAL, the same way the agent runtime's settings are: a server with no
+  // memory configured must still boot and serve every other feature. The
+  // ingest job and the recall path check these themselves and stay off rather
+  // than failing a run that would otherwise have worked without memory.
+  //
+  // Cloud for now; self-hosted once there is real usage, which is when the
+  // extraction model becomes ours to choose (§13).
+  hindsightBaseUrl: process.env['HINDSIGHT_BASE_URL'] ?? null,
+  hindsightApiKey: process.env['HINDSIGHT_API_KEY'] ?? null,
+  /**
+   * REST-path tenant. The TypeScript client has no tenant option and addresses
+   * `/v1/default/`, so this is only read by anything calling the API directly.
+   */
+  hindsightTenant: process.env['HINDSIGHT_TENANT'] ?? 'default',
+  /**
+   * Ingestion runs only when this is set. Off by default, and separately from
+   * whether Hindsight is configured — a workspace can be reading memory that
+   * already exists while nothing new is being written.
+   */
+  memoryIngest: process.env['MEMORY_INGEST'] === '1',
+  /**
+   * Recall runs on an agent run only when this is set. Separate from
+   * `MEMORY_INGEST` on purpose — a deployment can read memory that already
+   * exists while writing none, and the two are turned on in different stages.
+   *
+   * Off by default, which is also what keeps the dispatcher's tests from
+   * reaching a real Hindsight: a feature that costs a network round trip per
+   * run should be opted into, not inherited from an API key being present.
+   */
+  memoryRecall: process.env['MEMORY_RECALL'] === '1',
+  /**
+   * Restricts ingestion to these space ids. NULL means every eligible space.
+   *
+   * The first room is chosen deliberately rather than discovered: the point of
+   * stage 2 is a person reading one room's facts and judging them, which needs
+   * to be a room whose conversation they recognise.
+   */
+  memoryIngestSpaces: process.env['MEMORY_INGEST_SPACES']?.split(',').map(s => s.trim())
+    .filter(Boolean) ?? null,
+
   // ── workspace agents, step 3 (WORKSPACE-AGENTS-IMPL.md §4.2) ─────────────
   //
   // All three OPTIONAL, and deliberately: a server with no runtime configured

@@ -18,6 +18,7 @@ import { admitRun, onRunEnd, type ClaimedRun } from './checkpoints.ts';
 import { enabledToolkits } from './sessions.ts';
 import { runTools, toolsPrompt, FIND_TOOLS, CALL_TOOL } from './tools/index.ts';
 import { buildTranscript } from './transcript.ts';
+import { recallForRun, memoryBlock, personPrompt, citationPrompt, queryFrom } from '../memory/recall.ts';
 import { signGrant } from './grant.ts';
 import { callRuntime, RuntimeInterruptedError } from './runtime-client.ts';
 import { ROOMKEEPER_HANDLE } from '../provisioning/system-agents.ts';
@@ -307,6 +308,7 @@ async function processRun(
   // content the rest of the room must not learn by a page appearing (PANELS.md).
   const place = await db.selectFrom('chats').innerJoin('spaces', 'spaces.id', 'chats.space_id')
     .select(['spaces.id as space_id', 'spaces.kind as space_kind', 'spaces.name as space_name',
+             'spaces.visibility as space_visibility',
              'chats.kind as chat_kind', 'chats.name as chat_name'])
     .where('chats.id', '=', run.chatId).executeTakeFirst();
   const inRoom = place?.space_kind === 'room' && place.chat_kind !== 'private';
@@ -344,7 +346,27 @@ async function processRun(
     workspaceId, state: 'running',
   });
 
-  const prompt = await buildTranscript(db, trigger, run.agentActorId, run.invokerActorId);
+  // What was actually asked, which is the recall query. `TriggerRef` carries
+  // no body — it is an address, not content — so this is its own lookup, by
+  // primary key.
+  const triggerRow = trigger
+    ? await db.selectFrom('messages').select('body').where('id', '=', trigger.id).executeTakeFirst()
+    : undefined;
+
+  // IN PARALLEL WITH THE TRANSCRIPT, deliberately. Recall costs seconds against
+  // a real bank, and it is additive — so it runs beside work the run has to do
+  // anyway, and its own deadline drops the block rather than the run
+  // (MEMORY.md §7.1, §11).
+  const [prompt, remembered] = await Promise.all([
+    buildTranscript(db, trigger, run.agentActorId, run.invokerActorId),
+    place && env.memoryRecall
+      ? recallForRun(db, {
+          workspaceId, spaceId: place.space_id, visibility: place.space_visibility,
+          invokerActorId: run.invokerActorId,
+          query: queryFrom(triggerRow?.body ?? '', run.agentActorId),
+        }).catch(() => ({ facts: [], aboutPerson: [] }))
+      : Promise.resolve({ facts: [], aboutPerson: [] }),
+  ]);
   const grant = await signGrant({
     invokerActorId: run.invokerActorId, agentActorId: run.agentActorId, runId: run.id, chatId: run.chatId,
   });
@@ -353,7 +375,7 @@ async function processRun(
 
   const body = RunRequest.parse({
     runId: run.id,
-    prompt,
+    prompt: memoryBlock(remembered.facts) + prompt,
     // The writing rules come last, deliberately: a rule right before the model
     // writes outweighs the same rule buried under tool descriptions.
     systemPrompt: `${agent?.instructions ?? ''}\n\nYou are running inside Relayed. The last message is the `
@@ -363,7 +385,16 @@ async function processRun(
       + `\n\n${PEOPLE_PROMPT}`
       + toolsPrompt(toolkits, where)
       + summaryPrompt(summary?.body ?? '')
-      + `\n\n${WRITING_PROMPT}`,
+      // Its own slot, never fused into the recalled-facts block: a preference
+      // travels between rooms and is not citable, and everything in that block
+      // is anchored to one room (MEMORY.md §5.5).
+      + personPrompt(remembered.aboutPerson)
+      + `\n\n${WRITING_PROMPT}`
+      // AFTER the writing rules, so it is the last thing read before the model
+      // writes. Asking for the citation inside the memory block — above a
+      // forty-message transcript — was ignored on every run that used a fact
+      // (MEMORY.md §7.2).
+      + citationPrompt(remembered.facts),
     ...(agent?.model ? { model: agent.model } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     palette: 'none',
@@ -393,7 +424,10 @@ async function processRun(
         if (outcome.state === 'failed' && frame.result.error) {
           console.error(`[agent.dispatcher] run ${run.id} (${run.agentActorId}) failed: ${frame.result.error}`);
         }
-        const written = await deliverReply(db, finished, outcome);
+        // The only branch that can be `completed`, and so the only one that can
+        // cite anything: a notice draws on nothing. What the run was OFFERED
+        // goes in; `deliverReply` keeps the ones the reply actually cited.
+        const written = await deliverReply(db, finished, outcome, remembered.facts);
         count('agent.run', { run_outcome: outcome.state });
         await finishDelivery(db, registry, finished, written);
         return;

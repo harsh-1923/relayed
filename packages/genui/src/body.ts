@@ -45,6 +45,11 @@ function partText(part: MessagePart): string {
     case 'reply_to_ui':
       // Drawn as "Chose …"; the words the person sent are the markdown part beside it.
       return '';
+    case 'memory':
+      // Nothing. The footer is an enhancement over the reply, and `body` is what
+      // search, notifications and a client older than this part will show — the
+      // citations are already in the markdown wherever the model kept them.
+      return '';
     case 'access_request':
       // Never actually reached: the card's body is supplied directly by
       // `access.ts` (`trustedBody`), never derived here — this part carries

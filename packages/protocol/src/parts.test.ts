@@ -8,14 +8,22 @@ const tool = {
   input: { command: 'node --test' }, output_preview: '# pass 17', output_bytes: 5120,
 };
 const ui = { kind: 'ui', lang: 'openui-lang@0.5', library: 'relayed-ui@1', source: 'root = Card([])' };
+const memory = {
+  kind: 'memory',
+  recalled: [{
+    text: 'Bob Iyer owns the rollback script', message_id: 'msg_01M4',
+    label: 'db-cutover, 19 Sep', used: true,
+  }],
+};
 
 test('every kind the contract names parses, and nothing else is a kind', () => {
   const parsed = Parts.safeParse([
-    { kind: 'markdown', text: 'I ran the test.' }, tool, ui,
+    { kind: 'markdown', text: 'I ran the test.' }, tool, ui, memory,
     { kind: 'reply_to_ui', message_id: 'msg_A2', label: 'Apply the fix' },
   ]);
   assert.equal(parsed.success, true);
-  assert.deepEqual([...PART_KINDS].sort(), ['access_request', 'markdown', 'reply_to_ui', 'tool', 'ui']);
+  assert.deepEqual([...PART_KINDS].sort(),
+    ['access_request', 'markdown', 'memory', 'reply_to_ui', 'tool', 'ui']);
 });
 
 test('keys are snake_case: a camelCase part is refused on write, not silently emptied', () => {
@@ -81,4 +89,38 @@ test('stored parts that are not parts read as none, so body is shown', () => {
   assert.equal(readStoredParts('{"kind":"markdown"}'), null, 'not an array');
   assert.equal(readStoredParts('[]'), null);
   assert.equal(readStoredParts('[{"text":"no kind"}]'), null);
+});
+
+// ── memory (docs/MEMORY.md §7.2) ────────────────────────────────────────────
+
+test('a memory part recalling nothing is refused — an empty footer is not a footer', () => {
+  assert.equal(Parts.safeParse([{ kind: 'memory', recalled: [] }]).success, false);
+});
+
+test('a recalled fact that was NOT used is valid — that is the diagnostic', () => {
+  // "six recalled, none used" is the thing worth seeing while this is built,
+  // and it is invisible if the part only appears on a hit.
+  const unused = [{ ...memory.recalled[0], used: false }];
+  assert.equal(Parts.safeParse([{ kind: 'memory', recalled: unused }]).success, true);
+});
+
+test('a recalled fact needs its anchor, its label and its verdict', () => {
+  for (const missing of ['text', 'message_id', 'label', 'used'] as const) {
+    const recalled = [{ ...memory.recalled[0], [missing]: undefined }];
+    assert.equal(Parts.safeParse([{ kind: 'memory', recalled }]).success, false,
+                 `${missing} must be required`);
+  }
+});
+
+test('more facts than a recall can produce are refused', () => {
+  const many = Array.from({ length: PART_LIMITS.maxMemoriesRecalled + 1 }, (_, index) =>
+    ({ ...memory.recalled[0], message_id: `msg_${index}` }));
+  assert.equal(Parts.safeParse([{ kind: 'memory', recalled: many }]).success, false);
+});
+
+test('a PERSON may not claim to have cited memory — it is a costume, like a tool part', () => {
+  assert.equal(forbiddenPartKind('human', [memory]), 'memory');
+  assert.equal(forbiddenPartKind('agent', [memory]), null);
+  assert.equal(undrawablePartKind('human', [memory]), 'memory');
+  assert.equal(undrawablePartKind('agent', [memory]), null);
 });
