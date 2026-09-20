@@ -8,6 +8,7 @@
 //
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
+import { syncUrl, workosClientId } from './config.ts';
 import {
   emit, count, histogram, span, identify, useOtlpIfConfigured, type Identity,
   type EventName, type MetricName,
@@ -179,7 +180,7 @@ const provisionalDeviceId = (): string => (provisional ??= newId('dev'));
 const ports = new Set<Electron.MessagePortMain>();
 
 const session = new Session({
-  config: { clientId: process.env['WORKOS_CLIENT_ID'] ?? '' },
+  config: { clientId: workosClientId() },
   deviceId: () => (storage.accountId ? storage.deviceId : provisionalDeviceId()),
   openBrowser,
   vault: {
@@ -335,8 +336,7 @@ const reauth = createReauth({
 });
 
 const link = createLink({
-  url: (process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787')
-    .replace(/^http/, 'ws') + '/sync',
+  url: syncUrl(),
   gate: net,
   db: () => (storage.hasWorkspace ? storage.workspace : null),
   workspaceId: () => storage.workspaceId,
@@ -985,7 +985,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     push();
     return view();
   },
-  'auth.configured': () => ({ clientId: (process.env['WORKOS_CLIENT_ID'] ?? '').slice(0, 14) || null }),
+  'auth.configured': () => ({ clientId: workosClientId().slice(0, 14) || null }),
 
   // ── invitations (AUTHZ.md §9) ──────────────────────────────────────────
   // The renderer never holds a token, so every one of these is proxied through

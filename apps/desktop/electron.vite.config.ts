@@ -35,12 +35,45 @@ function signalBuild(): Plugin {
   };
 }
 
+/**
+ * What this build points at, substituted into the bundle (src/sync/config.ts).
+ *
+ * READ FROM THE BUILD ENVIRONMENT, which is the developer's shell for a local
+ * build and CI's secrets for a release. A packaged app has no `.env` to read at
+ * runtime, so this is the only moment the values can be chosen.
+ *
+ * The localhost default is what makes `pnpm dev` work with no setup. It is also
+ * why a release build MUST set these: shipping the default produces an app that
+ * points at a server on the user's own machine and fails at sign-in with
+ * nothing to suggest why. `pnpm build` warns when they are unset.
+ */
+function buildConfig(): Record<string, string> {
+  const server = process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787';
+  const client = process.env['WORKOS_CLIENT_ID'] ?? '';
+  if (process.env['RELAYED_RELEASE'] === '1') {
+    // A release that would ship the dev defaults is a broken download, and the
+    // break only shows up on someone else's machine. Fail the build instead.
+    if (server.includes('127.0.0.1') || server.includes('localhost')) {
+      throw new Error(`RELAYED_RELEASE=1 but RELAYED_SERVER_URL is ${server}`);
+    }
+    if (!client) throw new Error('RELAYED_RELEASE=1 but WORKOS_CLIENT_ID is unset');
+  }
+  return {
+    __RELAYED_SERVER_URL__: JSON.stringify(server),
+    __WORKOS_CLIENT_ID__: JSON.stringify(client),
+  };
+}
+
 export default defineConfig({
   main: {
     // Workspace packages are SOURCE and must be bundled; only real node_modules
     // dependencies get externalized. Without the exclude, Electron tries to
     // load @relayed/telemetry's raw .ts at runtime and fails to resolve it.
     plugins: [externalizeDepsPlugin({ exclude: ['@relayed/telemetry'] }), signalBuild()],
+    // The sync engine is one of this build's entries, so its `config.ts` is
+    // substituted here rather than in the renderer — the renderer never learns
+    // the server URL and has no business holding it.
+    define: buildConfig(),
     build: {
       rollupOptions: {
         // Three main-process entries: the app itself, the sync engine, and the

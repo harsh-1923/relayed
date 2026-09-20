@@ -1,3 +1,4 @@
+import { serverUrl } from '../config.ts';
 import type { Role } from '@relayed/authz';
 import { firstString } from './json.ts';
 
@@ -75,7 +76,7 @@ export class ServerError extends Error {
   }
 }
 
-const baseUrl = () => process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787';
+const baseUrl = serverUrl;
 
 async function get<T>(path: string, bearer: string): Promise<T> {
   let res: Response;
