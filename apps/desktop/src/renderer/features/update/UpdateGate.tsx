@@ -1,15 +1,26 @@
 // The two levels of "your build is behind" (docs/RELEASE.md §1).
 //
 // An OFFER and a REFUSAL are different things, so they are different surfaces.
-// `update_available` is a strip you can dismiss and keep working past.
-// `update_required` replaces the app: this build is below the floor the server
-// publishes, and pretending it still works would mean writes that the server
-// will reject and a person who cannot tell why.
 //
-// NEITHER APPEARS WITHOUT AN ANSWER. The sync engine only leaves `ok` on a
-// successful response, so an unreachable server shows nothing at all — R3 says
-// local data is fully readable with no network, and a wall on a plane would be
-// the exact failure the local-first design exists to prevent.
+// THE OFFER OVERLAYS, IT DOES NOT DISPLACE. It was a strip above the router,
+// which pushed the entire application down the window and read as broken chrome
+// rather than as a notice. Nothing about "there is a newer build" justifies
+// moving the app someone is using, so it is a fixed card in the corner over the
+// top of everything.
+//
+// IT DOES NOT TIME OUT. A toast that disappears on its own is right for "sent"
+// and wrong for this: someone who looks away misses the only signal there is,
+// and there is no second channel telling them. It stays until dismissed, and
+// dismissal lasts for this window — the next launch offers it again, because
+// the update is still not installed.
+//
+// THE REFUSAL TAKES THE WHOLE WINDOW, deliberately: this build is below the
+// floor the server publishes, so there is nothing useful left to overlay.
+//
+// NEITHER APPEARS WITHOUT AN ANSWER. The sync engine leaves `ok` only on a
+// successful response, so an unreachable server shows nothing — R3 says local
+// data is fully readable with no network, and a wall on a plane would be the
+// exact failure local-first exists to prevent.
 import { useState, type ReactNode } from 'react';
 import { useSession } from '@/app/state';
 import { Button } from '@/components/ui/button';
@@ -24,9 +35,12 @@ export function UpdateGate({ children }: { children: ReactNode }) {
 
   if (v.status === 'update_required') {
     return (
-      <div className="grid h-dvh place-items-center bg-background p-8">
-        <div className="max-w-md text-center">
-          <h1 className="text-lg font-medium">Relayed needs updating</h1>
+      // `fixed inset-0`, not `h-dvh`: height alone left the width to whatever
+      // layout the root happened to use, so the wall covered part of the window
+      // and the translucent material showed through beside it.
+      <div className="fixed inset-0 z-50 grid place-items-center bg-background p-8">
+        <div className="max-w-sm text-center">
+          <h1 className="text-base font-medium">Relayed needs updating</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             This version ({state.version?.current}) is no longer supported.
             Version {v.minimum} or newer is required to continue.
@@ -44,18 +58,25 @@ export function UpdateGate({ children }: { children: ReactNode }) {
 
   return (
     <>
+      {children}
       {v.status === 'update_available' && !dismissed && (
-        <div className="flex items-center justify-between gap-3 border-b bg-muted/40 px-3 py-1.5 text-sm">
-          <span className="text-muted-foreground">
-            Version {v.latest} is available. You have {state.version?.current}.
-          </span>
-          <span className="flex items-center gap-1">
-            <Button size="sm" variant="ghost" onClick={() => open(v.url)}>Download</Button>
-            <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>Dismiss</Button>
-          </span>
+        <div
+          role="status"
+          className="fixed bottom-4 right-4 z-50 w-72 rounded-lg border bg-popover
+                     p-3 text-popover-foreground shadow-lg"
+        >
+          <p className="text-sm font-medium">Version {v.latest} is available</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            You&rsquo;re on {state.version?.current}.
+          </p>
+          <div className="mt-2.5 flex justify-end gap-1">
+            <Button size="sm" variant="ghost" onClick={() => setDismissed(true)}>
+              Not now
+            </Button>
+            <Button size="sm" onClick={() => open(v.url)}>Download</Button>
+          </div>
         </div>
       )}
-      {children}
     </>
   );
 }
