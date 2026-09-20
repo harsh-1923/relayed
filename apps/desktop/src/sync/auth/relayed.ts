@@ -424,14 +424,22 @@ export const revokeInvite = async (
 ): Promise<{ invitation: Invitation }> =>
   post<{ invitation: Invitation }>(`/invitations/${encodeURIComponent(id)}/revoke`, {}, accessToken);
 
-/** Materialise the actor for a workspace we were admitted to (§9). */
+/**
+ * Materialise the actor for a workspace we were admitted to (§9).
+ *
+ * EITHER CREDENTIAL. Onboarding holds a WorkOS token and no session of ours;
+ * somebody invited after they had already signed up holds the opposite, because
+ * the WorkOS token is dropped the moment onboarding completes. The server takes
+ * both, the same way /auth/workspace always has.
+ */
 export const joinWorkspace = async (
-  workosAccessToken: string, deviceId: string, workspaceId: string, handle: string,
+  proof: { workosAccessToken: string } | { bearer: string },
+  deviceId: string, workspaceId: string, handle: string,
 ): Promise<OurSession> =>
   toSession(await post<RawSession>('/auth/join', {
-    workos_access_token: workosAccessToken, device_id: deviceId,
-    workspace_id: workspaceId, handle,
-  }));
+    ...('workosAccessToken' in proof ? { workos_access_token: proof.workosAccessToken } : {}),
+    device_id: deviceId, workspace_id: workspaceId, handle,
+  }, 'bearer' in proof ? proof.bearer : undefined));
 
 export interface DirectoryActor {
   id: string; workspaceId: string; type: 'human' | 'agent';

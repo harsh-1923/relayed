@@ -289,9 +289,16 @@ export class Session {
    * to authenticate with.
    */
   async joinWorkspace(workspaceId: string, handle: string): Promise<AuthState> {
-    if (!this.#pendingWorkosToken) throw new Error('no pending sign-in — start again');
-    const session = await joinWorkspace(
-      this.#pendingWorkosToken, this.#deps.deviceId(), workspaceId, handle);
+    // Onboarding holds a WorkOS token. Somebody invited AFTER they signed up
+    // holds none — it is cleared the moment onboarding completes — but does
+    // hold one of our access tokens, for a different workspace. Either proves
+    // the same identity, and demanding the first is what made an invitation
+    // unacceptable to anyone who had already created a workspace.
+    const proof = this.#pendingWorkosToken
+      ? { workosAccessToken: this.#pendingWorkosToken }
+      : this.accessToken ? { bearer: this.accessToken } : null;
+    if (!proof) throw new Error('no pending sign-in — start again');
+    const session = await joinWorkspace(proof, this.#deps.deviceId(), workspaceId, handle);
     this.#pendingWorkosToken = null;
     await this.#adopt(session);
     return this.#state;

@@ -266,23 +266,62 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    * hosted page before the app was ever opened (join.ts). This is the moment the
    * actor comes into existence, which is separate because it needs a handle.
    */
-  app.post<{ Body: ExchangeBody & { workspace_id: string; handle: string } }>(
+  app.post<{ Body: Partial<ExchangeBody> & { workspace_id: string; handle: string } }>(
     '/auth/join', async (req, reply) => {
       const { workos_access_token, device_id, workspace_id, handle } = req.body ?? {};
-      if (!workos_access_token || !device_id || !workspace_id || !handle) {
+      if (!workspace_id || !handle) {
         return reply.code(400).send({ error: 'missing required fields' });
       }
       const bad = validateHandle(handle);
       if (bad) return reply.code(400).send({ error: 'invalid_handle', reason: bad });
 
+      // TWO WAYS TO PROVE IDENTITY, exactly as /auth/workspace above, and for
+      // the same reason: there are two callers.
+      //
+      // Onboarding holds a WorkOS token and has no session. But somebody who
+      // signed up first and was invited afterwards is already signed in to a
+      // DIFFERENT workspace, holds one of our tokens, and has no WorkOS token
+      // any more — it is dropped the moment onboarding completes. Requiring one
+      // here meant that person could never accept an invitation: the only way
+      // back to a WorkOS token is another trip through the browser, and nothing
+      // asks for one once you are signed in.
       let identity: Identity;
-      try { identity = await identityFrom(workos_access_token); }
-      catch (e) {
-        const msg = (e as Error).message;
-        return /profile/i.test(msg)
-          ? reply.code(502).send({ error: 'profile_unavailable', detail: msg })
-          : reply.code(401).send({ error: 'invalid_token', detail: msg });
+      let deviceId = device_id;
+      const bearer = (req.headers.authorization ?? '').startsWith('Bearer ')
+        ? (req.headers.authorization ?? '').slice(7)
+        : '';
+
+      if (workos_access_token) {
+        try { identity = await identityFrom(workos_access_token); }
+        catch (e) {
+          const msg = (e as Error).message;
+          return /profile/i.test(msg)
+            ? reply.code(502).send({ error: 'profile_unavailable', detail: msg })
+            : reply.code(401).send({ error: 'invalid_token', detail: msg });
+        }
+      } else if (bearer) {
+        let claims;
+        try { claims = await verifyAccessToken(bearer); }
+        catch (e) { return reply.code(401).send({ error: 'invalid_token', detail: (e as Error).message }); }
+
+        const actor = await db.selectFrom('actors')
+          .select(['identity_kind', 'identity_id', 'display_name', 'avatar_url'])
+          .where('id', '=', claims.actorId).executeTakeFirst();
+        if (!actor?.identity_id || actor.identity_kind !== 'workos_user') {
+          return reply.code(403).send({ error: 'not_a_human_actor' });
+        }
+        // Email is absent by design (§6.2 — never a join key). `joinWorkspace`
+        // authorises against the WorkOS MEMBERSHIP, not the address.
+        identity = {
+          workosUserId: actor.identity_id, email: '',
+          displayName: actor.display_name, avatarUrl: actor.avatar_url,
+        };
+        deviceId ??= claims.deviceId;
+      } else {
+        return reply.code(401).send({ error: 'no_credential' });
       }
+
+      if (!deviceId) return reply.code(400).send({ error: 'device_id required' });
 
       const joined = await joinWorkspace(db, identity, workspace_id, handle);
       if (typeof joined === 'object') {
@@ -308,7 +347,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         needs_workspace: false,
         actor: joined,
         memberships: memberships.map(wire),
-        ...(await issue(joined.actorId, joined.orgId, joined.workspaceId, device_id)),
+        ...(await issue(joined.actorId, joined.orgId, joined.workspaceId, deviceId)),
       });
     });
 
