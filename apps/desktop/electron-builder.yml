@@ -1,0 +1,81 @@
+# How a build becomes something a person can download (docs/RELEASE.md).
+#
+# macOS only, and unsigned for now — §2 and §3 there carry what that costs and
+# when it changes. Windows is not a target: electron-winstaller's build script
+# is left unapproved in pnpm for the same reason.
+
+# PERMANENT. `userData` is derived from this, so changing it after a release
+# orphans every existing install: the app looks freshly installed and all local
+# history is gone. Recoverable, because the local database is a replica — and
+# indistinguishable from data loss to the person it happens to (RELEASE.md §6).
+appId: app.relayed.com
+productName: Relayed
+copyright: Copyright © 2026 Harsh Sharma
+
+directories:
+  output: release
+  buildResources: resources
+
+# electron-vite has already bundled main, preload and the renderer into `out`.
+# Only the externalized runtime dependencies come from node_modules, and
+# electron-builder resolves those from package.json itself.
+files:
+  - out/**/*
+  - package.json
+  # THE SDK'S OWN `claude` BINARY IS 194MB AND IS NEVER RUN. Every call site
+  # passes `pathToClaudeCodeExecutable` resolved by `agent-runner/claude/binary.ts`,
+  # which finds the PERSON'S installation — the native installer, an older local
+  # install, Homebrew, or PATH — and reports "not installed" when there is none
+  # (LOCAL-ROOMS.md §3.6). A second copy inside the app would never be reached,
+  # and shipping it tripled the download.
+  #
+  # Only the platform packages are excluded. The SDK's JavaScript is still
+  # bundled: it is what speaks to whichever binary was found.
+  - '!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**'
+
+# NATIVE, AND SO CANNOT LIVE INSIDE THE ARCHIVE. `@napi-rs/keyring` loads a
+# `.node` binary, and dlopen cannot read one out of an asar. It is imported
+# lazily (main/browser-import), so an app with it packed wrong fails only when
+# someone imports browser sign-ins — long after the build looked fine.
+asarUnpack:
+  - '**/node_modules/@napi-rs/keyring/**'
+
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.productivity
+  # ARM64 ONLY, for now, and deliberately rather than by omission.
+  #
+  # `@napi-rs/keyring` is native, and pnpm 10+ does not install optional
+  # dependencies for an architecture it is not running on — so an x64 build made
+  # on this machine ships WITHOUT `keyring.darwin-x64.node`. It would package
+  # cleanly, launch cleanly, and fail only when somebody imports browser
+  # sign-ins, which is the worst way to find out.
+  #
+  # Adding x64 needs either an x64 (or CI matrix) build host, or
+  # `--config.supportedArchitectures`. Until one of those is set up and a build
+  # has actually been run on Intel, shipping that artifact would be guessing.
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  # EXPLICITLY UNSIGNED, said out loud rather than left to a missing variable.
+  # electron-builder still ad-hoc signs arm64, because macOS will not execute an
+  # arm64 binary carrying no signature at all. That ad-hoc signature is also why
+  # Gatekeeper reports the app as "damaged" rather than "unidentified developer"
+  # — it fails validation rather than lacking it — and why the install
+  # instructions must lead with `xattr -dr com.apple.quarantine` (RELEASE.md §2).
+  identity: null
+  # Both false, together. `hardenedRuntime` without notarization buys nothing for
+  # Gatekeeper and only adds ways to fail — the trap RELEASE.md §3 names.
+  hardenedRuntime: false
+  notarize: false
+
+dmg:
+  # The plain two-icon window. A background image is a design decision nobody
+  # has made yet, and the default is not wrong.
+  artifactName: ${productName}-${version}-${arch}.dmg
+
+# `npm rebuild` against Electron's headers. Nothing here builds from source:
+# node:sqlite is built into Node, and keyring ships prebuilt binaries.
+npmRebuild: false

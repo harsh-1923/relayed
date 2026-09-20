@@ -8,6 +8,11 @@ allowBuilds:
   # name rather than left to the default, so the decision is visible
   # (docs/AGENT-RESPONSES.md, rules for rooms).
   '@openuidev/lang-core': false
+  # Windows installer tooling, pulled in by electron-builder. We ship macOS only
+  # (apps/desktop/electron-builder.yml), and an unanswered build script makes
+  # pnpm exit non-zero — which electron-builder hits because it shells out to
+  # `pnpm install` during packaging. Denied by name so the decision is visible.
+  electron-winstaller: false
   esbuild: true
   protobufjs: false
 

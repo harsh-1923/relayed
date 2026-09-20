@@ -50,3 +50,6 @@ schema.sql
 
 # Composio spike debug dumps; may hold the API key
 spikes/composio-connect/.last-request*.json
+
+# electron-builder output.
+apps/desktop/release/
