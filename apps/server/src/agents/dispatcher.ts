@@ -62,7 +62,10 @@ export function startDispatcher(db: Kysely<DB>, registry: Registry): Dispatcher 
     .filter(key => !env[key]);
   if (missing.length > 0) {
     // Boot-time configuration state, before any logger is wired for this module.
-    console.log(`agent dispatcher not started — missing: ${missing.join(', ')}`);
+    // The names are a separate argument rather than interpolated: they come from
+    // the literal list above, so no user content can reach this line, and the
+    // privacy rule stays enforceable by pattern (OBSERVABILITY.md §6).
+    console.log('agent dispatcher not started — missing:', missing.join(', '));
     return { wake: () => {}, cancel: () => {}, stop: () => {} };
   }
 
@@ -417,13 +420,22 @@ async function processRun(
           : frame.result.status === 'timeout' ? { state: 'timeout' as const }
           : frame.result.status === 'cancelled' ? { state: 'cancelled' as const, by: 'the runtime' }
           : { state: 'failed' as const, reason: 'run_failed' as const };
-        // The runtime's own reason, dropped otherwise: `run_failed` tells the
-        // person nothing, and telemetry events carry no free text (§1 of the
-        // catalogue). Console only, for whoever is watching this process —
-        // never stored, never sent anywhere.
-        if (outcome.state === 'failed' && frame.result.error) {
-          console.error(`[agent.dispatcher] run ${run.id} (${run.agentActorId}) failed: ${frame.result.error}`);
-        }
+        // THE RUNTIME'S OWN ERROR TEXT IS DELIBERATELY NOT RECORDED. It is free
+        // text we did not author — a model or tool failure that can quote the
+        // prompt, and so a message body — and OBSERVABILITY.md §6 makes keeping
+        // that out of telemetry the privacy control rather than a style rule.
+        //
+        // This was a console.error, on the reasoning that a console is "never
+        // stored, never sent anywhere". That held on a laptop. It stopped being
+        // true when the server got a host: stdout and stderr are captured into
+        // the platform's log store with retention (docs/DEPLOY.md), so a console
+        // is a log sink like any other and not a containment boundary.
+        //
+        // What is left is enough to find the run: `agent.run{run_outcome}` below
+        // counts it, and the `finally` at the end of this function annotates the
+        // span with `run_id` and `agent_id`. What is lost is the runtime's own
+        // sentence about why — recover it from the runtime's traces, which is
+        // where it belongs, rather than by copying it across a trust boundary.
         // The only branch that can be `completed`, and so the only one that can
         // cite anything: a notice draws on nothing. What the run was OFFERED
         // goes in; `deliverReply` keeps the ones the reply actually cited.

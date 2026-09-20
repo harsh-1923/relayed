@@ -91,7 +91,7 @@ export async function seed(db: Kysely<DB>, size: WorldSize): Promise<World> {
     channels.push({ spaceId: made.spaceId, chatId: made.chatId, name });
     // Everybody, so fanout has a real audience rather than a pair.
     for (const actor of actors.slice(1)) {
-      await addToSpace(db, made.spaceId, actor, owner);
+      await addToSpace(db, made.spaceId, actor, owner, ulid('msg'));
     }
   }
 
@@ -105,7 +105,7 @@ export async function seed(db: Kysely<DB>, size: WorldSize): Promise<World> {
     // the edge case with no other way to produce it.
     const members = [owner, ...actors.slice(1, Math.max(2, Math.ceil(actors.length / 3)))];
     for (const actor of members.slice(1)) {
-      await addToSpace(db, made.spaceId, actor, owner);
+      await addToSpace(db, made.spaceId, actor, owner, ulid('msg'));
     }
     privates.push({ spaceId: made.spaceId, chatId: made.chatId, members });
   }
