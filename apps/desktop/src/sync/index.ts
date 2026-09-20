@@ -229,7 +229,29 @@ function adoptSession(s: OurSession): void {
     return;
   }
 
-  if (storage.workspaceId !== workspaceId) storage.switchWorkspace(workspaceId);
+  if (storage.workspaceId !== workspaceId) {
+    // STOP BEFORE THE REPLICA MOVES, for the reason `workspace.switch` gives at
+    // length: the link resolves its database through `storage.workspace`, so a
+    // socket still authenticated for the old workspace goes on delivering that
+    // workspace's events INTO THE NEW REPLICA, frontier advancing as if they
+    // belonged.
+    //
+    // `link.start()` at the end of this function is NOT enough on its own, and
+    // that is what made this hard to see: `connection.start()` is idempotent —
+    // "begin, or do nothing if already going" — so on a live socket it returns
+    // without doing anything, and the old connection simply stays. Whoever
+    // joined or created a second workspace while signed in kept the previous
+    // one's socket, and `hydrateDirectory` — which runs on CONNECT — never ran
+    // for the workspace they were now looking at. The symptom was an empty
+    // People list; the hazard underneath it was cross-tenant delivery.
+    //
+    // Reached only when the workspace actually changes, so the ordinary paths
+    // are untouched: `workspace.switch` has already stopped the link and moved
+    // storage before `activate` lands here, and boot and a plain sign-in have
+    // no socket to stop.
+    link.stop();
+    storage.switchWorkspace(workspaceId);
+  }
 
   // Scope the blob handler to whatever account is now open, then fill the
   // avatar cache. Fire-and-forget: a grey circle is not a failed sign-in.
