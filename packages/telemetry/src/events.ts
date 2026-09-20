@@ -194,6 +194,12 @@ export const events = {
                            doc: 'A renderer attached a MessagePort (DESIGN §13.2).' },
   'blob.prefetched':     { fields: { kind: 'enum', count: 'int' },
                            doc: 'Blobs fetched eagerly. Avatars are the pinned class (DESIGN §13.3).' },
+  'app.update.offered':  { fields: { current: 'enum', latest: 'enum', required: 'bool' },
+                           doc: 'This build is behind. `required` separates the offer from the '
+                              + 'refusal: false is a dismissible banner, true is a build below '
+                              + 'the published floor that the app will not run (RELEASE.md §1). '
+                              + 'A rising `required` count after a floor is raised is how you '
+                              + 'watch people actually move.' },
 } as const satisfies Record<string, EventSpec>;
 
 export type EventName = keyof typeof events;

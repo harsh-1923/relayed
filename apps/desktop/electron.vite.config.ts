@@ -2,7 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import type { Plugin } from 'vite';
 
 /**
@@ -73,6 +73,13 @@ function signalBuild(): Plugin {
  * points at a server on the user's own machine and fails at sign-in with
  * nothing to suggest why. `pnpm build` warns when they are unset.
  */
+/** This app's version, read from its own package.json at build time. */
+function pkgVersion(): string {
+  try {
+    return JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version ?? '0.0.0';
+  } catch { return '0.0.0'; }
+}
+
 function buildConfig(): Record<string, string> {
   const server = process.env['RELAYED_SERVER_URL'] ?? 'http://127.0.0.1:8787';
   const client = process.env['WORKOS_CLIENT_ID'] ?? '';
@@ -87,6 +94,10 @@ function buildConfig(): Record<string, string> {
   return {
     __RELAYED_SERVER_URL__: JSON.stringify(server),
     __WORKOS_CLIENT_ID__: JSON.stringify(client),
+    // What this build calls itself, for the update check (sync/version.ts).
+    // Taken from package.json so `npm version` is the only place it is set and
+    // the number in the dmg and the number on the wire cannot disagree.
+    __RELAYED_VERSION__: JSON.stringify(pkgVersion()),
   };
 }
 

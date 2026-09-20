@@ -38,9 +38,14 @@ import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
 import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
 import { AccountSettingsShortcuts } from '@/routes/AccountSettingsShortcuts';
 import { NotFound } from '@/routes/NotFound';
+import { UpdateGate } from '@/features/update/UpdateGate';
 
 export function Router() {
   return (
+    // OUTSIDE the routes, because a required update is not a place you navigate
+    // to — it replaces every route, including sign-in, which a build below the
+    // floor should not be starting either.
+    <UpdateGate>
     <Routes>
       {/* Decides where you belong from state, rather than guessing. */}
       <Route path="/" element={<RootRedirect />} />
@@ -105,5 +110,6 @@ export function Router() {
 
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </UpdateGate>
   );
 }

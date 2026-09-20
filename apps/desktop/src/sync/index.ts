@@ -9,6 +9,7 @@
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
 import { syncUrl, workosClientId } from './config.ts';
+import { appVersion, checkVersion, type VersionState } from './version.ts';
 import {
   emit, count, histogram, span, identify, useOtlpIfConfigured, type Identity,
   type EventName, type MetricName,
@@ -484,11 +485,44 @@ function view() {
     auth: session.state,
     /** Development-only affordances. False in a packaged build, so the UI is absent. */
     devTools,
+    /**
+     * The update banner, and the wall. `update_required` means this build is
+     * below the floor the server publishes and the UI must stop being usable —
+     * entered only on an ANSWER saying so, never on a failed check.
+     */
+    version: { current: appVersion(), state: versionState },
     offline: net.offline,
     canGoOffline: net.canGoOffline,
     platform: process.platform,
   };
 }
+
+/**
+ * Whether this build is still one the server will accept (RELEASE.md §1).
+ *
+ * KEPT UNTIL CONTRADICTED. A failed check returns null and changes nothing, so
+ * a client already told it is too old stays told across a network blip, and one
+ * that has never been told is left alone — R3 means an unreachable server is
+ * not news.
+ */
+let versionState: VersionState = { status: 'ok' };
+
+async function runVersionCheck(): Promise<void> {
+  const next = await checkVersion();
+  if (!next) return;
+  const changed = next.status !== versionState.status;
+  versionState = next;
+  if (changed) push();
+}
+
+/**
+ * On boot, then hourly. Hourly rather than on every reconnect: the answer
+ * changes when somebody cuts a release, which is not a thing that happens on
+ * the timescale of a socket dropping.
+ */
+const VERSION_POLL_MS = 3_600_000;
+void runVersionCheck();
+setInterval(() => void runVersionCheck(), VERSION_POLL_MS).unref?.();
 
 function push(): void {
   const data = view();

@@ -130,6 +130,8 @@ export interface LabelValues {
    * outstanding — nothing of that attempt is kept, and the reply is text alone.
    */
   genui_outcome: 'valid' | 'repaired' | 'given_up';
+  /** What a version check MEANT. Its own label: `outcome` is the auth one. */
+  version_outcome: 'ok' | 'update_available' | 'update_required';
   /**
    * Why a `show_ui` call failed validation — the parser's own codes plus the
    * two the server adds for a block it cannot read at all. A closed allowlist,
@@ -234,6 +236,7 @@ export const labelValues = {
   version: Array.from({ length: 12 }, (_, i) => `v${i}`) as unknown as string[],
   stage: ['frame', 'apply', 'catchup', 'directory', 'roster', 'drain', 'welcome'],
   genui_outcome: ['valid', 'repaired', 'given_up'],
+  version_outcome: ['ok', 'update_available', 'update_required'],
   genui_error: ['empty', 'too-large', 'parse-exception', 'no-root', 'wrong-root',
                 'incomplete', 'too-many-statements', 'data-not-allowed', 'state-not-allowed',
                 'unknown-lang', 'unknown-library', 'other'],
@@ -628,6 +631,14 @@ export const metrics = {
        + '`running` — this counts what a run ENDED as. A rising `interrupted` '
        + 'share outside a deploy window means leases are expiring while the '
        + 'runtime is still healthy, which points at the timeout, not an outage.',
+  },
+  'app.version.checked': {
+    kind: 'counter', labels: ['version_outcome'],
+    doc: 'A version check that got an ANSWER, by what it meant: ok, '
+       + 'update_available, update_required. A check that could not reach the '
+       + 'server is absent rather than counted as ok — R3 means an unreachable '
+       + 'server is not news, and counting it would hide how many clients are '
+       + 'never hearing the floor at all.',
   },
   'agent.run.refused': {
     kind: 'counter', labels: ['run_refusal'],

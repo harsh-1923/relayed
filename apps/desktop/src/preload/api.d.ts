@@ -285,6 +285,22 @@ export interface AppState {
   auth: AuthState;
   /** Development build. False in a packaged app, where the controls do not exist. */
   devTools: boolean;
+  /**
+   * Whether this build is still one the server accepts (RELEASE.md §1).
+   *
+   * `update_available` is an offer and the app works. `update_required` is a
+   * refusal: this build is below the published floor and the UI must stop being
+   * usable. It is entered only on an ANSWER that says so — never on a failed
+   * check, because R3 means an unreachable server is not news and a wall on a
+   * plane would be the failure local-first exists to prevent.
+   */
+  version: {
+    current: string;
+    state:
+      | { status: "ok" }
+      | { status: "update_available"; latest: string; url: string }
+      | { status: "update_required"; latest: string; minimum: string; url: string };
+  };
   /** The network is cut for the sync process — simulated aeroplane. */
   offline: boolean;
   /** This build can simulate offline. False in production, where the code is absent. */
