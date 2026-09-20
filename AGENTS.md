@@ -54,6 +54,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/DESIGN.md`](docs/DESIGN.md) | **Design of record.** Architecture, schema, sync protocol, invariants. |
 | [`docs/STACK.md`](docs/STACK.md) | Technology choices and why, the local dev stack, library docs and context7 IDs. |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | How builds reach users, code signing, forward compatibility across versions. |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | **Runbook.** Getting `apps/server` and Postgres onto Railway: the one-instance rule, WorkOS production setup, environment, the custom domain, and what moving out would cost. |
 | [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) | What we collect and how. Read before adding any log, metric or span. |
 | [`docs/STORAGE.md`](docs/STORAGE.md) | Local storage layout, multi-workspace and multi-account, switching flows. |
 | [`docs/AUTHZ.md`](docs/AUTHZ.md) | Who may do what. The `memberships` shape, the single `can()`, and why FGA is deferred. |

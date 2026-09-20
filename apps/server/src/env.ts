@@ -19,6 +19,16 @@ const required = (name: string): string => {
 
 export const env = {
   port: Number(process.env['PORT'] ?? 8787),
+  /**
+   * LOOPBACK BY DEFAULT, and a container has to say otherwise.
+   *
+   * A development machine that bound 0.0.0.0 would put an unauthenticated
+   * `/dev` surface on whatever café network it is joined to. A container's
+   * loopback, meanwhile, reaches nothing outside it — so a deployment that
+   * forgets `HOST` fails by being unreachable, which is loud, rather than by
+   * being exposed, which is silent.
+   */
+  host: process.env['HOST'] ?? '127.0.0.1',
   databaseUrl: required('DATABASE_URL'),
   workosClientId: required('WORKOS_CLIENT_ID'),
   /** Only needed for Management API calls (orgs, invitations) — never for auth. */

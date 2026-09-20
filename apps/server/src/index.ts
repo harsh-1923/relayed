@@ -128,24 +128,38 @@ const summariser = startSummariser(db, sync.registry);
 // Off unless MEMORY_INGEST=1, and it says so rather than starting silently.
 const ingest = startIngest(db, sync.registry);
 
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(sig, () => {
-    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); ingest.stop(); dispatcher?.stop();
-    void pool.end(); process.exit(0);
-  });
-}
-
-await app.listen({ port: env.port, host: '127.0.0.1' });
+await app.listen({ port: env.port, host: env.host });
 emit('app.boot', { to_first_render: 0, from_local: false });
 
+/**
+ * ONE handler for both signals, and it must stay one.
+ *
+ * This was two: a first that stopped the jobs and called `process.exit(0)`
+ * synchronously, and a second, registered after `listen`, that closed the
+ * sockets with a code first. Node runs listeners in registration order, so the
+ * first one's exit pre-empted the second and the socket close never ran: the
+ * second handler carried a careful comment about behaviour the process could
+ * not reach.
+ *
+ * The cost was paid on every deploy: clients discovered the restart at their
+ * next heartbeat instead of being told, which is up to a minute of silence that
+ * looks exactly like a network fault.
+ *
+ * ORDER IS THE POINT. Jobs first, so nothing new is written into a server that
+ * is leaving. Then the sockets, told WHY, so each client reconnects immediately
+ * on a jittered delay rather than arriving together (invariant 31). Then
+ * Fastify, then the pool.
+ */
+let leaving = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.once(sig, () => {
-    // Sockets first, and told WHY. A deploy that just drops connections leaves
-    // every client discovering it at its next heartbeat — up to a minute of
-    // silence that looks exactly like a network fault. Closing with a code lets
-    // them reconnect immediately, on a jittered delay so they do not arrive
-    // together (invariant 31).
-    stopRetention();
+    // `once` is per signal, so a SIGTERM followed by a SIGINT would otherwise
+    // start a second shutdown over the top of the first.
+    if (leaving) return;
+    leaving = true;
+
+    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); ingest.stop(); dispatcher?.stop();
+
     void sync.close()
       .then(() => app.close())
       .then(() => pool.end())

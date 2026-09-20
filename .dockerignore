@@ -1,0 +1,44 @@
+# The build context. Everything the server image does not need, and a few things
+# it must never receive.
+
+# SECRETS. First, and not only for size.
+.env
+.env.*
+!.env.example
+
+# Installed trees are rebuilt inside the image; copying them in would also break
+# pnpm's symlink layout, which the Dockerfile depends on.
+node_modules
+**/node_modules
+.pnpm-store
+
+# Build output.
+out
+dist
+**/out
+**/dist
+graphify-out
+
+# Not the server: the renderer's source, the executable models, the tooling.
+apps/desktop/src
+apps/desktop/resources
+spikes
+tools
+scripts
+infra
+docker
+
+# Repository furniture.
+.git
+.github
+.husky
+.vscode
+.claude
+.codex
+docs
+*.md
+
+# Local artefacts that have no business in a build context.
+compose.yaml
+*.log
+.DS_Store
