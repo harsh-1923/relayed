@@ -36,7 +36,7 @@ await modelRuntime();
 app.log.info({ providers: describeProviders(), fallback: `${env.fallback.provider}/${env.fallback.model}` },
   'provider table registered');
 
-await app.listen({ port: env.port, host: '127.0.0.1' });
+await app.listen({ port: env.port, host: env.host });
 
 let shuttingDown = false;
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

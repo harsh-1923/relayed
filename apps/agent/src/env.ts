@@ -160,6 +160,15 @@ const { providers, fallback } = loadProviders();
 
 export const env = {
   port: num('AGENT_PORT', 8788),
+  /**
+   * LOOPBACK BY DEFAULT, and a container has to say otherwise — the same
+   * asymmetry `apps/server` uses, for the same reason. This service
+   * authenticates callers with a shared key and nothing else, so a
+   * development machine that bound 0.0.0.0 would offer that surface to
+   * whatever network it is joined to. A deployment that forgets `HOST`
+   * fails by being unreachable, which is loud.
+   */
+  host: process.env['HOST'] ?? '127.0.0.1',
   s2sKey,
   providers,
   fallback,
