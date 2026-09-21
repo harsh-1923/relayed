@@ -50,12 +50,10 @@ export function SettingsSidebar({ inline = false }: { inline?: boolean }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              size="lg"
               render={<Link to={returnTo} />}
-              className="gap-2"
             >
               <ArrowLeft className="text-muted-foreground" />
-              <span className="truncate text-sm font-medium">Back to app</span>
+              <span>Back to app</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

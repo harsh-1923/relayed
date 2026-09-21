@@ -493,6 +493,30 @@ export const Welcome = z.object({
   }),
 
   /**
+   * Which build the server expects (RELEASE.md §1).
+   *
+   * ON THE SOCKET, because the socket already reconnects. A client learns it is
+   * behind on the next connection rather than on the next poll — deploys,
+   * network changes and waking from sleep all reconnect, so a floor raised after
+   * a bad build reaches people in seconds instead of within the hour a poll
+   * window allows.
+   *
+   * NOT INSTEAD OF `GET /version`, which stays for the two cases a socket cannot
+   * serve: a client too old or too signed-out to authenticate still needs to be
+   * told, and "check for updates" is a question someone asks on demand.
+   *
+   * OPTIONAL, because a client from before this field must not treat its absence
+   * as an answer — and because a server that has not been told its versions
+   * genuinely has nothing to say (both default to `0.0.0`, which nothing is
+   * below). Absent means "no news", never "you are current".
+   */
+  version: z.object({
+    latest: z.string(),
+    minimum: z.string(),
+    url: z.string(),
+  }).optional(),
+
+  /**
    * Spaces the actor has JOINED. Not every space they could see.
    *
    * Public means discoverable, not synced. A workspace with three hundred

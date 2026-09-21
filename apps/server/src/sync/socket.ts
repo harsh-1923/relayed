@@ -11,6 +11,7 @@
 // into every access log and proxy trace between here and the client. The cost
 // of authenticating a frame later is that an unauthenticated socket exists for
 // a moment — which is why it carries a deadline it cannot talk its way out of.
+import { versionAnswer } from '../web/version.ts';
 import type { Server } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -732,6 +733,12 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     const bytes = state.send('welcome', {
       protocol: PROTOCOL,
       now: Date.now(),
+      // Which build we expect, on every connection (RELEASE.md §1). The socket
+      // reconnects on deploys, network changes and waking from sleep, so a
+      // floor raised after a bad build reaches people in seconds rather than
+      // within the hour a poll window allows. `GET /version` still answers the
+      // clients a socket cannot: too old, or not signed in.
+      version: versionAnswer(),
       actor: { id: actor.id, handle: actor.handle, display_name: actor.display_name },
       spaces: payload.spaces.map(space => ({
         id: space.id, kind: space.kind, name: space.name, slug: space.slug,

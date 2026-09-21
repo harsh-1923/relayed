@@ -484,6 +484,20 @@ export interface RelayedApi {
   ): Promise<{ id: string }>;
   query(op: "auth.signOut"): Promise<AppState>;
   query(op: "auth.configured"): Promise<{ clientId: string | null }>;
+  /**
+   * Ask the server what the current and minimum builds are, now.
+   *
+   * `ok: false` means the server could not be reached — a distinct outcome from
+   * "you are up to date", and the button must say which.
+   */
+  query(op: "version.check"): Promise<{
+    ok: boolean;
+    current: string;
+    state:
+      | { status: "ok" }
+      | { status: "update_available"; latest: string; url: string }
+      | { status: "update_required"; latest: string; minimum: string; url: string };
+  }>;
   query(
     op: "auth.createWorkspace",
     params: { workspaceName: string; handle: string },

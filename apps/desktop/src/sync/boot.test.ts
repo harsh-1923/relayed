@@ -146,3 +146,53 @@ test('a boot with no workspace open still answers, rather than throwing', async 
   assert.equal(result.accounts, 0);
   assert.ok(result.install.startsWith('ins_'));
 });
+
+/**
+ * THE GUARD THAT DID NOT GUARD.
+ *
+ * Everything above instantiates `Storage`. The docstring at the top claims the
+ * unit under test is "everything the sync engine does before a renderer could
+ * paint" — and the module that actually does that, `index.ts`, was never
+ * evaluated here. So a `void fetch(…)` beside the imports was invisible to the
+ * one test meant to fail a build for it, and shipped. Production reported
+ * `boot.network_calls_before_paint = 1` about an hour after telemetry was
+ * wired up; it was a version check added that morning.
+ *
+ * This drives the real module graph with `fetch` replaced, and asserts nobody
+ * called it. It is the shape the top of this file always described.
+ */
+test('IMPORTING the sync engine touches the network zero times', async () => {
+  const seen: string[] = [];
+  const real = globalThis.fetch;
+  // REPLACED, not gated: the point is to catch a call nothing awaits, which a
+  // gate would count and let through.
+  globalThis.fetch = (async (input: unknown) => {
+    seen.push(String(input));
+    throw new Error('the boot path must not reach the network');
+  }) as typeof fetch;
+
+  // `process.parentPort` exists only inside an Electron utilityProcess, and
+  // index.ts subscribes to it at module scope. WITHOUT THIS STUB the module
+  // throws there and evaluation stops — so a fetch beside the imports is never
+  // reached and this test passes while the bug is present. It did, on the first
+  // attempt: the mutation check is the only reason that was caught.
+  const proc = process as unknown as { parentPort?: unknown };
+  const hadPort = 'parentPort' in proc;
+  proc.parentPort = { on() {}, postMessage() {} };
+
+  const previousData = process.env['RELAYED_DATA'];
+  process.env['RELAYED_DATA'] = mkdtempSync(join(tmpdir(), 'relayed-boot-'));
+  try {
+    await import('./index.ts');
+    // The call is un-awaited by construction, so the assertion has to come
+    // after the microtask queue has had a turn.
+    await new Promise(resolve => setTimeout(resolve, 100));
+  } finally {
+    globalThis.fetch = real;
+    if (!hadPort) delete proc.parentPort;
+    if (previousData === undefined) delete process.env['RELAYED_DATA'];
+    else process.env['RELAYED_DATA'] = previousData;
+  }
+
+  assert.deepEqual(seen, [], `the boot path fetched: ${seen.join(', ')}`);
+});

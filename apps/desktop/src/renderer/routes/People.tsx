@@ -13,6 +13,7 @@ import { useQuery } from '@/lib/query';
 import { grantsOf } from '@/lib/ipc';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useOpenDm } from '@/features/dms/useOpenDm';
 import { ActorAvatar } from '@/components/ActorAvatar';
 
@@ -22,6 +23,20 @@ export function People() {
   const { open, opening, failure, offline } = useOpenDm();
   const me = state.workspaces.find(row => row.workspaceId === state.workspaceId)?.actorId;
   const mayMessage = state.workspaceId !== null && can(grantsOf(state), 'create_space', workspaceTarget(state.workspaceId));
+  const directoryActors = actors ?? [];
+  const actorGroups = [
+    { value: 'all', label: 'All', actors: directoryActors, empty: null },
+    {
+      value: 'humans', label: 'Humans',
+      actors: directoryActors.filter(actor => actor.type === 'human'),
+      empty: 'No humans in this workspace.',
+    },
+    {
+      value: 'agents', label: 'Agents',
+      actors: directoryActors.filter(actor => actor.type === 'agent'),
+      empty: 'No agents in this workspace.',
+    },
+  ] as const;
 
   return (
     <div className="space-y-4">
@@ -33,17 +48,6 @@ export function People() {
         </p>
       </div>
 
-      {/* The three-state matrix (FRONTEND.md §6.2), and `loading` kept distinct
-          from `empty`: showing the sign-in copy for the millisecond before the
-          first read lands would be a wrong answer, not a slow one. */}
-      {status === 'loading' && <p className="text-sm text-muted-foreground">Reading…</p>}
-
-      {status === 'empty' && (
-        <p className="text-sm text-muted-foreground">
-          Empty — sign in once while online so the directory replicates.
-        </p>
-      )}
-
       {/* A failed read keeps the rows it had, so this sits ALONGSIDE the list
           rather than replacing it. Rendering an error over data we still hold
           would be the offline failure this app exists to avoid. */}
@@ -53,31 +57,61 @@ export function People() {
 
       {failure && <p role="alert" className="text-sm text-destructive">{failure}</p>}
 
-      {actors && actors.length > 0 && (
-        <ul className="max-w-xl divide-y rounded-md border">
-          {actors.map(actor => (
-            <li key={actor.id} className="flex items-center gap-3 p-3">
-              {/* The BLOB, never `avatarUrl` — invariant 46. Absent until the
-                  prefetch lands, which is what the monogram is for. */}
-              <ActorAvatar id={actor.id} className="size-8" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{actor.displayName}</div>
-                <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>
-              </div>
-              {actor.type === 'agent' && <Badge variant="outline">agent</Badge>}
-              {actor.state !== 'active' && <Badge variant="secondary">{actor.state}</Badge>}
-              {/* Opens the DM already there, or starts one. */}
-              {mayMessage && actor.state === 'active' && actor.id !== me && (
-                <Button variant="outline" size="sm" disabled={opening || offline}
-                  title={offline ? 'Starting a conversation needs a connection' : undefined}
-                  onClick={() => { void open([actor.id]); }}>
-                  Message
-                </Button>
-              )}
-            </li>
+      <Tabs defaultValue="all" className="gap-4">
+        <TabsList aria-label="Directory view">
+          {actorGroups.map(group => (
+            <TabsTrigger key={group.value} value={group.value}>{group.label}</TabsTrigger>
           ))}
-        </ul>
-      )}
+        </TabsList>
+
+        {actorGroups.map(group => (
+          <TabsContent key={group.value} value={group.value}>
+            {/* The three-state matrix (FRONTEND.md §6.2), and `loading` kept
+                distinct from `empty`: showing the sign-in copy for the
+                millisecond before the first read lands would be a wrong
+                answer, not a slow one. */}
+            {status === 'loading' && (
+              <p className="text-muted-foreground">Reading…</p>
+            )}
+
+            {status === 'empty' && (
+              <p className="text-muted-foreground">
+                Empty — sign in once while online so the directory replicates.
+              </p>
+            )}
+
+            {status !== 'loading' && status !== 'empty' && group.actors.length === 0 && (
+              <p className="text-muted-foreground">{group.empty}</p>
+            )}
+
+            {group.actors.length > 0 && (
+              <ul className="max-w-xl divide-y rounded-md border">
+                {group.actors.map(actor => (
+                  <li key={actor.id} className="flex items-center gap-3 p-3">
+                    {/* The BLOB, never `avatarUrl` — invariant 46. Absent until
+                        the prefetch lands, which is what the monogram is for. */}
+                    <ActorAvatar id={actor.id} className="size-8" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{actor.displayName}</div>
+                      <div className="truncate text-xs text-muted-foreground">@{actor.handle}</div>
+                    </div>
+                    {actor.type === 'agent' && <Badge variant="outline">agent</Badge>}
+                    {actor.state !== 'active' && <Badge variant="secondary">{actor.state}</Badge>}
+                    {/* Opens the DM already there, or starts one. */}
+                    {mayMessage && actor.state === 'active' && actor.id !== me && (
+                      <Button variant="outline" size="sm" disabled={opening || offline}
+                        title={offline ? 'Starting a conversation needs a connection' : undefined}
+                        onClick={() => { void open([actor.id]); }}>
+                        Message
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 }

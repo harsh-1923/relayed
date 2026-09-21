@@ -9,7 +9,7 @@
 // Storage is tiered (STORAGE.md §5): one account.db per account, one replica
 // per workspace beneath it, exactly one workspace active at a time.
 import { syncUrl, workosClientId } from './config.ts';
-import { appVersion, checkVersion, type VersionState } from './version.ts';
+import { appVersion, checkVersion, stateFor, type VersionState } from './version.ts';
 import {
   emit, count, histogram, span, identify, useOtlpIfConfigured, tapTelemetry, type Identity,
   type EventName, type MetricName,
@@ -413,6 +413,10 @@ const link = createLink({
     }
   },
   onWelcome: (body) => {
+    // ABSENT MEANS NO NEWS, never "you are current". A server from before this
+    // field, or one whose versions were never configured, must not be able to
+    // clear a wall a previous answer raised.
+    if (body.version) applyVersion(body.version);
     storage.applyWelcome({
       actorId: body.actor.id,
       spaces: (body.spaces ?? []).map(space => ({
@@ -529,12 +533,29 @@ function view() {
  */
 let versionState: VersionState = { status: 'ok' };
 
-async function runVersionCheck(): Promise<void> {
-  const next = await checkVersion();
-  if (!next) return;
+/** One place the state changes, whichever carrier brought the answer. */
+function applyVersion(answer: { latest: string; minimum: string; url: string }): void {
+  const next = stateFor(appVersion(), answer);
   const changed = next.status !== versionState.status;
   versionState = next;
   if (changed) push();
+}
+
+/**
+ * The HTTP fallback, for what the socket cannot serve.
+ *
+ * A signed-out client never receives a `welcome`, and neither does one the
+ * server has refused — both still need to be told they are too old. This also
+ * backs the "Check for updates" button, which is a question somebody asked and
+ * must therefore produce an answer now rather than at the next reconnect.
+ */
+async function runVersionCheck(): Promise<VersionState | null> {
+  const next = await checkVersion();
+  if (!next) return null;
+  const changed = next.status !== versionState.status;
+  versionState = next;
+  if (changed) push();
+  return next;
 }
 
 /**
@@ -542,9 +563,6 @@ async function runVersionCheck(): Promise<void> {
  * changes when somebody cuts a release, which is not a thing that happens on
  * the timescale of a socket dropping.
  */
-const VERSION_POLL_MS = 3_600_000;
-void runVersionCheck();
-setInterval(() => void runVersionCheck(), VERSION_POLL_MS).unref?.();
 
 function push(): void {
   const data = view();
@@ -1065,6 +1083,24 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   },
   'auth.configured': () => ({ clientId: workosClientId().slice(0, 14) || null }),
 
+  /**
+   * "Check for updates", asked by a person (RELEASE.md §1).
+   *
+   * ALWAYS THE HTTP ENDPOINT, never the socket's last answer. Somebody pressing
+   * a button is asking what is true NOW; replaying what `welcome` said at
+   * connection time would look identical and answer a different question.
+   *
+   * Returns the answer rather than only pushing it, so the button can report
+   * "you are up to date" — a check that silently changes nothing is
+   * indistinguishable from one that failed.
+   */
+  'version.check': async () => {
+    const state = await runVersionCheck();
+    return state
+      ? { ok: true, current: appVersion(), state }
+      : { ok: false, current: appVersion(), state: versionState };
+  },
+
   // ── invitations (AUTHZ.md §9) ──────────────────────────────────────────
   // The renderer never holds a token, so every one of these is proxied through
   // the process that does (DESIGN.md §13.1).
@@ -1434,6 +1470,13 @@ function startSyncing(): void {
   // Boot may already hold everything but the bytes — an install whose blobs
   // were evicted, or a fetch that failed while offline last run.
   void fillAvatars();
+  // HERE, not at module load, and that is the whole R3 fix. An un-awaited
+  // `fetch('/version')` beside the imports made "no network before first paint"
+  // true by accident: nothing waited on it, and the counter still saw it —
+  // invariant 9 says any call, not any blocking one. A signed-in client
+  // normally learns its version from `welcome` before this runs; this covers
+  // the one that never gets a welcome because it is not signed in.
+  void runVersionCheck();
 }
 setTimeout(startSyncing, 5_000).unref?.();
 
