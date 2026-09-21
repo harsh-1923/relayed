@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "noEmit": true,
+    "incremental": true,
+    "paths": { "@/*": ["./src/*"] },
+    // Next's TypeScript plugin: server/client boundary diagnostics in the editor.
+    "plugins": [{ "name": "next" }],
+
+    // Relaxed for the same reason as the desktop renderer's tsconfig.web.json:
+    // src/components/ui is vendored shadcn source that `shadcn add --overwrite`
+    // rewrites wholesale, so a patch here is undone by the next component update.
+    "exactOptionalPropertyTypes": false,
+    "noUnusedLocals": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.mts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": ["node_modules", ".next", "out"]
+}

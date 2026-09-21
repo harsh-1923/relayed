@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="226" height="226" viewBox="0 0 226 226" role="img" aria-label="Human Agent Interaction Labs">
+  <!-- The HAIL mark reduced to what survives a browser tab. The full lockup is
+       public/hail-mark.svg, served at /hail; its ring of letters is set at
+       roughly 8px on a 221px artboard, so at a 16px favicon it renders as noise
+       around a dot. Same blue, same asterisk, same cream — the ring text is
+       dropped and the asterisk scaled up to hold the square on its own.
+
+       Squared off at 226 (the taller of the artboard's two sides) because a
+       non-square icon is letterboxed or stretched by the browser, and the
+       asterisk is re-centred on that square rather than on the original. -->
+  <rect width="226" height="226" fill="#1347F5"/>
+  <g transform="translate(113 113) scale(1.8) translate(-110.129 -114.497)">
+    <path fill="#FAF6E6" d="M103.14 74.0643C107.799 72.8487 112.458 72.8487 117.117 74.0643L116.526 85.4833L125.452 76.4844C128.789 77.4718 131.793 79.0873 134.465 81.3307L121.591 94.3096L146.487 95.509C148.219 98.6652 149.42 102.016 150.089 105.562L122.303 104.293L147.601 130.481C146.718 133.762 145.144 136.663 142.878 139.183L116.003 112.089L114.81 155.233C111.689 156.045 108.569 156.045 105.448 155.233L104.255 112.089L77.3798 139.183C75.1144 136.663 73.54 133.762 72.6567 130.481L97.9547 104.293L70.1689 105.562C70.8379 102.016 72.0388 98.6652 73.7714 95.509L98.6667 94.3096L85.7924 81.3307C88.4644 79.0873 91.4689 77.4718 94.8059 76.4844L103.732 85.4833L103.14 74.0643Z"/>
+  </g>
+</svg>

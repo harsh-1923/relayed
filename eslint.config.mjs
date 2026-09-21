@@ -39,11 +39,13 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/out/**',
       '**/dist/**',
-      // Vendored shadcn. `shadcn add --overwrite` rewrites these files wholesale,
-      // so anything we enforce here is undone by the next component update — the
-      // same reason tsconfig.web.json relaxes two compiler flags for exactly this
-      // directory (FRONTEND.md §6.1).
+      // Vendored shadcn, in both surfaces that use it. `shadcn add --overwrite`
+      // rewrites these files wholesale, so anything we enforce here is undone by
+      // the next component update — the same reason each app's renderer tsconfig
+      // relaxes two compiler flags for exactly these directories
+      // (apps/desktop/tsconfig.web.json, apps/web/tsconfig.json; FRONTEND.md §6.1).
       'apps/desktop/src/renderer/components/ui/**',
+      'apps/web/src/components/ui/**',
       // A separate npm project with its own install, run by hand to verify
       // Electron behaviour. Not part of this workspace's graph.
       'spikes/electron-verify/**',
@@ -138,13 +140,14 @@ export default tseslint.config(
     },
   },
 
-  // ── React, in the renderer only ───────────────────────────────────────────
+  // ── React, where React runs ───────────────────────────────────────────────
   //
-  // The other half of this codebase is a main process, a utility process and a
-  // server, none of which have hooks. Scoping keeps the rules' failures
-  // meaningful instead of a plugin loaded everywhere for four directories.
+  // The renderer and the marketing site. The other half of this codebase is a
+  // main process, a utility process and a server, none of which have hooks.
+  // Scoping keeps the rules' failures meaningful instead of a plugin loaded
+  // everywhere for four directories.
   {
-    files: ['apps/desktop/src/renderer/**/*.{ts,tsx}'],
+    files: ['apps/desktop/src/renderer/**/*.{ts,tsx}', 'apps/web/src/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
     rules: {
       'react-hooks/rules-of-hooks': 'error',

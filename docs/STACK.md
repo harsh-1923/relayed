@@ -8,7 +8,7 @@ How builds reach users — packaging, signing, update channels — is
 [`RELEASE.md`](RELEASE.md); what we collect at runtime is
 [`OBSERVABILITY.md`](OBSERVABILITY.md).
 
-**Last updated:** 2026-09-08
+**Last updated:** 2026-09-21
 
 ---
 
@@ -30,6 +30,7 @@ How builds reach users — packaging, signing, update channels — is
 | Client read path | **Ours**, implementing §11 | A push-invalidated local replica is the data layer; a server-state cache is priced for a cost we do not pay (§5.2) |
 | Blobs | **S3-compatible** — R2 in production, MinIO locally | Egress cost dominates for a media-heavy chat client |
 | Auth | **WorkOS** | AuthKit for humans, M2M for agents, Pipes + Relay for third-party access (§6.2) |
+| Public site | **Next.js** App Router, Tailwind v4, shadcn — `apps/web` | Marketing and documentation. Static pages with no socket and no database, so the constraint below does not reach it |
 | Deploy artifact | **A long-running container** | The one hard constraint |
 
 That last row is what portability actually turns on. Everything else is
@@ -54,7 +55,7 @@ Recorded so they are not revisited by accident.
 
 | Rejected | Why |
 |---|---|
-| **Serverless** (Vercel, Cloud Run, Lambda) | A client holds a socket for hours. Vercel functions cap at 300s; Cloud Run at 60 minutes with max 1000 concurrent connections per container. You would pay container prices to hold idle sockets. |
+| **Serverless** (Vercel, Cloud Run, Lambda) **for `apps/server`** | A client holds a socket for hours. Vercel functions cap at 300s; Cloud Run at 60 minutes with max 1000 concurrent connections per container. You would pay container prices to hold idle sockets. **This rejection is about the sync server only.** The public site (`apps/web`) holds nothing open and is a good fit for Vercel — §4. |
 | **Prisma** | Own schema DSL, weak partial-index support, awkward raw SQL. Our schema uses partial unique indexes as *structural* invariants (§7.1). |
 | **MySQL / Vitess** | No partial indexes, so `chat_singleton` degrades from a database guarantee to application logic. |
 | **Turso / libSQL** | Sharing the SQLite dialect across client and server is attractive, but only ~60% of the schema overlaps, and adding a database that also does its own sync to a product whose hard part is sync creates two competing sync stories. |
@@ -153,6 +154,19 @@ or Compute Engine on GCP.
 GCP and AWS are peers here; neither buys anything specific. What matters is
 picking a compute primitive that permits long-lived processes.
 
+### The public site is hosted separately
+
+`apps/web` is marketing and documentation: static pages, no socket, no database,
+nothing shared with the server but a domain. **Vercel**, where the constraint
+that rules serverless out for `apps/server` simply does not apply. Keeping the
+two apart also means a marketing deploy cannot take the product down, and the
+site stays up while the server is being redeployed.
+
+What it must not acquire, for that separation to stay real: no read of the
+product's Postgres, no socket to the sync server, no shared secret. If the site
+ever needs product data, it comes through a public endpoint the server already
+serves.
+
 ### What portability rules out
 
 Worth naming so it does not erode by accident:
@@ -203,6 +217,9 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | pino | https://getpino.io | resolve |
 | Grafana Cloud / OTLP | https://grafana.com/docs/grafana-cloud/send-data/otlp/ | resolve |
 | node:sqlite | https://nodejs.org/api/sqlite.html | resolve |
+| Next.js (`apps/web`) | https://nextjs.org/docs | `/vercel/next.js` |
+| Tailwind CSS v4 | https://tailwindcss.com/docs | resolve |
+| shadcn | https://ui.shadcn.com/docs | resolve |
 
 **Workspace packages must be bundled, not externalized.** `electron-vite`'s
 `externalizeDepsPlugin()` treats every `dependency` as external, including

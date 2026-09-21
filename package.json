@@ -12,6 +12,7 @@
     "services:down": "docker compose down",
     "dev": "node --env-file-if-exists=.env scripts/dev-clients.mjs",
     "agent": "pnpm --filter @relayed/agent dev",
+    "web": "pnpm --filter @relayed/web dev",
     "services:reset": "docker compose down -v && pnpm services",
     "services:lite": "docker compose up -d --wait postgres redis minio && docker compose up -d minio-init",
     "services:logs": "docker compose logs -f",

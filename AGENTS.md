@@ -87,6 +87,11 @@ validator and the prompt — no React; [`docs/AGENT-RESPONSES.md`](docs/AGENT-RE
 `@relayed/telemetry` (the typed event catalogue), `@relayed/icons`
 (~980 icons in five styles, renderer-only — [`packages/icons/README.md`](packages/icons/README.md)).
 
+`apps/web` is the public site — marketing and, in time, documentation. Next.js,
+Tailwind v4, shadcn on the same `base-nova` preset the desktop renderer uses. It
+shares no code and no data with the product and is deployed on its own
+([`apps/web/README.md`](apps/web/README.md), hosting in [`docs/STACK.md`](docs/STACK.md) §4).
+
 `docs/DESIGN.md` carries the rationale for every non-obvious decision. **The
 rationale is the part that tells you whether a change is safe** — the two-counter
 (`ord`/`rev`) model, the contiguity rule, chat-as-sync-unit and the identity
@@ -237,6 +242,7 @@ pnpm install         # pnpm 11, Node >=24 (engine-strict is on)
 pnpm services        # Postgres + Redis + MinIO + Grafana — docs/STACK.md §3
 pnpm services:down   # stop them
 pnpm dev             # desktop app + server, in parallel
+pnpm web             # the public site on :3100 — apps/web/README.md
 pnpm typecheck       # all packages, then the boundary checker
 pnpm test            # all packages
 pnpm spike:sync      # sync-protocol model tests — must stay green
