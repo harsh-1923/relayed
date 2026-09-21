@@ -89,7 +89,12 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
                 <p className="text-sm text-muted-foreground">{READS[scope].empty}</p>
               )}
 
-              {(messages ?? []).map((message, index, allMessages) => {
+              {/* TOMBSTONES ARE NOT DRAWN. `storage.messages` keeps and marks
+                  them rather than filtering — a gap it cannot explain reads as
+                  data loss — but the decision of what a reader sees is this
+                  side's, and for now a deleted message simply is not shown.
+                  The row still holds its ordinal, so nothing below it moves. */}
+              {(messages ?? []).filter(message => !message.deleted).map((message, index, allMessages) => {
                 // History, not authored conversation: no sender, no grouping,
                 // no bubble (SPACE-MEMBERSHIP-MARKERS.md). A direct
                 // `MessageScrollerContent` child, same as `ChatBubble`, so the
