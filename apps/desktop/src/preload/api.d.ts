@@ -8,7 +8,7 @@ import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts'
 import type { Document } from '../shared/documents.ts';
 import type { TimelineEntry } from '../shared/timeline.ts';
 import type { ImageMediaType } from '../shared/blobs.ts';
-import type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
+import type { BrowserImportQuitOutcome, BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export type {
   ApprovalDecision, ApprovalQuestion, ClaudeAccount, ClaudeCommand, ClaudeModel, ClaudeStatus, EffortLevel, PendingApproval, RoomMode,
@@ -19,7 +19,7 @@ export type { Space, SpaceChat, SpaceMember, SpaceRoster, SpaceScope } from '../
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
 export type { Document } from '../shared/documents.ts';
 export type { TimelineEntry, TimelineFact } from '../shared/timeline.ts';
-export type { BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
+export type { BrowserImportQuitOutcome, BrowserImportResult, BrowserImportSource, BrowserImportSourceId } from '../shared/browser-import.ts';
 
 export interface DbInfo {
   open: boolean;
@@ -419,6 +419,7 @@ export interface RelayedApi {
   query(op: "browserImport.run", params: { sourceId: BrowserImportSourceId; directory: string }): Promise<BrowserImportResult>;
   /** Sign web panels out of every site. */
   query(op: "browserImport.clear"): Promise<null>;
+  query(op: "browserImport.quit", params: { sourceId: BrowserImportSourceId }): Promise<BrowserImportQuitOutcome>;
   query(op: "browserImport.openFullDiskAccess"): Promise<null>;
   query(op: "local.panels.touch", params: { panelId: string }): Promise<null>;
   /** Share a local panel into its local room. One-way. */

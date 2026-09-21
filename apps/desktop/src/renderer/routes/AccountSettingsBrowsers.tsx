@@ -7,7 +7,7 @@
 // so a later sign-out in Chrome is not a surprise here.
 import { useEffect, useState } from 'react';
 import type { BrowserImportResult, BrowserImportSource } from '../../preload/api';
-import { BROWSER_IMPORT_FAILURE_COPY } from '../../shared/browser-import.ts';
+import { BROWSER_IMPORT_FAILURE_COPY, BROWSER_IMPORT_QUIT_COPY } from '../../shared/browser-import.ts';
 import { Button } from '@/components/ui/button';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { SettingsPanel } from '@/features/settings/SettingsPanel';
@@ -76,13 +76,18 @@ function SourceAction({ source, onRecheck, checking }: { source: BrowserImportSo
 
   if (source.unavailable === 'browserRunning' || source.unavailable === 'needsFullDiskAccess') {
     return (
-      <div className="flex items-center gap-2">
-        {source.unavailable === 'needsFullDiskAccess' && (
-          <Button variant="outline" size="sm" onClick={() => void call(api => api.query('browserImport.openFullDiskAccess'))}>
-            Open System Settings
-          </Button>
-        )}
-        <Button variant="outline" size="sm" disabled={checking} onClick={onRecheck}>{checking ? 'Checking…' : 'Check again'}</Button>
+      <div className="flex max-w-72 flex-col items-end gap-1.5">
+        <div className="flex items-center gap-2">
+          {source.unavailable === 'needsFullDiskAccess' && (
+            <Button variant="outline" size="sm" onClick={() => void call(api => api.query('browserImport.openFullDiskAccess'))}>
+              Open System Settings
+            </Button>
+          )}
+          {source.unavailable === 'browserRunning' && source.canQuit && (
+            <QuitBrowser source={source} onQuit={onRecheck} />
+          )}
+          <Button variant="outline" size="sm" disabled={checking} onClick={onRecheck}>{checking ? 'Checking…' : 'Check again'}</Button>
+        </div>
       </div>
     );
   }
@@ -127,6 +132,49 @@ function SourceAction({ source, onRecheck, checking }: { source: BrowserImportSo
       )}
       {state.step === 'failed' && <p className="text-right text-xs text-destructive">{BROWSER_IMPORT_FAILURE_COPY[state.reason]}</p>}
     </div>
+  );
+}
+
+/**
+ * Quitting the browser that is in the way, rather than telling the person to go
+ * and do it.
+ *
+ * ONE PRESS, NO CONFIRMATION. The button says which application it quits and
+ * the row above it says why, which is the whole of the decision — and the quit
+ * is the same one ⌘Q performs, so the browser saves its session and reopens
+ * with the tabs it had. A second dialog here would be ceremony over an action
+ * the person can simply undo by launching it again.
+ *
+ * It can come back "still open", and that is the browser behaving: a page with
+ * unsaved work raises its own dialog and wins.
+ */
+function QuitBrowser({ source, onQuit }: { source: BrowserImportSource; onQuit: () => void }) {
+  const [quitting, setQuitting] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const quit = () => {
+    setQuitting(true);
+    setProblem(null);
+    void (async () => {
+      try {
+        const outcome = await call(api => api.query('browserImport.quit', { sourceId: source.id }));
+        if (outcome === 'quit' || outcome === null) onQuit();
+        else setProblem(BROWSER_IMPORT_QUIT_COPY[outcome]);
+      } catch {
+        setProblem(BROWSER_IMPORT_QUIT_COPY.cannotIdentify);
+      } finally {
+        setQuitting(false);
+      }
+    })();
+  };
+
+  return (
+    <>
+      <Button variant="outline" size="sm" disabled={quitting} onClick={quit}>
+        {quitting ? 'Quitting…' : `Quit ${source.name}`}
+      </Button>
+      {problem && <p className="text-right text-xs text-destructive">{problem}</p>}
+    </>
   );
 }
 

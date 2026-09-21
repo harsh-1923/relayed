@@ -14,6 +14,7 @@ import { adoptAppIcon, applyAppIcon } from './app-icon';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
 import { guardWebPanels } from './web-panels';
 import { clearSignIns, importCookies, listSources } from './browser-import';
+import { quitBrowser } from './browser-import/quit.ts';
 import { isBrowserImportSourceId } from '../shared/browser-import.ts';
 import { webPanelPartition } from '../shared/web-panels.ts';
 import { DEFAULT_ICON_COLORWAY_ID } from '../shared/icon-colorways.ts';
@@ -526,6 +527,14 @@ app.whenReady().then(() => {
       case 'browserImport:clear': {
         const pages = panelAccountId ? session.fromPartition(webPanelPartition(panelAccountId)) : null;
         void clearSignIns(pages).then(() => reply(null), () => reply(null));
+        break;
+      }
+      // Only ever from the button on a row that already says the browser is in
+      // the way. Main does the quitting because the browser is a native
+      // application, not something the sync process can reach.
+      case 'browserImport:quit': {
+        if (!isBrowserImportSourceId(msg.sourceId)) { reply('cannotIdentify'); break; }
+        void quitBrowser(msg.sourceId).then(reply, () => reply('cannotIdentify'));
         break;
       }
       // Full Disk Access cannot be asked for; the person grants it, so open the pane where they do.

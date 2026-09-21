@@ -41,7 +41,26 @@ export interface BrowserImportSource {
   profiles: BrowserImportProfile[];
   /** Absent when it can be imported. */
   unavailable?: BrowserImportUnavailable;
+  /**
+   * Whether the running browser can be offered a quit — true only when its own
+   * lock named a live process we could resolve to an application. Firefox keeps
+   * no pid in its lock, so the screen offers it nothing it cannot deliver.
+   */
+  canQuit?: boolean;
 }
+
+/**
+ * What came of asking a browser to quit. `refused` is the ordinary failure: a
+ * page with unsaved work raises its own dialog and the browser stays open, which
+ * is the browser working correctly rather than an error.
+ */
+export type BrowserImportQuitOutcome = 'quit' | 'refused' | 'cannotIdentify';
+
+export const BROWSER_IMPORT_QUIT_COPY: Record<BrowserImportQuitOutcome, string> = {
+  quit: '',
+  refused: 'The browser is still open — it may be asking you about unsaved work.',
+  cannotIdentify: 'Could not tell which application to quit. Quit it yourself, then check again.',
+};
 
 export type BrowserImportResult =
   | {

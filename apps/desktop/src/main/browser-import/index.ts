@@ -11,7 +11,7 @@ import type {
   BrowserImportFailure, BrowserImportResult, BrowserImportSource, BrowserImportSourceId,
 } from '../../shared/browser-import.ts';
 import { chromiumMacKey, CookieReadError, readChromiumCookies, readFirefoxCookies, readSafariCookies, type CookieRead } from './cookies.ts';
-import { cookieDatabase, listProfiles, SOURCES, unavailableReason, type SourceDefinition } from './sources.ts';
+import { chromiumPid, cookieDatabase, listProfiles, SOURCES, unavailableReason, type SourceDefinition } from './sources.ts';
 
 class ImportFailed extends Error {
   readonly reason: BrowserImportFailure;
@@ -30,6 +30,9 @@ export function listSources(home = homedir()): BrowserImportSource[] {
       // Listing touches the browser's own files; skip it for one that cannot be imported anyway.
       profiles: unavailable === undefined ? listProfiles(source, home) : [],
       ...(unavailable === undefined ? {} : { unavailable }),
+      // Only offered where the browser's own lock named a process we can
+      // resolve; the screen must not show a button that cannot act.
+      ...(unavailable === 'browserRunning' && chromiumPid(source, home) !== undefined ? { canQuit: true } : {}),
     };
   })
     // Not installed is not a choice; the screen lists what is on this Mac.

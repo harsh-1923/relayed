@@ -820,6 +820,11 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     return browserImport.run(sourceId, directory);
   },
   'browserImport.clear': () => browserImport.clear(),
+  'browserImport.quit': (params) => {
+    const sourceId = (params as { sourceId?: unknown } | undefined)?.sourceId;
+    if (typeof sourceId !== 'string') throw new Error('sourceId required');
+    return browserImport.quit(sourceId);
+  },
   'browserImport.openFullDiskAccess': () => browserImport.openFullDiskAccess(),
 
   /** A web panel's page, in the system browser. Only the web: `browser:open` itself opens anything. */

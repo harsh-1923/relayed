@@ -12,7 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   chromiumMacKey, cookieScope, decryptChromiumValue, parseBinaryCookies, readChromiumCookies, readFirefoxCookies,
 } from './cookies.ts';
-import { chromiumLockHeld, cookieDatabase, listProfiles, parseFirefoxProfiles, SOURCES, unavailableReason } from './sources.ts';
+import { chromiumLockHeld, chromiumPid, cookieDatabase, listProfiles, parseFirefoxProfiles, SOURCES, unavailableReason } from './sources.ts';
 import { importCookies, writeCookies } from './index.ts';
 
 const source = (id: string) => SOURCES.find(candidate => candidate.id === id)!;
@@ -86,6 +86,27 @@ test('Chromium: SingletonLock is held by a live pid on this host, and only then'
   const dir = fakeChrome(home, 23, [{ host: 'a.com', name: 'n', value: 'v' }]);
   symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'));
   assert.equal(unavailableReason(source('chrome'), home, 'darwin'), 'browserRunning');
+});
+
+test('chromiumPid names a process only when the lock is this host\'s and alive', () => {
+  const home = fakeHome();
+  const dir = fakeChrome(home, 23, [{ host: 'a.com', name: 'n', value: 'v' }]);
+  assert.equal(chromiumPid(source('chrome'), home), undefined, 'no lock names nobody');
+
+  symlinkSync(`${hostname()}-${process.pid}`, join(dir, 'SingletonLock'));
+  assert.equal(chromiumPid(source('chrome'), home), process.pid);
+
+  // A lock from another machine is not a process on this one, however alive the
+  // number looks — quitting by that pid would quit something unrelated.
+  const elsewhere = fakeHome();
+  const otherDir = fakeChrome(elsewhere, 23, [{ host: 'a.com', name: 'n', value: 'v' }]);
+  symlinkSync(`other-mac-${process.pid}`, join(otherDir, 'SingletonLock'));
+  assert.equal(chromiumPid(source('chrome'), elsewhere), undefined);
+});
+
+test('chromiumPid offers nothing for Firefox, whose lock carries no pid', () => {
+  const home = fakeHome();
+  assert.equal(chromiumPid(source('firefox'), home), undefined);
 });
 
 test('a browser with a user-data directory but no cookie database is not installed', () => {

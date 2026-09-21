@@ -1,7 +1,7 @@
 // Request/response over the parentPort to the main process, for the few
 // capabilities a utilityProcess does not have: safeStorage (verified absent)
 // and shell.openExternal.
-import type { BrowserImportResult, BrowserImportSource } from '../shared/browser-import.ts';
+import type { BrowserImportQuitOutcome, BrowserImportResult, BrowserImportSource } from '../shared/browser-import.ts';
 
 let seq = 0;
 const waiting = new Map<number, (v: unknown) => void>();
@@ -43,6 +43,7 @@ export const browserImport = {
   sources: () => callMain<BrowserImportSource[]>('browserImport:sources'),
   run: (sourceId: string, directory: string) => callMain<BrowserImportResult>('browserImport:run', { sourceId, directory }),
   clear: () => callMain<null>('browserImport:clear'),
+  quit: (sourceId: string) => callMain<BrowserImportQuitOutcome>('browserImport:quit', { sourceId }),
   openFullDiskAccess: () => callMain<null>('browserImport:fullDiskAccess'),
 };
 
