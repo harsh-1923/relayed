@@ -10,11 +10,13 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { emit, useOtlpIfConfigured } from '@relayed/telemetry';
 import { registerProtocol, onDeepLink, isRegistered } from './deep-link';
 import { registerBlobScheme, handleBlobProtocol, setBlobAccount } from './blob-protocol';
+import { adoptAppIcon, applyAppIcon } from './app-icon';
 import { storeRefreshToken, readRefreshToken, clearRefreshToken, isEncryptionAvailable } from './vault';
 import { guardWebPanels } from './web-panels';
 import { clearSignIns, importCookies, listSources } from './browser-import';
 import { isBrowserImportSourceId } from '../shared/browser-import.ts';
 import { webPanelPartition } from '../shared/web-panels.ts';
+import { DEFAULT_ICON_COLORWAY_ID } from '../shared/icon-colorways.ts';
 import {
   buildMenuTemplate, defaultMenuItems, parseMenuItems, shouldIgnoreMenuShortcut, type NativeMenuItem,
 } from './menu';
@@ -279,6 +281,9 @@ function createWindow(): BrowserWindow {
       webviewTag: true,
     },
   });
+  // Windows and Linux carry the icon per window rather than on a Dock tile, so
+  // one created after the colorway was applied has to be told (app-icon.ts).
+  adoptAppIcon(win);
   // Surface renderer errors in the main log during development; a silent CSP
   // violation or failed import is otherwise invisible outside devtools.
   if (!app.isPackaged) {
@@ -378,15 +383,15 @@ app.whenReady().then(() => {
   // menu in place of the one that carries Relayed's items.
   installMenu();
 
-  // Dev only, macOS only: unpackaged Electron shows its own icon in the Dock,
-  // because the real one is baked into the .app bundle at package time. This
-  // puts our icon there so `dev` looks like the shipped product. Packaged
-  // builds must NOT take this path — the bundle's .icns is already correct and
-  // resources/ does not exist at this path inside the asar.
-  if (!app.isPackaged && process.platform === 'darwin') {
-    const devIcon = join(__dirname, '../../resources/icon.png');
-    if (existsSync(devIcon)) app.dock?.setIcon(devIcon);
-  }
+  // The STARTING colorway, on the theme's reasoning immediately above: sync
+  // sends the stored one over `icon:colorway` once account.db is open, and the
+  // default is the right thing to be showing if that message loses the race,
+  // if there is no account, or if the engine never starts.
+  //
+  // This also covers what a dev-only branch used to: an unpackaged Electron
+  // shows its own icon in the Dock until something replaces it, and now
+  // something always does.
+  applyAppIcon(DEFAULT_ICON_COLORWAY_ID);
 
   handleBlobProtocol();
   syncProcess = startSyncEngine();
@@ -433,7 +438,7 @@ app.whenReady().then(() => {
     const msg = m as {
       type?: string; rid?: number; token?: string; url?: string;
       accountId?: string; workspaceId?: string; source?: string; items?: unknown;
-      sourceId?: unknown; directory?: unknown;
+      sourceId?: unknown; directory?: unknown; id?: unknown;
     };
     const reply = (value: unknown) => syncProcess?.postMessage({ rid: msg.rid, value });
     // A vault slot is per (account, workspace) — STORAGE.md §9.
@@ -466,6 +471,17 @@ app.whenReady().then(() => {
       case 'theme:source':
         nativeTheme.themeSource =
           msg.source === 'dark' || msg.source === 'light' ? msg.source : 'system';
+        reply(null);
+        break;
+      // The icon colorway, applied (PREFERENCES.md §9). The same split as the
+      // theme, for the same reason: the row lives in a database only the sync
+      // process opens and the Dock tile is a main-process object.
+      //
+      // An id this build does not know — a newer client wrote the row, or a
+      // release removed the colorway — resolves to the default inside
+      // `applyAppIcon` rather than being refused here.
+      case 'icon:colorway':
+        applyAppIcon(typeof msg.id === 'string' ? msg.id : DEFAULT_ICON_COLORWAY_ID);
         reply(null);
         break;
       // The folder a local room is about (LOCAL-ROOMS.md §7). Always chosen by

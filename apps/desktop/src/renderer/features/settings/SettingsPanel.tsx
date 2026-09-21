@@ -13,6 +13,15 @@ interface SettingsPanelItem {
    * the unbuilt rows keep reading as unbuilt.
    */
   value: ReactNode;
+  /**
+   * Where the control sits.
+   *
+   * `inline` (the default) is the right-hand column beside the label.
+   * `stacked` gives it the full width underneath, which anything wider than a
+   * toggle needs: the inline column is `auto`, so a twelve-swatch grid in it
+   * squeezes the description to nothing rather than wrapping.
+   */
+  layout?: 'inline' | 'stacked';
 }
 
 export function SettingsPanel({
@@ -36,7 +45,9 @@ export function SettingsPanel({
           {items.map(item => (
             <div
               key={item.label}
-              className="grid gap-2 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              className={item.layout === 'stacked'
+                ? 'space-y-3 px-5 py-4'
+                : 'grid gap-2 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center'}
             >
               <div className="min-w-0">
                 <h2 className="text-sm font-medium">{item.label}</h2>

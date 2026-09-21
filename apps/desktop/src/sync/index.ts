@@ -15,7 +15,7 @@ import {
   type EventName, type MetricName,
 } from '@relayed/telemetry';
 import { Session, type AuthState } from './auth/session.ts';
-import { vault as bridgeVault, browserImport, openBrowser, pickFolder, setBlobAccount, setMenuShortcuts, setThemeSource } from './main-bridge.ts';
+import { vault as bridgeVault, browserImport, openBrowser, pickFolder, setBlobAccount, setIconColorway, setMenuShortcuts, setThemeSource } from './main-bridge.ts';
 import { KEYBINDING_PREFIX } from '../shared/prefs.ts';
 import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts';
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
@@ -150,6 +150,17 @@ function applyTheme(): Promise<void> {
 }
 
 /**
+ * Push the stored icon colorway at main (PREFERENCES.md §9).
+ *
+ * Account-scoped beside the theme, and sent from the same places — so the Dock
+ * icon follows whichever account is open, which is the cost §4 already accepts
+ * for the theme rather than a new one.
+ */
+function applyIcon(): Promise<void> {
+  return setIconColorway(decode('appearance.icon', storage.preferences()));
+}
+
+/**
  * The menu's shortcuts, from the open account's keybinding rows — or the
  * defaults when there is no account. Sent wherever the theme is, since both are
  * account preferences main applies, and after any keybinding write.
@@ -174,6 +185,7 @@ function applyMenuShortcuts(): Promise<void> {
 // renderer, so in practice this lands well before `ready-to-show`; §9 records
 // why the remaining race is accepted rather than closed.
 void applyTheme();
+void applyIcon();
 void applyMenuShortcuts();
 
 // What multi-account and multi-workspace were built on assumptions about.
@@ -299,8 +311,10 @@ function adoptSession(s: OurSession): void {
   identify(who);
 
   void setBlobAccount(storage.accountId);
-  // The account may have changed under us, and each one keeps its own theme.
+  // The account may have changed under us, and each one keeps its own theme
+  // and its own icon.
   void applyTheme();
+  void applyIcon();
   void applyMenuShortcuts();
   // Whatever this replica ALREADY holds. On a fresh one that is nothing, which
   // is the whole reason `avatarsWanted` exists below: the directory arrives
@@ -951,16 +965,21 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     if (!key) throw new Error('key required');
     storage.setPreference(key, value);
     if (key.startsWith(KEYBINDING_PREFIX)) void applyMenuShortcuts();
-    // The one preference that also lives outside the database (§9). Gated on
+    // The two preferences that also live outside the database (§9). Gated on
     // the key rather than run unconditionally, so adding a preference does not
     // quietly add an IPC round trip to every write.
     //
-    // AWAITED, AND BEFORE THE INVALIDATION. The renderer resolves `system`
-    // against `prefers-color-scheme`, which is what `themeSource` drives — so
-    // waking it before main has applied the new value hands it the window's
-    // OLD appearance to resolve against. Ordering the two removes that race
-    // rather than papering over it with a delay.
+    // THE THEME IS AWAITED, AND BEFORE THE INVALIDATION. The renderer resolves
+    // `system` against `prefers-color-scheme`, which is what `themeSource`
+    // drives — so waking it before main has applied the new value hands it the
+    // window's OLD appearance to resolve against. Ordering the two removes
+    // that race rather than papering over it with a delay.
+    //
+    // THE ICON IS NOT, because nothing in the renderer resolves against it:
+    // the picker reads back the same row this write just made, and the Dock
+    // tile is not something the window can be out of step with.
     if (key === 'appearance.theme') await applyTheme();
+    if (key === 'appearance.icon') void applyIcon();
     // Written fine, subscribed coarse: this names the key, and a reader
     // subscribed to `prefs` is woken by the prefix rule in topics.ts.
     invalidate([topic.pref(key)]);
@@ -978,6 +997,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     storage.clearPreference(key);
     if (key.startsWith(KEYBINDING_PREFIX)) void applyMenuShortcuts();
     if (key === 'appearance.theme') await applyTheme();
+    if (key === 'appearance.icon') void applyIcon();
     invalidate([topic.pref(key)]);
     return null;
   },
@@ -995,6 +1015,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const keys = changes.map(change => change.key);
     if (keys.some(key => key.startsWith(KEYBINDING_PREFIX))) void applyMenuShortcuts();
     if (keys.includes('appearance.theme')) await applyTheme();
+    if (keys.includes('appearance.icon')) void applyIcon();
     invalidate(keys.map(key => topic.pref(key)));
     return null;
   },
@@ -1067,6 +1088,7 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     // just adopted owns the theme now, and signing out of the last one leaves
     // no rows at all, which correctly decodes back to the system default.
     void applyTheme();
+    void applyIcon();
     void applyMenuShortcuts();
 
     push();

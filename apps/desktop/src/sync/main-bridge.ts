@@ -69,6 +69,17 @@ export const setThemeSource = (source: 'system' | 'light' | 'dark') =>
   callMain<void>('theme:source', { source });
 
 /**
+ * Apply the icon colorway preference (PREFERENCES.md §9).
+ *
+ * The same split as the theme, and for the same reason: the Dock tile is a
+ * main-process object and the row lives in a database only this process opens.
+ * Only the ID travels — main holds the colour table and composites the picture
+ * itself, so the two sides cannot disagree about what `aurora` looks like.
+ */
+export const setIconColorway = (id: string) =>
+  callMain<void>('icon:colorway', { id });
+
+/**
  * Tell main the menu's Relayed items and their current bindings
  * (SHORTCUTS.md §6.3). Same split as the theme: the rows live in a database only
  * this process opens, and the menu is a main-process object.

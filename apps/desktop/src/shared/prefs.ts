@@ -18,6 +18,7 @@
 // a broken screen. Writes DO fail, in the engine, because the renderer is a
 // surface and not an authority (§7).
 
+import { DEFAULT_ICON_COLORWAY_ID, ICON_COLORWAY_IDS } from './icon-colorways.ts';
 import { isConfigurableCommandId, type ConfigurableCommandId } from './shortcuts/catalogue.ts';
 import { encodeBindings } from './shortcuts/schema.ts';
 import type { Platform } from './shortcuts/tanstack-driver.ts';
@@ -82,6 +83,23 @@ export const PREFERENCES = {
     fallback: 'system',
     parse: oneOf(['system', 'light', 'dark']),
   },
+  /**
+   * Which colorway the app icon is drawn in.
+   *
+   * The ID, never the colours (`icon-colorways.ts` says why). Account-tier
+   * beside the theme and for the same reason, which carries the same
+   * consequence: the Dock icon follows whichever account is open (§4).
+   *
+   * Applied like the theme — `main` composites it and calls
+   * `app.dock.setIcon`, because the picture is a native object and the row
+   * lives in a database only the sync process opens (§9).
+   */
+  'appearance.icon': {
+    tier: 'account',
+    reach: 'local',
+    fallback: DEFAULT_ICON_COLORWAY_ID,
+    parse: oneOf(ICON_COLORWAY_IDS),
+  },
   /** Whether the desktop workspace sidebar is expanded. Mobile uses a transient sheet. */
   'shell.sidebar.open': {
     tier: 'account',
@@ -120,6 +138,7 @@ export type PreferenceValue<K extends PreferenceKey> =
   NonNullable<ReturnType<(typeof PREFERENCES)[K]['parse']>>;
 
 export type ThemePreference = PreferenceValue<'appearance.theme'>;
+export type IconPreference = PreferenceValue<'appearance.icon'>;
 
 /** One row as it is stored. `value` is JSON TEXT, not a decoded value. */
 export interface PreferenceRow {

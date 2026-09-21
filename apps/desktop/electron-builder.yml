@@ -40,6 +40,15 @@ files:
 asarUnpack:
   - '**/node_modules/@napi-rs/keyring/**'
 
+# THE ICON, AGAIN, AS A READABLE FILE. `files:` above ships `out/` and
+# package.json; `resources/` is build INPUT and does not otherwise reach the
+# app. main/app-icon.ts reads this one back at runtime to recover the plate and
+# mark coverage it composites a chosen colorway from, which it cannot do
+# against the .icns the bundle already carries. ~9KB.
+extraResources:
+  - from: resources/icons/icon-512.png
+    to: icons/icon-512.png
+
 mac:
   icon: resources/icon.icns
   category: public.app-category.productivity

@@ -73,7 +73,7 @@ test('every key declares a fallback its own parse accepts', () => {
   // value. Checked across the whole catalogue so a new entry is covered by
   // being added rather than by somebody remembering to test it.
   for (const key of [
-    'appearance.theme', 'shell.sidebar.open', 'shell.sidebar.width',
+    'appearance.theme', 'appearance.icon', 'shell.sidebar.open', 'shell.sidebar.width',
     'developer.route_strip.visible',
   ] as const) {
     assert.ok(isPreferenceKey(key));
@@ -87,7 +87,7 @@ test('nothing is synced yet', () => {
   // release that starts syncing. Flipping a key to 'synced' before there is a
   // merge rule should fail here first.
   for (const key of [
-    'appearance.theme', 'shell.sidebar.open', 'shell.sidebar.width',
+    'appearance.theme', 'appearance.icon', 'shell.sidebar.open', 'shell.sidebar.width',
     'developer.route_strip.visible',
   ] as const) {
     assert.equal(specOf(key).reach, 'local');

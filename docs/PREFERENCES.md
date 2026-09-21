@@ -19,6 +19,7 @@ to everything the engine knows.
 | Where do defaults live? | In code. **A missing row is the default** | 7 |
 | Keyboard shortcuts? | One `keybindings.<command id>` row per customized command, written through `prefs.set`, `prefs.clear` and the transactional `prefs.apply` | 8, 11; SHORTCUTS.md §9 |
 | How does the theme actually apply? | `nativeTheme.themeSource` in main for the window, `<Theme />` for the tokens — both from the stored value | 9 |
+| Can a person choose the app icon? | **Yes.** A colorway id in `appearance.icon`, composited in main from the shipped icon's own pixels | 9.2 |
 | Does the sidebar survive a restart? | **Yes.** Desktop open state and last expanded width are separate account-local preferences | 10.2 |
 | Is the route strip shown by default? | **No.** The Developers setting opts into it per account on this device | 10.3 |
 
@@ -270,7 +271,14 @@ and a `loaded` flag, and the value is the default until the first read lands.
 
 ---
 
-## 9. The theme, which is the one preference that leaves the database
+## 9. The two preferences that leave the database
+
+The theme (§9.1) and the app icon (§9.2). Both take the same route for the
+same reason — the thing that applies them is a native object, and the row is
+in a database only the sync process opens — so main is **told** rather than
+reading it.
+
+### 9.1 The theme
 
 Two things apply it, from one stored value:
 
@@ -338,6 +346,78 @@ Gating `win.show()` on the theme arriving would close it, and is deliberately
 not done: it makes a sync engine that fails to start a **window that never
 appears**, trading a one-frame flash for a black screen. The fallback here is
 the system theme, which is a correct-looking app rather than a broken one.
+
+### 9.2 The app icon
+
+One stored value, one native call, and no renderer half at all:
+
+```
+prefs.set('appearance.icon', 'emerald')
+  → account.db                                     the stored colorway ID
+  → callMain('icon:colorway', { id })              sync → main, like theme:source
+      → app.dock.setIcon(composited)               the DOCK TILE
+  → invalidate('prefs:appearance.icon')
+      → the picker repaints its selection
+```
+
+**Only the id travels.** Main holds the colour table (`shared/icon-colorways.ts`)
+and draws the picture itself, so the swatch in Settings and the tile in the Dock
+cannot disagree about what `emerald` is. Sending three hex values instead would
+put the same gradient in two places, and PREFERENCES.md §3's argument about old
+clients applies to values as much as to keys: an id a build does not recognise
+falls back to the default icon, where three colours it cannot judge would paint
+an unreadable one.
+
+**Not awaited**, unlike the theme. The theme is awaited because the renderer
+resolves `system` against `prefers-color-scheme`, which `themeSource` drives.
+Nothing in the window resolves against the icon.
+
+#### What a chosen colorway can and cannot reach
+
+| Surface | Follows the preference |
+|---|---|
+| macOS Dock tile, while the app runs | **Yes** — `app.dock.setIcon` |
+| Window and taskbar icon on Windows and Linux | **Yes** — `win.setIcon`, re-applied per window |
+| Finder, Launchpad, Spotlight, notifications, the .dmg | **No** |
+
+Everything in the second row reads `Contents/Resources/icon.icns` inside the
+bundle. Rewriting that in place breaks the code signature and Gatekeeper then
+refuses to launch the app (RELEASE.md §3), so it is deliberately not attempted —
+and the Appearance screen says so in the setting's own description rather than
+leaving somebody to discover it in Finder. macOS does have a per-file custom
+icon API that leaves the signature intact; Electron has no binding for it, and
+it is not worth a native addon today.
+
+#### Why the picture is composited rather than shipped
+
+A hundred pre-rendered icons is a hundred assets in the bundle and a build step
+every time a colorway is added. The alternative needs a rasteriser in main,
+which Electron does not have — `nativeImage` decodes PNG and JPEG, not SVG —
+and adding one (resvg, sharp) puts a native module in the build for one feature,
+with `@napi-rs/keyring`'s asar problem to repeat.
+
+So the shipped icon is read back apart instead. Its alpha **is** the plate's
+coverage, and because the plate and the mark are each drawn in one known colour
+(`SOURCE_PLATE`, `SOURCE_MARK`), the blend between them at every pixel unmixes
+into the mark's coverage. Two masks, no dependency, antialiasing intact, and
+gradients fall out of the same loop. `main/icon-composite.ts` is the whole of
+it, and it is pure so that `node --test` can check a picture nothing else would
+notice was wrong.
+
+Two traps it is built around, both measured rather than recalled:
+
+- **`toBitmap()`'s byte order is documented as platform-dependent.** It measures
+  as BGRA on macOS, but a constant would be a guess about the platforms not
+  measured, and the failure is swapped colours that no type or test would catch.
+  So the order is read off the image: the plate's three channels are all
+  different, which makes any opaque plate pixel a labelled sample.
+- **Premultiplied alpha never has to be decided.** The mark's coverage is only
+  read where alpha is 255, and on the plate's antialiased rim the coverage is
+  zero either way.
+
+If the shipped icon and `SOURCE_PLATE`/`SOURCE_MARK` ever disagree, the masks
+cannot be recovered — so `deriveMasks` returns null, main keeps the packaged
+icon and says so, and a test asserts the default colorway still equals the pair.
 
 ---
 
