@@ -71,19 +71,33 @@ in production.
 2. Copy the **Client ID** (`client_...`) and create an **API key** (`sk_...`).
    The client id is a public identifier; the API key is a secret and is only
    needed for Management API calls — organisations and invitations.
-3. Under **Redirects**, add both:
+3. Under **Redirects**, add all three:
    - `http://127.0.0.1:*/auth/callback` — the real sign-in path
+   - `https://api.relayed.imharsh.in/welcome` — **mark this one default**
    - `relayed://auth/callback` — the packaged-app fallback
 
    **The wildcard cannot be the default**, and WorkOS refuses the whole save if
-   it is: *"A wildcard URI can not be the default Redirect URI."* Add
-   `relayed://auth/callback` as well and mark **that** one default.
+   it is: *"A wildcard URI can not be the default Redirect URI."*
 
    The wildcard is not negotiable — `loopback.ts` calls `server.listen(0, …)`,
    so the OS picks a fresh port per sign-in and no fixed port would match more
-   than by luck. The default, meanwhile, does nothing here: `workos.ts` sends
-   `redirect_uri` explicitly on every authorization request, and the default is
-   only consulted when a request omits it. It has to exist, not to be right.
+   than by luck.
+
+   **The default is load-bearing, and only for invitations.** `workos.ts` sends
+   `redirect_uri` explicitly on every authorization request, so ordinary
+   sign-in never consults it. An invitation does: acceptance happens on
+   AuthKit's hosted page and we are never asked (`AUTHZ.md` §9.1), and
+   `createInvitation` sends no redirect of its own — so the default is where
+   AuthKit drops the browser once Google has answered.
+
+   Set it to `relayed://auth/callback` and someone who accepts an invitation
+   **before installing the app** has no handler for that scheme: the browser
+   silently discards the navigation and the hosted page hangs on its last step
+   forever. Their membership is fine — it was created before the redirect — but
+   they are given no confirmation, no download, and a frozen tab that reads as
+   failure. `/welcome` ([`web/landing.ts`](../apps/server/src/web/landing.ts))
+   is the page written for exactly that person: it says the invitation worked
+   and carries the download.
 4. Configure whichever social providers you intend to offer.
 
 ### 3b. Session keys
@@ -231,6 +245,7 @@ Set on the `relayed-server` service.
 | `SESSION_PRIVATE_KEY` | from §3b | Secret |
 | `SESSION_PUBLIC_KEY` | from §3b | |
 | `RELAYED_PUBLIC_URL` | `https://api.relayed.imharsh.in` | |
+| `RELAYED_DOWNLOAD_URL` | the R2 `.dmg` url | Read by `/version` (the update nag) **and** by `/welcome`. Unset, both fall back to the GitHub releases page — so an invitee is sent somewhere there is no build. Must match `apps/web/src/lib/download.ts`, which holds the same url by hand |
 
 `PORT` is injected by Railway and already read by
 [`env.ts`](../apps/server/src/env.ts). Do not set it.
@@ -437,3 +452,11 @@ invitation email delivery is unproven — nothing arrived at a `juspay.in` addre
 and a corporate mail gateway is the likely reason. Until a sending domain is
 configured in WorkOS, an invitation's accept link has to be fetched from the
 WorkOS API by hand.
+
+**And the mirror of the case above, found in production:** somebody invited
+*before* installing the app. Acceptance still works — it happens on AuthKit —
+but the redirect afterwards goes to the environment's default redirect URI, and
+with that set to `relayed://auth/callback` the browser has no handler for the
+scheme and the page hangs on the last step of Google sign-in. Nothing is wrong
+with their account; they simply are not told so, and the tab reads as a failed
+sign-in. §3a step 3 is the fix — the default belongs on `/welcome`.

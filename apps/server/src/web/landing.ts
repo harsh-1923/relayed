@@ -1,10 +1,16 @@
 // The page someone lands on after accepting an invitation.
 //
 // Deliberately NOT a web app. The only thing needed here is to stop a
-// successful acceptance ending on a browser error page — which is what happens
-// today, because AuthKit redirects to our loopback URL and nothing is listening
-// on it: the loopback listener exists only while a sign-in is running IN the
-// app, and this flow started from an email.
+// successful acceptance ending nowhere — which is what happens when this page
+// is not the environment's DEFAULT redirect URI at WorkOS. An invitation
+// carries no `redirect_uri` of its own (`workos/management.ts` sends none, and
+// AuthKit owns acceptance — AUTHZ.md §9.1), so AuthKit falls back to that
+// default. Pointed at `relayed://auth/callback`, the browser of someone who has
+// not installed the app yet silently drops the navigation and the hosted page
+// hangs on its last step forever. DEPLOY.md §3a is the configuration.
+//
+// So the audience here is specifically a person WITHOUT the app: the download
+// is the whole point of the page, not a footnote.
 //
 // A real web app would bring a second session model with it — httpOnly cookies,
 // CSRF, a separate refresh path — where ours is desktop-shaped throughout
@@ -13,6 +19,17 @@
 //
 // So: one route, no state, no auth, no JavaScript.
 import type { FastifyInstance } from 'fastify';
+import { versionAnswer } from './version.ts';
+
+// The twin of `apps/web/src/lib/download.ts`. That site shares no code with the
+// product (AGENTS.md), so the string lives twice and moves together — the same
+// bargain `download.ts` already strikes with RELAYED_DOWNLOAD_URL.
+//
+// Said BEFORE they meet it. An unsigned Electron app carries an ad-hoc
+// signature that actively fails validation, so macOS says "damaged" rather than
+// "unidentified", and someone who was not warned concludes the download is
+// corrupt and bins it (RELEASE.md §2).
+const UNQUARANTINE = 'xattr -cr /Applications/Relayed.app';
 
 /** Shared with `connections.ts`, for the same reason: a browser tab mid-flow deserves this, not a JSON 4xx. */
 export const page = (title: string, body: string) => `<!doctype html>
@@ -34,9 +51,17 @@ export const page = (title: string, body: string) => `<!doctype html>
   li { margin:.4rem 0; }
   code { background:#18181b; padding:.1rem .4rem; border-radius:6px;
          font:0.85em ui-monospace,SFMono-Regular,Menlo,monospace; color:#e4e4e7; }
+  code.cmd { display:block; margin:.45rem 0; padding:.5rem .65rem;
+             user-select:all; overflow-wrap:anywhere; }
+  .btn { display:inline-flex; align-items:center; gap:.4rem; margin-top:.5rem;
+         padding:.6rem 1.15rem; border-radius:999px; text-decoration:none;
+         font-size:.9rem; font-weight:500; background:#fafafa; color:#0a0a0a; }
+  .btn span { opacity:.55; font-weight:400 }
+  .note { font-size:.82rem; margin:1.25rem 0 0; }
   @media (prefers-color-scheme: light) {
     body { background:#fafafa; color:#18181b } p, ol { color:#52525b }
     code { background:#f4f4f5; color:#27272a }
+    .btn { background:#18181b; color:#fafafa }
   }
 </style></head>
 <body><main><div class="mark"></div>${body}</main></body></html>`;
@@ -50,15 +75,28 @@ export async function landingRoutes(app: FastifyInstance): Promise<void> {
    * after a successful action reads as a failure.
    */
   app.get('/welcome', async (_req, reply) => {
+    // Read per request rather than at module load, so the URL follows the
+    // Railway variable the way `/version` does — one source, set by hand
+    // (version.ts), never two that can disagree about where the build lives.
+    const download = versionAnswer().url;
     reply.type('text/html; charset=utf-8').send(page('You are in', `
       <h1>You're in</h1>
       <p>Your invitation is accepted. The workspace is waiting in the Relayed app.</p>
+      <a class="btn" href="${download}">Download Relayed <span>· macOS, Apple Silicon</span></a>
       <ol>
-        <li>Open <strong>Relayed</strong> on your computer.</li>
-        <li>Sign in with the same email you just used.</li>
+        <li>Open the <code>.dmg</code> and drag <strong>Relayed</strong> into
+            Applications.</li>
+        <li>In Terminal, run:
+            <code class="cmd">${UNQUARANTINE}</code>
+            This build is not signed by Apple yet. Without that command macOS
+            calls the app <em>damaged</em> — it is not, and the step disappears
+            once signing lands.</li>
+        <li>Open <strong>Relayed</strong> and sign in with the same email you
+            just used.</li>
         <li>Choose a handle for this workspace — handles are per workspace, so
             one you use elsewhere may already be taken.</li>
-      </ol>`));
+      </ol>
+      <p class="note">Already have Relayed installed? Skip to step 3.</p>`));
   });
 
   /**
