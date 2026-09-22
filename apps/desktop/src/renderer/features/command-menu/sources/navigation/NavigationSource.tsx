@@ -5,9 +5,21 @@ import { useSession } from '@/app/state';
 import { iconForDestination } from '@/lib/navigation/destinations/destination-icon.ts';
 import { NAVIGATION_GROUPS } from '@/lib/navigation/destinations/destinations.ts';
 import { useQuery } from '@/lib/query';
-import type { CommandMenuItem } from '../../command-menu-context.ts';
+import type { CommandMenuItem, CommandMenuSection } from '../../command-menu-context.ts';
 import { CommandMenuGroup } from '../../CommandMenuRow.tsx';
 import { navigationEntriesFor } from './navigation-entries.ts';
+
+/**
+ * A tab has less room than a heading, and the whole strip has to fit on one
+ * line, so the two longest groups get a shorter name above the list than they
+ * carry inside it.
+ */
+const TAB_LABELS: Readonly<Record<string, string>> = { group_dm: 'Groups', dm: 'DMs' };
+
+/** One tab per sidebar group, in sidebar order. */
+export const NAVIGATION_SECTIONS: readonly CommandMenuSection[] = NAVIGATION_GROUPS.map(
+  group => ({ id: group.id, label: TAB_LABELS[group.id] ?? group.label }),
+);
 
 export function NavigationSource() {
   // From state, not the URL: a local room's route has no workspace in its path.
@@ -50,7 +62,9 @@ export function NavigationSource() {
           Some spaces could not be read. Showing what is available.
         </p>
       ) : null}
-      {groups.map(group => <CommandMenuGroup key={group.id} heading={group.label} items={group.items} />)}
+      {groups.map(group => (
+        <CommandMenuGroup key={group.id} section={group.id} heading={group.label} items={group.items} />
+      ))}
     </>
   );
 }

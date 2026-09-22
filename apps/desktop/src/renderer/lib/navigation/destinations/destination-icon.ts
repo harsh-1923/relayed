@@ -1,10 +1,11 @@
 import type { ComponentType } from 'react';
 import {
-  ChatDefault, Hashtag, LockClose, PluginAddonPuzzle, UserTwo,
+  Bot, ChatDefault, Hashtag, LockClose, PluginAddonPuzzle, UserTwo,
 } from '@relayed/icons';
 import type { NavigationDestination, NavigationIcon } from './destinations.ts';
 
 const ICONS = {
+  agents: Bot,
   chat: ChatDefault,
   apps: PluginAddonPuzzle,
   group: UserTwo,

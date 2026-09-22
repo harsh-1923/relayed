@@ -21,6 +21,15 @@ test('projects Apps as a workspace destination', () => {
   });
 });
 
+test('projects Agents as the directory opened on its Agents tab', () => {
+  const destinations = primaryDestinationsFor('workspace');
+  assert.deepEqual(destinations.map(destination => [destination.label, destination.to]), [
+    ['People', '/w/workspace/people?tab=humans'],
+    ['Agents', '/w/workspace/people?tab=agents'],
+    ['Apps', '/w/workspace/apps'],
+  ]);
+});
+
 test('projects Installed apps as its nested workspace route', () => {
   assert.deepEqual(installedAppsDestination('workspace'), {
     id: 'p:workspace:apps:installed',

@@ -25,7 +25,7 @@ export const NAVIGATION_GROUPS = [
 ] as const;
 
 export type NavigationGroupId = (typeof NAVIGATION_GROUPS)[number]['id'];
-export type NavigationIcon = 'apps' | 'chat' | 'group' | 'hashtag' | 'lock' | 'people';
+export type NavigationIcon = 'agents' | 'apps' | 'chat' | 'group' | 'hashtag' | 'lock' | 'people';
 
 export interface NavigationDestination {
   /** Stable and unique. Labels are not unique. */
@@ -46,7 +46,18 @@ export function primaryDestinationsFor(workspaceId: string | null): NavigationDe
       label: 'People',
       group: 'go-to',
       icon: 'people',
-      to: `/w/${workspaceId}/people`,
+      to: `/w/${workspaceId}/people?tab=humans`,
+      disabled: false,
+    },
+    {
+      // The same route as People, opened on its Agents tab. The directory is
+      // one list of actors; which kind you came looking for is a tab, and the
+      // tab lives in the URL so this row can point at it.
+      id: `p:${workspaceId}:agents`,
+      label: 'Agents',
+      group: 'go-to',
+      icon: 'agents',
+      to: `/w/${workspaceId}/people?tab=agents`,
       disabled: false,
     },
     {

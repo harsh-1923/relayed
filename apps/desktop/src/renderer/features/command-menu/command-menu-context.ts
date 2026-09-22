@@ -21,15 +21,41 @@ export interface CommandMenuItem {
   readonly perform: () => void;
 }
 
+/**
+ * One group of rows, and one tab above them. A source declares its sections as
+ * a constant so the strip can be ordered without waiting for anything to load;
+ * whether a section is offered at all is reported at render time by its group.
+ */
+export interface CommandMenuSection {
+  readonly id: string;
+  readonly label: string;
+}
+
 export interface CommandMenuApi {
   /** Close the menu, then perform. */
   run(perform: () => void): void;
+  /**
+   * A group reports itself while it holds rows, so a tab is only offered for a
+   * section there is something to see in. Stable across renders: groups call it
+   * from an effect.
+   */
+  reportRows(section: string, hasRows: boolean): void;
 }
 
 export const CommandMenuContext = createContext<CommandMenuApi | null>(null);
+
+/**
+ * The section the tabs have narrowed to, or null for all of them. Apart from
+ * the api so that switching tabs does not re-run every group's reporting.
+ */
+export const CommandMenuSectionContext = createContext<string | null>(null);
 
 export function useCommandMenu(): CommandMenuApi {
   const api = useContext(CommandMenuContext);
   if (!api) throw new Error('command menu source outside CommandMenu');
   return api;
+}
+
+export function useActiveSection(): string | null {
+  return useContext(CommandMenuSectionContext);
 }

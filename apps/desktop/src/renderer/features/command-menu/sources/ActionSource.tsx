@@ -6,9 +6,9 @@ import {
   ArrowLeft, ArrowRight, KeyboardWired, PlusDefault, Settings01, SidebarDefault, SidebarRightOpen,
 } from '@relayed/icons';
 import { definitionOf, type CommandId } from '../../../../shared/shortcuts/catalogue.ts';
-import { CommandGroup } from '@/components/ui/command';
 import { useCommand } from '@/lib/commands/CommandProvider';
-import { CommandMenuRow } from '../CommandMenuRow.tsx';
+import type { CommandMenuItem, CommandMenuSection } from '../command-menu-context.ts';
+import { CommandMenuGroup } from '../CommandMenuRow.tsx';
 
 /**
  * The commands worth finding by name, in the order they are listed. Opening
@@ -25,28 +25,25 @@ const ACTIONS: readonly { id: CommandId; icon: ComponentType<{ className?: strin
   { id: 'app.shortcuts.open', icon: KeyboardWired },
 ];
 
-export function ActionSource() {
-  return (
-    <CommandGroup heading="Actions">
-      {ACTIONS.map(action => <ActionRow key={action.id} {...action} />)}
-    </CommandGroup>
-  );
-}
+export const ACTION_SECTIONS: readonly CommandMenuSection[] = [{ id: 'actions', label: 'Actions' }];
 
-function ActionRow({ id, icon }: { id: CommandId; icon: ComponentType<{ className?: string }> }) {
-  const command = useCommand(id);
-  if (!command.enabled) return null;
-  const definition = definitionOf(id);
-  return (
-    <CommandMenuRow
-      item={{
-        id: `cmd:${id}`,
-        label: definition.title,
-        icon,
-        keywords: [definition.title, definition.category],
-        shortcut: command.shortcutLabel,
-        perform: () => { command.execute(); },
-      }}
-    />
-  );
+export function ActionSource() {
+  // ACTIONS is a module constant, so this calls the same hooks in the same
+  // order on every render.
+  const items = ACTIONS.map(({ id, icon }): CommandMenuItem | null => {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const command = useCommand(id);
+    if (!command.enabled) return null;
+    const definition = definitionOf(id);
+    return {
+      id: `cmd:${id}`,
+      label: definition.title,
+      icon,
+      keywords: [definition.title, definition.category],
+      shortcut: command.shortcutLabel,
+      perform: () => { command.execute(); },
+    };
+  }).filter(item => item !== null);
+
+  return <CommandMenuGroup section="actions" heading="Actions" items={items} />;
 }

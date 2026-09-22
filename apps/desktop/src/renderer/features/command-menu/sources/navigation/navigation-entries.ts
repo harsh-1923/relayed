@@ -15,6 +15,7 @@ export interface NavigationEntry {
 
 const PRIMARY_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   People: ['members'],
+  Agents: ['bots', 'directory'],
   Apps: ['integrations', 'connectors'],
   'Installed apps': ['connected apps', 'connections', 'manage apps'],
 };

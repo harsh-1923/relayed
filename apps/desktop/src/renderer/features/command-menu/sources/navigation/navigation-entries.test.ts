@@ -46,7 +46,7 @@ test('keeps duplicate labels distinct and orders them like the sidebar', () => {
   ]);
 
   assert.deepEqual(entries.map(entry => entry.destination.group), [
-    'go-to', 'go-to', 'go-to', 'local-room', 'local-room', 'channel', 'room', 'dm',
+    'go-to', 'go-to', 'go-to', 'go-to', 'local-room', 'local-room', 'channel', 'room', 'dm',
   ]);
   assert.equal(new Set(entries.map(entry => entry.destination.id)).size, entries.length);
   assert.deepEqual(entries.filter(entry => entry.destination.label === 'General').map(entry => entry.destination.to), [
