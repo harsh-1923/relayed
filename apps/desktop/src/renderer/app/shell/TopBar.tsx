@@ -15,7 +15,7 @@
 // EVERY CONTROL IN HERE IS `no-drag`. A drag region swallows clicks, so a button
 // inside one is inert until it opts out — and it still looks and hovers exactly
 // like a button that works.
-import { ArrowLeft, ArrowRight, SidebarDefault } from '@relayed/icons';
+import { ArrowLeft, ArrowRight, Monitor01, Moon, SidebarDefault, Sun } from '@relayed/icons';
 import { useActiveWorkspace, useSession } from '../state';
 import { useBackForward } from './use-back-forward/use-back-forward';
 import { useSidebarPresent } from './sidebar/use-sidebar-presence';
@@ -25,7 +25,9 @@ import { Button } from '@/components/ui/button';
 import { ActorAvatar } from '@/components/ActorAvatar';
 import { useSidebar } from '@/components/ui/sidebar';
 import { useCommand, useCommandHandler } from '@/lib/commands/CommandProvider';
+import { usePreference } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
+import type { ThemePreference } from '../../../shared/prefs.ts';
 
 /**
  * Room for the macOS traffic lights, which `hiddenInset` leaves floating over
@@ -123,6 +125,7 @@ export function TopBar() {
 
         <RouteStrip />
         <OfflineSwitch />
+        <ThemeSwitch />
         {activeWorkspace && (
           <div
             role="img"
@@ -141,6 +144,49 @@ export function TopBar() {
         )}
       </div>
     </header>
+  );
+}
+
+/**
+ * The theme, as one button that cycles rather than as the three-way control in
+ * Account Settings: the bar has room for an icon, and the full choice already
+ * has a home (features/settings/ThemeToggle.tsx).
+ *
+ * It writes the SAME preference and applies nothing itself. `prefs.set` tells
+ * main, main sets `nativeTheme.themeSource`, and `app/Theme.tsx` paints the
+ * class — so the tokens and the native window material stay two readings of one
+ * fact. Toggling `html.dark` from here would move one and leave the other.
+ */
+const THEME_CYCLE: { value: ThemePreference; label: string; Icon: typeof Monitor01 }[] = [
+  { value: 'system', label: 'System', Icon: Monitor01 },
+  { value: 'light', label: 'Light', Icon: Sun },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+];
+
+function ThemeSwitch() {
+  const theme = usePreference('appearance.theme');
+
+  const index = THEME_CYCLE.findIndex(choice => choice.value === theme.value);
+  const current = THEME_CYCLE[index] ?? THEME_CYCLE[0]!;
+  const next = THEME_CYCLE[(index + 1) % THEME_CYCLE.length] ?? THEME_CYCLE[0]!;
+
+  // The same three refusals ThemeToggle makes, and for the same reasons: the
+  // value shown before the first read is the default rather than what is
+  // stored, a write is already in flight, or there is no account to store it in
+  // (PREFERENCES.md §4) — signed out is a real state here, since the bar is
+  // above the router and renders on /signin.
+  const disabled = !theme.loaded || theme.saving || !theme.writable;
+
+  return (
+    <Bare
+      label={theme.writable
+        ? `Theme: ${current.label} (switch to ${next.label})`
+        : 'Sign in to change the theme'}
+      onClick={() => { if (!disabled) theme.set(next.value); }}
+      disabled={disabled}
+    >
+      <current.Icon className="size-4" />
+    </Bare>
   );
 }
 
