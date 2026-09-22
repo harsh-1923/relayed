@@ -37,6 +37,7 @@ import { AccountSettingsDevelopers } from '@/routes/AccountSettingsDevelopers';
 import { AccountSettingsGeneral } from '@/routes/AccountSettingsGeneral';
 import { AccountSettingsNotifications } from '@/routes/AccountSettingsNotifications';
 import { AccountSettingsShortcuts } from '@/routes/AccountSettingsShortcuts';
+import { AvatarPlayground } from '@/routes/AvatarPlayground';
 import { NotFound } from '@/routes/NotFound';
 import { UpdateGate } from '@/features/update/UpdateGate';
 
@@ -67,6 +68,9 @@ export function Router() {
           scroll container (see shell/Page.tsx). */}
       <Route element={<AppShell />}>
         <Route path="/account" element={<Page><Account /></Page>} />
+        {/* A bench, not a surface: where the avatar shapes and states are tuned.
+            The faces themselves ship through ActorAvatar. */}
+        <Route path="/playground/avatars" element={<Page><AvatarPlayground /></Page>} />
         {/* A local room (LOCAL-ROOMS.md §11.3): the synced space's view, in the
             local scope. Outside /w/ because a local room is account-tier. */}
         <Route path="/local/s/:spaceId" element={<Space scope="local" />} />

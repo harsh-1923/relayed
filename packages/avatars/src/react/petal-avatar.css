@@ -1,0 +1,89 @@
+/* Motion for the experimental segment avatars (lib/avatar/petals.ts).
+   EXPERIMENTAL — only /playground/avatars renders these.
+
+   `morph` is not here: the cuts travel by interpolating the geometry itself,
+   which is a SMIL <animate> on each path's `d` (see PetalAvatar.tsx). The modes
+   below all transform finished cells, so they can only shuffle rigid tiles —
+   useful for comparison, and cheap enough for a dense list.
+
+   Every transform is about the disc centre, not each cell's own box, so the
+   segments move as one object rather than each wobbling in place. In SVG that
+   needs `transform-box: view-box`, which makes `transform-origin` resolve
+   against the viewBox instead of the fill box. */
+
+.petal-cell {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  will-change: transform;
+}
+
+/* Each cell eases away from its own cuts and back, so the white gaps open and
+   close unevenly. The nearest a rigid transform gets to a moving cut: the
+   direction is per-cell (--petal-fx/fy, set from the cell's own normals) rather
+   than radial, which is what stops it reading as a pulse. */
+@keyframes petal-flow {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: calc(var(--petal-fx) * 2.2) calc(var(--petal-fy) * 2.2);
+  }
+}
+
+/* Cells ease outward and back, staggered by how far they sit from the centre,
+   so the pulse reads as a ripple travelling out to the rim. */
+@keyframes petal-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+/* Each cell orbits a little out of phase — the busiest of the rigid modes. */
+@keyframes petal-orbit {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(12deg);
+  }
+}
+
+@keyframes petal-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.petal-anim-flow .petal-cell {
+  animation: petal-flow var(--petal-duration) ease-in-out infinite;
+}
+.petal-anim-breathe .petal-cell {
+  animation: petal-breathe var(--petal-duration) ease-in-out infinite;
+}
+.petal-anim-orbit .petal-cell {
+  animation: petal-orbit var(--petal-duration) ease-in-out infinite;
+}
+.petal-anim-spin {
+  animation: petal-spin var(--petal-duration) linear infinite;
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+}
+
+/* Motion here is decoration; it carries no state a reader needs. The morph is
+   NOT covered by this — SMIL does not read stylesheets, so PetalAvatar drops
+   the <animate> element itself when this preference is set. */
+@media (prefers-reduced-motion: reduce) {
+  .petal-cell,
+  .petal-anim-spin {
+    animation: none !important;
+  }
+}

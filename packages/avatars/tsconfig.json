@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // DOM for SVG and matchMedia; "node" for the test file; "react-jsx" because the
+  // React entry is TSX.
+  // React itself is a PEER: the geometry entry (".") imports nothing from it,
+  // so a consumer that only wants paths and colours never pulls React in.
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["react", "node"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

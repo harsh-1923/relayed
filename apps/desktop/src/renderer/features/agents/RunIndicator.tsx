@@ -3,9 +3,10 @@
 // entirely from `useChatActivity` and disappears the moment `ended` arrives or
 // the answer's own message lands beside it.
 import { useState } from 'react';
-import { ThinkingOrb } from 'thinking-orbs';
 import type { RunActivity } from '@/lib/agent-activity';
 import { useActor } from '@/lib/actors';
+import { ActorAvatar } from '@/components/ActorAvatar';
+import { useRunPosture } from '@/lib/agent-posture';
 import { call } from '@/lib/ipc';
 import { Button } from '@/components/ui/button';
 
@@ -18,6 +19,9 @@ interface RunIndicatorProps {
 export function RunIndicator({ run, isInvoker }: RunIndicatorProps) {
   const agent = useActor(run.agentId);
   const [stopping, setStopping] = useState(false);
+  // The one surface with live run data, so the one that can honestly drive a
+  // posture. Everywhere else an agent's face rests.
+  const posture = useRunPosture(run);
 
   const label = run.state === 'waiting'
     ? `${agent?.displayName ?? 'Agent'} is busy — starting shortly`
@@ -27,7 +31,10 @@ export function RunIndicator({ run, isInvoker }: RunIndicatorProps) {
 
   return (
     <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground" role="status">
-      <ThinkingOrb state={run.state === 'waiting' ? 'listening' : 'working'} size={20} aria-hidden />
+      {/* The agent's OWN face, working, rather than a generic orb: the row
+          already names who is running, and one indicator that is both the
+          identity and the state beats two things side by side saying half each. */}
+      <ActorAvatar id={run.agentId} activity={posture} className="size-5" />
       <span>{label}</span>
       {isInvoker && (
         <Button

@@ -1,0 +1,14 @@
+/* The ONLY layout the package insists on.
+
+   No width, no height, no Tailwind: an avatar is sized by whatever it sits in,
+   because a library that picks its own size is a library you fight. `block`
+   only because an inline SVG inherits line-height and lands off-centre.
+
+   Imported by each component rather than left to styles.css: the components
+   pull their own sheets in, so a bundler that handles CSS imports needs no
+   extra step — and a rule that arrives only when someone remembers a separate
+   import is a rule that is missing in half the apps that use this. */
+.relayed-avatar {
+  display: block;
+  overflow: visible;
+}

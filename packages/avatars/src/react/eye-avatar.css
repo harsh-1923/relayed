@@ -1,0 +1,351 @@
+/* Motion for the eye avatars (lib/avatar/eyes.ts).
+   THREE INDEPENDENT PARTS, and every state re-choreographs them rather than
+   swapping in a whole new animation:
+
+     .eye-gaze  — where it is looking       (the group of both eyes)
+     .eye       — the lids                  (each eye, scaleY)
+     .eye-body  — the head                  (the disc itself)
+
+   Keeping them separate is what makes a state readable. A creature that is
+   thinking moves its HEAD and its eyes differently from one that is searching,
+   and if those were one animation you would have to author every combination.
+
+   Liveliness comes from the parts running on clocks that do not divide into
+   each other: gaze 7s, blink 4-8s from the seed, breath 3.4s. Anything moving
+   on ONE clock reads as a loading spinner. */
+
+.eye-avatar .eye-gaze {
+  animation: eye-gaze var(--gaze-duration) cubic-bezier(0.6, 0, 0.2, 1) infinite;
+  animation-delay: var(--phase);
+}
+
+.eye-avatar .eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  /* Lids are `transform`; anything that MOVES an eye uses `translate`, so the
+     two compose instead of overwriting each other. */
+  animation: eye-blink var(--blink-duration) ease-in-out infinite;
+  animation-delay: var(--phase);
+  transition:
+    translate 420ms cubic-bezier(0.3, 0, 0.2, 1),
+    scale 420ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+
+.eye-avatar .eye-body {
+  transform-box: view-box;
+  transform-origin: 50px 50px;
+  animation: eye-breathe var(--breathe-duration) ease-in-out infinite;
+}
+
+/* The wink's shut eye must not blink — it is already closed, and squashing it
+   again just makes it vanish. */
+.eye-avatar .eye-shut {
+  animation: none;
+}
+
+/* ---- idle ---------------------------------------------------------------
+   Deliberately not a loop of even steps: a creature looks somewhere, HOLDS it,
+   then looks somewhere else, so the interesting frames are the pauses between
+   the moves. Amplitude comes from the seed as --wander. */
+@keyframes eye-gaze {
+  0%,
+  18% {
+    translate: 0 0;
+  }
+  26%,
+  42% {
+    translate: calc(var(--wander) * 1px) calc(var(--wander) * -0.35px);
+  }
+  50%,
+  62% {
+    translate: calc(var(--wander) * -0.9px) calc(var(--wander) * 0.2px);
+  }
+  70%,
+  84% {
+    translate: calc(var(--wander) * 0.35px) calc(var(--wander) * 0.7px);
+  }
+  92%,
+  100% {
+    translate: 0 0;
+  }
+}
+
+/* Shut for a fraction of the cycle and nothing for the rest of it. Squashing to
+   0.06 rather than 0 keeps the rounded ends visible on the way down, which is
+   what makes it read as a lid instead of a flicker. */
+@keyframes eye-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.06);
+  }
+}
+
+/* Under two percent, and off the other two clocks: a pulse, not a zoom. */
+@keyframes eye-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.018);
+  }
+}
+
+/* ---- waiting ------------------------------------------------------------
+   Queued behind another run. Looking away and down — the posture of something
+   that has been told to hold — with long, heavy lids. */
+@keyframes eye-avert {
+  0%,
+  100% {
+    translate: calc(var(--wander) * -0.5px) calc(var(--wander) * 0.6px);
+  }
+  50% {
+    translate: calc(var(--wander) * -0.75px) calc(var(--wander) * 0.85px);
+  }
+}
+@keyframes eye-doze {
+  0%,
+  70%,
+  100% {
+    transform: scaleY(1);
+  }
+  80%,
+  86% {
+    transform: scaleY(0.25);
+  }
+}
+.eye-avatar[data-activity="waiting"] .eye-gaze {
+  animation: eye-avert 6s ease-in-out infinite;
+}
+.eye-avatar[data-activity="waiting"] .eye {
+  animation: eye-doze 5s ease-in-out infinite;
+}
+.eye-avatar[data-activity="waiting"] .eye-body {
+  animation-duration: 6s;
+}
+
+/* ---- thinking -----------------------------------------------------------
+   The one you asked for: the HEAD turns, rather than a thought bubble stuck
+   beside it. The gaze travels a slow circle while the head swings on a longer
+   period, so the two are never at the same place twice — which is what makes
+   it read as turning something over instead of scanning. Looking UP is doing a
+   lot of the work; it is the direction people look when they are recalling. */
+@keyframes eye-circle {
+  0%,
+  100% {
+    translate: calc(var(--wander) * 0.9px) calc(var(--wander) * -0.7px);
+  }
+  25% {
+    translate: calc(var(--wander) * 0.2px) calc(var(--wander) * -1.1px);
+  }
+  50% {
+    translate: calc(var(--wander) * -0.9px) calc(var(--wander) * -0.7px);
+  }
+  75% {
+    translate: calc(var(--wander) * -0.2px) calc(var(--wander) * 0.1px);
+  }
+}
+@keyframes eye-ponder {
+  0%,
+  100% {
+    transform: rotate(-7deg) scale(1.01);
+  }
+  50% {
+    transform: rotate(7deg) scale(1.01);
+  }
+}
+.eye-avatar[data-activity="thinking"] .eye-gaze {
+  animation: eye-circle 3.2s ease-in-out infinite;
+}
+.eye-avatar[data-activity="thinking"] .eye-body {
+  animation: eye-ponder 4.6s ease-in-out infinite;
+}
+
+/* ---- searching ----------------------------------------------------------
+   Saccades. The long holds and near-instant moves are the whole effect — real
+   eyes do not glide, they snap and then stare. The head tilts on its own
+   slower clock so it LAGS the eyes, which is what stops a fast animation
+   reading as a twitch. Blinking is rare: you do not blink while hunting. */
+@keyframes eye-scan {
+  0%,
+  20% {
+    translate: calc(var(--wander) * -1.5px) calc(var(--wander) * -0.3px);
+  }
+  24%,
+  44% {
+    translate: calc(var(--wander) * 1.5px) calc(var(--wander) * -0.5px);
+  }
+  48%,
+  60% {
+    translate: calc(var(--wander) * 0.4px) calc(var(--wander) * 0.9px);
+  }
+  64%,
+  82% {
+    translate: calc(var(--wander) * -1.2px) calc(var(--wander) * 0.5px);
+  }
+  86%,
+  100% {
+    translate: calc(var(--wander) * 1.1px) calc(var(--wander) * 0.2px);
+  }
+}
+@keyframes eye-cast {
+  0%,
+  100% {
+    transform: rotate(-4deg);
+  }
+  50% {
+    transform: rotate(4deg);
+  }
+}
+.eye-avatar[data-activity="searching"] .eye-gaze {
+  animation: eye-scan 2.4s cubic-bezier(0.85, 0, 0.15, 1) infinite;
+}
+.eye-avatar[data-activity="searching"] .eye-body {
+  animation: eye-cast 3.1s ease-in-out infinite;
+}
+.eye-avatar[data-activity="searching"] .eye {
+  animation-duration: 11s;
+}
+
+/* ---- working ------------------------------------------------------------
+   Hands on a tool. The gaze stops wandering and holds dead centre with a small
+   jitter — attention, not stillness — over a short repetitive body pulse that
+   reads as effort. */
+@keyframes eye-fix {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0.4px -0.3px;
+  }
+}
+@keyframes eye-effort {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
+}
+.eye-avatar[data-activity="working"] .eye-gaze {
+  animation: eye-fix 0.9s ease-in-out infinite;
+}
+.eye-avatar[data-activity="working"] .eye-body {
+  animation: eye-effort 1.1s ease-in-out infinite;
+}
+.eye-avatar[data-activity="working"] .eye {
+  animation-duration: 9s;
+}
+
+/* ---- laser --------------------------------------------------------------
+   Working, turned up. Three things at once, and it needs all three: the eyes
+   narrow (scale), they CONVERGE toward each other (translate, per side — which
+   is why the eyes carry data-eye), and the head leans in. Convergence is the
+   one that sells it; two narrowed eyes staring straight ahead just look small,
+   but two aimed at the same near point look like they mean it. */
+@keyframes eye-lean {
+  0%,
+  100% {
+    transform: scale(1.05);
+  }
+  50% {
+    transform: scale(1.075);
+  }
+}
+.eye-avatar[data-activity="laser"] .eye-gaze {
+  animation: none;
+}
+.eye-avatar[data-activity="laser"] .eye-body {
+  animation: eye-lean 1.5s ease-in-out infinite;
+}
+.eye-avatar[data-activity="laser"] .eye {
+  animation-duration: 12s;
+  scale: 0.72 0.62;
+}
+.eye-avatar[data-activity="laser"] .eye[data-eye="left"] {
+  translate: 4.5px 0;
+}
+.eye-avatar[data-activity="laser"] .eye[data-eye="right"] {
+  translate: -4.5px 0;
+}
+
+/* ---- speaking -----------------------------------------------------------
+   A bob on roughly the cadence of speech, and a gaze that stays with you. */
+@keyframes eye-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1.2px) scale(1.02);
+  }
+}
+.eye-avatar[data-activity="speaking"] .eye-gaze {
+  animation: eye-fix 2.6s ease-in-out infinite;
+}
+.eye-avatar[data-activity="speaking"] .eye-body {
+  animation: eye-bob 0.9s ease-in-out infinite;
+}
+
+/* ---- done / failed ------------------------------------------------------
+   Both run ONCE and hold. An outcome is a moment, not a state: a success that
+   keeps bouncing stops meaning anything by the third loop. */
+@keyframes eye-pop {
+  0% {
+    transform: scale(0.9);
+  }
+  45% {
+    transform: scale(1.08);
+  }
+  70% {
+    transform: scale(0.98);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes eye-flinch {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  15% {
+    transform: translateX(-2.5px) rotate(-3deg);
+  }
+  35% {
+    transform: translateX(2.5px) rotate(3deg);
+  }
+  55% {
+    transform: translateX(-1.5px) rotate(-1.5deg);
+  }
+  75% {
+    transform: translateX(1px);
+  }
+}
+.eye-avatar[data-activity="done"] .eye-body {
+  animation: eye-pop 0.7s cubic-bezier(0.3, 1.4, 0.5, 1) 1 forwards;
+}
+.eye-avatar[data-activity="failed"] .eye-body {
+  animation: eye-flinch 0.6s ease-in-out 1 forwards;
+}
+
+/* ---- off ---------------------------------------------------------------- */
+.eye-avatar[data-animated="false"] .eye-gaze,
+.eye-avatar[data-animated="false"] .eye,
+.eye-avatar[data-animated="false"] .eye-body {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eye-avatar .eye-gaze,
+  .eye-avatar .eye,
+  .eye-avatar .eye-body {
+    animation: none !important;
+  }
+}

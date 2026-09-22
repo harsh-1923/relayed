@@ -1,0 +1,9 @@
+/* The package's stylesheet. Import once per app:
+     import '@relayed/avatars/styles.css';
+
+   The components also import their own sheets, so a bundler that handles CSS
+   imports from a dependency needs nothing else. This file exists for the ones
+   that do not, and as the single thing to point a published consumer at. */
+@import "./base.css";
+@import "./eye-avatar.css";
+@import "./petal-avatar.css";

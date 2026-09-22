@@ -20,12 +20,21 @@ import { AccountSwitcher } from './AccountSwitcher';
 import { SpaceDirectory } from '@/features/chat/SpaceDirectory';
 import { LocalRoomsDirectory } from '@/features/local-rooms/LocalRoomsDirectory';
 import { SidebarItem } from '@/components/SidebarItem';
+import { EyeAvatar } from '@relayed/avatars/react';
 import { Button } from '@/components/ui/button';
 import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, useSidebar,
 } from '@/components/ui/sidebar';
 import { useCommand } from '@/lib/commands/CommandProvider';
 import { cn } from '@/lib/utils';
+
+// The playground's own icon is one of the avatars it generates — the row shows
+// the thing it links to, and blinks at you from 16px, which is the size the
+// experiment actually has to survive. Module scope, so it is not a fresh
+// component type on every sidebar render.
+function PlaygroundIcon({ className }: { className?: string }) {
+  return <EyeAvatar seed="playground" mood="curious" className={className} />;
+}
 
 export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
@@ -88,6 +97,12 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border/40">
+        {/* A bench, not a destination. Deliberately NOT in `primaryDestinationsFor`:
+            that list is the shared navigation vocabulary the command menu and search
+            also read, and a tuning surface does not belong in it. */}
+        <SidebarMenu className="gap-0.5">
+          <SidebarItem label="Avatar playground" icon={PlaygroundIcon} to="/playground/avatars" />
+        </SidebarMenu>
         <AccountSwitcher />
       </SidebarFooter>
     </Sidebar>
