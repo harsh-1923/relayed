@@ -27,6 +27,7 @@ import {
   Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenu, useSidebar,
 } from '@/components/ui/sidebar';
 import { useCommand } from '@/lib/commands/CommandProvider';
+import { usePreference } from '@/lib/prefs';
 import { cn } from '@/lib/utils';
 
 // The playground's own icon is one of the avatars it generates — the row shows
@@ -47,6 +48,8 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   // different tabs, so matching on the path alone would light up both rows.
   const here = useLocation();
   const current = `${here.pathname}${here.search}`;
+  // Off unless someone turned it on in Account Settings → Developers.
+  const playground = usePreference('developer.avatar_playground.visible');
 
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
@@ -103,12 +106,16 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border/40">
-        {/* A bench, not a destination. Deliberately NOT in `primaryDestinationsFor`:
-            that list is the shared navigation vocabulary the command menu and search
-            also read, and a tuning surface does not belong in it. */}
-        <SidebarMenu className="gap-0.5">
-          <SidebarItem label="Avatar playground" icon={PlaygroundIcon} to="/playground/avatars" />
-        </SidebarMenu>
+        {/* A bench, not a destination, and off by default. Deliberately NOT in
+            `primaryDestinationsFor`: that list is the shared navigation vocabulary
+            the command menu and search also read, and a tuning surface does not
+            belong in it — which also means this switch is the only thing that has
+            to be checked to hide it. */}
+        {playground.value && (
+          <SidebarMenu className="gap-0.5">
+            <SidebarItem label="Avatar playground" icon={PlaygroundIcon} to="/playground/avatars" />
+          </SidebarMenu>
+        )}
         <AccountSwitcher />
       </SidebarFooter>
     </Sidebar>

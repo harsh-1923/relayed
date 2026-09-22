@@ -470,6 +470,18 @@ reads it through the live-query preference client before drawing the current
 path and panel query in the top bar. A missing row therefore keeps the strip
 out of both development and production builds until the person opts in.
 
+### 10.4 The avatar playground — built
+
+`developer.avatar_playground.visible` is the same shape and defaults to false.
+`AppSidebar` reads it before drawing the row that reaches the bench for tuning
+generated agent faces, so the bench is absent from a normal install rather than
+merely out of the way.
+
+The ROUTE stays registered either way. The preference hides an entrance, not a
+surface: a bookmarked URL that stopped resolving because a switch was flipped
+would be a worse thing to explain than a page nobody has a link to, and the
+playground reads nothing that is not already on screen elsewhere.
+
 ---
 
 ## 11. Adding a preference

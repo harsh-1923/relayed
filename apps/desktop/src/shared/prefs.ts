@@ -121,6 +121,18 @@ export const PREFERENCES = {
     fallback: false,
     parse: boolean,
   },
+  /**
+   * Whether the avatar playground is offered in the sidebar.
+   *
+   * Off by default: it is a bench for tuning the generated agent faces, not a
+   * place anyone using Relayed has a reason to go.
+   */
+  'developer.avatar_playground.visible': {
+    tier: 'account',
+    reach: 'local',
+    fallback: false,
+    parse: boolean,
+  },
 } as const satisfies Record<string, PreferenceSpec<unknown>>;
 
 export type PreferenceKey = keyof typeof PREFERENCES;
