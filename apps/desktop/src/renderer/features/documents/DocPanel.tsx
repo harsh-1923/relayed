@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
+import { Refresh as RefreshIcon } from '@relayed/icons';
 import type { Document } from '../../../preload/api';
 import { isEmptyDocument, webAddress } from '../../../shared/documents.ts';
 import { useActor } from '@/lib/actors';
@@ -94,10 +95,14 @@ function DocBody({ document, spaceId, onOpenPanel }: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 border-b border-border/60 px-12 py-3">
-        <div className="mx-auto flex w-full max-w-[80ch] flex-wrap items-baseline gap-x-2">
-          <h2 className="text-sm font-medium">{document.title ?? 'Document'}</h2>
+        {/* ONE LINE, ALWAYS. Wrapping put the tabs on a second row and moved the
+            document under them, so nothing here wraps: the title and the
+            controls keep their width and the staleness line is what gives,
+            clipping from its end as the panel narrows. */}
+        <div className="mx-auto flex w-full max-w-[80ch] items-baseline gap-x-2">
+          <h2 className="shrink-0 text-sm font-medium">{document.title ?? 'Document'}</h2>
           {/* Honest about its own staleness: who wrote this, and when. */}
-          <p className="text-xs text-muted-foreground">
+          <p className="min-w-0 truncate text-xs text-muted-foreground">
             {empty ? 'Not written yet' : `Updated ${when(document.updatedAt)}`}
             {author && !empty && (
               <> by{' '}
@@ -108,7 +113,7 @@ function DocBody({ document, spaceId, onOpenPanel }: {
               </>
             )}
           </p>
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <ViewTab active={view === 'summary'} onClick={() => setView('summary')}>Summary</ViewTab>
             <ViewTab active={view === 'timeline'} onClick={() => setView('timeline')}>Timeline</ViewTab>
             {view === 'summary' && <Refresh spaceId={spaceId} />}
@@ -199,12 +204,18 @@ function openLink(
 function Refresh({ spaceId }: { spaceId: string }) {
   const [state, setState] = useState<'idle' | 'working' | 'too_soon' | 'failed'>('idle');
   return (
-    <span className="ml-auto flex items-center gap-2">
+    <span className="flex items-center gap-2">
       {state === 'too_soon' && <span className="text-xs text-muted-foreground">Just refreshed</span>}
       {state === 'failed' && <span className="text-xs text-muted-foreground">Could not refresh</span>}
       <Button
         variant="ghost"
-        size="xs"
+        size="icon-xs"
+        // An icon, to leave the one line as much room as possible. The word it
+        // replaced is still said — as the name a pointer and a screen reader
+        // both get — and a refusal still gets its own visible text, since an
+        // icon has no way to say "just refreshed".
+        aria-label={state === 'working' ? 'Refreshing…' : 'Refresh'}
+        title={state === 'working' ? 'Refreshing…' : 'Refresh'}
         disabled={state === 'working'}
         onClick={() => {
           setState('working');
@@ -218,7 +229,7 @@ function Refresh({ spaceId }: { spaceId: string }) {
             .catch(() => setState('failed'));
         }}
       >
-        {state === 'working' ? 'Refreshing…' : 'Refresh'}
+        <RefreshIcon className={cn(state === 'working' && 'animate-spin')} />
       </Button>
     </span>
   );
