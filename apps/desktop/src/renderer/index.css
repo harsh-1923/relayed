@@ -100,8 +100,13 @@
   --window-solid: var(--background);
   --sidebar-item-background: color-mix(in oklch, var(--foreground) 8%, transparent);
   --sidebar-item-foreground: color-mix(in oklch, var(--foreground) 85%, transparent);
-  --message-outgoing: oklch(0.2143 0.0039 286.07);
-  --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
+  /* Yours, against theirs: one step darker than the incoming bubble's --muted
+     (0.97) rather than a colour of its own. Light enough that everything in it
+     keeps the page's own ink, so the accent is simply the theme's. */
+  --message-outgoing: oklch(0.93 0 0);
+  --message-outgoing-foreground: var(--foreground);
+  --message-outgoing-accent: var(--primary);
+  --message-outgoing-accent-foreground: var(--primary-foreground);
 
   /* Tones for agent UI blocks (docs/AGENT-RESPONSES.md): a Stat, Badge or
      Callout marked success or warning. Lightness kept beside destructive's so
@@ -152,6 +157,10 @@
   --sidebar-item-foreground: color-mix(in oklch, var(--foreground) 85%, transparent);
   --message-outgoing: oklch(0.2143 0.0039 286.07);
   --message-outgoing-foreground: oklch(0.9187 0.0029 264.54);
+  /* Lighter than --primary: the bubble is lighter than the page it sits on, so
+     the accent that reads against the page is short of AA against this. */
+  --message-outgoing-accent: oklch(0.62 0.1497 276.12);
+  --message-outgoing-accent-foreground: oklch(1 0 0);
   --success: oklch(0.72 0.15 150);
   --warning: oklch(0.78 0.14 75);
 }

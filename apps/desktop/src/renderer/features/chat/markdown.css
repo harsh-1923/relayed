@@ -8,7 +8,8 @@
    and headings take more above than below, so they bind to what follows.
 
    Colours stay relative to the TEXT colour (`currentColor`): the same Markdown
-   sits on the page, in a muted bubble and in the dark outgoing one. */
+   sits on the page, in a muted bubble and in the outgoing one — which is a
+   shade darker than muted in light mode, and dark in dark mode. */
 
 .markdown {
   --md-space: 14px;
@@ -17,6 +18,11 @@
   --md-list-inset: 24px;
   --md-rule: color-mix(in srgb, currentColor 14%, transparent);
   --md-row-rule: color-mix(in srgb, currentColor 6%, transparent);
+  /* The accent, for the few things that are not relative to the text colour.
+     Overridden wherever the ground is not the one the theme assumes. */
+  --md-accent: var(--primary);
+  --md-accent-foreground: var(--primary-foreground);
+  --md-link-color: currentColor;
 
   font-size: 16px;
   line-height: 26px;
@@ -76,7 +82,8 @@
     text-align: inherit;
     text-decoration: underline dotted;
     text-decoration-thickness: 1.5px;
-    text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+    color: var(--md-link-color);
+    text-decoration-color: color-mix(in srgb, var(--md-link-color) 30%, transparent);
     text-underline-offset: 2px;
     cursor: pointer;
     transition: opacity 0.2s ease;
@@ -98,11 +105,10 @@
   }
 
   /* The app accent, where it is a colour: in dark mode it is #606ACC, while
-     light mode's accent is still shadcn's near-white hover grey, which would
-     make a link vanish — there a link keeps the text colour and its underline. */
-  :where(.dark) & .md-link {
-    color: var(--color-primary);
-    text-decoration-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+     light mode's accent is a near-black that a link would vanish into — there a
+     link keeps the text colour and its underline. */
+  :where(.dark) & {
+    --md-link-color: var(--md-accent);
   }
 
   & hr {
@@ -310,10 +316,10 @@
   & .md-mention {
     display: inline-block;
     padding: 1px 4px;
-    color: var(--primary);
+    color: var(--md-accent);
     font-weight: 600;
     line-height: 1.3;
-    background: color-mix(in srgb, var(--primary) 12%, transparent);
+    background: color-mix(in srgb, var(--md-accent) 12%, transparent);
     border-radius: 6px;
   }
 
@@ -339,8 +345,29 @@
   }
 
   & .md-mention-button:hover {
-    background: color-mix(in srgb, var(--primary) 20%, transparent);
+    background: color-mix(in srgb, var(--md-accent) 20%, transparent);
   }
+
+  /* Was a stray top-level rule that only matched because a root `&` resolves to
+     `:scope`. It belongs to the Markdown it is written in. */
+  & .md-command {
+    display: inline-block;
+    padding: 0 4px;
+    color: var(--md-accent-foreground);
+    font-weight: 600;
+    line-height: 1.5;
+    background: var(--md-accent);
+    border-radius: 4px;
+  }
+}
+
+/* The outgoing bubble is not the ground either theme's accent assumes, so it
+   names its own: the theme's own accent in light mode, where the bubble is a
+   shade off the page, and a lighter one in dark mode, where it is not. */
+[data-slot="bubble"][data-variant="outgoing"] .markdown {
+  --md-accent: var(--message-outgoing-accent);
+  --md-accent-foreground: var(--message-outgoing-accent-foreground);
+  --md-link-color: var(--md-accent);
 }
 
 /* Chromium's scroll-state query hides the no-wrap control when the table fits.
@@ -350,16 +377,6 @@
   .markdown .md-table[data-layout="scrollable"] .md-table-controls {
     display: none;
   }
-}
-
-& .md-command {
-  display: inline-block;
-  padding: 0 4px;
-  color: var(--primary-foreground);
-  font-weight: 600;
-  line-height: 1.5;
-  background: var(--primary);
-  border-radius: 4px;
 }
 
 /*
