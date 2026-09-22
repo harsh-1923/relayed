@@ -356,6 +356,11 @@ export const metrics = {
        + 'stay flat; `authorized` is allowed to be slow, and is unbounded when '
        + 'offline. Collapsing them hides a regression in the half that matters.',
   },
+  'account.switch': {
+    kind: 'histogram', unit: 'ms', labels: ['phase', 'result'],
+    doc: 'The account-tier twin of workspace.switch, split the same way and '
+       + 'for the same reason (STORAGE.md §12.5).',
+  },
   'workspace.close': {
     kind: 'histogram', unit: 'ms', labels: [],
     doc: 'Closing a replica: outbox count plus a WAL checkpoint. Paid inside '
@@ -378,6 +383,17 @@ export const metrics = {
     kind: 'counter', labels: ['outcome'],
     doc: 'The onboarding funnel. `needs_workspace` is someone who authenticated '
        + 'and has not finished; a rising share means onboarding is losing people.',
+  },
+  'auth.no_credential': {
+    kind: 'counter', labels: [],
+    doc: 'Activation found no refresh token to use — no vault slot, or one the '
+       + 'keychain would not decrypt. The account still renders and cannot sync, '
+       + 'and before this counter nothing said so.',
+  },
+  'auth.add_account': {
+    kind: 'counter', labels: ['outcome'],
+    doc: 'Signing in to a second account while one is open. Kept off '
+       + 'auth.signin so it does not read as the onboarding funnel.',
   },
   'auth.signin.duration': {
     kind: 'histogram', unit: 'ms', labels: ['outcome'],

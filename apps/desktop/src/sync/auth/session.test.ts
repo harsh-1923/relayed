@@ -324,3 +324,208 @@ test('concurrent ensureFresh calls share ONE refresh — rotation would refuse a
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+// ── adding a second account (STORAGE.md §12.5) ────────────────────────────────
+
+/**
+ * WorkOS and our server in one process, plus a "browser" that completes the
+ * loopback callback the moment it is opened. `/auth/session` answers as the
+ * NEW account — `needsWorkspace` decides whether it has a workspace yet.
+ */
+async function addAccountHarness(opts: {
+  needsWorkspace?: boolean; completeBrowser?: boolean;
+  /** The open account has no usable credential — a slot the keychain will not decrypt. */
+  noCredential?: boolean;
+} = {}) {
+  const { createServer } = await import('node:http');
+  const seen: { path: string; body: Record<string, unknown> }[] = [];
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c: Buffer) => { raw += c.toString(); });
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      seen.push({ path: req.url ?? '', body });
+      res.setHeader('content-type', 'application/json');
+      const actor = (wsp: string, id: string) => ({ actorId: id, orgId: 'org_1', workspaceId: wsp });
+      switch (req.url) {
+        case '/user_management/authenticate':
+          return res.end(JSON.stringify({ access_token: jwt(1800000000),
+                                          user: { id: 'user_2', email: 'second@example.com' } }));
+        case '/auth/session':
+          return res.end(JSON.stringify(opts.needsWorkspace
+            ? { needs_workspace: true, identity: { email: 'second@example.com', displayName: 'Second' },
+                handle_suggestions: ['second'] }
+            : { access_token: 'access_b', refresh_token: 'rt_b', expires_in: 900,
+                actor: actor(WSP_B, 'act_b') }));
+        case '/auth/refresh':
+          return res.end(JSON.stringify({ access_token: 'access_a', refresh_token: 'rt_a2',
+                                          expires_in: 900, actor: actor(WSP_A, 'act_a') }));
+        case '/auth/me':
+          return res.end(JSON.stringify({ actor: { id: 'act_x', handle: 'x', display_name: 'X',
+            avatar_url: null, org_id: 'org_1', workspace_id: WSP_A } }));
+        default:
+          res.writeHead(404);
+          return res.end('{}');
+      }
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  process.env['RELAYED_SERVER_URL'] = url;
+
+  const vault = fakeVault();
+  if (!opts.noCredential) await vault.store(WSP_A, 'rt_a');
+  const opened: string[] = [];
+  /** What each adoption told storage the account's email was. */
+  const emails: (string | null)[] = [];
+  // The resolver index.ts uses: provisional while adding, the open account's otherwise.
+  const s: Session = new Session({
+    onSession: (_session, { email }) => { emails.push(email); },
+    config: { clientId: 'client_test', apiBase: url },
+    deviceId: () => (s.adding ? 'dev_provisional' : 'dev_open'),
+    vault,
+    openBrowser: (u) => {
+      opened.push(u);
+      if (opts.completeBrowser === false) return;
+      const q = new URL(u).searchParams;
+      void fetch(`${q.get('redirect_uri')}?code=code_1&state=${q.get('state')}`).catch(() => {});
+    },
+  });
+  await s.activate(WSP_A);
+  assert.equal(s.state.status, opts.noCredential ? 'signed_out' : 'authenticated');
+  const statuses: string[] = [];
+  s.onChange(st => statuses.push(st.status));
+
+  return {
+    s, vault, seen, opened, statuses, emails,
+    async close() {
+      delete process.env['RELAYED_SERVER_URL'];
+      await new Promise<void>(r => server.close(() => r()));
+    },
+  };
+}
+
+test('adding an account asks afresh and sends a PROVISIONAL device id, never the open account\'s', async () => {
+  const h = await addAccountHarness();
+  try {
+    await h.s.addAccount();
+    assert.equal(new URL(h.opened[0]!).searchParams.get('max_age'), '0',
+      'without it AuthKit reuses the browser session — the account already open');
+    const session = h.seen.find(r => r.path === '/auth/session');
+    assert.equal(session?.body['device_id'], 'dev_provisional',
+      'the open account\'s id would link two accounts server-side (§8)');
+    assert.equal(h.s.state.status, 'authenticated');
+    assert.equal(h.s.workspaceId, WSP_B, 'the held session is now the added account\'s');
+    assert.equal(h.vault.slots.get(WSP_B), 'rt_b');
+    assert.equal(h.s.adding, null);
+    assert.ok(!h.statuses.some(st => st === 'authenticating' || st === 'awaiting_browser' || st === 'signed_out'),
+      `the open account never looked signed out while adding: ${h.statuses.join(' → ')}`);
+  } finally { await h.close(); }
+});
+
+test('cancelling an add leaves the open account exactly as it was', async () => {
+  const h = await addAccountHarness({ completeBrowser: false });
+  try {
+    const token = h.s.accessToken;
+    const pending = h.s.addAccount();
+    const until = Date.now() + 2000;
+    while (h.s.adding !== 'browser') {
+      if (Date.now() > until) throw new Error('add never reached the browser');
+      await new Promise(r => setTimeout(r, 5));
+    }
+    assert.equal(h.s.state.status, 'authenticated', 'still signed in while the browser is open');
+    h.s.cancelAddAccount();
+    await assert.rejects(pending);
+    assert.equal(h.s.adding, null);
+    assert.equal(h.s.state.status, 'authenticated');
+    assert.equal(h.s.accessToken, token);
+    assert.equal(h.s.workspaceId, WSP_A);
+    assert.ok(!h.seen.some(r => r.path === '/auth/session'), 'nothing was exchanged');
+  } finally { await h.close(); }
+});
+
+test('an added account with no workspace gets onboarding, and backing out restores the open one', async () => {
+  const h = await addAccountHarness({ needsWorkspace: true });
+  try {
+    const token = h.s.accessToken;
+    await h.s.addAccount();
+    assert.equal(h.s.state.status, 'needs_workspace');
+    assert.equal(h.s.adding, 'onboarding');
+    assert.ok(h.s.canCreateWorkspace, 'onboarding holds the new identity\'s WorkOS token');
+
+    // Set aside, so nothing can refresh the previous account into the middle
+    // of someone else's onboarding.
+    const refreshes = h.seen.filter(r => r.path === '/auth/refresh').length;
+    assert.equal(await h.s.ensureFresh(), null);
+    assert.equal(h.seen.filter(r => r.path === '/auth/refresh').length, refreshes);
+
+    h.s.cancelAddAccount();
+    assert.equal(h.s.adding, null);
+    assert.equal(h.s.state.status, 'authenticated');
+    assert.equal(h.s.accessToken, token);
+    assert.equal(h.s.workspaceId, WSP_A);
+    assert.equal(h.s.canCreateWorkspace, false, 'the added identity\'s token is dropped');
+  } finally { await h.close(); }
+});
+
+test('activating another account\'s workspace never mints with the held session', async () => {
+  const h = await addAccountHarness();
+  try {
+    // WSP_B has no slot; the held session is A's. /auth/switch with it can
+    // only be refused (§10.2 step 3), so it must not be tried.
+    const state = await h.s.activate(WSP_B, { mint: false });
+    assert.ok(!h.seen.some(r => r.path === '/auth/switch'));
+    assert.equal(state.status, 'signed_out');
+  } finally { await h.close(); }
+});
+
+test('an account open with NO usable credential can still add one', async () => {
+  // Found by hand: a rebuilt dev bundle whose keychain would not decrypt the
+  // vault slot. The replica rendered (R3), activation landed on `signed_out`,
+  // and "Add account" refused — leaving no way forward from inside the app.
+  const h = await addAccountHarness({ noCredential: true });
+  try {
+    await h.s.addAccount();
+    assert.equal(h.s.state.status, 'authenticated');
+    assert.equal(h.s.workspaceId, WSP_B);
+    const session = h.seen.find(r => r.path === '/auth/session');
+    assert.equal(session?.body['device_id'], 'dev_provisional');
+  } finally { await h.close(); }
+});
+
+test('backing out of an added account\'s onboarding returns to signed_out if that is where it started', async () => {
+  const h = await addAccountHarness({ noCredential: true, needsWorkspace: true });
+  try {
+    await h.s.addAccount();
+    assert.equal(h.s.state.status, 'needs_workspace');
+    h.s.cancelAddAccount();
+    assert.equal(h.s.state.status, 'signed_out');
+    assert.equal(h.s.adding, null);
+  } finally { await h.close(); }
+});
+
+test('the added account\'s email reaches storage once, from WorkOS — a refresh carries none', async () => {
+  // Our server keeps no email (DESIGN §6.2), so the code exchange is the only
+  // place the client learns which address an account is.
+  const h = await addAccountHarness();
+  try {
+    assert.deepEqual(h.emails, [null], 'the boot refresh knows no email');
+    await h.s.addAccount();
+    assert.deepEqual(h.emails, [null, 'second@example.com']);
+    await h.s.activate(WSP_A);
+    assert.equal(h.emails.at(-1), null, 'a later refresh does not repeat or invent one');
+  } finally { await h.close(); }
+});
+
+test('an added account that onboards first still records its email when it is created', async () => {
+  const h = await addAccountHarness({ needsWorkspace: true });
+  try {
+    await h.s.addAccount();
+    assert.deepEqual(h.emails, [null], 'nothing adopted yet — onboarding is on screen');
+    h.s.cancelAddAccount();
+    // Backing out drops it with the rest of the attempt: the next adoption is
+    // the open account's own refresh, and must not be labelled with it.
+    await h.s.activate(WSP_A);
+    assert.equal(h.emails.at(-1), null);
+  } finally { await h.close(); }
+});

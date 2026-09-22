@@ -214,6 +214,66 @@ test('a switch commits last_workspace before touching a handle', () => {
   assert.equal(boot.workspaceId, 'wsp_b', 'reopens where the user was going, not where they left');
 });
 
+/** Two accounts on one install: A (one workspace), then B (two), B opened last. */
+async function twoAccounts() {
+  const dir = root();
+  const a = seeded(dir, [member({ workspaceId: 'wsp_a', actorId: 'act_a', name: 'A' })], 'dev_a');
+  a.storage.close();
+  // last_active_at is in ms; a tie would make "most recent" a coin toss.
+  await new Promise(r => setTimeout(r, 5));
+  const b = seeded(dir, [
+    member({ workspaceId: 'wsp_b1', actorId: 'act_b1', name: 'B1' }),
+    member({ workspaceId: 'wsp_b2', actorId: 'act_b2', name: 'B2' }),
+  ], 'dev_b');
+  b.storage.switchWorkspace('wsp_b2');
+  await new Promise(r => setTimeout(r, 5));
+  return { dir, storage: b.storage, a: a.accountId, b: b.accountId };
+}
+
+test('an account switch opens that account in its last workspace, and only its workspaces', async () => {
+  const { storage, a, b } = await twoAccounts();
+  assert.deepEqual(storage.workspaces().map(w => w.workspaceId).sort(), ['wsp_b1', 'wsp_b2']);
+
+  const before = storage.epoch;
+  assert.equal(storage.switchAccount(a), 'wsp_a');
+  assert.equal(storage.accountId, a);
+  assert.equal(storage.workspaceId, 'wsp_a');
+  assert.equal(storage.deviceId, 'dev_a', 'the device identity moves with the account');
+  assert.deepEqual(storage.workspaces().map(w => w.workspaceId), ['wsp_a'],
+    'the other account\'s workspaces are not in the open account at all');
+  assert.equal(storage.epoch, before + 1, 'one bump for the whole move');
+
+  assert.equal(storage.switchAccount(b), 'wsp_b2', 'back to where B was, not merely its first');
+  assert.equal(storage.epoch, before + 2);
+});
+
+test('an account switch commits the choice before touching a handle', async () => {
+  const { dir, storage, a } = await twoAccounts();
+  storage.switchAccount(a);
+  // A crash: nothing is closed cleanly.
+  const boot = new Storage(dir).boot();
+  assert.equal(boot.accountId, a, 'reopens the account the user was moving to');
+  assert.equal(boot.workspaceId, 'wsp_a');
+});
+
+test('an account\'s email is recorded on it, read into its summary, and absent until then', async () => {
+  const { storage, a, b } = await twoAccounts();
+  assert.equal(storage.accounts().find(x => x.accountId === b)?.email, null);
+  storage.setAccountEmail('b@example.com');
+  const byId = new Map(storage.accounts().map(x => [x.accountId, x.email]));
+  assert.equal(byId.get(b), 'b@example.com');
+  assert.equal(byId.get(a), null, 'written to the OPEN account only');
+});
+
+test('switching to an unknown account, or one with no workspace, is refused', async () => {
+  const { storage, b } = await twoAccounts();
+  assert.throws(() => storage.switchAccount('acc_nope'), /unknown account/);
+  const empty = storage.createAccount('dev_c');
+  assert.throws(() => storage.switchAccount(empty), /no workspace/);
+  assert.equal(storage.accountId, b, 'a refused switch leaves the open account open');
+  assert.equal(storage.workspaceId, 'wsp_b2');
+});
+
 test('switching to an unknown or removed workspace is refused', () => {
   const { storage } = seeded(root(), [member({ workspaceId: 'wsp_a', actorId: 'act_a' })]);
   assert.throws(() => storage.switchWorkspace('wsp_nope'), /unknown workspace/);

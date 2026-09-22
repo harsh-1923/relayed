@@ -268,6 +268,21 @@ export interface WorkspaceRow {
   state: "active" | "removed";
 }
 
+/**
+ * An account in the account switcher (STORAGE.md §12.5): its email, and who
+ * you are in the workspace it was last in. `email` is null until the account
+ * next signs in through the browser.
+ */
+export interface AccountLabel {
+  accountId: string;
+  email: string | null;
+  workspaces: number;
+  lastActiveAt: number;
+  displayName: string;
+  handle: string;
+  workspaceName: string;
+}
+
 export interface AppState {
   /**
    * My grants in the ACTIVE workspace, as `scope:id -> role` pairs — the shape
@@ -279,7 +294,10 @@ export interface AppState {
   /** Bumped on every workspace switch; stale replies are dropped (§12.1). */
   epoch: number;
   accountId: string | null;
-  accounts: { accountId: string; workspaces: number; lastActiveAt: number }[];
+  /** Every account on this device, as a label. Never another account's workspaces. */
+  accounts: AccountLabel[];
+  /** An add-account attempt in flight, and where it is. */
+  addingAccount: "browser" | "onboarding" | null;
   workspaceId: string | null;
   workspaces: WorkspaceRow[];
   auth: AuthState;
@@ -349,6 +367,8 @@ export interface RelayedApi {
   query(op: "auth.state"): Promise<AuthState>;
   query(op: "auth.signIn"): Promise<AppState>;
   query(op: "auth.cancelSignIn"): Promise<AppState>;
+  query(op: "auth.addAccount"): Promise<AppState>;
+  query(op: "auth.cancelAddAccount"): Promise<AppState>;
   query(op: "auth.reopenBrowser"): Promise<{ reopened: boolean }>;
   query(op: "dev.setOffline", params: { offline: boolean }): Promise<AppState>;
   query(op: "actors.list"): Promise<ReplicaActor[]>;
@@ -506,6 +526,10 @@ export interface RelayedApi {
   query(
     op: "workspace.switch",
     params: { workspaceId: string },
+  ): Promise<AppState>;
+  query(
+    op: "account.switch",
+    params: { accountId: string },
   ): Promise<AppState>;
   query(op: "debug.snapshot"): Promise<DebugSnapshot>;
   /**

@@ -88,7 +88,7 @@ export interface SessionDeps {
    * created the account directory and opened the workspace before anything can
    * be written into it.
    */
-  onSession?(session: OurSession): void | Promise<void>;
+  onSession?(session: OurSession, context: { email: string | null }): void | Promise<void>;
   now?: () => number;
 }
 
@@ -112,6 +112,27 @@ export class Session {
    * does not help either: the attempt lives here, not in the renderer.
    */
   #attempt: { close(): void; url: string } | null = null;
+  /**
+   * Signing in to ANOTHER account while this one stays usable.
+   *
+   * Its own lifecycle, not a flag on `#state`: the held session is still the
+   * open account's and still refreshing, and `#state` goes on describing it.
+   * Routing the attempt through `authenticating` would put a signed-in person
+   * on the sign-in screen, and a closed browser tab would sign them out.
+   */
+  #adding: { close(): void; url: string } | null = null;
+  /**
+   * What to put back if an added account turns out to need onboarding and the
+   * person backs out of it. Held only while that onboarding is on screen.
+   */
+  #resume: { session: OurSession | null; workspaceId: string | null; state: AuthState } | null = null;
+  /**
+   * The email WorkOS just authenticated, held from the code exchange to the
+   * adoption it leads to — possibly across onboarding — and then handed to
+   * storage once. Our server keeps no email (DESIGN §6.2), so this is the one
+   * moment the client can learn which address an account is.
+   */
+  #email: string | null = null;
   #listeners = new Set<(s: AuthState) => void>();
   /** The refresh in flight, if any — see `ensureFresh`. */
   #refreshing: Promise<string | null> | null = null;
@@ -127,6 +148,14 @@ export class Session {
   /** In-memory only. Never persisted, never sent to the renderer. */
   get accessToken(): string | null { return this.#session?.accessToken ?? null; }
   get workspaceId(): string | null { return this.#workspaceId; }
+  /**
+   * Where an add-account attempt is, if one is running. `browser` while the
+   * person is in it; `onboarding` when the account they chose has no workspace
+   * yet and `#state` has become its `needs_workspace`.
+   */
+  get adding(): 'browser' | 'onboarding' | null {
+    return this.#adding ? 'browser' : this.#resume ? 'onboarding' : null;
+  }
 
   onChange(fn: (s: AuthState) => void): () => void {
     this.#listeners.add(fn);
@@ -159,6 +188,7 @@ export class Session {
       this.#set({ status: 'awaiting_browser' });
       const { code } = await listener.result;
       const workos = await exchangeCode(this.#deps.config, { code, verifier: pkce.verifier });
+      this.#email = workos.user.email || null;
 
       const result = await exchangeForSession(
         workos.accessToken, this.#deps.deviceId(), preferredWorkspaceId);
@@ -222,7 +252,7 @@ export class Session {
    * and the listener is bound to this one.
    */
   async reopenBrowser(): Promise<boolean> {
-    const url = this.#attempt?.url;
+    const url = this.#attempt?.url ?? this.#adding?.url;
     if (!url) return false;
     await this.#deps.openBrowser(url);
     return true;
@@ -231,6 +261,109 @@ export class Session {
   #abandon(): void {
     this.#attempt?.close();
     this.#attempt = null;
+  }
+
+  /**
+   * Sign in to another account, leaving the open one untouched until the new
+   * one is in hand.
+   *
+   * `max_age=0` so AuthKit asks who you are rather than reusing the browser's
+   * session — which is the account already open. Resolves with the state after
+   * the attempt; a cancel or a failure leaves it exactly as it was.
+   *
+   * The device id sent is a PROVISIONAL one (`adding` is what tells the
+   * resolver): the open account's would tie two accounts together server-side,
+   * which STORAGE.md §8 exists to prevent.
+   */
+  async addAccount(): Promise<AuthState> {
+    // `signed_out` is included: an account can be open and rendering with no
+    // usable credential — a vault slot the keychain will not decrypt, say —
+    // and adding (or re-adding) an account is a way out of that, not a reason
+    // to refuse. What is excluded is a sign-in or an onboarding already on screen.
+    const from = this.#state.status;
+    if (from !== 'authenticated' && from !== 'stale' && from !== 'signed_out') {
+      throw new Error('finish or cancel the sign-in already in progress first');
+    }
+    this.#abandonAdding();
+    const pkce = createPkce();
+    const listener = await listenForCallback({ state: pkce.state });
+    const url = buildAuthorizeUrl(this.#deps.config, pkce, listener.redirectUri, { maxAge: 0 });
+    const attempt = { close: () => listener.close(), url };
+    this.#adding = attempt;
+    this.#notify();
+    try {
+      await this.#deps.openBrowser(url);
+      const { code } = await listener.result;
+      const workos = await exchangeCode(this.#deps.config, { code, verifier: pkce.verifier });
+      const result = await exchangeForSession(workos.accessToken, this.#deps.deviceId());
+      if (this.#adding !== attempt) throw new Error('add account cancelled');
+      this.#email = workos.user.email || null;
+
+      if ('needsWorkspace' in result) {
+        // The chosen account has no workspace, so it needs onboarding — and for
+        // that screen to be the one showing, `#state` has to become its. The
+        // open account's credentials are set aside rather than dropped: backing
+        // out puts them back (cancelAddAccount), and while they are aside
+        // nothing can refresh with them into the middle of onboarding.
+        this.#resume = { session: this.#session, workspaceId: this.#workspaceId, state: this.#state };
+        this.#adding = null;
+        this.#session = null;
+        this.#workspaceId = null;
+        this.#pendingWorkosToken = workos.accessToken;
+        this.#set({ status: 'needs_workspace', identity: result.identity,
+                    handleSuggestions: result.handleSuggestions,
+                    pendingJoins: result.pendingJoins });
+        count('auth.add_account', { outcome: 'needs_workspace' });
+        return this.#state;
+      }
+      // Cleared BEFORE adopting: from here the device id to send is the new
+      // account's own, which adoption is about to create.
+      this.#adding = null;
+      await this.#adopt(result);
+      count('auth.add_account', { outcome: 'authenticated' });
+      return this.#state;
+    } catch (err) {
+      listener.close();
+      if (this.#adding === attempt) {
+        this.#adding = null;
+        count('auth.add_account', { outcome: 'failed' });
+        this.#notify();
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Back out of adding an account: close the browser wait, or leave the
+   * onboarding it led to and put the open account back as it was.
+   */
+  cancelAddAccount(): AuthState {
+    if (this.#adding) {
+      this.#abandonAdding();
+      count('auth.add_account', { outcome: 'cancelled' });
+      this.#notify();
+      return this.#state;
+    }
+    const resume = this.#resume;
+    if (!resume) return this.#state;
+    this.#resume = null;
+    this.#pendingWorkosToken = null;
+    this.#email = null;
+    this.#session = resume.session;
+    this.#workspaceId = resume.workspaceId;
+    count('auth.add_account', { outcome: 'cancelled' });
+    this.#set(resume.state);
+    return this.#state;
+  }
+
+  #abandonAdding(): void {
+    this.#adding?.close();
+    this.#adding = null;
+  }
+
+  /** Tell listeners something outside `#state` changed — `adding`, today. */
+  #notify(): void {
+    for (const fn of this.#listeners) fn(this.#state);
   }
 
   /**
@@ -315,11 +448,19 @@ export class Session {
    * Never throws. A failure here is a degraded sync engine, not a failed boot
    * and not a failed switch: the replica is already open and already rendering.
    */
-  async activate(workspaceId: string): Promise<AuthState> {
+  async activate(workspaceId: string, opts: { mint?: boolean } = {}): Promise<AuthState> {
     const stored = await this.#deps.vault.read(workspaceId);
-    const source = this.#session?.refreshToken ?? null;
+    // `mint: false` for a workspace in ANOTHER account: the held session is
+    // the previous account's, and /auth/switch with it can only be refused
+    // (STORAGE.md §10.2 step 3). A missing slot there means signed out of that
+    // workspace, not a first visit to it.
+    const source = opts.mint === false ? null : this.#session?.refreshToken ?? null;
 
     if (!stored && !source) {
+      // Counted, because it is otherwise the one silent outcome: the replica
+      // renders (R3) and nothing says this account cannot sync. A slot that
+      // exists but will not decrypt lands here too (vault.ts).
+      count('auth.no_credential');
       this.#session = null;
       this.#workspaceId = null;
       this.#set({ status: 'signed_out' });
@@ -412,6 +553,9 @@ export class Session {
     }
 
     emit('auth.signed_out', { account: '', workspaces: ids.size });
+    this.#abandonAdding();
+    this.#resume = null;
+    this.#email = null;
     this.#session = null;
     this.#workspaceId = null;
     this.#pendingWorkosToken = null;
@@ -419,12 +563,17 @@ export class Session {
   }
 
   async #adopt(session: OurSession, workspaceId?: string): Promise<void> {
+    // Any adoption ends an add-account onboarding: the new account now exists.
+    this.#resume = null;
     this.#session = session;
     this.#workspaceId = workspaceId ?? session.actor?.workspaceId ?? this.#workspaceId;
 
     // Storage first: the vault slot lives under the account directory, which
     // may not exist yet on a first sign-in.
-    await this.#deps.onSession?.(session);
+    // The email rides along exactly once: a refresh adopts too, and has none.
+    const email = this.#email;
+    this.#email = null;
+    await this.#deps.onSession?.(session, { email });
 
     if (session.refreshToken && this.#workspaceId) {
       await this.#deps.vault.store(this.#workspaceId, session.refreshToken);

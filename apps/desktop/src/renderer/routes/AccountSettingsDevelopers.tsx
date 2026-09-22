@@ -1,3 +1,4 @@
+import { useSession } from '@/app/state';
 import { SettingsPanel } from '@/features/settings/SettingsPanel';
 import { Switch } from '@/components/ui/switch';
 import { usePreference, type PreferenceHandle } from '@/lib/prefs';
@@ -35,6 +36,7 @@ function DeveloperSwitch<K extends BooleanPreferenceKey>({ label, preference }: 
 export function AccountSettingsDevelopers() {
   const routeStrip = usePreference('developer.route_strip.visible');
   const playground = usePreference('developer.avatar_playground.visible');
+  const { state } = useSession();
 
   return (
     <SettingsPanel
@@ -50,6 +52,24 @@ export function AccountSettingsDevelopers() {
           label: 'Avatar playground',
           description: 'Show the bench for tuning generated agent faces in the sidebar.',
           value: <DeveloperSwitch label="Show avatar playground" preference={playground} />,
+        },
+        {
+          label: 'Local replica',
+          description: 'What is open on this device: renderer → MessagePort → utilityProcess → SQLite.',
+          layout: 'stacked',
+          value: (
+            <dl className="grid grid-cols-[8rem_1fr] gap-y-1 font-mono text-xs text-muted-foreground">
+              <dt>install</dt><dd className="truncate">{state.installId}</dd>
+              <dt>account</dt><dd className="truncate">{state.accountId ?? '—'}</dd>
+              <dt>accounts</dt><dd>{state.accounts.length} on this device</dd>
+              <dt>workspace</dt><dd className="truncate">{state.workspaceId ?? '—'}</dd>
+              <dt>replicas</dt><dd>{state.workspaces.filter(w => w.state === 'active').length} known</dd>
+              {/* Device-tier and monotonic, so it survives a sign-out. It reset
+                  to 0 once, when it lived in account.db, and every reply after
+                  that looked stale (STORAGE.md §8). */}
+              <dt>epoch</dt><dd>{state.epoch}</dd>
+            </dl>
+          ),
         },
       ]}
     />

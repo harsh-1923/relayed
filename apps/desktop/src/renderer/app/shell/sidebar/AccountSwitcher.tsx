@@ -1,22 +1,30 @@
-// You, at the foot of the sidebar: who you are in this workspace, and the
-// account-tier things that are not about this workspace at all.
+// You, at the foot of the sidebar: who you are in this workspace, the accounts
+// on this device, and the account-tier things that are not about this
+// workspace at all.
 //
-// NOT YET A SWITCHER, and named for what it is rather than for the drawing.
-// `account.db` knows about several accounts — `state.accounts` lists them — but
-// there is no engine operation that makes a different one active, so offering a
-// choice here would be a menu that cannot do the thing it names. It lists the
-// others as a fact, with the current one marked, and sends everything else to
-// /account.
+// SWITCHING ACCOUNTS CALLS `account.switch`, then navigates to the workspace it
+// opened — unlike the workspace switcher, which only navigates (invariant 56).
+// An account is not in the URL, so there is nothing for a gate to derive it
+// from. The two updates land in one render, so WorkspaceGate finds the
+// workspace already open rather than briefly unknown.
+//
+// Another account's WORKSPACES are never shown anywhere, and could not be: the
+// engine sends each other account as a label only (STORAGE.md §12.5).
 //
 // SIGN-OUT IS NOT HERE either, and that is deliberate rather than an omission.
 // It has one authoritative path: the reply to `auth.signOut`, not the push that
 // fires partway through it (routes/Account.tsx). A second copy of that
 // reasoning in a dropdown is a second place for it to drift.
-import { Link, useParams } from 'react-router';
+import { useCallback, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router';
 import {
-  ChevronSortVertical, ContactsBook, LogOutRight, Settings01, UserTwo, Bot, UserPlus,
+  CheckTickSingle, ChevronSortVertical, ContactsBook, LogOutRight, PlusDefault,
+  Settings01, UserTwo, Bot, UserPlus,
 } from '@relayed/icons';
+import type { AccountLabel } from '../../../../preload/api';
 import { useSession } from '../../state';
+import { call, hueFor, initials } from '@/lib/ipc';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -27,7 +35,9 @@ import {
 import { ActorAvatar } from '@/components/ActorAvatar';
 
 export function AccountSwitcher() {
-  const { state } = useSession();
+  const { state, apply } = useSession();
+  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
   // Present on `authenticated` as well as `needs_workspace`: an invitation
   // accepted after you already had a workspace of your own (session.ts).
   const pendingJoins = state.auth.status === 'authenticated' || state.auth.status === 'needs_workspace'
@@ -36,12 +46,62 @@ export function AccountSwitcher() {
   const { wsId } = useParams();
   const me = state.workspaces.find(w => w.workspaceId === (wsId ?? state.workspaceId));
 
-  if (!me) return null;
+  // Every call is fired with `void`, so each catches its own rejection — an
+  // unguarded one would be unhandled rather than shown (invariant 54).
+  const switchTo = useCallback(async (accountId: string) => {
+    setError(null);
+    try {
+      const next = await call(api => api.query('account.switch', { accountId }));
+      if (!next) return;
+      apply(next);
+      if (next.workspaceId) void navigate(`/w/${next.workspaceId}`);
+    } catch (e) { setError((e as Error).message); }
+  }, [apply, navigate]);
 
-  const others = state.accounts.filter(a => a.accountId !== state.accountId);
+  // Not awaited into a local flag: it resolves only when the browser comes
+  // back, and the wait is pushed as `addingAccount` so a reload keeps it.
+  const addAccount = useCallback(() => {
+    setError(null);
+    void call(api => api.query('auth.addAccount'))
+      .then((next) => {
+        if (!next) return;
+        apply(next);
+        // Onboarding for an account with no workspace is routed by "/";
+        // otherwise go wherever the new account landed.
+        void navigate(next.auth.status === 'needs_workspace' || !next.workspaceId
+          ? '/' : `/w/${next.workspaceId}`);
+      })
+      .catch((e: Error) => setError(e.message));
+  }, [apply, navigate]);
+
+  const cancelAdd = useCallback(async () => {
+    try { apply(await call(api => api.query('auth.cancelAddAccount'))); }
+    catch (e) { setError((e as Error).message); }
+  }, [apply]);
+
+  const reopen = useCallback(async () => {
+    try { await call(api => api.query('auth.reopenBrowser')); }
+    catch (e) { setError((e as Error).message); }
+  }, []);
+
+  if (!me) return null;
 
   return (
     <SidebarMenu>
+      {state.addingAccount === 'browser' && (
+        <SidebarMenuItem className="space-y-2 rounded-2xl border p-3 text-xs text-muted-foreground">
+          <p>Adding an account. Finish signing in in your browser.</p>
+          <div className="flex gap-1">
+            <Button size="xs" variant="secondary" onClick={() => void reopen()}>Open again</Button>
+            <Button size="xs" variant="ghost" onClick={() => void cancelAdd()}>Cancel</Button>
+          </div>
+        </SidebarMenuItem>
+      )}
+      {error && (
+        <SidebarMenuItem className="rounded-2xl border border-destructive/40 p-3 text-xs text-destructive">
+          <button type="button" className="text-left" onClick={() => setError(null)}>{error}</button>
+        </SidebarMenuItem>
+      )}
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger render={<SidebarMenuButton  className="gap-2 rounded-2xl" />}>
@@ -84,11 +144,37 @@ export function AccountSwitcher() {
 
             <DropdownMenuSeparator />
 
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Accounts
+              </DropdownMenuLabel>
+              {state.accounts.map(account => (
+                <AccountItem
+                  key={account.accountId}
+                  account={account}
+                  current={account.accountId === state.accountId}
+                  onSelect={() => void switchTo(account.accountId)}
+                />
+              ))}
+              <DropdownMenuItem
+                disabled={state.addingAccount !== null}
+                onClick={addAccount}
+                className="gap-2"
+              >
+                <div className="grid size-5 place-items-center rounded-lg border bg-background">
+                  <PlusDefault className="size-3" />
+                </div>
+                <span className="text-muted-foreground">Add account</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+
+            <DropdownMenuSeparator />
+
             {/* Account tier: no workspace replica is open and none is needed
                 (STORAGE.md §5). The route sits outside /w/ for that reason. */}
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
-                {others.length > 0 ? `Account · ${others.length} more on this device` : 'Account'}
+                This account
               </DropdownMenuLabel>
               {/* A workspace admitted you and you have no actor in it yet. It
                   cannot live under /w/ — it is about a workspace you are not in
@@ -115,5 +201,41 @@ export function AccountSwitcher() {
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
+  );
+}
+
+/**
+ * One account on this device. Initials rather than a photo: avatar bytes are
+ * served for the OPEN account only (`blob:account`), so another account's
+ * face would be a broken image until you switched to it.
+ */
+function AccountItem({ account, current, onSelect }: {
+  account: AccountLabel;
+  current: boolean;
+  onSelect: () => void;
+}) {
+  // The email is what tells two accounts of one person apart — both are
+  // usually the same name. The workspace line stands in until the account next
+  // signs in through the browser, which is when its email is first recorded.
+  const detail = account.email ?? (account.workspaces > 1
+    ? `${account.workspaceName} · ${account.workspaces} workspaces`
+    : account.workspaceName);
+  return (
+    <DropdownMenuItem
+      onClick={current ? undefined : onSelect}
+      className="gap-2"
+    >
+      <div
+        className="grid size-5 shrink-0 place-items-center rounded-lg text-[10px] font-medium text-foreground/90"
+        style={{ backgroundColor: `oklch(0.34 0.07 ${hueFor(account.accountId)})` }}
+      >
+        {initials(account.displayName)}
+      </div>
+      <div className="grid min-w-0 flex-1 leading-tight">
+        <span className="truncate text-sm">{account.displayName || account.handle}</span>
+        <span className="truncate text-xs text-muted-foreground" title={detail}>{detail}</span>
+      </div>
+      {current && <CheckTickSingle className="size-4 shrink-0 text-muted-foreground" />}
+    </DropdownMenuItem>
   );
 }

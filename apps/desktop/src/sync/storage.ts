@@ -163,6 +163,12 @@ export type DirectoryRow = Omit<ReplicaActor, 'avatarBlob' | 'agent'>;
 
 export interface AccountSummary {
   accountId: string;
+  /**
+   * The address this account signed in with, for telling accounts apart in
+   * the switcher. Display only — never a key, never matched on (§5 matches on
+   * actor ids). Null until the account next signs in through the browser.
+   */
+  email: string | null;
   deviceId: string;
   lastActiveAt: number;
   lastWorkspace: string | null;
@@ -220,6 +226,7 @@ function readSummary(db: DatabaseSync, accountId: string): AccountSummary {
     .all() as Record<string, unknown>[];
   return {
     accountId,
+    email: getMeta(db, 'email'),
     deviceId: getMeta(db, 'device_id') ?? '',
     lastActiveAt: Number(getMeta(db, 'last_active_at') ?? 0),
     lastWorkspace: getMeta(db, 'last_workspace'),
@@ -477,6 +484,14 @@ export class Storage {
     return null;
   }
 
+  /**
+   * Record which address the open account signed in with (§6). Written on a
+   * browser sign-in only, since that is the one place it is known.
+   */
+  setAccountEmail(email: string): void {
+    setMeta(this.account, 'email', email);
+  }
+
   /** Sign-out. One directory delete takes the replicas, blobs and vault (§13). */
   deleteAccount(accountId: string): void {
     if (this.#accountId === accountId) {
@@ -606,6 +621,45 @@ export class Storage {
       local: Math.round(performance.now() - t0), epoch: this.#epoch,
     });
     return this.#epoch;
+  }
+
+  /**
+   * Make another account on this device the open one, landing in the workspace
+   * it was last in. Returns that workspace's id.
+   *
+   * The account-tier twin of `switchWorkspace`, with the same ordering: the
+   * choice is made durable FIRST — `last_active_at` on the target, which is
+   * what boot ranks accounts by — so a crash mid-switch boots into the account
+   * the person was moving TO. Only then the epoch, and only then the handles.
+   *
+   * One epoch bump for the whole move. Going through `switchWorkspace` would
+   * need the target account open already, and would bump again.
+   */
+  switchAccount(accountId: string): string {
+    const t0 = performance.now();
+    if (accountId === this.#accountId) {
+      if (!this.#workspaceId) throw new Error('account has no workspace open');
+      return this.#workspaceId;
+    }
+    if (!this.listAccountIds().includes(accountId)) throw new Error(`unknown account: ${accountId}`);
+
+    const summary = this.#withAccount(accountId, db => readSummary(db, accountId));
+    const active = summary.workspaces.filter(w => w.state === 'active');
+    const target = active.find(w => w.workspaceId === summary.lastWorkspace) ?? active[0];
+    if (!target) throw new Error(`account has no workspace: ${accountId}`);
+
+    this.#withAccount(accountId, db => setMeta(db, 'last_active_at', String(Date.now())));
+    this.#epoch = bumpEpoch(this.root, this.#epoch);
+
+    const from = this.#accountId;
+    this.openAccount(accountId);
+    this.#openWorkspace(target.workspaceId);
+
+    emit('account.switched', {
+      from: from ?? '', to: accountId, workspace: target.workspaceId,
+      local: Math.round(performance.now() - t0), epoch: this.#epoch,
+    });
+    return target.workspaceId;
   }
 
   #openWorkspace(workspaceId: string): void {

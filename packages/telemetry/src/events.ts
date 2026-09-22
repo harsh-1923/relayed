@@ -149,6 +149,12 @@ export const events = {
     fields: { account: 'id', device: 'id', workspaces: 'int', epoch: 'int' },
     doc: 'An account.db was opened at boot or on an account switch.',
   },
+  'account.switched': {
+    fields: { from: 'id', to: 'id', workspace: 'id', local: 'ms', epoch: 'int' },
+    doc: 'An account switch completed its LOCAL phase: the target account and '
+       + 'its last workspace are open and the renderer can repaint. Token and '
+       + 'socket work follows and is timed separately (STORAGE §12.5).',
+  },
   'workspace.switched': {
     fields: { account: 'id', from: 'id', to: 'id', local: 'ms', epoch: 'int' },
     doc: 'A workspace switch completed its LOCAL phase — the part the user '

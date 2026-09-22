@@ -145,7 +145,7 @@ the schema's comments rather than in a sequence nobody will execute.
 
 ```sql
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
--- device_id, last_workspace, last_active_at
+-- device_id, last_workspace, last_active_at, email
 
 CREATE TABLE workspaces (
   -- ── the workspace ───────────────────────────────────────────────────────
@@ -536,9 +536,76 @@ on it.
 
 ### 12.5 Account switching
 
-Same as a workspace switch, plus: close the current account's `account.db`,
-open the target's, and load *its* `last_workspace`. `device_id` changes with the
-account, by design (§8).
+Built. Two emails on one install, and **the workspace switcher only ever shows
+the open account's workspaces.** That holds by construction rather than by a
+filter: `state.workspaces` is read from the open `account.db`, and every other
+account reaches the renderer as a label — display name, handle, the name of the
+workspace it was last in, a count — never as a list of workspaces. A link to
+another account's workspace resolves to "Unresolved" until you switch to it,
+which is the point: accounts are strangers (§2).
+
+**An account is labelled by its email**, because two accounts of one person
+usually share a name and the address is what actually differs. It is a
+deliberate, narrow bend of §5: `meta.email` in that account's own `account.db`,
+**display only** — never a key, never matched on (accounts are still matched by
+actor ids), never in a path, never in telemetry, and gone with the directory on
+sign-out. Our server keeps no email (DESIGN §6.2), so the client records the one
+WorkOS returns from the code exchange, on a browser sign-in or an add. An
+account that has not signed in that way since has no email yet, and falls back
+to the workspace it was last in.
+
+#### Switching — `account.switch(accountId)`
+
+The same two phases as a workspace switch, timed as `account.switch{phase}`:
+
+```
+  step                                        checkpoint
+─────────────────────────────────────────────────────────────────────────
+1 link.stop()                                 live sockets 1 → 0
+2 target account.db: last_active_at = now     committed BEFORE step 4.
+                                              kill -9 here → boots into it
+3 epoch++                                     once, for the whole move
+4 close workspace + account.db, open the      device_id changes with the
+  target's, open ITS last_workspace           account, by design (§8)
+5 blob handler, theme, icon, menu → target    account-scoped; adoptSession
+                                              only reaches them online
+  ══════ USER SEES THE OTHER ACCOUNT. NO NETWORK YET. ══════
+6 activate(wsp, { mint: false })              refresh from ITS vault slot
+7 link.start() unless stale
+```
+
+`account.switch` is called by the account menu, which then navigates to the
+workspace it opened. It is not derived from the URL the way a workspace switch
+is (invariant 56): deriving it would mean the renderer holding every account's
+workspaces, which is exactly what the switcher must not show.
+
+**`mint: false` at step 6.** With no vault slot, `activate` normally bootstraps
+through `/auth/switch` using the session it holds — which here is the previous
+account's, and §10.2 step 3 can only refuse it. So a missing slot in another
+account means signed out of it, not a first visit.
+
+#### Adding — `auth.addAccount`
+
+A second sign-in, beside the open account rather than instead of it:
+
+| | Why |
+|---|---|
+| **Its own lifecycle, not `authenticating`.** `Session.addAccount` holds its own browser attempt and leaves `AuthState` describing the open account throughout | Routing it through the sign-in states would show a signed-in person the sign-in screen, and a closed browser tab would sign them out |
+| **A provisional `device_id`** while adding (`session.adding` tells the resolver) | Sending the open account's would tie the two accounts together server-side — invariant 38's correlation, by a different road |
+| **`max_age=0`** on the authorize URL | Without it AuthKit reuses the browser's session, which is the account already open |
+| **Allowed from `signed_out` too**, when an account is open with no usable credential | Found by hand: a rebuilt dev bundle whose keychain would not decrypt the vault slot. The replica rendered, activation landed on `signed_out` silently — now counted as `auth.no_credential` — and a refused "Add account" left no way forward |
+| **Onboarding when the new account has no workspace.** `authenticated`, `stale` or `signed_out` → `needs_workspace`, the edges adding declares | The open account's session is set aside, not dropped — so nothing refreshes it into the middle of someone else's onboarding — and "Back to your account" restores it |
+
+Adding an account that is already on the device matches it by actor ids (§5)
+and opens it. Its new session was minted with the provisional device id, so that
+account's server-side sessions now carry two — the §8.1 gap, reached a new way.
+Revocable, and rare enough not to cost an extra round trip on every add.
+
+#### Sign-out
+
+Unchanged in what it deletes: the open account's directory, whole (§13). What
+changed is that there may be another account left, and boot picks the most
+recently active one up — so signing out of one account lands you in the next.
 
 ---
 
@@ -546,7 +613,7 @@ account, by design (§8).
 
 | Event | Effect |
 |---|---|
-| Sign out of an account | `POST /auth/signout` for **each** stored refresh token, then `rm -rf accounts/<acc_id>` — DB, blobs, vault together |
+| Sign out of an account | `POST /auth/signout` for **each** stored refresh token, then `rm -rf accounts/<acc_id>` — DB, blobs, vault together. Any other account on the device is left alone and becomes the open one (§12.5) |
 | Removed from a workspace | membership absent from `memberships` → `state='removed'`, replica and blobs deleted, vault slot cleared |
 | Token expiry / refresh failure | **Nothing is deleted.** `state='stale'`, local reads continue (§13.1) |
 

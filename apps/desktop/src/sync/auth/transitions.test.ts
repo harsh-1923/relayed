@@ -19,9 +19,11 @@ test('every ordered pair of statuses is either declared or rejected', () => {
   }
   // Asserted as numbers so that widening the table shows up as a failing test
   // rather than as a quiet loosening nobody reviews. Six statuses admit
-  // thirty-six ordered pairs; twenty-two of them mean something.
+  // thirty-six ordered pairs; twenty-five of them mean something — the last
+  // three added with account switching, into `needs_workspace` for an added
+  // account that has no workspace yet.
   assert.equal(ALL.length, 6);
-  assert.equal(legal, 22);
+  assert.equal(legal, 25);
 });
 
 test('a status is always allowed to transition to itself', () => {
@@ -39,9 +41,11 @@ test('boot reaches authenticated and stale WITHOUT passing through authenticatin
 });
 
 test('signing in again while already signed in is not a transition we have', () => {
-  // Not an oversight. It has no meaning today, and if account switching arrives
-  // it is a different flow that should have to declare this edge deliberately.
+  // Adding an account is `Session.addAccount`, which leaves `authenticated`
+  // describing the open account for the whole browser wait. Its one visible
+  // edge is onboarding, when the added account has no workspace.
   assert.throws(() => assertEdge('authenticated', 'authenticating'));
+  assertEdge('authenticated', 'needs_workspace');
   // Whereas re-authenticating a stale session is the natural recovery, declared
   // ahead of the button that will use it.
   assertEdge('stale', 'authenticating');

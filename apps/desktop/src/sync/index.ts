@@ -21,7 +21,7 @@ import { nativeMenuItems, resolveBindings } from '../shared/shortcuts/resolve.ts
 import { platformOf } from '../shared/shortcuts/tanstack-driver.ts';
 import { isWebUrl } from '../shared/web-panels.ts';
 import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts';
-import { Storage, type WorkspaceRow } from './storage.ts';
+import { Storage, type AccountSummary, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
   agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSideChat, createSpace, openDm, type SpaceInput,
@@ -214,9 +214,11 @@ const provisionalDeviceId = (): string => (provisional ??= newId('dev'));
 /** Live renderer ports. Multiple windows are normal; dead ones must be reaped. */
 const ports = new Set<Electron.MessagePortMain>();
 
-const session = new Session({
+const session: Session = new Session({
   config: { clientId: workosClientId() },
-  deviceId: () => (storage.accountId ? storage.deviceId : provisionalDeviceId()),
+  // Provisional while ADDING an account, too: the open account's id would be
+  // sent for a different identity, linking the two server-side (§8).
+  deviceId: (): string => (storage.accountId && !session.adding ? storage.deviceId : provisionalDeviceId()),
   openBrowser,
   vault: {
     read: (wsp) => storage.accountId
@@ -229,7 +231,7 @@ const session = new Session({
       ? bridgeVault.clear(storage.accountId, wsp)
       : Promise.resolve(),
   },
-  onSession: (s) => adoptSession(s),
+  onSession: (s, { email }) => adoptSession(s, email),
 });
 
 /**
@@ -240,7 +242,7 @@ const session = new Session({
  * Matching is on actor-id intersection, never on a WorkOS identifier: no Layer
  * 1 identity is written to disk (STORAGE.md §5).
  */
-function adoptSession(s: OurSession): void {
+function adoptSession(s: OurSession, email: string | null = null): void {
   // Fall back to the workspace already open. A response that omits `actor` must
   // not silently discard the memberships beside it — belt and braces alongside
   // the server now always sending one.
@@ -249,6 +251,10 @@ function adoptSession(s: OurSession): void {
 
   if (s.memberships.length > 0) {
     const matched = storage.findAccountByActors(s.memberships.map(m => m.actorId));
+    // A different account is about to be opened — an account added while one
+    // was open. Stop first, for the reason given below: opening it closes the
+    // replica the live socket is writing into.
+    if (matched !== storage.accountId) link.stop();
     if (matched) {
       storage.openAccount(matched);
     } else {
@@ -257,6 +263,7 @@ function adoptSession(s: OurSession): void {
       provisional = null;
     }
     storage.syncMemberships(s.memberships);
+    if (email) storage.setAccountEmail(email);
   } else if (!storage.accountId) {
     // /auth/switch returns no memberships — it is scoped to one workspace and
     // says nothing new about the others. It can only follow a session that
@@ -495,6 +502,26 @@ const link = createLink({
 
 // ── the view the renderer renders ───────────────────────────────────────────
 
+/**
+ * How an account is told apart in the switcher: its email, which is what
+ * actually differs between two accounts of one person, beside who you are in
+ * the workspace you were last in. The email is null for an account that has
+ * not signed in through the browser since it started being recorded (§6).
+ */
+function accountLabel(a: AccountSummary) {
+  const active = a.workspaces.filter(w => w.state === 'active');
+  const last = active.find(w => w.workspaceId === a.lastWorkspace) ?? active[0];
+  return {
+    accountId: a.accountId,
+    email: a.email,
+    workspaces: active.length,
+    lastActiveAt: a.lastActiveAt,
+    displayName: last?.actorDisplayName ?? '',
+    handle: last?.actorHandle ?? '',
+    workspaceName: last?.name ?? '',
+  };
+}
+
 function view() {
   const hasAccount = storage.accountId !== null;
   const workspaces: WorkspaceRow[] = hasAccount ? storage.workspaces() : [];
@@ -512,11 +539,12 @@ function view() {
     installId: storage.installId,
     epoch: storage.epoch,
     accountId: storage.accountId,
-    accounts: storage.accounts().map(a => ({
-      accountId: a.accountId,
-      workspaces: a.workspaces.filter(w => w.state === 'active').length,
-      lastActiveAt: a.lastActiveAt,
-    })),
+    // Every account on the device, as a LABEL and nothing more. Another
+    // account's workspaces never reach the renderer: the switcher shows the
+    // open account's (`workspaces` below), and that holding by construction is
+    // what keeps them apart, not a filter in a component.
+    accounts: storage.accounts().map(accountLabel),
+    addingAccount: session.adding,
     workspaceId: storage.workspaceId,
     workspaces,
     // `awaiting_browser` is one of its statuses now, not a boolean beside it —
@@ -1064,6 +1092,33 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     push();
     return view();
   },
+  /**
+   * Sign in to another account while this one stays open (STORAGE.md §12.5).
+   * Like `auth.signIn` it blocks on the browser, so the renderer follows the
+   * pushed `addingAccount` rather than this reply.
+   */
+  'auth.addAccount': async () => {
+    // `adding` changing pushes by itself (session.onChange), so every window
+    // shows the wait without waiting on this reply.
+    try {
+      const state = await session.addAccount();
+      // Onboarding for an account with no workspace: the socket belongs to the
+      // account set aside, and must not run under someone else's onboarding.
+      if (state.status === 'needs_workspace') link.stop();
+    } catch (e) {
+      if (!/cancel|timed out/i.test((e as Error).message)) throw e;
+    }
+    push();
+    return view();
+  },
+  /** Back out of adding an account, from the browser wait or its onboarding. */
+  'auth.cancelAddAccount': () => {
+    const resuming = session.adding === 'onboarding';
+    session.cancelAddAccount();
+    if (resuming && session.state.status === 'authenticated') link.start();
+    push();
+    return view();
+  },
   /** Abandon a sign-in waiting on a browser that is not coming back. */
   'auth.cancelSignIn': () => { session.cancelSignIn(); push(); return view(); },
   /** Re-open the same authorize URL — the browser may never have appeared. */
@@ -1354,6 +1409,47 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   },
 
   // ── workspaces (STORAGE.md §12.2) ──────────────────────────────────────
+  /**
+   * Open another account on this device, in the workspace it was last in.
+   *
+   * The same two phases as `workspace.switch`, timed the same way: `local` is
+   * everything the person waits on and completes offline; `authorized` is the
+   * refresh and the socket that follow. The renderer navigates to the returned
+   * `workspaceId`, so WorkspaceGate finds it already open.
+   */
+  'account.switch': (params) => {
+    const { accountId } = params as { accountId: string };
+    if (accountId === storage.accountId) return view();
+
+    const t0 = performance.now();
+    let workspaceId: string;
+    try {
+      // Before the replica moves, for the reason `workspace.switch` gives.
+      link.stop();
+      workspaceId = storage.switchAccount(accountId);
+    } catch (e) {
+      histogram('account.switch', Math.round(performance.now() - t0), { phase: 'local', result: 'error' });
+      throw e;
+    }
+    // Account-scoped, and `adoptSession` only reaches these once a token lands
+    // — which offline is never. The theme must follow the account now.
+    void setBlobAccount(storage.accountId);
+    void applyTheme();
+    void applyIcon();
+    void applyMenuShortcuts();
+    histogram('account.switch', Math.round(performance.now() - t0), { phase: 'local', result: 'ok' });
+
+    // No minting: the session held is the previous account's (Session.activate).
+    const t1 = performance.now();
+    void span('account.authorize', () => session.activate(workspaceId, { mint: false }))
+      .then((state) => {
+        histogram('account.switch', Math.round(performance.now() - t1),
+                  { phase: 'authorized', result: state.status === 'stale' ? 'error' : 'ok' });
+        if (state.status !== 'stale') link.start();
+      });
+    push();
+    return view();
+  },
   'workspace.switch': (params) => {
     const { workspaceId } = params as { workspaceId: string };
     if (workspaceId === storage.workspaceId) return view();

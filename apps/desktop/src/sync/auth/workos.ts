@@ -65,7 +65,7 @@ export function buildAuthorizeUrl(
   cfg: WorkOSConfig,
   pkce: Pkce,
   redirectUri: string,
-  opts: { provider?: string; loginHint?: string } = {},
+  opts: { provider?: string; loginHint?: string; maxAge?: number } = {},
 ): string {
   const q = new URLSearchParams({
     client_id: cfg.clientId,
@@ -79,6 +79,10 @@ export function buildAuthorizeUrl(
     state: pkce.state,
   });
   if (opts.loginHint) q.set('login_hint', opts.loginHint);
+  // 0 makes AuthKit ask afresh instead of reusing the browser's session with
+  // it. Without it, "add account" signs straight back in as the account that
+  // is already open.
+  if (opts.maxAge !== undefined) q.set('max_age', String(opts.maxAge));
   return `${cfg.apiBase ?? API}/user_management/authorize?${q}`;
 }
 

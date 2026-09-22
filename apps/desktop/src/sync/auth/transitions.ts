@@ -2,7 +2,7 @@
 //
 // `session.ts` had this machine written down half-way: every `#set()` names a
 // DESTINATION and none of them names a legal SOURCE. Six statuses admit
-// thirty-six ordered pairs; these are the sixteen that mean something, and
+// thirty-six ordered pairs; these are the nineteen that mean something, and
 // before this file nobody had said which.
 //
 // The artifact is the point. The check is a side effect — writing the table
@@ -28,7 +28,11 @@ export const ALLOWED = {
   // vault slot refreshes straight to `authenticated`, and a boot with a slot
   // the server rejects goes straight to `stale` — neither passes through
   // `authenticating`, because neither involves a browser.
-  signed_out:       ['authenticating', 'authenticated', 'stale'],
+  //
+  // To `needs_workspace` without passing through the browser states: adding an
+  // account (`Session.addAccount`) from an account that is open but has no
+  // usable credential, when the account chosen has no workspace yet.
+  signed_out:       ['authenticating', 'authenticated', 'stale', 'needs_workspace'],
 
   // Binding the loopback socket. Sub-millisecond, and there is nothing to
   // cancel yet — the only exits are the browser opening, or failing to.
@@ -43,16 +47,17 @@ export const ALLOWED = {
   // whether onboarding has finished.
   needs_workspace:  ['authenticated', 'signed_out', 'stale'],
 
-  // Deliberately NOT to `authenticating`. Signing in while signed in has no
-  // meaning today; if account switching arrives it is a different flow with a
-  // different entry point, and it should have to add this edge on purpose.
-  authenticated:    ['stale', 'signed_out'],
+  // Deliberately NOT to `authenticating`. Adding a second account is a
+  // different flow (`Session.addAccount`) that leaves this state describing the
+  // open account throughout. Its one visible edge is to `needs_workspace`: the
+  // account chosen had no workspace, and onboarding for it takes the screen.
+  authenticated:    ['stale', 'signed_out', 'needs_workspace'],
 
   // To `authenticating` IS allowed: re-authenticating from a stale session is
   // the natural recovery, and the affordance for it — a "Reconnect" action on
   // the stale banner — is not built yet. The edge is declared ahead of the
   // button rather than discovered by it.
-  stale:            ['authenticated', 'signed_out', 'authenticating'],
+  stale:            ['authenticated', 'signed_out', 'authenticating', 'needs_workspace'],
 } as const satisfies Record<Status, readonly Status[]>;
 
 /**
