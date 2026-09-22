@@ -593,6 +593,32 @@ its own.
 third-party account is spent, and each writes what it did through the ordinary
 sync path, so it is attributed like any other change.
 
+**`web_search` is the one exception to "spends nobody's account", and it is a
+different exception from the one the sentence above guards against.** It spends
+OURS — a metered key we hold, billed per query — rather than the invoker's, so
+there is still nothing to ask a person's permission for and still no card to
+raise. What follows from that is a budget instead of a checkpoint: the tool
+fixes the speed tier, the number of sources and the character ceiling itself and
+offers none of them to the model, because how much a run may spend is not a
+thing a prompt should be able to talk its way into.
+
+- **`web_search`** searches the public web through Parallel
+  (`apps/server/src/agents/tools/web-search.ts`) and returns extracted page
+  text with each source's url and publication date. **Offered only where
+  `PARALLEL_API_KEY` is set**, and refused rather than merely unlisted where it
+  is not — the offer is the authorisation, as for every app tool. The model
+  supplies a plain-language `objective` and two or three keyword `queries`;
+  Parallel ranks the extracted text against the objective, which is why this
+  endpoint was chosen over a keyword-only one, since a query written by a model
+  from a conversation is full of pronouns the keywords alone lose. Recency is
+  asked for as a window (`within: day|week|month|year`) and converted to
+  Parallel's absolute `after_date` **by us**: a model doing that arithmetic
+  needs today's date in front of it, and a date it gets wrong discards the best
+  answers silently rather than failing. The character budget is set below the
+  broker's result cap so no source comes back truncated mid-sentence. Nothing
+  is written to Relayed, so unlike every other app tool it is safe to run twice
+  and sits with the reads — last among them, because what this workspace knows
+  about itself is better evidence than the web.
 - **`open_panel`** opens a page beside the chat for everyone in the room
   (`PANELS.md`), recorded with the agent as `created_by_actor_id` and the
   invoker as `on_behalf_of_actor_id`. Opening the same page again brings it
@@ -1908,6 +1934,7 @@ A proposal to agree, per `OBSERVABILITY.md`, not a list to add. Service identity
 | `agent.run.queue_wait` | Time from commit to claim. Whether the dispatcher is keeping up, and the number that says when a poll interval stops being enough |
 | `agent.tool{effect, outcome}` | Which effects agents actually use, and whether failures are ours (`refused`, `permission_required`) or theirs (`failed`, `needs_reauth`) |
 | `composio.request{op, outcome}` + duration | A Composio outage against a bug in the broker. Without it both read as "tools fail" |
+| `web.search{outcome}` | The only tool billed to us, so this doubles as the spend. `rate_limited` (our quota, passes) against `unauthorized` (our key, does not) — and a climbing `no_results` share is money going on queries the prompt is not shaping. No duration: `agent_app_tool_calls.duration_ms` already records one per call |
 | `connection.flow{scheme, stage, outcome}` | Where people abandon connecting: before the provider, at it, or on the way back. `scheme` is a closed set (§6.5) |
 | `sync.withheld{path}` | **Only once something writes restricted messages — nothing does in v1.** `live` / `catchup`. Withheld frames should track restricted messages written, times the chat's other readers. A path at zero while cards are being written is a path that stopped redacting. Backfill and the gap tail omit rows in SQL and have nothing to count — their guard is the tests in §12.3 |
 

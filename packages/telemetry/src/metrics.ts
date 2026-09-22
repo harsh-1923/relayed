@@ -192,6 +192,17 @@ export interface LabelValues {
   tool_outcome: 'ok' | 'duplicate_call' | 'permission_required' | 'connection_required'
     | 'needs_reauth' | 'failed' | 'refused' | 'tool_deprecated' | 'rate_limited'
     | 'provider_forbidden' | 'provider_unavailable';
+
+  // ── web search, through Parallel (WORKSPACE-AGENTS.md §5.5) ─────────────
+  /**
+   * How one `web_search` call ended. Deliberately NOT `result`: the two
+   * failures worth separating from each other are ours to fix and read
+   * nothing alike — `rate_limited` is the Parallel quota, which passes, and
+   * `unauthorized` is the key, which does not. `no_results` is a success that
+   * answered nothing, which is a signal about the queries being written rather
+   * than about Parallel.
+   */
+  search_outcome: 'ok' | 'no_results' | 'rate_limited' | 'unauthorized' | 'rejected' | 'failed';
 }
 
 export type LabelName = keyof LabelValues;
@@ -257,6 +268,7 @@ export const labelValues = {
   connect_scheme: ['OAUTH2', 'OAUTH1', 'DCR_OAUTH', 'CIMD_OAUTH',
                    'API_KEY', 'BEARER_TOKEN', 'BASIC', 'BASIC_WITH_JWT'],
   connect_stage: ['link', 'start', 'verify', 'complete', 'disconnect'],
+  search_outcome: ['ok', 'no_results', 'rate_limited', 'unauthorized', 'rejected', 'failed'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
 /** Union members not present in `labelValues`. `never` when the sets agree. */
@@ -707,6 +719,20 @@ export const metrics = {
        + 'reused start token, a missing verification cookie, a session-uri '
        + 'mismatch at complete — which `composio.request` alone cannot show, '
        + 'because most of those stages never call Composio at all.',
+  },
+
+  'web.search': {
+    kind: 'counter', labels: ['search_outcome'],
+    doc: 'One `web_search` call, by how it ended (WORKSPACE-AGENTS.md §5.5). '
+       + 'The only tool billed to US rather than to the invoker, so this is '
+       + 'also the spend: a rate against the Parallel plan. Answers the two '
+       + 'questions the audit table cannot be alerted on — whether we are out '
+       + 'of quota (`rate_limited`) or the key is wrong (`unauthorized`) — and '
+       + 'whether agents are searching well, since a `no_results` share that '
+       + 'climbs is money spent on queries the prompt is not shaping. '
+       + 'DURATION IS DELIBERATELY NOT COLLECTED: every app tool call already '
+       + 'records its own in `agent_app_tool_calls.duration_ms`, and a '
+       + 'histogram beside it would be a second copy nobody reads.',
   },
 
   'agent.tool': {

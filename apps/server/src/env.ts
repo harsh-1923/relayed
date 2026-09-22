@@ -110,6 +110,18 @@ export const env = {
   /** Signs the `relayed_connect` cookie (§6.5). A separate secret from every other signing key here, on the same reasoning as `AGENT_GRANT_SECRET`. */
   connectCookieSecret: process.env['CONNECT_COOKIE_SECRET'] ?? null,
 
+  // ── web search, through Parallel (WORKSPACE-AGENTS.md §5.5) ──────────────
+  /**
+   * Parallel's API key. Optional, like everything above it: a server without
+   * one still answers every run, just without the `web_search` tool, which is
+   * not offered at all when this is unset.
+   *
+   * Setting it is the whole decision. There is no second switch beside it, as
+   * memory has, because nothing else uses this key — see the note on the
+   * tool's own `definition`.
+   */
+  parallelApiKey: process.env['PARALLEL_API_KEY'] ?? null,
+
   // ── the room summariser (DOCUMENTS.md §4.4) ───────────────────────────────
   /**
    * New readable messages before a room's summary is refreshed. An env value

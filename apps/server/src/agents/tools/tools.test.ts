@@ -1,7 +1,7 @@
 // What a run is offered (run-tools.ts). The broker's answers are broker.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runTools, toolsPrompt, CREATE_ROOM, WRITE_ROOM_SUMMARY, READ_ROOM_SUMMARY, REMEMBER } from './index.ts';
+import { runTools, toolsPrompt, CREATE_ROOM, WRITE_ROOM_SUMMARY, READ_ROOM_SUMMARY, REMEMBER, WEB_SEARCH } from './index.ts';
 import { env } from '../../env.ts';
 
 /** Every run that is not Roomkeeping's, which is every run but one agent's. */
@@ -10,13 +10,15 @@ const anyone = { isRoomkeeper: false };
 /**
  * Tool names, minus the ones whose OFFER depends on deployment configuration.
  *
- * `remember` follows `MEMORY_RECALL` (MEMORY.md §5.5), so pinning the full list
- * would make this test pass or fail on whether the machine running it has
- * memory switched on — which it did, in both directions, before this filter
- * existed. The gate itself is asserted below, on its own terms.
+ * `remember` follows `MEMORY_RECALL` (MEMORY.md §5.5) and `web_search` follows
+ * `PARALLEL_API_KEY`, so pinning the full list would make this test pass or
+ * fail on what the machine running it happens to have switched on — which it
+ * did, in both directions, before this filter existed. Each gate is asserted
+ * below, on its own terms.
  */
+const CONFIGURED: readonly string[] = [REMEMBER, WEB_SEARCH];
 const names = (tools: ReturnType<typeof runTools>) =>
-  tools.map(tool => tool.name).filter(name => name !== REMEMBER);
+  tools.map(tool => tool.name).filter(name => !CONFIGURED.includes(name));
 test('create_room and the messaging tools are offered to every run: no services, not in a room', () => {
   assert.deepEqual(names(runTools([], { inRoom: false, ...anyone })),
     [READ_ROOM_SUMMARY, 'room_members', 'external_identity', CREATE_ROOM, 'send_dm', 'post_message', 'add_to_room']);
@@ -29,6 +31,26 @@ test('remember is offered exactly when recall is, and never otherwise', () => {
   // A preference nothing will ever read is not worth asking somebody to state.
   const offered = runTools([], { inRoom: false, ...anyone }).map(tool => tool.name);
   assert.equal(offered.includes(REMEMBER), env.memoryRecall);
+});
+
+test('web_search is offered exactly when a search key is set, and never otherwise', () => {
+  // The one tool billed to US rather than to the invoker: a deployment that
+  // has not paid for it must not be able to call it by naming it.
+  const offered = runTools([], { inRoom: false, ...anyone }).map(tool => tool.name);
+  assert.equal(offered.includes(WEB_SEARCH), env.parallelApiKey !== null);
+  assert.equal(/web_search/.test(toolsPrompt([], { inRoom: false, ...anyone })), env.parallelApiKey !== null);
+});
+
+test('the web is offered after everything that reads this workspace', () => {
+  // The order decides what the model sees first, and the room's own answer is
+  // better evidence about the room than the web's.
+  const order = runTools([], { inRoom: true, ...anyone }).map(tool => tool.name);
+  const web = order.indexOf(WEB_SEARCH);
+  if (web === -1) return;
+  for (const read of [READ_ROOM_SUMMARY, 'room_members', 'external_identity']) {
+    assert.ok(order.indexOf(read) < web, `${read} comes before ${WEB_SEARCH}`);
+  }
+  assert.ok(web < order.indexOf(CREATE_ROOM), 'and before anything that writes');
 });
 
 test('the prompt says to create a room only when asked, and last', () => {
