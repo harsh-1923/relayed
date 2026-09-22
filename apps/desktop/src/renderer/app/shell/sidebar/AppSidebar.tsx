@@ -10,6 +10,7 @@
 // and the account switcher is in the FOOTER. The directory between them is the
 // only part that scrolls, so the things you reach most often never disappear
 // behind a long list of spaces.
+import { useLocation } from 'react-router';
 import { useSession } from '../../state';
 import { SearchDefault } from '@relayed/icons';
 import { iconForDestination } from '@/lib/navigation/destinations/destination-icon.ts';
@@ -42,6 +43,10 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const wsId = useSession().state.workspaceId;
   const destinations = primaryDestinationsFor(wsId);
   const search = useCommand('app.search.open');
+  // Compared whole — path AND query. People and Agents are the same route on
+  // different tabs, so matching on the path alone would light up both rows.
+  const here = useLocation();
+  const current = `${here.pathname}${here.search}`;
 
   // The top bar holds the toggle and sits above this tree, so it cannot see
   // whether there is anything to toggle. This is how it finds out.
@@ -85,6 +90,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
                 icon={iconForDestination(destination)}
                 to={destination.to}
                 disabled={destination.disabled}
+                isActive={destination.to === current}
               />
             ))}
           </SidebarMenu>
