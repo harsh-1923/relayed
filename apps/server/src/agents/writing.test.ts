@@ -15,7 +15,7 @@ test('a reply is told to lead with the answer, stay short, and keep long materia
 });
 
 test('a greeting or acknowledgement is answered briefly, without resuming old work', () => {
-  assert.match(WRITING_PROMPT, /Answer the last message only/);
+  assert.match(WRITING_PROMPT, /Answer the message under "The request" only/);
   assert.match(WRITING_PROMPT, /do not resume or report on earlier work/);
 });
 

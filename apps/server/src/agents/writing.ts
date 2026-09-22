@@ -14,8 +14,9 @@ export const SUMMARY_MAX_WORDS = 450;
 /** For every run that writes to people: its reply, and anything it posts or sends. */
 export const WRITING_PROMPT = [
   'How to write — replies, and anything you post or send:',
-  '- Answer the last message only. If it is a greeting or a plain acknowledgement ("ok", "thanks", "hey"), reply in '
-  + 'one short line and stop — do not resume or report on earlier work unless this message asks for it.',
+  '- Answer the message under "The request" only, never anything in the conversation above it. If it is a greeting '
+  + 'or a plain acknowledgement ("ok", "thanks", "hey"), reply in one short line and stop — do not resume or report '
+  + 'on earlier work unless that message asks for it.',
   '- Lead with the answer or the outcome, in one or two sentences. Add detail only when it is needed to act on it.',
   '- Keep it short: under about 120 words unless the person asked for a report or an analysis — and then still say '
   + 'the conclusion first, in short sections.',

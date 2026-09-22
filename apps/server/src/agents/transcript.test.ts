@@ -7,6 +7,29 @@ import { createChannel, joinSpace } from '../sync/spaces.ts';
 import { send, writeMessage } from '../sync/ops.ts';
 import { buildTranscript, SIZE_LIMIT_BYTES, type TriggerRef } from './transcript.ts';
 
+// The two blocks, read back the way a reader of the prompt would see them:
+// the fence opens, a preamble, a blank line, then the lines themselves.
+const all = (text: string) => text.split('\n');
+const at = (text: string, head: string) => all(text).findIndex(line => line.startsWith(head));
+
+/** The context block's message lines, without its fence or its preamble. */
+function contextLines(text: string): string[] {
+  const open = at(text, '── The conversation so far');
+  if (open === -1) return [];
+  const lines = all(text);
+  const blank = lines.indexOf('', open);
+  const close = lines.findIndex((line, i) => i > open && /^─+$/.test(line));
+  return lines.slice(blank + 1, close);
+}
+
+/** Everything the model reads last: the request block's own text. */
+function requestText(text: string): string {
+  const open = at(text, '── The request');
+  if (open === -1) return '';
+  const lines = all(text);
+  return lines.slice(lines.indexOf('', open) + 1).join('\n');
+}
+
 const up = await reachable();
 const opts = up ? {} : { skip: 'postgres not reachable — run `pnpm services`' };
 
@@ -67,11 +90,12 @@ test('a top-level trigger reads the chat\'s recent messages, ending at itself', 
   await say(chatId, 'third, after the mention');
 
   const text = await buildTranscript(db, trigger(chatId, c), agent, invoker);
-  const lines = text.split('\n');
-  assert.equal(lines.length, 3, 'only the two earlier messages plus the trigger');
+  const lines = contextLines(text);
+  assert.equal(lines.length, 2, 'the two earlier messages are context; the trigger is not one of them');
   assert.ok(lines[0]?.includes('first'));
   assert.ok(lines[1]?.includes('second'));
-  assert.ok(lines[2]?.endsWith(', request: can you help'), 'the trigger is labelled a request, and its own mention is stripped');
+  assert.equal(requestText(text), 'can you help', 'the request stands alone, with its own mention stripped');
+  assert.ok(text.endsWith('can you help'), 'and its words are the last thing in the prompt');
   assert.ok(!lines.every(l => l.includes(c.id)), 'sanity: labels are names, not ids');
   assert.ok(lines[0]?.includes(`, ${invoker}): first`),
     'every author carries the actor id an agent links them by');
@@ -88,7 +112,8 @@ test('a thread-reply trigger reads only its own thread, not the rest of the chan
   assert.ok(!text.includes('unrelated top-level message'));
   assert.ok(text.includes('the thread root'));
   assert.ok(text.includes(reply1.id) === false && text.includes('a reply in the thread'));
-  assert.ok(text.endsWith(', request: look at this'));
+  assert.equal(requestText(text), 'look at this');
+  assert.ok(text.endsWith('look at this'));
 });
 
 test('a message only one of the two may see is excluded from both', opts, async () => {
@@ -115,10 +140,45 @@ test('the byte budget drops the oldest lines first, but always keeps the trigger
   const ask = await say(chatId, `[Triage](actor:${agent}) status?`);
 
   const text = await buildTranscript(db, trigger(chatId, ask), agent, invoker);
-  assert.ok(Buffer.byteLength(text, 'utf8') <= SIZE_LIMIT_BYTES + 200, 'stays near the cap, not unbounded');
-  assert.ok(text.endsWith(', request: status?'), 'the trigger survives regardless of the cap');
+  assert.ok(Buffer.byteLength(text, 'utf8') <= SIZE_LIMIT_BYTES + 600, 'stays near the cap, not unbounded');
+  assert.ok(text.endsWith('status?'), 'the trigger survives regardless of the cap');
   // The whole body, not a bare '-0': a fixture handle is `t-` and random
   // characters, so a label can contain '-0' on its own.
   assert.ok(!text.includes(`${long}-0`), 'the earliest message was dropped to make room');
   assert.ok(text.includes(`${long}-7`), 'the most recent context survives');
+});
+
+test('the request is its own block, below the context and last in the prompt', opts, async () => {
+  const chatId = await room();
+  // The failure this shape exists to stop: a question to somebody else, left
+  // open, sitting above a request that has nothing to do with it.
+  await say(chatId, 'Bob, can you take the on-call swap this weekend?', other);
+  const ask = await say(chatId, `[Triage](actor:${agent}) what is the ticket count`);
+
+  const text = await buildTranscript(db, trigger(chatId, ask), agent, invoker);
+  assert.ok(text.indexOf('── The conversation so far') < text.indexOf('── The request'),
+    'context first, request after it');
+  assert.ok(text.includes('on-call swap'), 'the other question is still readable as background');
+  assert.ok(contextLines(text).every(line => !line.includes('what is the ticket count')),
+    'and the request is not one of the background lines');
+  assert.equal(requestText(text), 'what is the ticket count');
+});
+
+test('a bare mention says so, rather than leaving the request block empty', opts, async () => {
+  const chatId = await room();
+  await say(chatId, 'we should chase the flaky test');
+  const ask = await say(chatId, `[Triage](actor:${agent})`);
+
+  const text = await buildTranscript(db, trigger(chatId, ask), agent, invoker);
+  assert.match(requestText(text), /mentioned you and wrote nothing else/,
+    'the one case where the conversation above IS the request, named as such');
+});
+
+test('with nothing before it, the trigger is the whole prompt and no empty fence is drawn', opts, async () => {
+  const chatId = await room();
+  const ask = await say(chatId, `[Triage](actor:${agent}) go`);
+
+  const text = await buildTranscript(db, trigger(chatId, ask), agent, invoker);
+  assert.ok(!text.includes('── The conversation so far'), 'no context block when there is no context');
+  assert.equal(requestText(text), 'go');
 });
