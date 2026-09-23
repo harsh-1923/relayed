@@ -233,6 +233,11 @@ export const stopAgentRun = (accessToken: string, runId: string) =>
   request<{ run_id: string; state: string }>('POST',
     `/agent-runs/${encodeURIComponent(runId)}/stop`, accessToken, {});
 
+/** Mark an answer an agent gave without being asked as not helpful (AMBIENT-RESPONSES.md §10.2). */
+export const dismissAmbient = (accessToken: string, messageId: string) =>
+  request<{ message_id: string; dismissed: boolean }>('POST',
+    `/ambient/${encodeURIComponent(messageId)}/dismiss`, accessToken, {});
+
 // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ─────────────────
 
 export interface ToolkitSummary {

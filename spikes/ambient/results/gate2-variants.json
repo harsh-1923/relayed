@@ -1,0 +1,108 @@
+{
+  "wordings": {
+    "literal": "`draft` directly and materially answers `question`.",
+    "useful": "`draft` would help the person who wrote `question`: it answers it, or tells them something specific they need to answer it.",
+    "deflects": "`draft` mostly says it cannot see, check or know what was asked."
+  },
+  "rows": [
+    {
+      "id": "S01",
+      "label": "post",
+      "scores": {
+        "literal": [0.77, 0.77],
+        "useful": [0.83, 0.83],
+        "deflects": [0.09, 0.1]
+      }
+    },
+    {
+      "id": "S02",
+      "label": "post",
+      "scores": {
+        "literal": [0.93, 0.92],
+        "useful": [0.92, 0.93],
+        "deflects": [0.05, 0.05]
+      }
+    },
+    {
+      "id": "S03",
+      "label": "post",
+      "scores": {
+        "literal": [0.61, 0.65],
+        "useful": [0.78, 0.76],
+        "deflects": [0.11, 0.09]
+      }
+    },
+    {
+      "id": "S05",
+      "label": "post",
+      "scores": {
+        "literal": [0.91, 0.91],
+        "useful": [0.92, 0.92],
+        "deflects": [0.05, 0.05]
+      }
+    },
+    {
+      "id": "S06",
+      "label": "post",
+      "scores": {
+        "literal": [0.83, 0.82],
+        "useful": [0.86, 0.85],
+        "deflects": [0.06, 0.06]
+      }
+    },
+    {
+      "id": "S07",
+      "label": "post",
+      "scores": {
+        "literal": [0.86, 0.86],
+        "useful": [0.84, 0.85],
+        "deflects": [0.07, 0.07]
+      }
+    },
+    {
+      "id": "S08",
+      "label": "either",
+      "scores": {
+        "literal": [0.76, 0.76],
+        "useful": [0.88, 0.87],
+        "deflects": [0.08, 0.09]
+      }
+    },
+    {
+      "id": "S21",
+      "label": "post",
+      "scores": {
+        "literal": [0.92, 0.92],
+        "useful": [0.91, 0.91],
+        "deflects": [0.07, 0.07]
+      }
+    },
+    {
+      "id": "S22",
+      "label": "hold",
+      "scores": {
+        "literal": [0.4, 0.37],
+        "useful": [0.81, 0.81],
+        "deflects": [0.87, 0.88]
+      }
+    },
+    {
+      "id": "S24",
+      "label": "post",
+      "scores": {
+        "literal": [0.86, 0.86],
+        "useful": [0.86, 0.87],
+        "deflects": [0.12, 0.11]
+      }
+    },
+    {
+      "id": "S27",
+      "label": "hold",
+      "scores": {
+        "literal": [0.31, 0.28],
+        "useful": [0.81, 0.8],
+        "deflects": [0.67, 0.67]
+      }
+    }
+  ]
+}

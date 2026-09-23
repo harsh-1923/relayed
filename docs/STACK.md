@@ -195,6 +195,7 @@ context7 ID is listed it has been verified; otherwise resolve it at time of use.
 | Library | Docs | context7 |
 |---|---|---|
 | Electron | https://electronjs.org/docs/latest | `/electron/electron` |
+| TypeSafe (Jev), `@typesafe-ai/sdk` **0.6.0**, pinned exact | https://docs.typesafe.ai — index at `/llms.txt`, any page as Markdown by appending `.md`; the SDK at `/sdk/javascript` | none. Behind a wrapper (`agents/ambient/jev.ts`) that pins the model, silences the logger (its debug level prints message text) and checks the answers. 0.6.0 broke 0.5.7 four days after the first release — read its changelog before moving |
 | electron-builder | https://electron.build | `/electron-userland/electron-builder` |
 | electron-vite | https://electron-vite.org | resolve |
 | electron-updater | https://www.electron.build/auto-update | `/electron-userland/electron-builder` |

@@ -203,6 +203,21 @@ export interface LabelValues {
    * than about Parallel.
    */
   search_outcome: 'ok' | 'no_results' | 'rate_limited' | 'unauthorized' | 'rejected' | 'failed';
+
+  // ── ambient answers (AMBIENT-RESPONSES.md §12) ───────────────────────────
+  /**
+   * How one look at a chat ended — the closed set in `ambient_decisions.outcome`
+   * less `pending`, which is not an ending (§8).
+   */
+  ambient_outcome: 'silent' | 'declined' | 'suppressed' | 'gate_error' | 'failed'
+    | 'withdrawn' | 'stale' | 'shadow' | 'posted' | 'run';
+  /**
+   * Which Jev call (§7): each message of a turn on its own, which agent, the
+   * draft, the offer, whether a person answered meanwhile, or a follow-up.
+   */
+  ambient_gate: 'message' | 'agent' | 'draft' | 'offer' | 'meanwhile' | 'follow_up';
+  /** Why a Jev call failed (`JevErrorReason`, agents/ambient/jev.ts). */
+  jev_error: 'timeout' | 'rate_limited' | 'http_4xx' | 'http_5xx' | 'network' | 'malformed';
 }
 
 export type LabelName = keyof LabelValues;
@@ -269,6 +284,10 @@ export const labelValues = {
                    'API_KEY', 'BEARER_TOKEN', 'BASIC', 'BASIC_WITH_JWT'],
   connect_stage: ['link', 'start', 'verify', 'complete', 'disconnect'],
   search_outcome: ['ok', 'no_results', 'rate_limited', 'unauthorized', 'rejected', 'failed'],
+  ambient_outcome: ['silent', 'declined', 'suppressed', 'gate_error', 'failed',
+                    'withdrawn', 'stale', 'shadow', 'posted', 'run'],
+  ambient_gate: ['message', 'agent', 'draft', 'offer', 'meanwhile', 'follow_up'],
+  jev_error: ['timeout', 'rate_limited', 'http_4xx', 'http_5xx', 'network', 'malformed'],
 } as const satisfies { readonly [K in LabelName]: readonly LabelValues[K][] };
 
 /** Union members not present in `labelValues`. `never` when the sets agree. */
@@ -735,6 +754,38 @@ export const metrics = {
        + 'reused start token, a missing verification cookie, a session-uri '
        + 'mismatch at complete — which `composio.request` alone cannot show, '
        + 'because most of those stages never call Composio at all.',
+  },
+
+  // ── ambient answers (AMBIENT-RESPONSES.md §12) ───────────────────────────
+  'ambient.decided': {
+    kind: 'counter', labels: ['ambient_outcome'],
+    doc: 'One look at one chat for an answer nobody asked for, by how it ended. '
+       + 'Answers how often an agent speaks unprompted and where it usually '
+       + 'stops: a `silent` share near one is the gate doing its job, a rising '
+       + '`suppressed` share is drafts missing the question, and `failed` is '
+       + 'the runtime. Per chat and per agent it lives in `ambient_decisions`, '
+       + 'where a query can slice it without a series per id.',
+  },
+  'ambient.gate_error': {
+    kind: 'counter', labels: ['ambient_gate', 'jev_error'],
+    doc: 'A Jev call that did not answer. An ambient answer that could not be '
+       + 'judged is never posted, so a broken gate is SILENT to everyone who '
+       + 'would have seen the answer — this is the only signal that agents have '
+       + 'stopped speaking up because TypeSafe is failing, out of quota '
+       + '(`rate_limited`), or refusing the key (`http_4xx`).',
+  },
+  'ambient.jev_ms': {
+    kind: 'histogram', unit: 'ms', labels: ['ambient_gate'],
+    doc: 'How long one Jev call took, retries included. The looks sit after a '
+       + '90-second lull and a follow-up is meant to feel like a conversation, '
+       + 'so this answers whether a gate is ever what makes an answer late.',
+  },
+  'ambient.jev_tokens': {
+    kind: 'histogram', unit: 'count', labels: ['ambient_gate'],
+    doc: 'Input tokens TypeSafe billed for one call, as its SDK reports them. '
+       + 'The spike could only estimate these from characters; this is the '
+       + 'real cost of looking, per step, and the first place a window or a '
+       + 'room summary growing past what it should shows up.',
   },
 
   'web.search': {

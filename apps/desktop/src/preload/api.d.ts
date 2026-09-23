@@ -610,6 +610,8 @@ export interface RelayedApi {
   query(op: "agents.definition", params: { agentId: string }): Promise<AgentDefinition | null>;
   /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
   query(op: "agents.stopRun", params: { runId: string }): Promise<AgentAnswer<{ run_id: string; state: string }>>;
+  /** "Not helpful here" on an unprompted answer, kept as feedback (AMBIENT-RESPONSES.md §10.2). Anyone in the chat. */
+  query(op: "ambient.dismiss", params: { messageId: string }): Promise<AgentAnswer<{ message_id: string; dismissed: boolean }>>;
 
   // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ───────────────
   query(op: "connections.list"): Promise<ConnectionRow[]>;

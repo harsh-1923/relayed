@@ -55,6 +55,11 @@ function partText(part: MessagePart): string {
       // `access.ts` (`trustedBody`), never derived here — this part carries
       // only ids, and a sentence needs names this file has no way to look up.
       return '';
+    case 'ambient':
+      // Nothing, like `memory`: the marker says who was answered, and the answer
+      // itself is the markdown part beside it. Its body is supplied directly by
+      // the ambient job (`trustedBody`) in any case.
+      return '';
   }
 }
 

@@ -20,10 +20,11 @@ test('every kind the contract names parses, and nothing else is a kind', () => {
   const parsed = Parts.safeParse([
     { kind: 'markdown', text: 'I ran the test.' }, tool, ui, memory,
     { kind: 'reply_to_ui', message_id: 'msg_A2', label: 'Apply the fix' },
+    { kind: 'ambient', answering: 'msg_A1', asker: 'Alice Chen' },
   ]);
   assert.equal(parsed.success, true);
   assert.deepEqual([...PART_KINDS].sort(),
-    ['access_request', 'markdown', 'memory', 'reply_to_ui', 'tool', 'ui']);
+    ['access_request', 'ambient', 'markdown', 'memory', 'reply_to_ui', 'tool', 'ui']);
 });
 
 test('keys are snake_case: a camelCase part is refused on write, not silently emptied', () => {
@@ -123,4 +124,24 @@ test('a PERSON may not claim to have cited memory — it is a costume, like a to
   assert.equal(forbiddenPartKind('agent', [memory]), null);
   assert.equal(undrawablePartKind('human', [memory]), 'memory');
   assert.equal(undrawablePartKind('agent', [memory]), null);
+});
+
+// ── ambient (docs/AMBIENT-RESPONSES.md) ─────────────────────────────────────
+
+test('an ambient marker is the server\'s alone: refused on the ordinary path for everyone, drawn only on an agent', () => {
+  const ambient = { kind: 'ambient', answering: 'msg_01', asker: 'Alice Chen' };
+  assert.equal(Parts.safeParse([ambient, { kind: 'markdown', text: 'Because.' }]).success, true);
+  assert.equal(forbiddenPartKind('agent', [ambient]), 'ambient',
+    'not even an agent may claim nobody asked — only the ambient job, through trustedParts');
+  assert.equal(forbiddenPartKind('human', [ambient]), 'ambient');
+  assert.equal(undrawablePartKind('agent', [ambient]), null);
+  assert.equal(undrawablePartKind('human', [ambient]), 'ambient');
+});
+
+test('an ambient marker needs the message it answers and how the reference reads', () => {
+  for (const missing of ['answering', 'asker'] as const) {
+    const part = { kind: 'ambient', answering: 'msg_01', asker: 'Alice Chen', [missing]: undefined };
+    assert.equal(Parts.safeParse([part]).success, false, `${missing} must be required`);
+  }
+  assert.equal(Parts.safeParse([{ kind: 'ambient', answering: 'msg_01', asker: 'x'.repeat(201) }]).success, false);
 });

@@ -11,6 +11,28 @@ const devRoutes = (): boolean => {
   return on;
 };
 
+/** Unset is `live` — on by default. Anything set and unrecognised is off: a typo must not switch it on. */
+function ambientMode(value: string | undefined): 'off' | 'shadow' | 'live' {
+  if (value === undefined || value.trim() === '') return 'live';
+  return value === 'shadow' || value === 'live' ? value : 'off';
+}
+
+/**
+ * Handles, or NULL for "every agent". An EMPTY value is NULL too: `.env.example`
+ * ships the line blank, and a copied blank line must not quietly switch every
+ * agent off.
+ */
+function handleList(value: string | undefined): string[] | null {
+  const handles = value?.split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean) ?? [];
+  return handles.length > 0 ? handles : null;
+}
+
+/** A positive number of seconds, or the default — `Number('')` is 0, and a lull of 0 is no first refusal at all. */
+function seconds(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return value !== undefined && value.trim() !== '' && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 const required = (name: string): string => {
   const v = process.env[name];
   if (!v) throw new Error(`missing required env var: ${name}`);
@@ -130,4 +152,28 @@ export const env = {
    * working session, too low and it burns budget saying the same thing.
    */
   summaryThreshold: Number(process.env['SUMMARY_THRESHOLD'] ?? 15),
+
+  // ── ambient answers (AMBIENT-RESPONSES.md) ────────────────────────────────
+  //
+  // On by default, but still optional: without a key nothing ambient runs,
+  // the server says so at boot, and every other feature is untouched —
+  // mentions never call TypeSafe at all.
+  /** TypeSafe's key, for Jev. */
+  typesafeApiKey: process.env['TYPESAFE_API_KEY'] ?? null,
+  /** Where TypeSafe is. Only a test or a proxy points it anywhere else. */
+  typesafeBaseUrl: process.env['TYPESAFE_BASE_URL'] ?? 'https://api.typesafe.ai',
+  /**
+   * `off`, `shadow` or `live` (§10.1). LIVE WHEN UNSET, since the first release
+   * (2026-09-24): answers ship on so that people can say what they think of
+   * them. `off` switches it off; anything else unrecognised is off too, so a
+   * typo never turns it on.
+   */
+  ambientMode: ambientMode(process.env['AMBIENT_MODE']),
+  /**
+   * Restricts ambient answers to these agent handles. NULL is every agent. The
+   * rollout switch, in the shape `MEMORY_INGEST_SPACES` already has (§10.3).
+   */
+  ambientAgents: handleList(process.env['AMBIENT_AGENTS']),
+  /** Seconds after a person's last message before their turn is looked at — first refusal (§3). A guess to be tuned. */
+  ambientLullSec: seconds(process.env['AMBIENT_LULL_SEC'], 90),
 } as const;

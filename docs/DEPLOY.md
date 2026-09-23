@@ -14,14 +14,14 @@ This is the runbook. The *reasoning* behind hosting choices is in
 
 | | |
 |---|---|
-| **Host** | Railway — the server and Postgres as two services in one project |
+| **Host** | Railway — the server, the agent runtime and Postgres as three services in one project |
 | **API address** | `https://api.relayed.imharsh.in` — **live** |
 | **Project** | `relayed`, `9962b6e0-c7d1-49a1-b703-d84a09d0af44` |
 | **Region** | `asia-southeast1` (Singapore, Equinix SG3), both services. ~45ms TCP from India |
 | **Instances** | **Exactly one.** Never more (§2) |
 | **Build** | A plain Dockerfile, so the same image runs anywhere |
 | **Migrations** | In-process at boot. No separate deploy step |
-| **Not deployed** | `apps/agent`, memory, Composio connectors — all optional (§8) |
+| **Optional subsystems** | Agent runs, memory, connectors, web search and telemetry — all switched on, none required to boot (§8) |
 
 ## 2. The one-instance rule
 
@@ -328,22 +328,28 @@ curl -s -o /dev/null -w "%{http_code}\n" --http1.1 \
 Then take a manual backup from the Postgres service's **Backups** tab, and
 confirm PITR is on.
 
-## 8. Not deployed, on purpose
+## 8. Optional subsystems, and what each is spending
 
-The server boots fine without all of these, and each is a third-party account
-and a cost:
+None of these is needed to boot — the server starts and serves without every
+one of them, which is the property worth keeping — but each is a third-party
+account and a bill, so what is switched on is a standing cost rather than a
+setting. **All of them now are.** This section used to say the opposite, and
+was read by at least one person as meaning agents did not run in production.
 
-| Off | Turned on by |
-|---|---|
-| Agent runs | `AGENT_*` (and running `apps/agent`) |
-| Memory | `HINDSIGHT_*`, `MEMORY_INGEST`, `MEMORY_RECALL` |
-| Connectors | `COMPOSIO_API_KEY`, `CONNECT_COOKIE_SECRET` |
-| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT` |
+| Subsystem | Turned on by | State |
+|---|---|---|
+| Agent runs | `AGENT_GRANT_SECRET`, `AGENT_RUNTIME_URL`, `AGENT_S2S_KEY`, and `apps/agent` running | **On.** `relayed-agent` is the third service in the project, not an undeployed app |
+| Memory | `HINDSIGHT_BASE_URL`, `HINDSIGHT_API_KEY`, and the two switches beside them | **On, both halves** — `MEMORY_INGEST=1` and `MEMORY_RECALL=1`. They are separate on purpose (`MEMORY.md`, what an agent remembers §5.5) |
+| Connectors | `COMPOSIO_API_KEY`, `CONNECT_COOKIE_SECRET` | **On** |
+| Ambient answers | `TYPESAFE_API_KEY`, `AMBIENT_MODE`, `AMBIENT_AGENTS`, `AMBIENT_LULL_SEC` | **On once `TYPESAFE_API_KEY` is set** — `AMBIENT_MODE` unset is `live`; `shadow` judges and drafts and posts nothing; `off` switches it off. Message text goes to TypeSafe, so setting the key is also a data-processing decision (`AMBIENT-RESPONSES.md`, switching it on §10.3). The unprompted marker and "Not helpful here" need desktop 0.0.3; older builds show the answer with a "needs a newer version" note |
+| Web search | `PARALLEL_API_KEY` | **On.** The one tool billed to US per query rather than to the person who asked, so setting this key is a spending decision (`WORKSPACE-AGENTS.md`, a tool call §5.5) |
+| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` | **On** — Grafana Cloud, `ap-south-1`. The dashboards in `infra/grafana/` are the ones it feeds |
 
-Telemetry is the one to fix soonest. Without it a packaged build reports nothing
-anywhere, and "it broke" arrives from a user with no trace attached. Grafana
-Cloud's free tier accepts OTLP and the dashboards in `infra/grafana/` already
-exist.
+**Turning one off is a matter of unsetting its variables**, and the server keeps
+serving: each subsystem is asked for by the code that needs it rather than
+assumed, so an absent key removes a capability instead of breaking a boot. That
+is the invariant this table exists to protect, and the reason to check it still
+holds after adding anything to the list.
 
 ## 9. Moving out
 

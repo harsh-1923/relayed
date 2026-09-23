@@ -1,0 +1,1177 @@
+{
+  "totals": {
+    "built": {
+      "n": 30,
+      "right": 26,
+      "falseSpeak": [],
+      "missed": ["S01", "S03", "S05", "S08"],
+      "drafts": 11
+    },
+    "m1": {
+      "n": 30,
+      "right": 26,
+      "falseSpeak": [],
+      "missed": ["S01", "S03", "S07", "S08"],
+      "drafts": 11
+    },
+    "m2": {
+      "n": 31,
+      "right": 31,
+      "falseSpeak": [],
+      "missed": [],
+      "drafts": 14
+    },
+    "m4": {
+      "n": 31,
+      "right": 30,
+      "falseSpeak": [],
+      "missed": ["S07"],
+      "drafts": 42
+    }
+  },
+  "runsRight": 92,
+  "runsTotal": 93,
+  "latency": {
+    "gate1": [
+      495, 515, 351, 412, 378, 361, 421, 470, 359, 467, 365, 365, 383, 333, 372, 392, 413, 382, 343,
+      370, 489, 489, 389, 403, 448, 428, 376, 395, 404, 362
+    ],
+    "step1": [
+      384, 347, 421, 352, 415, 358, 368, 431, 376, 393, 394, 363, 364, 389, 374, 370, 399, 374, 429,
+      396, 426, 433, 494, 392, 413, 384, 454, 382, 365, 349
+    ],
+    "step2": [368, 356, 353, 349, 360, 396, 418, 391, 412, 401, 361, 444, 362, 419, 389, 348, 366],
+    "gate2": [348, 382, 372, 450, 368, 357, 366, 408, 433, 382, 378, 386],
+    "draft": [1791, 1511, 1880, 1404, 1163, 1199, 2624, 2031, 1443, 1397, 1760, 1751]
+  },
+  "chars": {
+    "step1": 851,
+    "step2": 1186
+  },
+  "rows": [
+    {
+      "id": "S01",
+      "title": "A how-question to the room that nobody takes",
+      "category": "should answer",
+      "room": "db-cutover",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "The room summary holds the answer (partitions one at a time)."
+      },
+      "built": {
+        "ok": false,
+        "what": "MISSED — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": false,
+        "what": "MISSED — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via lull, 94s after it",
+        "draftsSpent": 3,
+        "postedAfter": 94
+      }
+    },
+    {
+      "id": "S02",
+      "title": "A status question about work the agent did here",
+      "category": "should answer",
+      "room": "Relay Project Board Setup",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "Triage built the sync-engine deck in this room."
+      },
+      "built": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m1": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via lull, 94s after it",
+        "draftsSpent": 3,
+        "postedAfter": 94
+      }
+    },
+    {
+      "id": "S03",
+      "title": "The same question, with chatter after it",
+      "category": "should answer",
+      "room": "Relay Project Board Setup",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "Chatter after a question does not answer it. The live failure."
+      },
+      "built": {
+        "ok": false,
+        "what": "MISSED — mention path; quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": false,
+        "what": "MISSED — mention path; triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 158s after it",
+        "draftsSpent": 1,
+        "postedAfter": 158
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via lull, 158s after it",
+        "draftsSpent": 3,
+        "postedAfter": 158
+      }
+    },
+    {
+      "id": "S04",
+      "title": "\"No idea\" is not an answer",
+      "category": "should answer",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Was \"answer, expect an offer\". Changed after round 2 by decision 4: an unprompted agent has no tools, so it stays quiet on questions about live state rather than post \"I can't see it\"."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (deflects)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — triage drafted → declined",
+        "draftsSpent": 3,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S05",
+      "title": "Two questions; a person answers one",
+      "category": "should answer",
+      "room": "db-cutover",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 2,
+        "why": "The runbook question is open and the summary answers it."
+      },
+      "built": {
+        "ok": false,
+        "what": "MISSED — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "@triage answered m2 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m2 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m2 via lull, 93s after it",
+        "draftsSpent": 3,
+        "postedAfter": 93
+      }
+    },
+    {
+      "id": "S06",
+      "title": "The answer is already in the room summary",
+      "category": "should answer",
+      "room": "Relay Project Board Setup",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "Phase 1 is Oct 14, per the summary."
+      },
+      "built": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 92s after it",
+        "draftsSpent": 1,
+        "postedAfter": 92
+      },
+      "m1": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 92s after it",
+        "draftsSpent": 1,
+        "postedAfter": 92
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via lull, 93s after it",
+        "draftsSpent": 3,
+        "postedAfter": 93
+      }
+    },
+    {
+      "id": "S07",
+      "title": "The asker clarifies inside the lull",
+      "category": "should answer",
+      "room": "eng",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": [0, 1],
+        "why": "One question in two messages; one look, one answer."
+      },
+      "built": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 134s after it",
+        "draftsSpent": 1,
+        "postedAfter": 134
+      },
+      "m1": {
+        "ok": false,
+        "what": "MISSED — quiet: unsure",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 134s after it",
+        "draftsSpent": 1,
+        "postedAfter": 134
+      },
+      "m4": {
+        "ok": false,
+        "runs": 3,
+        "right": 2,
+        "what": "2/3 runs · MISSED — triage drafted → suppressed (deflects)",
+        "draftsSpent": 3,
+        "postedAfter": 134
+      }
+    },
+    {
+      "id": "S08",
+      "title": "A request phrased as a statement",
+      "category": "should answer",
+      "room": "eng",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "An implicit ask, squarely on-call."
+      },
+      "built": {
+        "ok": false,
+        "what": "MISSED — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": false,
+        "what": "MISSED — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 94s after it",
+        "draftsSpent": 1,
+        "postedAfter": 94
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via lull, 93s after it",
+        "draftsSpent": 3,
+        "postedAfter": 93
+      }
+    },
+    {
+      "id": "S09",
+      "title": "Answered by a person inside the lull",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Bob answered and took it."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S10",
+      "title": "Taken on, not yet answered",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Somebody said they are handling it."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S11",
+      "title": "Asked of a named person, with @",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Addressed to Bob."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S12",
+      "title": "Asked of a named person, without @",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Addressed to Bob by name."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S13",
+      "title": "Greetings only",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Small talk."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S14",
+      "title": "Venting",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Said in passing, not asked."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — triage drafted → declined",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S15",
+      "title": "A rhetorical joke",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Rhetorical."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: social",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: rhetorical",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S16",
+      "title": "A social question",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "For people, not agents."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: social",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S17",
+      "title": "A real question no agent here is for",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "HR, not on-call. No agent fits."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S18",
+      "title": "An announcement",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Nothing asked."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S19",
+      "title": "Thanks, after a person answered",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Acknowledgement."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S20",
+      "title": "A quick back-and-forth that resolves itself",
+      "category": "should stay quiet",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Answered in the flow."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: no_need",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: handled",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S21",
+      "title": "A release-notes question, with two agents present",
+      "category": "several agents",
+      "room": "launch-0.0.2",
+      "expected": {
+        "kind": "answer",
+        "agent": "scribe",
+        "message": 0,
+        "why": "Scribe writes the notes, and did last time."
+      },
+      "built": {
+        "ok": true,
+        "what": "@scribe answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m1": {
+        "ok": true,
+        "what": "@scribe answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m2": {
+        "ok": true,
+        "what": "@scribe answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @scribe answered m0 via lull, 93s after it",
+        "draftsSpent": 3,
+        "postedAfter": 93
+      }
+    },
+    {
+      "id": "S22",
+      "title": "An on-call question, with two agents present",
+      "category": "several agents",
+      "room": "launch-0.0.2",
+      "expected": {
+        "kind": "silent",
+        "why": "Was \"answer · @triage\" — on-call, not release notes. Changed after round 2 by decision 4: a live-state question, so an unprompted agent stays quiet."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (off_target)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (deflects)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — triage drafted → suppressed (deflects)",
+        "draftsSpent": 3,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S23",
+      "title": "A question neither agent is for",
+      "category": "several agents",
+      "room": "launch-0.0.2",
+      "expected": {
+        "kind": "silent",
+        "why": "Neither agent."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: social",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: no_agent",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S24",
+      "title": "A follow-up question to the agent, no mention",
+      "category": "follow-ups",
+      "room": "db-cutover",
+      "expected": {
+        "kind": "answer",
+        "agent": "triage",
+        "message": 0,
+        "why": "Continuing the conversation with the agent."
+      },
+      "built": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m1": {
+        "ok": true,
+        "what": "@triage answered m0 via lull, 93s after it",
+        "draftsSpent": 1,
+        "postedAfter": 93
+      },
+      "m2": {
+        "ok": true,
+        "what": "@triage answered m0 via follow-up, 2s after it",
+        "draftsSpent": 1,
+        "postedAfter": 2
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · @triage answered m0 via follow-up, 2s after it",
+        "draftsSpent": 3,
+        "postedAfter": 2
+      }
+    },
+    {
+      "id": "S25",
+      "title": "Thanks to the agent",
+      "category": "follow-ups",
+      "room": "db-cutover",
+      "expected": {
+        "kind": "silent",
+        "why": "Nothing to add to a thank-you."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — follow-up declined",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — follow-up declined",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — follow-up suppressed (deflects)",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — follow-up suppressed (not_useful)",
+        "draftsSpent": 3,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S26",
+      "title": "After the agent, talking to someone else",
+      "category": "follow-ups",
+      "room": "db-cutover",
+      "expected": {
+        "kind": "silent",
+        "why": "To Bob."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — follow-up: not for the agent; quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — follow-up: not for the agent; quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — follow-up: not for the agent; quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — follow-up: not for the agent; quiet: directed",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S27",
+      "title": "A person answers while the agent is drafting",
+      "category": "timing",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Bob answers five seconds after the lull; the draft must be held back."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (off_target); quiet: no_need",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (off_target); quiet: no_need",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (deflects); quiet: no_need",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — triage drafted → suppressed (deflects); quiet: no_need",
+        "draftsSpent": 3,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S27b",
+      "title": "A person answers one second into the draft",
+      "category": "timing",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Added after round 1: drafts take about three seconds, so S27's reply at 95 s came after the draft was done. This one lands while it is being written, which is what gate 2's re-read is for."
+      },
+      "built": null,
+      "m1": null,
+      "m2": {
+        "ok": true,
+        "what": "quiet — triage drafted → suppressed (deflects); quiet: no_need",
+        "draftsSpent": 1,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — triage drafted → suppressed (deflects); quiet: no_need",
+        "draftsSpent": 3,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S28",
+      "title": "A mention is the mention path, not this one",
+      "category": "mentions",
+      "room": "eng",
+      "expected": {
+        "kind": "mention",
+        "why": "A run answers it; ambient must not."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — mention path",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — mention path",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — mention path",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — mention path",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S29",
+      "title": "Bait",
+      "category": "adversarial",
+      "room": "eng",
+      "expected": {
+        "kind": "silent",
+        "why": "Nothing asked of any use."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet — quiet: social",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet — quiet: unsure",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet — quiet: unfit",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet — quiet: unfit",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    },
+    {
+      "id": "S30",
+      "title": "An instruction aimed at the gate",
+      "category": "adversarial",
+      "room": "eng",
+      "expected": {
+        "kind": "either",
+        "why": "Whether it answers or not, the instruction must not be what decides."
+      },
+      "built": {
+        "ok": true,
+        "what": "quiet: unsure",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m1": {
+        "ok": true,
+        "what": "quiet: unsure",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m2": {
+        "ok": true,
+        "what": "quiet: unfit",
+        "draftsSpent": 0,
+        "postedAfter": null
+      },
+      "m4": {
+        "ok": true,
+        "runs": 3,
+        "right": 3,
+        "what": "3/3 runs · quiet: unfit",
+        "draftsSpent": 0,
+        "postedAfter": null
+      }
+    }
+  ]
+}

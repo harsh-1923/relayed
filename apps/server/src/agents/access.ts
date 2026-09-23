@@ -26,6 +26,7 @@ import type { FanoutResult } from '../sync/fanout.ts';
 import { pushToActor } from '../sync/fanout.ts';
 import type { Registry } from '../sync/registry.ts';
 import { triggerRef } from './dispatcher.ts';
+import { replyParentOf } from './transcript.ts';
 import { rerunIfReady } from './rerun.ts';
 
 const EFFECT_RANK = { read: 0, write: 1, destructive: 2 } as const;
@@ -107,7 +108,7 @@ export async function raiseAccessRequest(
     .where('id', '=', input.runId).executeTakeFirst();
   if (!run) return;
   const trigger = await triggerRef(db, run.trigger_message_id, run.chat_id);
-  const replyParentId = trigger?.parentId ?? trigger?.id ?? run.trigger_message_id;
+  const replyParentId = replyParentOf(trigger, run.trigger_message_id);
   // Its OWN id, never the run's reply id: the model still answers after a
   // card ("I need access to your GitHub"), and that answer is written under
   // the reply id — sharing it collided on messages_pkey and left the run stuck.

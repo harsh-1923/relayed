@@ -796,6 +796,10 @@ Then `agent_runs.state` moves to its terminal value in the same transaction as
 the message, guarded by `WHERE state = 'running'` — a run someone stopped keeps
 `cancelled` when the runtime's own `done` arrives a moment later.
 
+(An ambient answer — an agent answering a message that did not mention it —
+is not a run, and is the opposite: it ends silently on everything but a good
+answer, because nobody is waiting for it. `AMBIENT-RESPONSES.md`, silence §8.)
+
 **A run never ends silently.** Every outcome that is not an answer posts a
 one-line notice from the agent, in the same thread:
 
@@ -872,7 +876,7 @@ somewhere else — the discipline `can()` already holds for authorization
 
 | Checkpoint | Called | Returns | v1 does | Later features land here |
 |---|---|---|---|---|
-| `invocationsFor(message)` | Inside `send`, in the transaction (§5.1) | the agents to run, each `{ agent }` | Mentions of member agents; every message in a DM with an agent | Continuing a thread the agent answered without a new mention; slash commands; **steering** a running run with a follow-up from its invoker instead of starting another |
+| `invocationsFor(message)` | Inside `send`, in the transaction (§5.1) | the agents to run, each `{ agent }` | Mentions of member agents; every message in a DM with an agent | ~~Continuing a thread the agent answered without a new mention~~ — built as a follow-up judged after commit instead (`AMBIENT-RESPONSES.md`, four ways in §4); the one change here is that an agent's name used as an address at the start of a message ("triage, …") invokes it like a mention, decided by `addressedAgent` beside the mention parser; slash commands; **steering** a running run with a follow-up from its invoker instead of starting another |
 | `admitRun(run)` | At claim (§5.3) | `admit` \| `defer(reason, until)` \| `refuse(code)` | Execution-time checks; `runtime_busy` | **One run at a time per agent per thread** — `defer('thread_busy')` while another run of that agent is `running` in the thread; workspace quotas and cost ceilings; agent rate limits (`DESIGN.md`, open questions §16 item 9) |
 | `beforeToolCall(run, call)` | Broker steps 4–8 (§5.5) | `execute` \| `stop(code, card?)` | Activity, the catalogue, permission, connection | **Approval** for `write` and `destructive` tools (on `agent_permissions`); a workspace allow-list of toolkits; per-toolkit rate limits |
 | `afterToolCall(run, call, outcome)` | Broker step 10 | nothing | Record the call; `last_used_at`; mark `needs_reauth` | Durable result markers that make a retried run safe |
@@ -2036,7 +2040,7 @@ purpose rather than rediscovered.
 | **A workspace allow-list of toolkits** | The first security review that asks for it. A table and one broker check |
 | **Disconnecting a person's accounts when they are deactivated** | Cheap, and recommended alongside the WorkOS poller's deactivation. v1 relies on the broker's per-call check, which stops use but leaves tokens live in Composio |
 | **Connections owned by an agent or a team** | Decided against: the invoker, always |
-| **Scheduled or event-triggered agents** (Composio triggers) | There is no invoker in the room, so there is no one whose authority a run can spend without a standing grant — a separate design |
+| **Scheduled or event-triggered agents** (Composio triggers) | There is no invoker in the room, so there is no one whose authority a run can spend without a standing grant — a separate design. (An agent answering unprompted needed none: it is a job that spends nobody's authority and uses no connections — `AMBIENT-RESPONSES.md`, whose authority §5) |
 | **A chain deeper than three steps, or per-agent control over who may mention it** | A real workflow needs a longer hand-off. `MAX_CHAIN_DEPTH` in `checkpoints.ts` is one constant |
 | **Idempotent messaging across re-runs** | A message sent twice because an access card re-ran a request that had already sent it. Today only the prompt holds it (§5.5); a key on the triggering message, the agent and the conversation would |
 | **Finding people who were not mentioned** (`find_people`) | "Add Carol and Dave" without mentioning them. Today an agent reaches only ids in its transcript |

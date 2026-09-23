@@ -21,6 +21,8 @@ import { startCatalogueRefresh } from './agents/catalogue.ts';
 import { startDispatcher, type Dispatcher } from './agents/dispatcher.ts';
 import { startSummariser } from './agents/summariser.ts';
 import { startIngest } from './memory/ingest.ts';
+import { startConfiguredAmbient } from './agents/ambient/loop.ts';
+import { ambientRoutes } from './agents/ambient/routes.ts';
 import { spaceRoutes } from './sync/routes.ts';
 
 useOtlpIfConfigured('server');
@@ -101,6 +103,7 @@ await app.register(agentRoutes({
   dispatcher: { cancel: (runId) => dispatcher?.cancel(runId) },
 }));
 await app.register(spaceRoutes({ db, deliver: sync.deliver, registry: sync.registry }));
+await app.register(ambientRoutes({ db }));
 await app.register(connectionRoutes({ db, registry: sync.registry }));
 await app.register(permissionRoutes({
   db, deliver: sync.deliver, registry: sync.registry, dispatcher: { wake: () => dispatcher?.wake() },
@@ -147,6 +150,12 @@ const summariser = startSummariser(db, sync.registry);
 // Off unless MEMORY_INGEST=1, and it says so rather than starting silently.
 const ingest = startIngest(db, sync.registry);
 
+// Ambient answers (docs/AMBIENT-RESPONSES.md): an agent answering a message
+// that did not mention it. A job like the two above — nobody asked, so there is
+// no invoker — and found by polling after commit, never from the send path.
+// Off unless AMBIENT_MODE is shadow or live, and it says so either way.
+const ambient = startConfiguredAmbient(db, sync.registry);
+
 await app.listen({ port: env.port, host: env.host });
 emit('app.boot', { to_first_render: 0, from_local: false });
 
@@ -177,7 +186,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     if (leaving) return;
     leaving = true;
 
-    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); ingest.stop(); dispatcher?.stop();
+    stopPoller(); stopRetention(); stopCatalogue(); summariser.stop(); ingest.stop(); ambient.stop(); dispatcher?.stop();
 
     void sync.close()
       .then(() => app.close())

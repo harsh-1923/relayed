@@ -153,8 +153,15 @@ export interface MemoryPresence {
   personHasNotes: boolean;
 }
 
+/**
+ * `invokerActorId` is NULL for a job — an ambient answer nobody asked for,
+ * posted to a room (AMBIENT-RESPONSES.md, whose authority §5). It gets the
+ * space and workspace banks and NEVER a person bank: that bank is private to
+ * one person, and there is no person here whose it could be (invariant 92).
+ * Not "borrow the asker's" — the asker asked the room, not the agent.
+ */
 export function banksForRun(
-  space: SpacePlacement, invokerActorId: string, publicSpaceIds: readonly string[],
+  space: SpacePlacement, invokerActorId: string | null, publicSpaceIds: readonly string[],
   presence: MemoryPresence,
 ): ReadableBank[] {
   // The live public list, PLUS THIS SPACE ITSELF — and the second half is not a
@@ -187,19 +194,21 @@ export function banksForRun(
   if (!isPublicSpace(space) && presence.spacesWithMemory.has(space.id)) {
     banks.push({ id: spaceBank(space.id), tags: [] });
   }
-  if (presence.personHasNotes) banks.push({ id: personBank(invokerActorId), tags: [] });
+  if (invokerActorId !== null && presence.personHasNotes) banks.push({ id: personBank(invokerActorId), tags: [] });
   return banks;
 }
 
 /** What this workspace and this person actually hold — one query each, both local. */
 export async function memoryPresence(
-  db: Kysely<DB>, workspaceId: string, invokerActorId: string,
+  db: Kysely<DB>, workspaceId: string, invokerActorId: string | null,
 ): Promise<MemoryPresence> {
   const [spaces, note] = await Promise.all([
     db.selectFrom('memory_documents').select('space_id').distinct()
       .where('workspace_id', '=', workspaceId).execute(),
-    db.selectFrom('memory_person_notes').select('document_id')
-      .where('actor_id', '=', invokerActorId).limit(1).executeTakeFirst(),
+    // A job has no person, so there is no person's notes to look for.
+    invokerActorId === null ? Promise.resolve(undefined)
+      : db.selectFrom('memory_person_notes').select('document_id')
+        .where('actor_id', '=', invokerActorId).limit(1).executeTakeFirst(),
   ]);
   return {
     spacesWithMemory: new Set(spaces.map((row) => row.space_id)),

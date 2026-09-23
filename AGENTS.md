@@ -44,8 +44,8 @@ client connects, paints correct badges, applies what arrives, asks for what it
 missed, hydrates its directory, writes offline, and is told when it has fallen
 past the retention horizon.
 
-Green as of the last commit: **607 tests**, 103 spike assertions, 9 boundary
-rules over 230 files, typecheck across five packages, production build.
+Green as of the last commit: **1,454 tests**, 103 spike assertions, 13 boundary
+rules over 505 files, typecheck across ten workspace projects, production build.
 
 ## Documentation
 
@@ -70,6 +70,7 @@ rules over 230 files, typecheck across five packages, production build.
 | [`docs/LOCAL-ROOMS.md`](docs/LOCAL-ROOMS.md) | **Proposal.** Rooms driven by the person's own Claude Code on their laptop, and how one is published into a shared room. Not yet the design of record — its header says which `DESIGN.md` sections it contradicts. |
 | [`docs/WORKSPACE-AGENTS.md`](docs/WORKSPACE-AGENTS.md) | **Proposal.** Creating agents as actors, a mention becoming a run in `apps/agent`, tool calls brokered by the server through Composio as the invoker, connections and the connector store, and restricted messages with what they do to `ord` and `rev`. Its header lists the `DESIGN.md` decisions it replaces. |
 | [`docs/WORKSPACE-AGENTS-IMPL.md`](docs/WORKSPACE-AGENTS-IMPL.md) | **Plan.** How the workspace agents proposal is built: seven steps in order, each linked to the proposal sections it implements, with files, migrations, tests, what to check by hand, and the decisions and corrections it feeds back into the proposal. |
+| [`docs/AMBIENT-RESPONSES.md`](docs/AMBIENT-RESPONSES.md) | **Built, on by default** (`AMBIENT_MODE`; needs `TYPESAFE_API_KEY`). An agent answering a message that did not mention it: a clock per turn (what one person said in a row, judged 90 s after their last message; other people never delay it), an answer per open question, seven Jev (TypeSafe) checks per message then the best-fitting agent, a draft that is an answer, an offer to look something up in a connected tool, or both, checked before it posts; a follow-up to your own mention continues your run; anything inferred is a job with no invoker; one look at a time per chat, three answers per chat per ten minutes, three follow-ups per exchange; silent on anything but a good answer. Tuning harness: `pnpm --filter @relayed/server run ambient-gate <chat-id>`. |
 | [`docs/MEMORY.md`](docs/MEMORY.md) | **Proposal.** What an agent remembers and how: memory belongs to the space rather than the agent, Hindsight banks as the permission boundary (not tags — a leak elsewhere decided it), the quiet-bounded episode as the ingestion unit, recall injected with citations into every run, and forgetting through a document id we choose. Carries the evidence behind each call and a staged plan that opens with two spikes. **Phase two** adds the human-facing half: a room timeline of replicated entries that replaces the summariser, and an admin view that measures whether the facts formed are consequential. |
 | [`docs/AGENT-BROWSER.md`](docs/AGENT-BROWSER.md) | **Proposal.** Letting an agent drive a web panel — click, type, read — for the things with no API: the driver in main over the Chrome DevTools Protocol, one implementation reached from both room kinds, and the consent model a credentialed session needs. |
 | [`docs/ANNOTATIONS.md`](docs/ANNOTATIONS.md) | **Proposal, backed by a spike.** Marking a passage in a web panel and attaching it to a message: capture with no code in the page, the W3C selector triple, a part with a body atom, and clicking one to open the page scrolled to it. Evidence in [`spikes/text-fragments/`](spikes/text-fragments/README.md) (`pnpm verify:text-fragments`). |
@@ -265,7 +266,7 @@ Full list in `docs/DESIGN.md` §14 — 73 invariants; the reasoning for 37–47 
 in `docs/STORAGE.md` §18, for 48–54 in `docs/AUTHZ.md` §13, for 55–71 in
 `docs/FRONTEND.md` §12, and for 72–73 in `docs/SHORTCUTS.md`, each paired with
 the failure it prevents. The ones that can be checked mechanically are held by
-the eleven rules in `pnpm check:boundaries` rather than by being remembered. The ones
+the fourteen rules in `pnpm check:boundaries` rather than by being remembered. The ones
 most easily broken by a reasonable-looking change:
 
 | | |

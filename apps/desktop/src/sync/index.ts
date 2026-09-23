@@ -25,7 +25,7 @@ import { Storage, type AccountSummary, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
   agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSideChat, createSpace, openDm, type SpaceInput,
-  stopAgentRun, refreshRoomSummary, type AgentInput,
+  stopAgentRun, dismissAmbient, refreshRoomSummary, type AgentInput,
   listToolkits, disconnectConnection,
   grantAgentPermission, revokeAgentPermission, allowAccessRequest,
 } from './auth/relayed.ts';
@@ -1300,6 +1300,13 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('offline');
     return stopAgentRun(token, (params as { runId: string }).runId);
+  },
+
+  /** "Not helpful here" on an unprompted answer (AMBIENT-RESPONSES.md §10.2). Online-only, like stopping a run. */
+  'ambient.dismiss': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) throw new Error('offline');
+    return dismissAmbient(token, (params as { messageId: string }).messageId);
   },
 
   // ── connections, through Composio (WORKSPACE-AGENTS.md §6) ────────────────

@@ -130,6 +130,18 @@ export interface TriggerRef {
 }
 
 /**
+ * Where an agent's message about this trigger goes: the trigger's own thread
+ * root when it is itself a reply, otherwise the trigger (WORKSPACE-AGENTS.md,
+ * the reply §5.7). ONE function, because a run's access card, its notice and its
+ * answer must land in the same place, and an ambient answer beside them
+ * (AMBIENT-RESPONSES.md, where the answer lands §6) — four copies of this
+ * expression could each be changed alone.
+ */
+export function replyParentOf(trigger: Pick<TriggerRef, 'id' | 'parentId'> | null, triggerMessageId: string): string {
+  return trigger?.parentId ?? trigger?.id ?? triggerMessageId;
+}
+
+/**
  * The transcript for one run: everything §5.6 asks for, joined into `prompt`.
  *
  * Thread or channel is decided by the trigger alone: a thread reply reads its

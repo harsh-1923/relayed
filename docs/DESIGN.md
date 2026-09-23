@@ -586,6 +586,11 @@ Consequences:
   indicator** can say what tool an agent is using right now, and the reply
   itself still lands as one ordinary message, into the triggering message's
   own thread — never the flat room stream — once the run finishes.
+- An agent may also answer a message that did **not** mention it
+  ([`AMBIENT-RESPONSES.md`](AMBIENT-RESPONSES.md)). That is a job, not a run:
+  found by polling after commit, never from the send transaction, spending
+  nobody's authority, and landing where a mention's reply to the same message
+  would.
 - Agent invocation is therefore **online-only**, while reading stays local-first.
   A clean boundary worth preserving.
 
@@ -2893,6 +2898,12 @@ test.
 | 85 | Every row a read path returns is **complete current state** — body, tombstone, edited, reply count | A client that held the row keeps yesterday's body, or a deleted message, on every device that was far behind |
 | 86 | After a gap the floor is **the tail's**, never `MIN` with an old one, and backfill is asked for while `has_gap` is set — from a floor of 1, or from `head_ord + 1` when the tail was empty | What a later gap jumped over is never fetched, and `has_gap` sticks or clears over a hole. Found by the sync model: 62 of 100 random worlds lost history |
 | 87 | A fetched row applies **only if it is not older** than the row held, and a repair is complete only on a page with **nothing rejected** | A live change landing mid-repair is undone, or the change before it is lost for good |
+| 89 | An answer nobody asked for **has no invoker** — written as a job, with `on_behalf_of_actor_id` and `delegation_id` NULL (`AMBIENT-RESPONSES.md` §5) | Someone's name, and their connections, behind something they did not ask for |
+| 90 | A message written with **no invoker starts no run** | An ambient answer that mentions an agent starts a run spending nobody's authority, or the wrong person's |
+| 91 | **No TypeSafe call inside the send transaction** — the boundary rule `ambient/never-in-the-send-path` | A third party's latency holds a Postgres transaction open and slows every send |
+| 92 | A job **never reads a person bank** (`MEMORY.md` §5.5) | One person's private memory is posted to a room |
+| 93 | Only a **person's** message is evaluated for an ambient answer | Two agents answer each other, with no chain depth to stop them |
+| 94 | A run started from a follow-up **spends only the authority of the person who wrote it, and only when their own mention began the exchange** (`AMBIENT-RESPONSES.md` §4.2) | Bob's reply to an answer Alice asked for runs on Alice's connections, or on nobody's |
 
 ### Scenarios to test explicitly
 

@@ -1,0 +1,20 @@
+{
+  "name": "@relayed/spike-ambient",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "spike": "REPS=3 node --env-file=../../.env run.ts",
+    "spike:v1": "ROUND=1 node --env-file=../../.env run.ts",
+    "spike:v2": "ROUND=2 node --env-file=../../.env run.ts",
+    "spike:v3": "ROUND=3 node --env-file=../../.env run.ts",
+    "gate2": "node --env-file=../../.env gate2-variants.ts",
+    "audit": "node audit.ts",
+    "flow": "REPS=3 node --env-file=../../.env flow-run.ts",
+    "flow:audit": "node flow-audit.ts 5 && node flow-audit.ts 5b && node flow-audit.ts 5c && node flow-audit.ts 5d && node flow-audit.ts 5e",
+    "flow:5": "FLOW_ROUND=5 REPS=3 node --env-file=../../.env flow-run.ts",
+    "flow:5b": "FLOW_ROUND=5b REPS=3 node --env-file=../../.env flow-run.ts",
+    "flow:5c": "FLOW_ROUND=5c REPS=3 node --env-file=../../.env flow-run.ts",
+    "flow:5e": "FLOW_ROUND=5e REPS=3 node --env-file=../../.env flow-run.ts",
+    "gate": "FLOW_ROUND=gate REPS=3 node --env-file=../../.env flow-run.ts && node flow-audit.ts gate"
+  }
+}

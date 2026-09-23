@@ -576,6 +576,54 @@ export interface RoomTimelineEntriesTable {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * One look at one chat for an ambient answer (migrations 031 and 033;
+ * docs/AMBIENT-RESPONSES.md, the table §9.1). Server-only, never synced.
+ */
+export interface AmbientDecisionsTable {
+  id: string;
+  workspace_id: string;
+  chat_id: string;
+  kind: 'ambient' | 'follow_up';
+  from_ord: ColumnType<number, number, number>;
+  through_ord: ColumnType<number, number, number>;
+  trigger_message_id: string | null;
+  agent_actor_id: string | null;
+  model: string | null;
+  gate1: unknown | null;
+  gate2: unknown | null;
+  because: string | null;
+  draft: string | null;
+  reply_message_id: string | null;
+  outcome: Generated<AmbientOutcome>;
+  /** The agent message the exchange started with, for a follow-up or the answer that starts one (migration 033). */
+  exchange_message_id: string | null;
+  lease_until: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  finished_at: Timestamp | null;
+}
+
+export type AmbientOutcome = 'pending' | 'silent' | 'declined' | 'suppressed' | 'gate_error' | 'failed'
+  | 'withdrawn' | 'stale' | 'shadow' | 'posted' | 'run';
+
+/** A person's message a look has judged (migration 033). Unjudged until it appears here. */
+export interface AmbientJudgedTable {
+  message_id: string;
+  decision_id: string;
+  created_at: Generated<Timestamp>;
+}
+
+/**
+ * Feedback a person gave on an agent's message (migration 032). Server-only,
+ * never synced, and read by nothing yet.
+ */
+export interface AgentFeedbackTable {
+  message_id: string;
+  actor_id: string;
+  kind: 'not_helpful';
+  created_at: Generated<Timestamp>;
+}
+
 export interface DB {
   organizations: OrganizationsTable;
   workspaces: WorkspacesTable;
@@ -610,4 +658,7 @@ export interface DB {
   memory_watermarks: MemoryWatermarksTable;
   memory_person_notes: MemoryPersonNotesTable;
   room_timeline_entries: RoomTimelineEntriesTable;
+  ambient_decisions: AmbientDecisionsTable;
+  ambient_judged: AmbientJudgedTable;
+  agent_feedback: AgentFeedbackTable;
 }

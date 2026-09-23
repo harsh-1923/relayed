@@ -14,7 +14,7 @@ import { count } from '@relayed/telemetry';
 import type { DB } from '../db/schema.ts';
 import { loadGrants } from '../authz/can.ts';
 import { chatPlacement } from '../sync/placement.ts';
-import { mentionedActorIds } from '../sync/mentions.ts';
+import { LOOKS_ADDRESSED, addressedAgent, mentionedActorIds } from '../sync/mentions.ts';
 import { rerunIfReady } from './rerun.ts';
 import { ulid } from '../db/ulid.ts';
 
@@ -62,6 +62,27 @@ export async function startMentionedRuns(
   return rows.map(row => row.id);
 }
 
+/**
+ * The other way a run starts from a message: a person's reply to the agent
+ * their OWN mention brought in, judged after commit to be for that agent
+ * (`AMBIENT-RESPONSES.md` §4.2). Queued for that person, at depth 1 — the same
+ * row a mention writes, because it is the same conversation going on, with
+ * the same person's tools. Nobody else's reply ever reaches here: for anyone
+ * but the person who mentioned, the ambient loop drafts with no tools instead.
+ */
+export async function startRunFor(
+  db: Kysely<DB> | Transaction<DB>,
+  input: { chatId: string; messageId: string; agentActorId: string; invokerActorId: string },
+): Promise<string> {
+  const chat = await db.selectFrom('chats').select('workspace_id').where('id', '=', input.chatId).executeTakeFirstOrThrow();
+  const id = ulid('run');
+  await db.insertInto('agent_runs').values({
+    id, workspace_id: chat.workspace_id, agent_actor_id: input.agentActorId, invoker_actor_id: input.invokerActorId,
+    chat_id: input.chatId, trigger_message_id: input.messageId, chain_depth: 1, state: 'queued',
+  }).execute();
+  return id;
+}
+
 // ─── invocationsFor ─────────────────────────────────────────────────────────
 
 export interface Invocation {
@@ -83,10 +104,13 @@ export interface TriggerMessage {
  *
  * A mention is the canonical actor link `mentions.ts` also counts unread
  * badges with — one parser, so a badge and a run cannot disagree about what a
- * mention is (the plan's D6). An agent qualifies only if it is `active` and a
- * member of the space with access to the chat: the same `can()` question any
- * actor's read access is answered with, because an agent's membership works
- * exactly like a person's (`AUTHZ.md` §7).
+ * mention is (the plan's D6). So is an agent's name used as an address at the
+ * start of the message — "triage, what's blocking?" — decided by the same
+ * module (`addressedAgent`), for the agents in the chat's space; it moves no
+ * badge, since nobody was linked. An agent qualifies only if it is `active`
+ * and a member of the space with access to the chat: the same `can()` question
+ * any actor's read access is answered with, because an agent's membership
+ * works exactly like a person's (`AUTHZ.md` §7).
  *
  * A DM with an agent is no different: it runs when mentioned, not on every
  * message (§5.1's "every message in a DM with an agent" is not built).
@@ -95,13 +119,14 @@ export async function invocationsFor(
   trx: Transaction<DB>, message: TriggerMessage,
 ): Promise<Invocation[]> {
   const mentioned = mentionedActorIds(message.body);
-  if (mentioned.length === 0) return [];
+  const named = mentioned.length === 0 ? await addressedAgentIn(trx, message) : null;
+  if (mentioned.length === 0 && named === null) return [];
 
   // Never the author itself: an agent mentioning itself in its own message
   // would only start itself again.
   const agents = await trx.selectFrom('actors')
     .select('id')
-    .where('id', 'in', mentioned)
+    .where('id', 'in', named ? [named] : mentioned)
     .where('id', '!=', message.authorId)
     .where('type', '=', 'agent')
     .where('state', '=', 'active')
@@ -117,6 +142,20 @@ export async function invocationsFor(
     }
   }
   return out;
+}
+
+/** The agent in the chat's space the message addresses by name at its start, if any. One cheap regex before any query. */
+async function addressedAgentIn(trx: Transaction<DB>, message: TriggerMessage): Promise<string | null> {
+  if (!LOOKS_ADDRESSED.test(message.body.trim())) return null;
+  const chat = await trx.selectFrom('chats').select('space_id').where('id', '=', message.chatId).executeTakeFirst();
+  if (!chat) return null;
+  const agents = await trx.selectFrom('memberships as mem')
+    .innerJoin('actors as ag', 'ag.id', 'mem.actor_id')
+    .select(['ag.id', 'ag.handle', 'ag.display_name'])
+    .where('mem.scope_type', '=', 'space').where('mem.scope_id', '=', chat.space_id).where('mem.left_at', 'is', null)
+    .where('ag.type', '=', 'agent').where('ag.state', '=', 'active')
+    .execute();
+  return addressedAgent(message.body, agents.map(agent => ({ key: agent.id, handle: agent.handle, name: agent.display_name ?? agent.handle })));
 }
 
 // ─── admitRun ───────────────────────────────────────────────────────────────

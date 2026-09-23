@@ -6,6 +6,7 @@
 //   ui           the model, but only from @relayed/genui's library
 //   reply_to_ui  the person who clicked a Reply, on their own message
 //   memory       the SERVER, from what it actually recalled — see MemoryPart
+//   ambient      the SERVER, from its own record that nobody asked — see AmbientPart
 // Approvals are deliberately not parts: the system renders those, from their own table.
 //
 // KEYS ARE snake_case, like every other key on the wire and in storage. Parts
@@ -150,8 +151,31 @@ export const MemoryPart = z.object({
 });
 export type MemoryPart = z.infer<typeof MemoryPart>;
 
+/**
+ * An agent answering a message that did not mention it (docs/AMBIENT-RESPONSES.md).
+ *
+ * SERVER-ONLY, like an access card. Whether a message was unprompted is decided
+ * by the server from its own record (`ambient_decisions`), never claimed by a
+ * model or a person: on a person's message it is a costume, and on an agent's
+ * reply to a mention it would be a lie about who asked.
+ *
+ * It carries the reference to the question the answer is about, written by the
+ * server rather than the model — a model asked to cite will sometimes forget,
+ * and the answer can land under someone else's message when people post while
+ * it works (§6). `asker` is the name as it read when the answer was written; a
+ * reader resolves `answering` for anything current.
+ */
+export const AmbientPart = z.object({
+  kind: z.literal('ambient'),
+  /** The message this answers. */
+  answering: z.string().min(1),
+  /** How the reference reads: the asker's name at the time. */
+  asker: z.string().min(1).max(200),
+});
+export type AmbientPart = z.infer<typeof AmbientPart>;
+
 export const MessagePart = z.discriminatedUnion('kind',
-  [MarkdownPart, ToolPart, UiPart, ReplyToUiPart, AccessRequestPart, MemoryPart]);
+  [MarkdownPart, ToolPart, UiPart, ReplyToUiPart, AccessRequestPart, MemoryPart, AmbientPart]);
 export type MessagePart = z.infer<typeof MessagePart>;
 
 /** The strict reading: what a server accepts on write. */
@@ -183,7 +207,7 @@ const AGENT_ONLY: ReadonlySet<string> = new Set(['tool', 'ui', 'memory']);
  * because it writes through `writeMessage`'s `trustedParts` instead of
  * untrusted `parts` (`sync/ops.ts`'s `contentOf`).
  */
-const SERVER_ONLY: ReadonlySet<string> = new Set(['access_request']);
+const SERVER_ONLY: ReadonlySet<string> = new Set(['access_request', 'ambient']);
 
 /** The first kind in `parts` this author may not write, or `null` if all are allowed. */
 export function forbiddenPartKind(authorType: string, parts: readonly { kind: string }[]): string | null {

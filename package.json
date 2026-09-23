@@ -25,7 +25,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json && pnpm check:boundaries",
+    "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p spikes/ambient/tsconfig.json && pnpm check:boundaries",
     "psql": "docker compose exec postgres psql -U relayed -d relayed",
     "redis-cli": "docker compose exec redis redis-cli",
     "grafana": "open http://localhost:3000",

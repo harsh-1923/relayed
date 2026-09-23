@@ -61,7 +61,8 @@ type Part =
       input: unknown; outputPreview?: string; outputBytes?: number }
   | { kind: 'ui'; lang: 'openui-lang@0.5'; library: `relayed-ui@${number}`; source: string }
   | { kind: 'reply_to_ui'; messageId: string; label: string }    // on the clicker's message, §6.3
-  | { kind: 'memory'; used: { text: string; messageId: string; label: string }[] };  // MEMORY.md §7.2
+  | { kind: 'memory'; used: { text: string; messageId: string; label: string }[] }   // MEMORY.md §7.2
+  | { kind: 'ambient'; answering: string; asker: string };  // AMBIENT-RESPONSES.md §6, server-only
 
 // Approvals are NOT parts. They are rows in their own table, rendered by the system.
 ```
@@ -74,6 +75,7 @@ type Part =
 | `tool` | the **runtime**, from a tool that really ran | no |
 | `ui` | the model, **only from relayed's library** | only within the library, which has nothing that looks like system UI |
 | `memory` | the **server**, from the facts it injected intersected with the citations the reply kept | no — a model writes text, never parts |
+| `ambient` | the **server**, from its own record that nobody asked (`ambient_decisions`) — the message answered and who asked it ([`AMBIENT-RESPONSES.md`](AMBIENT-RESPONSES.md) §6) | no — server-only, refused on the ordinary write path for every author |
 | approval | the **system** | no — a separate table and a look `ui` cannot produce |
 
 Unknown `kind`s are skipped by the renderer, which shows `body` in their place.

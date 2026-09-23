@@ -71,6 +71,10 @@ export function MessageParts({
             return null;
           case 'access_request':
             return <AccessCard key={index} part={part} body={body} onOpenLink={handlers.onOpenLink} />;
+          case 'ambient':
+            // Drawn in the header, as "unprompted · ↪ who asked" (`AmbientReference`),
+            // not in the answer: it says why the answer is here, not what it says.
+            return null;
         }
       })}
     </div>

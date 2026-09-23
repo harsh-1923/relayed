@@ -24,6 +24,7 @@ import {
 } from './definitions.ts';
 import { triggerRef, claimReplyMessageId, postFinishedNotice } from './dispatcher.ts';
 import type { FinishedRun } from './reply.ts';
+import { replyParentOf } from './transcript.ts';
 
 export interface AgentRouteDeps {
   db: Kysely<DB>;
@@ -165,7 +166,7 @@ export function agentRoutes(deps: AgentRouteDeps) {
       const finished: FinishedRun = {
         id: run.id, chatId: run.chat_id, agentActorId: run.agent_actor_id,
         invokerActorId: run.invoker_actor_id, replyMessageId,
-        replyParentId: trigger?.parentId ?? trigger?.id ?? run.trigger_message_id,
+        replyParentId: replyParentOf(trigger, run.trigger_message_id),
       };
       // The notice reads "Stopped by <name>" (§5.7) — a name, never the id
       // `can()` and everything else here works in.

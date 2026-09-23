@@ -600,6 +600,12 @@ bank's config and silently pinned it."*
 
 ### 7.1 What a run recalls
 
+**A job recalls with no invoker.** An ambient answer (`AMBIENT-RESPONSES.md`)
+has no person behind it, so `recallForRun` is called with a NULL invoker and
+reads the space and workspace banks only — never a person bank, which is
+private to one person, posted to a room here (invariant 92). Not "borrow the
+asker's": the asker asked the room, not the agent.
+
 ```
 run in chat C of space S, invoked by person P, replying into C
 

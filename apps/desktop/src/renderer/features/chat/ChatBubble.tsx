@@ -15,9 +15,10 @@ import { ThinkingOrb } from 'thinking-orbs';
 import { useAgentStream } from '@/lib/agent-stream';
 import { cn } from '@/lib/utils';
 import { CopyButton } from './CopyButton';
-import type { MemoryPart } from '@relayed/protocol';
+import type { AmbientPart, MemoryPart } from '@relayed/protocol';
 import { MessageParts } from './MessageParts';
 import { MemoryHoverCard } from './MemoryHoverCard';
+import { AmbientReference, DismissAmbient } from './AmbientMarker';
 import { openLink as openInRoomPanel, showAnnotation } from '@/lib/panel-navigation';
 import { isAnnotationLink } from '../../../shared/annotations.ts';
 import { isWebUrl, withoutFragmentDirective } from '../../../shared/web-panels.ts';
@@ -65,6 +66,11 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
   // (`undrawablePartKind`).
   const memoryPart = agentAuthored
     ? (parts ?? []).find((part): part is MemoryPart => part.kind === 'memory')
+    : undefined;
+  // The server's marker that nobody asked for this answer — only ever drawn on
+  // an agent, for the reason the memory part is (`undrawablePartKind`).
+  const ambientPart = agentAuthored
+    ? (parts ?? []).find((part): part is AmbientPart => part.kind === 'ambient')
     : undefined;
   const navigate = useNavigate();
   const { state: session } = useSession();
@@ -127,6 +133,7 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 : undefined}
             >
               {authorName}
+              {ambientPart && <AmbientReference part={ambientPart} />}
             </MessageHeader>
           )}
 
@@ -194,6 +201,12 @@ export function ChatBubble({ message, mine, startsGroup, endsGroup, waiting = fa
                 // this reply" — one gives you the text, the other where it came
                 // from (MEMORY.md §7.2).
                 <MemoryHoverCard part={memoryPart} onOpenLink={openLink} />
+              )}
+              {ambientPart && !message.deleted && (
+                <DismissAmbient
+                  messageId={message.id}
+                  className="opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100"
+                />
               )}
               {!mine && !message.deleted && !streaming && message.body && (
                 // As its Markdown source. An agent's body is derived from its

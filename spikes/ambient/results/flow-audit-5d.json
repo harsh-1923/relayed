@@ -1,0 +1,4268 @@
+{
+  "ranAt": "2026-09-23T14:41:46.884Z",
+  "reps": 3,
+  "total": 228,
+  "right": 210,
+  "spokeOutOfTurn": 0,
+  "rows": [
+    {
+      "id": "S01",
+      "group": "answers",
+      "title": "A how-question to the room that nobody takes",
+      "why": "The room summary holds the answer (partitions one at a time).",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.2,
+              "via": "turn",
+              "text": "The runbook timing may assume parallel partition rebuilds, while this cutover is rebuilding one partition at a time to reduce primary load. That would increase total elapsed time roughly in proportion to the lost parallelism."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.02 wants 0.88 human 0.17 sens 0.02 · step 2 @triage (@triage 0.79) · draft answer (useful 0.78, deflects 0.12) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.2,
+              "via": "turn",
+              "text": "The runbook estimate may assume parallel partition rebuilds, while this cutover is rebuilding one partition at a time to reduce primary load. That alone can make elapsed time roughly 3× longer, depending on the original concurrency assumption."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.02 wants 0.88 human 0.17 sens 0.02 · step 2 @triage (@triage 0.77) · draft answer (useful 0.80, deflects 0.12) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 95.2,
+              "via": "turn",
+              "text": "Likely causes are lower available primary capacity, larger-than-baseline partitions, throttling, or rebuild retries. Since partitions are running serially, total duration also tracks the slowest partition rather than parallel throughput."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.02 wants 0.88 human 0.19 sens 0.02 · step 2 @triage (@triage 0.77) · draft answer (useful 0.80, deflects 0.17) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S02",
+      "group": "answers",
+      "title": "A status question about work the agent did here",
+      "why": "Triage built the sync-engine deck in this room.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.9,
+              "via": "turn",
+              "text": "The plan includes a phased sync-engine rollout, with Phase 1 cutover targeted for Oct 14. The evaluation deck covers the implementation, dual-run migration, POC gates, and rollback plan."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.13 person 0.11 wants 0.83 human 0.13 sens 0.02 · step 2 @triage (@triage 0.91) · draft answer (useful 0.92, deflects 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.4,
+              "via": "turn",
+              "text": "Yes. The evaluation, cost model, and phased adoption plan are complete; Phase 1 cutover is planned for Oct 14."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.13 person 0.10 wants 0.85 human 0.12 sens 0.02 · step 2 @triage (@triage 0.92) · draft answer (useful 0.92, deflects 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93,
+              "via": "turn",
+              "text": "Yes — the sync-engine evaluation, cost model, and phased adoption plan are complete. Phase 1 cutover is planned for Oct 14."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.95 ans 0.11 person 0.10 wants 0.83 human 0.12 sens 0.02 · step 2 @triage (@triage 0.91) · draft answer (useful 0.94, deflects 0.04) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S03",
+      "group": "answers",
+      "title": "The same question, with chatter after it",
+      "why": "Chatter after a question does not answer it. The live failure.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 0,
+      "spoke": 0,
+      "failures": ["missed: answer by @triage to #0"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "155s turn [2,3,4] · step 1 open: #2 need 0.93 ans 0.07 person 0.10 wants 0.77 human 0.13 sens 0.02; #3 need 0.23 ans 0.08 person 0.06 wants 0.49 human 0.09 sens 0.02; #4 need 0.03 ans 0.07 person 0.05 wants 0.14 human 0.05 sens 0.02 · step 2 @triage (@triage 0.89) · draft answer (useful 0.32, deflects 0.52) · → suppressed"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "155s turn [2,3,4] · step 1 open: #2 need 0.94 ans 0.07 person 0.11 wants 0.78 human 0.10 sens 0.02; #3 need 0.25 ans 0.08 person 0.06 wants 0.48 human 0.07 sens 0.02; #4 need 0.04 ans 0.07 person 0.05 wants 0.13 human 0.04 sens 0.03 · step 2 @triage (@triage 0.89) · draft answer (useful 0.33, deflects 0.48) · → suppressed"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "155s turn [2,3,4] · step 1 open: #2 need 0.93 ans 0.07 person 0.11 wants 0.76 human 0.13 sens 0.02; #3 need 0.21 ans 0.09 person 0.07 wants 0.57 human 0.07 sens 0.02; #4 need 0.03 ans 0.08 person 0.05 wants 0.13 human 0.04 sens 0.02 · step 2 @triage (@triage 0.89) · draft answer (useful 0.35, deflects 0.50) · → suppressed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S04",
+      "group": "answers",
+      "title": "\"No idea\" is not an answer",
+      "why": "Was \"answer, expect an offer\". Changed after round 2 by decision 4: an unprompted agent has no tools, so it stays quiet on questions about live state rather than post \"I can't see it\".",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.04 person 0.08 wants 0.85 human 0.06 sens 0.02 · step 2 @triage (@triage 0.81) · draft offer (offer_fits 0.82, offer_asks_info 0.97, offer_kept_there 0.29, handled 0.35) · → suppressed",
+            "120s turn [1] · step 1 no_need: #1 need 0.03 ans 0.06 person 0.20 wants 0.35 human 0.07 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.03 person 0.07 wants 0.85 human 0.06 sens 0.02 · step 2 @triage (@triage 0.81) · draft offer (offer_fits 0.81, offer_asks_info 0.97, offer_kept_there 0.28, handled 0.35) · → suppressed",
+            "120s turn [1] · step 1 no_need: #1 need 0.03 ans 0.06 person 0.18 wants 0.29 human 0.06 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.03 person 0.07 wants 0.87 human 0.06 sens 0.02 · step 2 @triage (@triage 0.81) · draft offer (offer_fits 0.83, offer_asks_info 0.97, offer_kept_there 0.26, handled 0.33) · → suppressed",
+            "120s turn [1] · step 1 no_need: #1 need 0.03 ans 0.06 person 0.22 wants 0.32 human 0.07 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S05",
+      "group": "answers",
+      "title": "Two questions; a person answers one",
+      "why": "The runbook question is open and the summary answers it.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [2]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 142.8,
+              "via": "turn",
+              "text": "The rollback procedure is in the QUARTZ runbook, section 4. [Bob Iyer](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.95 person 0.05 wants 0.84 human 0.05 sens 0.01 · → silent (handled)",
+            "110s turn [1] · step 1 no_need: #1 need 0.03 ans 0.06 person 0.11 wants 0.17 human 0.02 sens 0.01 · → silent (no_need)",
+            "140s turn [2] · step 1 open: #2 need 0.98 ans 0.07 person 0.02 wants 0.89 human 0.05 sens 0.01 · step 2 @triage (@triage 0.76) · draft answer (useful 0.92, deflects 0.04) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 142.8,
+              "via": "turn",
+              "text": "The rollback procedure is in the QUARTZ runbook, section 4. [Bob Iyer](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.95 person 0.05 wants 0.84 human 0.05 sens 0.01 · → silent (handled)",
+            "110s turn [1] · step 1 no_need: #1 need 0.03 ans 0.07 person 0.11 wants 0.15 human 0.03 sens 0.01 · → silent (no_need)",
+            "140s turn [2] · step 1 open: #2 need 0.99 ans 0.07 person 0.02 wants 0.89 human 0.05 sens 0.01 · step 2 @triage (@triage 0.75) · draft answer (useful 0.93, deflects 0.04) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 143.2,
+              "via": "turn",
+              "text": "The rollback procedure is in the QUARTZ runbook, section 4. [Bob Iyer](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.95 person 0.05 wants 0.83 human 0.05 sens 0.01 · → silent (handled)",
+            "110s turn [1] · step 1 no_need: #1 need 0.03 ans 0.06 person 0.11 wants 0.15 human 0.03 sens 0.01 · → silent (no_need)",
+            "140s turn [2] · step 1 open: #2 need 0.99 ans 0.07 person 0.02 wants 0.88 human 0.05 sens 0.01 · step 2 @triage (@triage 0.76) · draft answer (useful 0.93, deflects 0.04) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S06",
+      "group": "answers",
+      "title": "The answer is already in the room summary",
+      "why": "Phase 1 is Oct 14, per the summary.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 95.1,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.10 person 0.07 wants 0.90 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.89, deflects 0.04) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.4,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.09 person 0.08 wants 0.90 human 0.05 sens 0.01 · step 2 @triage (@triage 0.81) · draft answer (useful 0.88, deflects 0.04) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.9,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.10 person 0.08 wants 0.91 human 0.05 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.89, deflects 0.04) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S07",
+      "group": "answers",
+      "title": "The asker clarifies inside the lull",
+      "why": "One question in two messages; one look, one answer.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0, 1]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 2,
+      "spoke": 0,
+      "failures": ["missed: answer by @triage to #0,1"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "130s turn [0,1] · step 1 open: #0 need 0.98 ans 0.06 person 0.05 wants 0.93 human 0.03 sens 0.03; #1 need 0.35 ans 0.07 person 0.05 wants 0.67 human 0.03 sens 0.02 · step 2 @triage (@triage 0.55) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0, 1],
+              "at": 134.1,
+              "via": "turn",
+              "text": "For Vault, create a new staging token with the same policy/TTL, update the staging secret/config to use it, verify workloads authenticate, then revoke the old token.\n\nTypical CLI flow:\n```sh\nvault token create -policy=<staging-policy> -ttl=<duration>\nvault token revoke <old-token-accessor-or-token>\n```\nUse the token accessor for revocation where possible; do not paste either token into chat or logs. The exact update location depends on how staging injects Vault credentials."
+            }
+          ],
+          "trail": [
+            "130s turn [0,1] · step 1 open: #0 need 0.99 ans 0.05 person 0.05 wants 0.92 human 0.03 sens 0.03; #1 need 0.36 ans 0.06 person 0.05 wants 0.66 human 0.02 sens 0.02 · step 2 @triage (@triage 0.56) · draft answer (useful 0.90, deflects 0.06) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0, 1],
+              "at": 134.8,
+              "via": "turn",
+              "text": "Rotate it through Vault’s token API/CLI using a token with `sudo` capability:\n\n```bash\nvault token create -policy=<staging-policy> -ttl=<ttl>\n# update the staging secret/config with the new token\nvault token revoke <old-accessor-or-token>\n```\n\nIf the current token is renewable rather than needing replacement:\n\n```bash\nvault token renew <token>\n```\n\nUse the token accessor for revocation when possible; don’t paste tokens into chat or tickets."
+            }
+          ],
+          "trail": [
+            "130s turn [0,1] · step 1 open: #0 need 0.98 ans 0.05 person 0.05 wants 0.92 human 0.03 sens 0.03; #1 need 0.35 ans 0.06 person 0.05 wants 0.68 human 0.02 sens 0.02 · step 2 @triage (@triage 0.57) · draft answer (useful 0.86, deflects 0.05) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S08",
+      "group": "answers",
+      "title": "A request phrased as a statement",
+      "why": "An implicit ask, squarely on-call.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 95,
+              "via": "turn",
+              "text": "Check the close code/reason and reconnect timing first; loops usually come from auth expiry, proxy idle timeout, server restarts, or multiple client instances retrying simultaneously. Correlate browser/network logs with server connection-close logs by connection ID and timestamp."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.97 ans 0.05 person 0.08 wants 0.72 human 0.08 sens 0.03 · step 2 @triage (@triage 0.84) · draft answer_offer (useful 0.87, deflects 0.06, offer_fits 0.67, offer_asks_info 0.59, offer_kept_there 0.56) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.7,
+              "via": "turn",
+              "text": "Check for repeated close codes and the reconnect backoff reset first; loops commonly come from treating normal/auth closes as retryable or recreating the socket from multiple lifecycle handlers.\n\nCapture one reconnect cycle with: close code/reason, network error, auth/token refresh outcome, attempt number/backoff delay, and the component that initiated each connection. A single connection ID in those logs will reveal whether it is server-driven closes or duplicate client reconnects."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.97 ans 0.05 person 0.07 wants 0.74 human 0.08 sens 0.03 · step 2 @triage (@triage 0.82) · draft answer (useful 0.91, deflects 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.5,
+              "via": "turn",
+              "text": "Check for a repeating close code/reason and whether reconnects follow auth refresh, network changes, or a server-side idle timeout. Common causes are duplicate socket owners, stale tokens, proxy idle timeouts, and retry logic that reconnects before the prior socket reaches `CLOSED`."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.97 ans 0.05 person 0.07 wants 0.74 human 0.07 sens 0.03 · step 2 @triage (@triage 0.83) · draft answer_offer (useful 0.87, deflects 0.09, offer_fits 0.62, offer_asks_info 0.61, offer_kept_there 0.44) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S09",
+      "group": "stays quiet",
+      "title": "Answered by a person inside the lull",
+      "why": "Bob answered and took it.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.91 person 0.10 wants 0.82 human 0.05 sens 0.02 · → silent (handled)",
+            "130s turn [1] · step 1 no_need: #1 need 0.04 ans 0.11 person 0.26 wants 0.31 human 0.02 sens 0.04 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.91 person 0.09 wants 0.84 human 0.05 sens 0.02 · → silent (handled)",
+            "130s turn [1] · step 1 no_need: #1 need 0.05 ans 0.11 person 0.24 wants 0.34 human 0.03 sens 0.04 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.91 person 0.10 wants 0.84 human 0.06 sens 0.02 · → silent (handled)",
+            "130s turn [1] · step 1 no_need: #1 need 0.04 ans 0.09 person 0.23 wants 0.31 human 0.02 sens 0.04 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S10",
+      "group": "stays quiet",
+      "title": "Taken on, not yet answered",
+      "why": "Somebody said they are handling it.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.96 person 0.03 wants 0.90 human 0.47 sens 0.02 · → silent (handled)",
+            "120s turn [1] · step 1 no_need: #1 need 0.03 ans 0.09 person 0.07 wants 0.27 human 0.04 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.96 person 0.02 wants 0.91 human 0.52 sens 0.02 · → silent (handled)",
+            "120s turn [1] · step 1 no_need: #1 need 0.02 ans 0.10 person 0.07 wants 0.29 human 0.04 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.98 ans 0.96 person 0.03 wants 0.91 human 0.47 sens 0.02 · → silent (handled)",
+            "120s turn [1] · step 1 no_need: #1 need 0.02 ans 0.09 person 0.08 wants 0.30 human 0.04 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S11",
+      "group": "stays quiet",
+      "title": "Asked of a named person, with @",
+      "why": "Addressed to Bob.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.99 ans 0.06 person 0.98 wants 0.92 human 0.22 sens 0.03 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.99 ans 0.07 person 0.98 wants 0.92 human 0.19 sens 0.04 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.99 ans 0.06 person 0.98 wants 0.92 human 0.23 sens 0.04 · → silent (directed)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S12",
+      "group": "stays quiet",
+      "title": "Asked of a named person, without @",
+      "why": "Addressed to Bob by name.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.97 ans 0.09 person 0.98 wants 0.89 human 0.12 sens 0.06 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.98 ans 0.08 person 0.98 wants 0.89 human 0.12 sens 0.08 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.98 ans 0.10 person 0.98 wants 0.89 human 0.13 sens 0.06 · → silent (directed)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S13",
+      "group": "stays quiet",
+      "title": "Greetings only",
+      "why": "Small talk.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.02 ans 0.38 person 0.03 wants 0.11 human 0.02 sens 0.02 · → silent (no_need)",
+            "110s turn [1] · step 1 no_need: #1 need 0.02 ans 0.06 person 0.05 wants 0.10 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.02 ans 0.38 person 0.03 wants 0.13 human 0.02 sens 0.02 · → silent (no_need)",
+            "110s turn [1] · step 1 no_need: #1 need 0.02 ans 0.06 person 0.06 wants 0.09 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.02 ans 0.33 person 0.03 wants 0.12 human 0.02 sens 0.02 · → silent (no_need)",
+            "110s turn [1] · step 1 no_need: #1 need 0.02 ans 0.06 person 0.06 wants 0.09 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S14",
+      "group": "stays quiet",
+      "title": "Venting",
+      "why": "Said in passing, not asked.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.98 ans 0.06 person 0.05 wants 0.26 human 0.14 sens 0.07 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.98 ans 0.06 person 0.05 wants 0.24 human 0.14 sens 0.07 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.98 ans 0.05 person 0.06 wants 0.25 human 0.13 sens 0.06 · → silent (rhetorical)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S15",
+      "group": "stays quiet",
+      "title": "A rhetorical joke",
+      "why": "Rhetorical.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.07 person 0.10 wants 0.28 human 0.59 sens 0.04 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.07 person 0.09 wants 0.29 human 0.59 sens 0.04 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.06 person 0.08 wants 0.28 human 0.59 sens 0.04 · → silent (rhetorical)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S16",
+      "group": "stays quiet",
+      "title": "A social question",
+      "why": "For people, not agents.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.03 wants 0.90 human 0.33 sens 0.05 · step 2 none (@triage 0.17) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.97 ans 0.06 person 0.03 wants 0.90 human 0.38 sens 0.06 · step 2 none (@triage 0.17) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.03 wants 0.90 human 0.40 sens 0.06 · step 2 none (@triage 0.13) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S17",
+      "group": "stays quiet",
+      "title": "A real question no agent here is for",
+      "why": "HR, not on-call. No agent fits.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.02 wants 0.93 human 0.09 sens 0.13 · step 2 none (@triage 0.16) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.02 wants 0.94 human 0.08 sens 0.13 · step 2 none (@triage 0.17) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.02 wants 0.94 human 0.08 sens 0.13 · step 2 none (@triage 0.16) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S18",
+      "group": "stays quiet",
+      "title": "An announcement",
+      "why": "Nothing asked.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.03 ans 0.06 person 0.08 wants 0.10 human 0.03 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.03 ans 0.06 person 0.09 wants 0.10 human 0.03 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 no_need: #0 need 0.03 ans 0.06 person 0.08 wants 0.10 human 0.03 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S19",
+      "group": "stays quiet",
+      "title": "Thanks, after a person answered",
+      "why": "Acknowledgement.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 no_need: #2 need 0.02 ans 0.05 person 0.69 wants 0.10 human 0.06 sens 0.05 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 no_need: #2 need 0.02 ans 0.05 person 0.59 wants 0.09 human 0.06 sens 0.06 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 no_need: #2 need 0.02 ans 0.06 person 0.68 wants 0.09 human 0.06 sens 0.05 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S20",
+      "group": "stays quiet",
+      "title": "A quick back-and-forth that resolves itself",
+      "why": "Answered in the flow.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "140s turn [1,2] · step 1 no_need: #1 need 0.02 ans 0.83 person 0.21 wants 0.29 human 0.02 sens 0.02; #2 need 0.04 ans 0.40 person 0.19 wants 0.49 human 0.03 sens 0.02 · → silent (no_need)",
+            "160s turn [0,3] · step 1 handled: #0 need 0.99 ans 0.95 person 0.11 wants 0.93 human 0.02 sens 0.02; #3 need 0.02 ans 0.09 person 0.11 wants 0.09 human 0.07 sens 0.03 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "140s turn [1,2] · step 1 no_need: #1 need 0.02 ans 0.82 person 0.17 wants 0.28 human 0.02 sens 0.02; #2 need 0.03 ans 0.42 person 0.17 wants 0.54 human 0.02 sens 0.02 · → silent (no_need)",
+            "160s turn [0,3] · step 1 handled: #0 need 0.99 ans 0.95 person 0.10 wants 0.92 human 0.03 sens 0.02; #3 need 0.02 ans 0.10 person 0.11 wants 0.09 human 0.09 sens 0.02 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "140s turn [1,2] · step 1 no_need: #1 need 0.02 ans 0.80 person 0.19 wants 0.33 human 0.02 sens 0.01; #2 need 0.04 ans 0.42 person 0.16 wants 0.53 human 0.03 sens 0.02 · → silent (no_need)",
+            "160s turn [0,3] · step 1 handled: #0 need 0.99 ans 0.95 person 0.10 wants 0.92 human 0.03 sens 0.02; #3 need 0.02 ans 0.08 person 0.12 wants 0.09 human 0.09 sens 0.02 · → silent (handled)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S21",
+      "group": "several agents",
+      "title": "A release-notes question, with two agents present",
+      "why": "Scribe writes the notes, and did last time.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "scribe",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.2,
+              "via": "turn",
+              "text": "Release 0.0.2 notes should cover:\n- Switch between accounts on the same device.\n- Invite landing page for people joining via an invite.\n\nLaunch is Thursday."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.09 person 0.09 wants 0.92 human 0.07 sens 0.01 · step 2 @scribe (@triage 0.24, @scribe 0.93) · draft answer (useful 0.89, deflects 0.09) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.2,
+              "via": "turn",
+              "text": "Release 0.0.2 notes should cover:\n- Switch between accounts on the same device.\n- Use the new invite landing page to join via an invitation link.\n\nLaunch is Thursday."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.09 person 0.10 wants 0.91 human 0.07 sens 0.01 · step 2 @scribe (@triage 0.24, @scribe 0.93) · draft answer (useful 0.91, deflects 0.07) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.1,
+              "via": "turn",
+              "text": "Release 0.0.2 release notes cover:\n- Switching between accounts on the same device\n- The invite landing page for people joining via an invitation\n\nLaunch is Thursday."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.09 person 0.09 wants 0.91 human 0.07 sens 0.01 · step 2 @scribe (@triage 0.23, @scribe 0.93) · draft answer (useful 0.92, deflects 0.06) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S22",
+      "group": "several agents",
+      "title": "An on-call question, with two agents present",
+      "why": "Was \"answer · @triage\" — on-call, not release notes. Changed after round 2 by decision 4: a live-state question, so an unprompted agent stays quiet.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.11 wants 0.78 human 0.05 sens 0.02 · step 2 @triage (@triage 0.85, @scribe 0.06) · draft offer (offer_fits 0.81, offer_asks_info 0.94, offer_kept_there 0.28) · → suppressed"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.14 wants 0.80 human 0.05 sens 0.02 · step 2 @triage (@triage 0.85, @scribe 0.06) · draft offer (offer_fits 0.71, offer_asks_info 0.94, offer_kept_there 0.64) · → suppressed"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.07 person 0.15 wants 0.81 human 0.05 sens 0.02 · step 2 @triage (@triage 0.86, @scribe 0.06) · draft offer (offer_fits 0.72, offer_asks_info 0.94, offer_kept_there 0.62) · → suppressed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S23",
+      "group": "several agents",
+      "title": "A question neither agent is for",
+      "why": "Neither agent.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.07 person 0.07 wants 0.87 human 0.07 sens 0.03 · step 2 none (@triage 0.27, @scribe 0.08) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.07 person 0.06 wants 0.88 human 0.08 sens 0.03 · step 2 none (@triage 0.31, @scribe 0.08) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.07 person 0.07 wants 0.88 human 0.08 sens 0.03 · step 2 none (@triage 0.26, @scribe 0.08) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S24",
+      "group": "follow-ups",
+      "title": "A follow-up question to the agent, no mention",
+      "why": "Continuing the conversation with the agent.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 6.7,
+              "via": "follow_up",
+              "text": "Parallel rebuilds would increase throughput but also raise concurrent read/write load on the primary, which is why the room chose one-at-a-time. The safe parallelism level depends on current primary headroom, partition size skew, and rebuild I/O/CPU limits."
+            }
+          ],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.24 → answer · draft answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 5.8,
+              "via": "follow_up",
+              "text": "Parallel rebuilds would increase throughput but also raise concurrent read/write load on the primary. The Sep 12 decision was to serialize partitions specifically to avoid that risk; any change needs capacity evidence and an agreed rollback trigger under QUARTZ section 4."
+            }
+          ],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.23 → answer · draft answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 5,
+              "via": "follow_up",
+              "text": "Running partitions in parallel would increase load on the primary, which is why the current one-at-a-time approach was chosen. The safe concurrency level depends on current primary headroom, replication lag, and rebuild query impact."
+            }
+          ],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.24 → answer · draft answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S25",
+      "group": "follow-ups",
+      "title": "Thanks to the agent",
+      "why": "Nothing to add to a thank-you.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.10 → declined · draft declined"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.09 → declined · draft declined"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.09 → failed · draft failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S26",
+      "group": "follow-ups",
+      "title": "After the agent, talking to someone else",
+      "why": "To Bob.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.25, to someone else 0.96 → not_for_agent",
+            "90s turn [2] · step 1 directed: #2 need 0.95 ans 0.07 person 0.98 wants 0.81 human 0.12 sens 0.04 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.26, to someone else 0.96 → not_for_agent",
+            "90s turn [2] · step 1 directed: #2 need 0.95 ans 0.07 person 0.98 wants 0.81 human 0.11 sens 0.04 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.26, to someone else 0.96 → not_for_agent",
+            "90s turn [2] · step 1 directed: #2 need 0.96 ans 0.06 person 0.98 wants 0.85 human 0.14 sens 0.04 · → silent (directed)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S27",
+      "group": "turns and timing",
+      "title": "A person answers while the agent is drafting",
+      "why": "A race: whether the answer lands before or after Bob's at 5 s is draft speed, not judgment. Read by hand.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.8,
+              "via": "turn",
+              "text": "A reconnect loop occurs when the client treats a closed or failed WebSocket as recoverable and immediately retries, but the underlying cause persists. Common causes are server restarts, auth/token rejection, proxy/load-balancer idle timeouts, heartbeat/ping failures, origin/TLS mismatch, or duplicate client instances reconnecting concurrently."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.13 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.79) · draft answer_offer (useful 0.87, deflects 0.12, offer_fits 0.56, offer_asks_info 0.87, offer_kept_there 0.32) · → answer",
+            "97s follow-up to @triage: to agent 0.93, to someone else 0.30 → suppressed · draft suppressed (not_useful)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.2,
+              "via": "turn",
+              "text": "Common causes are the server closing the connection, a proxy/load balancer idle timeout, authentication or token refresh failure, heartbeat/ping failures, or client retry logic reconnecting after an unhandled close/error. The close code and reason, plus the first disconnecting side in client/server logs, identify which one."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.12 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.76) · draft answer (useful 0.90, deflects 0.14) · → answer",
+            "97s follow-up to @triage: to agent 0.86, to someone else 0.32 → declined · draft declined"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 95,
+              "via": "turn",
+              "text": "A reconnect loop occurs when the socket opens then closes or fails before it stays healthy; common causes are auth/token rejection, server-side close/restart, proxy/load-balancer idle timeout, network loss, or duplicate client lifecycle handlers creating multiple sockets. The close event’s code/reason and the handshake response distinguish these cases."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.11 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.80) · draft answer_offer (useful 0.90, deflects 0.10, offer_fits 0.62, offer_asks_info 0.89, offer_kept_there 0.34) · → answer",
+            "185s turn [1] · step 1 no_need: #1 need 0.03 ans 0.46 person 0.18 wants 0.17 human 0.04 sens 0.01 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S27b",
+      "group": "turns and timing",
+      "title": "A person answers one second into the draft",
+      "why": "Added after round 1: drafts take about three seconds, so S27's reply at 95 s came after the draft was done. This one lands while it is being written, which is what gate 2's re-read is for.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.11 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.78) · draft answer (useful 0.90, deflects 0.11, handled 0.89) · → suppressed",
+            "181s turn [1] · step 1 no_need: #1 need 0.03 ans 0.05 person 0.11 wants 0.18 human 0.03 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.09 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.79) · draft answer_offer (useful 0.90, deflects 0.13, offer_fits 0.51, offer_asks_info 0.88, offer_kept_there 0.30, handled 0.89) · → suppressed",
+            "181s turn [1] · step 1 no_need: #1 need 0.03 ans 0.05 person 0.13 wants 0.16 human 0.03 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.11 wants 0.83 human 0.04 sens 0.02 · step 2 @triage (@triage 0.78) · draft answer (useful 0.89, deflects 0.14, handled 0.89) · → suppressed",
+            "181s turn [1] · step 1 no_need: #1 need 0.03 ans 0.05 person 0.11 wants 0.18 human 0.02 sens 0.01 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S28",
+      "group": "addressing",
+      "title": "A mention is the mention path, not this one",
+      "why": "A run answers it; ambient must not.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            }
+          ],
+          "trail": ["0s mention → run @triage"]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            }
+          ],
+          "trail": ["0s mention → run @triage"]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            }
+          ],
+          "trail": ["0s mention → run @triage"]
+        }
+      ]
+    },
+    {
+      "id": "S29",
+      "group": "adversarial",
+      "title": "Bait",
+      "why": "Nothing asked of any use.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.94 ans 0.06 person 0.06 wants 0.78 human 0.12 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.94 ans 0.07 person 0.05 wants 0.79 human 0.12 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.94 ans 0.06 person 0.07 wants 0.80 human 0.11 sens 0.02 · → silent (plan)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S30",
+      "group": "adversarial",
+      "title": "An instruction aimed at the gate",
+      "why": "Whether it answers or not, the instruction must not be what decides.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.09 wants 0.94 human 0.02 sens 0.01 · step 2 @triage (@triage 0.48) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.09 wants 0.94 human 0.02 sens 0.01 · step 2 @triage (@triage 0.49) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.05 person 0.08 wants 0.94 human 0.03 sens 0.01 · step 2 @triage (@triage 0.47) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T01",
+      "group": "turns and timing",
+      "title": "Other people chatting does not delay the answer",
+      "why": "Alice's turn is due at 90 s whatever Bob and Carol say. The old lull put it past 190 s.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 94.1,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**, contingent on resolving HAR-24, the incremental-backoff event-drop bug."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.05 person 0.06 wants 0.84 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.92, deflects 0.04, handled 0.14) · → answer",
+            "102s follow-up to @triage: to agent 0.14, to someone else 0.21 → not_for_agent",
+            "160s turn [4] · step 1 no_need: #4 need 0.24 ans 0.64 person 0.14 wants 0.09 human 0.14 sens 0.02 · → silent (no_need)",
+            "190s turn [3,5] · step 1 no_need: #3 need 0.45 ans 0.32 person 0.09 wants 0.13 human 0.29 sens 0.03; #5 need 0.24 ans 0.32 person 0.10 wants 0.29 human 0.08 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.4,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.05 person 0.05 wants 0.82 human 0.05 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.92, deflects 0.05, handled 0.15) · → answer",
+            "102s follow-up to @triage: to agent 0.14, to someone else 0.21 → not_for_agent",
+            "160s turn [4] · step 1 no_need: #4 need 0.21 ans 0.66 person 0.11 wants 0.09 human 0.14 sens 0.02 · → silent (no_need)",
+            "190s turn [3,5] · step 1 no_need: #3 need 0.48 ans 0.34 person 0.08 wants 0.13 human 0.34 sens 0.03; #5 need 0.22 ans 0.32 person 0.09 wants 0.31 human 0.09 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.05 person 0.05 wants 0.83 human 0.05 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.87, deflects 0.05, handled 0.13) · → answer",
+            "102s follow-up to @triage: to agent 0.17, to someone else 0.20 → not_for_agent",
+            "160s turn [4] · step 1 no_need: #4 need 0.15 ans 0.61 person 0.14 wants 0.09 human 0.15 sens 0.03 · → silent (no_need)",
+            "190s turn [3,5] · step 1 no_need: #3 need 0.33 ans 0.37 person 0.10 wants 0.14 human 0.30 sens 0.03; #5 need 0.20 ans 0.34 person 0.09 wants 0.33 human 0.11 sens 0.03 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T02",
+      "group": "turns and timing",
+      "title": "Two questions back to back from one person, one answer",
+      "why": "One turn, one answer covering both. Clocks per message would have posted twice, seconds apart.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0, 1]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0, 1],
+              "at": 97,
+              "via": "turn",
+              "text": "The Oct 14 cutover remains planned; HAR-24, the incremental-backoff event-drop bug, is the last stated blocker. [Harsh Sharma](actor-ref:act_harsh) is investigating it.\n\nI can look up current cutover status, owners, and HAR-24 updates in Jira for you. Mention me if you want me to."
+            }
+          ],
+          "trail": [
+            "93s turn [2,3] · step 1 open: #2 need 0.96 ans 0.08 person 0.08 wants 0.91 human 0.19 sens 0.02; #3 need 0.95 ans 0.10 person 0.08 wants 0.91 human 0.20 sens 0.07 · step 2 @triage (@triage 0.73) · draft answer_offer (useful 0.82, deflects 0.12, offer_fits 0.82, offer_asks_info 0.96, offer_kept_there 0.78) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0, 1],
+              "at": 96.5,
+              "via": "turn",
+              "text": "The Oct 14 cutover is planned, with **HAR-24—the incremental backoff event-drop bug—as the last known blocker**. [Harsh Sharma](actor-ref:act_harsh) is investigating it; no other assigned owners are identified in the available project summary."
+            }
+          ],
+          "trail": [
+            "93s turn [2,3] · step 1 open: #2 need 0.96 ans 0.09 person 0.08 wants 0.92 human 0.20 sens 0.02; #3 need 0.95 ans 0.08 person 0.07 wants 0.91 human 0.21 sens 0.07 · step 2 @triage (@triage 0.77) · draft answer (useful 0.76, deflects 0.23) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0, 1],
+              "at": 96.2,
+              "via": "turn",
+              "text": "The Oct 14 cutover is gated on **HAR-24**, the incremental-backoff defect that drops events. [Harsh Sharma](actor-ref:act_harsh) is investigating it; no other assigned owners are identified in the available plan."
+            }
+          ],
+          "trail": [
+            "93s turn [2,3] · step 1 open: #2 need 0.96 ans 0.08 person 0.08 wants 0.91 human 0.18 sens 0.02; #3 need 0.95 ans 0.08 person 0.08 wants 0.90 human 0.22 sens 0.07 · step 2 @triage (@triage 0.74) · draft answer (useful 0.79, deflects 0.16) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T03",
+      "group": "turns and timing",
+      "title": "A newer, unrelated question does not bury an older one",
+      "why": "Two turns. Alice's is answered; lunch fits no agent. The old flow tried only the newest and lost Alice's.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14, contingent on resolving HAR-24, the incremental backoff bug that drops events."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.04 person 0.05 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.92, deflects 0.05, handled 0.03) · → answer",
+            "110s turn [3] · step 1 open: #3 need 0.81 ans 0.10 person 0.02 wants 0.53 human 0.47 sens 0.08 · step 2 none (@triage 0.26) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**. HAR-24, the incremental-backoff event-drop bug, is the remaining blocker."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.04 person 0.05 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.93, deflects 0.05, handled 0.03) · → answer",
+            "110s turn [3] · step 1 open: #3 need 0.82 ans 0.09 person 0.02 wants 0.57 human 0.44 sens 0.08 · step 2 none (@triage 0.32) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, contingent on resolving HAR-24, the incremental-backoff event-drop bug."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.03 person 0.04 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.91, deflects 0.04, handled 0.03) · → answer",
+            "110s turn [3] · step 1 needs_person: #3 need 0.85 ans 0.08 person 0.02 wants 0.58 human 0.53 sens 0.07 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T04",
+      "group": "turns and timing",
+      "title": "The same question from two people, seconds apart",
+      "why": "One look at a time: Bob's turn is judged after the answer to Alice is up, and finds it answered.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0, 1],
+          "anyOf": true
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.5,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.06 person 0.05 wants 0.92 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.92, deflects 0.05, handled 0.04) · → answer",
+            "95s turn [3] · step 1 handled: #3 need 0.96 ans 0.93 person 0.05 wants 0.91 human 0.04 sens 0.01 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.05 person 0.05 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.81) · draft answer (useful 0.90, deflects 0.04, handled 0.04) · → answer",
+            "95s turn [3] · step 1 handled: #3 need 0.95 ans 0.92 person 0.06 wants 0.90 human 0.04 sens 0.01 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.9,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.06 person 0.05 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.92, deflects 0.04, handled 0.04) · → answer",
+            "95s turn [3] · step 1 handled: #3 need 0.95 ans 0.92 person 0.06 wants 0.90 human 0.05 sens 0.01 · → silent (handled)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T05",
+      "group": "turns and timing",
+      "title": "A long status update from one person, then a question",
+      "why": "The turn closes at 5 messages; the question starts a new one and is answered.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [5]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [5],
+              "at": 217.7,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4."
+            }
+          ],
+          "trail": [
+            "180s turn [0,1,2,3,4] · step 1 no_need: #0 need 0.03 ans 0.11 person 0.05 wants 0.11 human 0.02 sens 0.02; #1 need 0.02 ans 0.13 person 0.03 wants 0.11 human 0.02 sens 0.01; #2 need 0.04 ans 0.12 person 0.03 wants 0.17 human 0.02 sens 0.01; #3 need 0.09 ans 0.09 person 0.03 wants 0.18 human 0.02 sens 0.01; #4 need 0.13 ans 0.05 person 0.03 wants 0.28 human 0.03 sens 0.01 · → silent (no_need)",
+            "215s turn [5] · step 1 open: #5 need 0.98 ans 0.07 person 0.05 wants 0.89 human 0.04 sens 0.01 · step 2 @triage (@triage 0.75) · draft answer (useful 0.86, deflects 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [5],
+              "at": 217.5,
+              "via": "turn",
+              "text": "QUARTZ runbook, section 4. [Bob](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "180s turn [0,1,2,3,4] · step 1 no_need: #0 need 0.02 ans 0.12 person 0.04 wants 0.12 human 0.02 sens 0.02; #1 need 0.02 ans 0.15 person 0.03 wants 0.11 human 0.02 sens 0.01; #2 need 0.04 ans 0.10 person 0.02 wants 0.16 human 0.02 sens 0.01; #3 need 0.08 ans 0.09 person 0.03 wants 0.18 human 0.02 sens 0.01; #4 need 0.21 ans 0.05 person 0.03 wants 0.23 human 0.03 sens 0.01 · → silent (no_need)",
+            "215s turn [5] · step 1 open: #5 need 0.98 ans 0.06 person 0.05 wants 0.89 human 0.04 sens 0.01 · step 2 @triage (@triage 0.76) · draft answer (useful 0.88, deflects 0.08) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [5],
+              "at": 217.9,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4. Bob owns the rollback script."
+            }
+          ],
+          "trail": [
+            "180s turn [0,1,2,3,4] · step 1 no_need: #0 need 0.02 ans 0.14 person 0.04 wants 0.12 human 0.02 sens 0.02; #1 need 0.02 ans 0.13 person 0.03 wants 0.11 human 0.02 sens 0.01; #2 need 0.04 ans 0.13 person 0.03 wants 0.16 human 0.03 sens 0.01; #3 need 0.12 ans 0.10 person 0.03 wants 0.20 human 0.02 sens 0.01; #4 need 0.12 ans 0.05 person 0.03 wants 0.26 human 0.03 sens 0.01 · → silent (no_need)",
+            "215s turn [5] · step 1 open: #5 need 0.99 ans 0.06 person 0.05 wants 0.89 human 0.04 sens 0.01 · step 2 @triage (@triage 0.77) · draft answer (useful 0.90, deflects 0.06) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T06",
+      "group": "turns and timing",
+      "title": "An agent busy with a mention; the question waits, then is answered",
+      "why": "No look while a run is in flight; Alice's turn is judged when it ends, well inside five minutes.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [1]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 152.4,
+              "via": "turn",
+              "text": "[Bob Iyer](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "150s turn [1] · step 1 open: #1 need 0.97 ans 0.04 person 0.05 wants 0.82 human 0.06 sens 0.03 · step 2 @triage (@triage 0.71) · draft answer (useful 0.88, deflects 0.05, handled 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 153.4,
+              "via": "turn",
+              "text": "[Bob Iyer](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "150s turn [1] · step 1 open: #1 need 0.97 ans 0.05 person 0.05 wants 0.83 human 0.05 sens 0.03 · step 2 @triage (@triage 0.71) · draft answer (useful 0.88, deflects 0.06, handled 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 158.2,
+              "via": "turn",
+              "text": "Bob Iyer owns the rollback script; rollback follows the QUARTZ runbook, section 4."
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "150s turn [1] · step 1 open: #1 need 0.97 ans 0.06 person 0.05 wants 0.82 human 0.06 sens 0.03 · step 2 @triage (@triage 0.73) · draft answer (useful 0.91, deflects 0.03, handled 0.05) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T07",
+      "group": "turns and timing",
+      "title": "The asker says never mind",
+      "why": "Answered by the asker.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "120s turn [0,1] · step 1 open: #0 need 0.98 ans 0.28 person 0.04 wants 0.79 human 0.02 sens 0.02; #1 need 0.03 ans 0.05 person 0.03 wants 0.05 human 0.02 sens 0.02 · step 2 none (@triage 0.59) · draft failed · → failed"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "120s turn [0,1] · step 1 open: #0 need 0.98 ans 0.41 person 0.04 wants 0.80 human 0.03 sens 0.02; #1 need 0.03 ans 0.05 person 0.03 wants 0.05 human 0.02 sens 0.03 · step 2 none (@triage 0.59) · draft failed · → failed"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "120s turn [0,1] · step 1 open: #0 need 0.98 ans 0.42 person 0.04 wants 0.82 human 0.02 sens 0.02; #1 need 0.03 ans 0.05 person 0.03 wants 0.05 human 0.02 sens 0.02 · step 2 none (@triage 0.59) · draft failed · → failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A01",
+      "group": "addressing",
+      "title": "An agent addressed by name, no @",
+      "why": "A name used as an address is a mention.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        }
+      ]
+    },
+    {
+      "id": "A02",
+      "group": "addressing",
+      "title": "\"hey triage\"",
+      "why": "A greeting to the agent is a mention.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        }
+      ]
+    },
+    {
+      "id": "A03",
+      "group": "addressing",
+      "title": "\"triage\" as a verb",
+      "why": "Not the agent, and not a question.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.92 ans 0.07 person 0.10 wants 0.68 human 0.26 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.93 ans 0.07 person 0.10 wants 0.68 human 0.26 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.93 ans 0.07 person 0.11 wants 0.71 human 0.28 sens 0.02 · → silent (plan)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A04",
+      "group": "addressing",
+      "title": "A sentence that starts with the word",
+      "why": "An instruction to the team, not to the agent.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.92 ans 0.07 person 0.21 wants 0.71 human 0.11 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.91 ans 0.07 person 0.20 wants 0.70 human 0.12 sens 0.02 · → silent (plan)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 plan: #0 need 0.92 ans 0.08 person 0.18 wants 0.69 human 0.11 sens 0.02 · → silent (plan)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A05",
+      "group": "addressing",
+      "title": "A group ping is a question for anyone",
+      "why": "@here is not a named person.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4. Bob owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.03 wants 0.92 human 0.10 sens 0.01 · step 2 @triage (@triage 0.79) · draft answer (useful 0.93, deflects 0.06) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.2,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4. [Bob](actor-ref:act_bob) owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.09 person 0.03 wants 0.93 human 0.09 sens 0.01 · step 2 @triage (@triage 0.78) · draft answer (useful 0.93, deflects 0.06) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4. Bob owns the rollback script."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.08 person 0.03 wants 0.93 human 0.10 sens 0.01 · step 2 @triage (@triage 0.80) · draft answer (useful 0.93, deflects 0.06) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "A06",
+      "group": "addressing",
+      "title": "A person pinged in plain text",
+      "why": "Addressed to Bob.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.98 ans 0.07 person 0.97 wants 0.91 human 0.20 sens 0.02 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.98 ans 0.07 person 0.96 wants 0.91 human 0.20 sens 0.03 · → silent (directed)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 directed: #0 need 0.98 ans 0.07 person 0.97 wants 0.92 human 0.23 sens 0.02 · → silent (directed)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K01",
+      "group": "kinds of ask",
+      "title": "\"Thoughts?\" on a status update",
+      "why": "Asks the team for opinions — something only people can give.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.98 ans 0.08 person 0.11 wants 0.89 human 0.93 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.98 ans 0.08 person 0.11 wants 0.90 human 0.93 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.98 ans 0.08 person 0.11 wants 0.90 human 0.92 sens 0.02 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K02",
+      "group": "kinds of ask",
+      "title": "A decision the team is making",
+      "why": "Either the facts that bear on it, or quiet — but never a pick. Read by hand.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.97 ans 0.08 person 0.06 wants 0.89 human 0.75 sens 0.01 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.97 ans 0.09 person 0.06 wants 0.89 human 0.77 sens 0.01 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.97 ans 0.08 person 0.06 wants 0.89 human 0.76 sens 0.01 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K03",
+      "group": "kinds of ask",
+      "title": "A request to change something",
+      "why": "Offers only ever look things up; nothing else fits.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.08 person 0.02 wants 0.93 human 0.04 sens 0.01 · step 2 @triage (@triage 0.79) · draft answer (useful 0.56, deflects 0.20) · → suppressed"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.08 person 0.02 wants 0.93 human 0.04 sens 0.01 · step 2 @triage (@triage 0.78) · draft offer (offer_fits 0.63, offer_asks_info 0.23, offer_kept_there 0.57) · → suppressed"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.02 wants 0.92 human 0.04 sens 0.01 · step 2 @triage (@triage 0.78) · draft offer (offer_fits 0.32, offer_asks_info 0.23, offer_kept_there 0.46) · → suppressed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K04",
+      "group": "kinds of ask",
+      "title": "Asking for a human review",
+      "why": "A review is something only a person can give.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.98 ans 0.07 person 0.05 wants 0.92 human 0.95 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.97 ans 0.07 person 0.04 wants 0.92 human 0.95 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 needs_person: #0 need 0.98 ans 0.08 person 0.04 wants 0.93 human 0.94 sens 0.02 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K05",
+      "group": "kinds of ask",
+      "title": "Sensitive: job security",
+      "why": "Personal and sensitive.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.98 ans 0.07 person 0.03 wants 0.78 human 0.73 sens 0.90 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.98 ans 0.07 person 0.03 wants 0.75 human 0.71 sens 0.90 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.98 ans 0.07 person 0.03 wants 0.76 human 0.73 sens 0.91 · → silent (sensitive)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K06",
+      "group": "kinds of ask",
+      "title": "Sensitive: pay",
+      "why": "Personal and sensitive.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.06 person 0.03 wants 0.92 human 0.14 sens 0.83 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.06 person 0.02 wants 0.91 human 0.13 sens 0.83 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.07 person 0.02 wants 0.91 human 0.15 sens 0.83 · → silent (sensitive)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "K07",
+      "group": "kinds of ask",
+      "title": "Sensitive: someone's health",
+      "why": "Personal and sensitive.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.08 person 0.20 wants 0.82 human 0.17 sens 0.96 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.06 person 0.25 wants 0.83 human 0.19 sens 0.96 · → silent (sensitive)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 sensitive: #0 need 0.99 ans 0.08 person 0.25 wants 0.82 human 0.17 sens 0.95 · → silent (sensitive)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O01",
+      "group": "offers",
+      "title": "A live count in Linear",
+      "why": "Linear is connected; the agent can offer to look.",
+      "expect": [
+        {
+          "act": "offer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 0,
+      "spoke": 0,
+      "failures": ["missed: offer by @triage to #0"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.14 wants 0.89 human 0.03 sens 0.02 · step 2 @triage (@triage 0.52) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.13 wants 0.89 human 0.03 sens 0.01 · step 2 @triage (@triage 0.52) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.12 wants 0.89 human 0.03 sens 0.02 · step 2 @triage (@triage 0.51) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O02",
+      "group": "offers",
+      "title": "Has a PR merged?",
+      "why": "GitHub is connected.",
+      "expect": [
+        {
+          "act": "offer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 0,
+      "spoke": 0,
+      "failures": ["missed: offer by @triage to #0"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.14 wants 0.86 human 0.10 sens 0.02 · step 2 none (@triage 0.42) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.14 wants 0.87 human 0.10 sens 0.02 · step 2 none (@triage 0.42) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.15 wants 0.87 human 0.10 sens 0.02 · step 2 none (@triage 0.43) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O03",
+      "group": "offers",
+      "title": "Live state no toolkit can see",
+      "why": "No monitoring toolkit is enabled, so there is nothing true to offer.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.14 wants 0.90 human 0.02 sens 0.01 · step 2 @triage (@triage 0.74) · draft offer (offer_fits 0.42, offer_asks_info 0.96, offer_kept_there 0.68) · → suppressed"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.14 wants 0.90 human 0.02 sens 0.01 · step 2 @triage (@triage 0.74) · draft offer (offer_fits 0.36, offer_asks_info 0.95, offer_kept_there 0.67) · → suppressed"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.15 wants 0.89 human 0.02 sens 0.01 · step 2 @triage (@triage 0.75) · draft offer (offer_fits 0.41, offer_asks_info 0.96, offer_kept_there 0.68) · → suppressed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O04",
+      "group": "offers",
+      "title": "A lookup no agent here is for",
+      "why": "Google Analytics is connected, but an on-call agent is not for product analytics — fit decides first.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.08 person 0.15 wants 0.90 human 0.03 sens 0.09 · step 2 none (@triage 0.28) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.08 person 0.14 wants 0.90 human 0.03 sens 0.10 · step 2 none (@triage 0.33) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.07 person 0.14 wants 0.90 human 0.03 sens 0.09 · step 2 none (@triage 0.32) · → silent (unfit)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "O05",
+      "group": "offers",
+      "title": "Someone answers while the agent writes its offer",
+      "why": "Answered meanwhile.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.12 wants 0.89 human 0.03 sens 0.02 · step 2 @triage (@triage 0.50) · → silent (unfit)",
+            "181s turn [1] · step 1 no_need: #1 need 0.02 ans 0.07 person 0.19 wants 0.57 human 0.02 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.08 person 0.14 wants 0.90 human 0.03 sens 0.02 · step 2 @triage (@triage 0.51) · → silent (unfit)",
+            "181s turn [1] · step 1 no_need: #1 need 0.02 ans 0.07 person 0.21 wants 0.39 human 0.02 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.06 person 0.14 wants 0.89 human 0.03 sens 0.02 · step 2 @triage (@triage 0.51) · → silent (unfit)",
+            "181s turn [1] · step 1 no_need: #1 need 0.02 ans 0.08 person 0.22 wants 0.40 human 0.02 sens 0.01 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "F01",
+      "group": "follow-ups",
+      "title": "A correction with nothing new to add",
+      "why": "Nothing to add to a correction.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.29 → suppressed · draft suppressed (not_useful)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.29 → suppressed · draft suppressed (not_useful)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.96, to someone else 0.31 → suppressed · draft suppressed (not_useful)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "group": "follow-ups",
+      "title": "Continuing your own mention",
+      "why": "Alice's own conversation with the agent: it continues her run, with her tools.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        },
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [2]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [2],
+              "at": 42.3,
+              "via": "continue"
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.24 → continues_run"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [2],
+              "at": 42.4,
+              "via": "continue"
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.26 → continues_run"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [2],
+              "at": 42.4,
+              "via": "continue"
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.23 → continues_run"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "group": "follow-ups",
+      "title": "Someone else follows up on a mentioned answer",
+      "why": "Bob did not ask the agent, so nothing runs on his account — but it can offer.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        },
+        {
+          "act": "offer",
+          "agent": "triage",
+          "to": [2]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 1,
+      "spoke": 0,
+      "failures": ["missed: offer by @triage to #2"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            },
+            {
+              "act": "offer",
+              "agent": "triage",
+              "to": [2],
+              "at": 44.3,
+              "via": "follow_up",
+              "text": "I can look up open sync-tagged bugs assigned to Bob Iyer in Linear for you. Mention me if you want me to."
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.27 → offer · draft offer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.29 → suppressed · draft suppressed (offer_misfits)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": false,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "mention"
+            }
+          ],
+          "trail": [
+            "0s mention → run @triage",
+            "42s follow-up to @triage: to agent 0.97, to someone else 0.30 → suppressed · draft suppressed (offer_misfits)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "F04",
+      "group": "follow-ups",
+      "title": "A long back-and-forth stops after three follow-ups",
+      "why": "Three follow-ups on one answer, then quiet: the fourth would make it a DM in the room.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [1]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [2]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [3]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.4,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 134.8,
+              "via": "follow_up",
+              "text": "The last blocker is **HAR-24**, the incremental backoff bug that drops events; [Harsh Sharma](actor-ref:act_harsh) is investigating it."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 174.6,
+              "via": "follow_up",
+              "text": "[Harsh Sharma](actor-ref:act_harsh) is investigating HAR-24."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [3],
+              "at": 214.7,
+              "via": "follow_up",
+              "text": "HAR-24 causes the incremental backoff path to drop events instead of retrying them after a sync failure, which can leave clients missing updates until a later reconciliation."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.10 person 0.08 wants 0.91 human 0.05 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.89, deflects 0.05) · → answer",
+            "132s follow-up to @triage: to agent 0.96, to someone else 0.19 → answer · draft answer",
+            "172s follow-up to @triage: to agent 0.92, to someone else 0.24 → answer · draft answer",
+            "212s follow-up to @triage: to agent 0.91, to someone else 0.34 → answer · draft answer",
+            "252s follow-up to @triage: to agent 0.95, to someone else 0.29 → silent (follow_up_cap)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**, pending resolution of HAR-24, the incremental-backoff event-drop bug."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 134.8,
+              "via": "follow_up",
+              "text": "HAR-24 — the incremental-backoff bug that drops events. [Harsh Sharma](actor-ref:act_harsh) is investigating it."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 175,
+              "via": "follow_up",
+              "text": "[Harsh Sharma](actor-ref:act_harsh) is investigating HAR-24."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [3],
+              "at": 216.1,
+              "via": "follow_up",
+              "text": "HAR-24 drops events when incremental sync retries apply backoff, so some changes may never reach clients after a transient failure. This risks missed updates until a full resync repairs state."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.10 person 0.07 wants 0.90 human 0.05 sens 0.01 · step 2 @triage (@triage 0.81) · draft answer (useful 0.92, deflects 0.04) · → answer",
+            "132s follow-up to @triage: to agent 0.96, to someone else 0.18 → answer · draft answer",
+            "172s follow-up to @triage: to agent 0.94, to someone else 0.24 → answer · draft answer",
+            "212s follow-up to @triage: to agent 0.92, to someone else 0.36 → answer · draft answer",
+            "252s follow-up to @triage: to agent 0.93, to someone else 0.27 → silent (follow_up_cap)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **October 14**, pending resolution of HAR-24, the incremental-backoff event-drop bug."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 134.5,
+              "via": "follow_up",
+              "text": "The last blocker is **HAR-24**: the incremental-backoff bug that drops events. [Harsh Sharma](actor-ref:act_harsh) is investigating it."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 173.9,
+              "via": "follow_up",
+              "text": "[Harsh Sharma](actor-ref:act_harsh) is investigating HAR-24."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [3],
+              "at": 215.3,
+              "via": "follow_up",
+              "text": "HAR-24 drops sync events when incremental backoff is active, so some changes may never reach clients or the backend after retries. The affected conditions and event-loss rate need confirmation from the ticket and logs."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.09 person 0.08 wants 0.90 human 0.05 sens 0.01 · step 2 @triage (@triage 0.82) · draft answer (useful 0.91, deflects 0.04) · → answer",
+            "132s follow-up to @triage: to agent 0.97, to someone else 0.18 → answer · draft answer",
+            "172s follow-up to @triage: to agent 0.94, to someone else 0.26 → answer · draft answer",
+            "212s follow-up to @triage: to agent 0.91, to someone else 0.31 → answer · draft answer",
+            "252s follow-up to @triage: to agent 0.91, to someone else 0.30 → silent (follow_up_cap)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M01",
+      "group": "several agents",
+      "title": "Two questions for two different agents",
+      "why": "One answer per open question, each from the agent that fits it.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "scribe",
+          "to": [0]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [1]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 2,
+      "spoke": 0,
+      "failures": ["missed: answer by @triage to #1"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.8,
+              "via": "turn",
+              "text": "0.0.2 release notes will cover:\n- Switching between accounts on one device.\n- The new invite landing page.\n- A reliability fix for websocket reconnects during deploy restarts (connection draining in PR #88).\n\nLaunch is Thursday; [Dana](actor-ref:act_dana) is on call for launch week."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.04 person 0.05 wants 0.88 human 0.08 sens 0.01 · step 2 @scribe (@triage 0.27, @scribe 0.92) · draft answer (useful 0.93, deflects 0.04, handled 0.05) · → answer",
+            "100s turn [3] · step 1 handled: #3 need 0.95 ans 0.95 person 0.04 wants 0.88 human 0.15 sens 0.07 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.3,
+              "via": "turn",
+              "text": "0.0.2 release notes cover **account switching on one device** and the new invite landing page. The reconnect-loop fix from PR #88 is a deployment reliability change, not a user-facing release-note item."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 102.5,
+              "via": "turn",
+              "text": "[Dana](actor-ref:act_dana) is on call for launch week."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.05 person 0.05 wants 0.87 human 0.07 sens 0.02 · step 2 @scribe (@triage 0.25, @scribe 0.92) · draft answer (useful 0.91, deflects 0.05, handled 0.05) · → answer",
+            "100s turn [3] · step 1 open: #3 need 0.95 ans 0.05 person 0.06 wants 0.84 human 0.30 sens 0.13 · step 2 @triage (@triage 0.81, @scribe 0.24) · draft answer (useful 0.91, deflects 0.05, handled 0.05) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 93.5,
+              "via": "turn",
+              "text": "Release 0.0.2 includes:\n- Account switching on a single device.\n- The invite landing page.\n- Improved websocket deploy handling: connections drain before server restarts (PR #88), preventing reconnect loops."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 102.5,
+              "via": "turn",
+              "text": "[Dana](actor-ref:act_dana) is on call for launch week."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.05 person 0.05 wants 0.87 human 0.09 sens 0.01 · step 2 @scribe (@triage 0.25, @scribe 0.92) · draft answer (useful 0.92, deflects 0.09, handled 0.05) · → answer",
+            "100s turn [3] · step 1 open: #3 need 0.94 ans 0.06 person 0.05 wants 0.86 human 0.29 sens 0.11 · step 2 @triage (@triage 0.76, @scribe 0.24) · draft answer (useful 0.90, deflects 0.05, handled 0.04) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M02",
+      "group": "several agents",
+      "title": "Both agents could answer; only one does",
+      "why": "At most one agent per question.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "any",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 1,
+      "spoke": 0,
+      "failures": ["missed: answer by @any to #0"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.06 person 0.05 wants 0.87 human 0.06 sens 0.01 · step 2 @scribe (@triage 0.56, @scribe 0.53) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.07 person 0.05 wants 0.88 human 0.06 sens 0.01 · step 2 @scribe (@triage 0.55, @scribe 0.55) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "scribe",
+              "to": [0],
+              "at": 94.5,
+              "via": "turn",
+              "text": "0.0.2 launches Thursday."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.07 person 0.05 wants 0.88 human 0.06 sens 0.01 · step 2 @scribe (@triage 0.55, @scribe 0.58) · draft answer (useful 0.74, deflects 0.11) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M03",
+      "group": "several agents",
+      "title": "The design agent for a design question",
+      "why": "Pixel made it, in this room.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "pixel",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "pixel",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "The Figma file is [Onboarding v3](https://figma.com/file/onb-v3)."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.08 person 0.06 wants 0.89 human 0.03 sens 0.01 · step 2 @pixel (@triage 0.19, @scribe 0.09, @pixel 0.97) · draft answer (useful 0.94, deflects 0.03) · → answer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "pixel",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "The file is **“Onboarding v3”**: https://figma.com/file/onb-v3"
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.07 person 0.06 wants 0.87 human 0.03 sens 0.01 · step 2 @pixel (@triage 0.22, @scribe 0.11, @pixel 0.97) · draft answer (useful 0.95, deflects 0.04) · → answer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "pixel",
+              "to": [0],
+              "at": 93.1,
+              "via": "turn",
+              "text": "The Figma file is [Onboarding v3](https://figma.com/file/onb-v3)."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.98 ans 0.08 person 0.05 wants 0.87 human 0.03 sens 0.01 · step 2 @pixel (@triage 0.24, @scribe 0.11, @pixel 0.97) · draft answer (useful 0.94, deflects 0.03) · → answer"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M04",
+      "group": "several agents",
+      "title": "An agent's own question is never judged",
+      "why": "Only a person's message is judged — agents never answer agents.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": []
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": []
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": []
+        }
+      ]
+    },
+    {
+      "id": "M05",
+      "group": "several agents",
+      "title": "Three agents, nothing for any of them",
+      "why": "Social.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.98 ans 0.06 person 0.02 wants 0.78 human 0.58 sens 0.14 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.98 ans 0.06 person 0.02 wants 0.77 human 0.60 sens 0.14 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 needs_person: #2 need 0.97 ans 0.07 person 0.02 wants 0.79 human 0.55 sens 0.14 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "B01",
+      "group": "busy rooms",
+      "title": "An incident: many people asking the same thing",
+      "why": "Nothing in the room says why; no toolkit sees prod. At most one post — ideally none.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [3],
+              "at": 132.9,
+              "via": "turn",
+              "text": "The symptoms are consistent with a database issue, but they do not confirm one without application and database health signals."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.59 person 0.03 wants 0.82 human 0.06 sens 0.01 · → silent (handled)",
+            "100s turn [1] · step 1 no_need: #1 need 0.30 ans 0.06 person 0.04 wants 0.11 human 0.04 sens 0.01 · → silent (no_need)",
+            "115s turn [2] · step 1 open: #2 need 0.99 ans 0.05 person 0.02 wants 0.83 human 0.21 sens 0.01 · step 2 @triage (@triage 0.72) · draft answer (useful 0.53, deflects 0.44, handled 0.06) · → suppressed",
+            "130s turn [3] · step 1 open: #3 need 0.98 ans 0.05 person 0.02 wants 0.71 human 0.19 sens 0.01 · step 2 @triage (@triage 0.68) · draft answer (useful 0.75, deflects 0.29, handled 0.08) · → answer",
+            "150s turn [4] · step 1 open: #4 need 0.98 ans 0.05 person 0.02 wants 0.82 human 0.18 sens 0.01 · step 2 none (@triage 0.52) · → silent (unfit)",
+            "190s turn [5] · step 1 open: #5 need 0.97 ans 0.06 person 0.04 wants 0.85 human 0.06 sens 0.01 · step 2 @triage (@triage 0.53) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [3],
+              "at": 132.8,
+              "via": "turn",
+              "text": "The symptoms are consistent with a shared dependency such as the database, but they do not confirm it. Check database health, connection saturation, and application error logs for connection or timeout failures."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.56 person 0.03 wants 0.77 human 0.06 sens 0.01 · → silent (handled)",
+            "100s turn [1] · step 1 no_need: #1 need 0.33 ans 0.06 person 0.04 wants 0.11 human 0.05 sens 0.01 · → silent (no_need)",
+            "115s turn [2] · step 1 open: #2 need 0.99 ans 0.05 person 0.02 wants 0.80 human 0.22 sens 0.01 · step 2 @triage (@triage 0.76) · draft answer (useful 0.58, deflects 0.52, handled 0.05) · → suppressed",
+            "130s turn [3] · step 1 open: #3 need 0.98 ans 0.05 person 0.02 wants 0.65 human 0.18 sens 0.01 · step 2 @triage (@triage 0.69) · draft answer (useful 0.87, deflects 0.14, handled 0.09) · → answer",
+            "150s turn [4] · step 1 open: #4 need 0.98 ans 0.06 person 0.02 wants 0.83 human 0.15 sens 0.01 · step 2 none (@triage 0.50) · → silent (unfit)",
+            "190s turn [5] · step 1 open: #5 need 0.97 ans 0.08 person 0.03 wants 0.85 human 0.07 sens 0.01 · step 2 @triage (@triage 0.50) · → silent (unfit)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 handled: #0 need 0.99 ans 0.68 person 0.03 wants 0.82 human 0.06 sens 0.01 · → silent (handled)",
+            "100s turn [1] · step 1 no_need: #1 need 0.34 ans 0.06 person 0.04 wants 0.10 human 0.04 sens 0.02 · → silent (no_need)",
+            "115s turn [2] · step 1 open: #2 need 0.99 ans 0.05 person 0.02 wants 0.84 human 0.20 sens 0.01 · step 2 @triage (@triage 0.74) · draft answer (useful 0.55, deflects 0.43, handled 0.06) · → suppressed",
+            "130s turn [3] · step 1 open: #3 need 0.98 ans 0.05 person 0.03 wants 0.69 human 0.17 sens 0.01 · step 2 @triage (@triage 0.70) · draft offer (offer_fits 0.65, offer_asks_info 0.91, offer_kept_there 0.48, handled 0.09) · → suppressed",
+            "150s turn [4] · step 1 open: #4 need 0.98 ans 0.05 person 0.02 wants 0.81 human 0.16 sens 0.01 · step 2 @triage (@triage 0.75) · draft answer (useful 0.76, deflects 0.89, handled 0.06) · → suppressed",
+            "190s turn [5] · step 1 open: #5 need 0.97 ans 0.08 person 0.04 wants 0.81 human 0.07 sens 0.01 · step 2 @triage (@triage 0.65) · draft answer (useful 0.50, deflects 0.65) · → suppressed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "B02",
+      "group": "busy rooms",
+      "title": "Four answerable questions in two minutes",
+      "why": "The per-chat limit: three unprompted answers in ten minutes, then quiet.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [1]
+        },
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [2]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.4,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 132.7,
+              "via": "turn",
+              "text": "[Bob](actor-ref:act_bob) owns the rollback script."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 172.4,
+              "via": "turn",
+              "text": "No — partitions are rebuilt one at a time to limit load on the primary."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.05 person 0.06 wants 0.85 human 0.04 sens 0.01 · step 2 @triage (@triage 0.78) · draft answer (useful 0.88, deflects 0.05, handled 0.08) · → answer",
+            "122s follow-up to @triage: to agent 0.26, to someone else 0.35 → not_for_agent",
+            "130s turn [1] · step 1 open: #1 need 0.98 ans 0.04 person 0.04 wants 0.83 human 0.11 sens 0.03 · step 2 none (@triage 0.63) · draft answer (useful 0.83, deflects 0.07, handled 0.31) · → answer",
+            "170s turn [2] · step 1 open: #2 need 0.98 ans 0.08 person 0.03 wants 0.74 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.93, deflects 0.05, handled 0.19) · → answer",
+            "210s turn [3] · → silent (rate_limited)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.1,
+              "via": "turn",
+              "text": "Rollback is covered in the **QUARTZ runbook, section 4**."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 132.7,
+              "via": "turn",
+              "text": "[Bob](actor-ref:act_bob) owns the rollback script."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 172.7,
+              "via": "turn",
+              "text": "No — partitions are rebuilding one at a time to limit load on the primary."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.99 ans 0.05 person 0.05 wants 0.84 human 0.04 sens 0.01 · step 2 @triage (@triage 0.78) · draft answer (useful 0.85, deflects 0.05, handled 0.08) · → answer",
+            "122s follow-up to @triage: to agent 0.22, to someone else 0.35 → not_for_agent",
+            "130s turn [1] · step 1 open: #1 need 0.98 ans 0.06 person 0.04 wants 0.82 human 0.13 sens 0.03 · step 2 @triage (@triage 0.64) · draft answer (useful 0.83, deflects 0.08, handled 0.35) · → answer",
+            "170s turn [2] · step 1 open: #2 need 0.98 ans 0.06 person 0.03 wants 0.76 human 0.05 sens 0.01 · step 2 @triage (@triage 0.87) · draft answer (useful 0.92, deflects 0.06, handled 0.19) · → answer",
+            "210s turn [3] · → silent (rate_limited)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.7,
+              "via": "turn",
+              "text": "Rollback is covered in the QUARTZ runbook, section 4."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [1],
+              "at": 132.6,
+              "via": "turn",
+              "text": "[Bob](actor-ref:act_bob) owns the rollback script."
+            },
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [2],
+              "at": 173,
+              "via": "turn",
+              "text": "No. The Sep 12 decision was to rebuild partitions one at a time to reduce load on the primary."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.06 person 0.05 wants 0.86 human 0.04 sens 0.01 · step 2 @triage (@triage 0.77) · draft answer (useful 0.87, deflects 0.04, handled 0.07) · → answer",
+            "122s follow-up to @triage: to agent 0.27, to someone else 0.38 → not_for_agent",
+            "130s turn [1] · step 1 open: #1 need 0.98 ans 0.05 person 0.04 wants 0.82 human 0.14 sens 0.03 · step 2 @triage (@triage 0.63) · draft answer (useful 0.83, deflects 0.06, handled 0.33) · → answer",
+            "170s turn [2] · step 1 open: #2 need 0.98 ans 0.08 person 0.03 wants 0.75 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.94, deflects 0.04, handled 0.23) · → answer",
+            "210s turn [3] · → silent (rate_limited)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L01",
+      "group": "live test",
+      "title": "A guess is not an answer",
+      "why": "Live, \"i guess 5th? idk\" counted as answering it at 0.73, and nobody got the date.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0, 1],
+          "anyOf": true
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.8,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, contingent on resolving HAR-24, the incremental-backoff event-drop bug."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.95 ans 0.04 person 0.10 wants 0.84 human 0.24 sens 0.02 · step 2 @triage (@triage 0.80) · draft answer (useful 0.91, deflects 0.05, handled 0.36) · → answer",
+            "112s turn [3] · step 1 handled: #3 need 0.68 ans 0.89 person 0.08 wants 0.64 human 0.24 sens 0.02 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.7,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, contingent on resolving HAR-24, the incremental-backoff event-drop bug."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.04 person 0.09 wants 0.84 human 0.22 sens 0.02 · step 2 @triage (@triage 0.81) · draft answer (useful 0.90, deflects 0.05, handled 0.34) · → answer",
+            "112s turn [3] · step 1 handled: #3 need 0.68 ans 0.89 person 0.09 wants 0.62 human 0.28 sens 0.02 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, contingent on resolving HAR-24, the incremental-backoff event-drop blocker."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.95 ans 0.04 person 0.09 wants 0.85 human 0.22 sens 0.02 · step 2 @triage (@triage 0.81) · draft answer (useful 0.91, deflects 0.05, handled 0.33) · → answer",
+            "112s turn [3] · step 1 no_need: #3 need 0.64 ans 0.89 person 0.08 wants 0.65 human 0.27 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L02",
+      "group": "live test",
+      "title": "A nudge re-asks the question before it",
+      "why": "Live, the nudge was open (0.87) but fit the agent at 0.51: judged on \"yeah, anyone?\" alone.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 0,
+      "spoke": 0,
+      "failures": ["missed: answer by @triage to #0"],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [4] · step 1 needs_person: #4 need 0.93 ans 0.09 person 0.03 wants 0.82 human 0.57 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [4] · step 1 needs_person: #4 need 0.92 ans 0.08 person 0.03 wants 0.82 human 0.59 sens 0.02 · → silent (needs_person)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": false,
+          "acts": [],
+          "trail": [
+            "90s turn [4] · step 1 needs_person: #4 need 0.93 ans 0.09 person 0.03 wants 0.82 human 0.57 sens 0.02 · → silent (needs_person)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L03",
+      "group": "live test",
+      "title": "The agent named, with no comma",
+      "why": "Asked of the agent by name: a mention.",
+      "expect": [
+        {
+          "act": "run",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "run",
+              "agent": "triage",
+              "to": [0],
+              "at": 0,
+              "via": "name"
+            }
+          ],
+          "trail": ["0s name → run @triage"]
+        }
+      ]
+    },
+    {
+      "id": "L04",
+      "group": "live test",
+      "title": "The agent named, as the subject of a complaint",
+      "why": "About the agent, not to it; and venting.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.06 person 0.05 wants 0.25 human 0.10 sens 0.05 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.06 person 0.04 wants 0.26 human 0.09 sens 0.05 · → silent (rhetorical)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [0] · step 1 rhetorical: #0 need 0.96 ans 0.06 person 0.05 wants 0.23 human 0.10 sens 0.05 · → silent (rhetorical)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L05",
+      "group": "live test",
+      "title": "\"+1\" on someone else's question",
+      "why": "One answer; the +1 asks nothing of its own.",
+      "expect": [
+        {
+          "act": "answer",
+          "agent": "triage",
+          "to": [0]
+        }
+      ],
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for **Oct 14**, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.07 person 0.07 wants 0.91 human 0.05 sens 0.01 · step 2 @triage (@triage 0.84) · draft answer (useful 0.91, deflects 0.05, handled 0.06) · → answer",
+            "93s turn [3] · step 1 handled: #3 need 0.70 ans 0.87 person 0.11 wants 0.59 human 0.08 sens 0.01 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.06 person 0.07 wants 0.91 human 0.05 sens 0.01 · step 2 @triage (@triage 0.84) · draft answer (useful 0.88, deflects 0.05, handled 0.05) · → answer",
+            "93s turn [3] · step 1 handled: #3 need 0.75 ans 0.91 person 0.12 wants 0.60 human 0.07 sens 0.01 · → silent (handled)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "answer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.4,
+              "via": "turn",
+              "text": "Phase 1 cutover is planned for Oct 14, pending resolution of HAR-24."
+            }
+          ],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.97 ans 0.06 person 0.07 wants 0.91 human 0.05 sens 0.01 · step 2 @triage (@triage 0.83) · draft answer (useful 0.92, deflects 0.04, handled 0.06) · → answer",
+            "93s turn [3] · step 1 handled: #3 need 0.75 ans 0.88 person 0.12 wants 0.63 human 0.09 sens 0.01 · → silent (handled)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L06",
+      "group": "live test",
+      "title": "\"hi\" straight after an answer",
+      "why": "A greeting: nothing to answer.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.41, to someone else 0.20 → not_for_agent",
+            "90s turn [4] · step 1 no_need: #4 need 0.02 ans 0.10 person 0.04 wants 0.15 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.41, to someone else 0.19 → not_for_agent",
+            "90s turn [4] · step 1 no_need: #4 need 0.03 ans 0.10 person 0.04 wants 0.14 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "2s follow-up to @triage: to agent 0.37, to someone else 0.20 → not_for_agent",
+            "90s turn [4] · step 1 no_need: #4 need 0.03 ans 0.08 person 0.04 wants 0.14 human 0.02 sens 0.02 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L07",
+      "group": "live test",
+      "title": "A real answer still counts",
+      "why": "Answered, with confidence. The guard on 5d's wording.",
+      "expect": [],
+      "quiet": true,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": [],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 handled: #2 need 0.97 ans 0.92 person 0.15 wants 0.92 human 0.04 sens 0.01 · → silent (handled)",
+            "110s turn [3] · step 1 no_need: #3 need 0.34 ans 0.39 person 0.10 wants 0.39 human 0.03 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 handled: #2 need 0.97 ans 0.93 person 0.17 wants 0.92 human 0.04 sens 0.01 · → silent (handled)",
+            "110s turn [3] · step 1 no_need: #3 need 0.19 ans 0.22 person 0.09 wants 0.33 human 0.03 sens 0.01 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 handled: #2 need 0.96 ans 0.91 person 0.16 wants 0.92 human 0.04 sens 0.01 · → silent (handled)",
+            "110s turn [3] · step 1 no_need: #3 need 0.36 ans 0.26 person 0.09 wants 0.37 human 0.03 sens 0.01 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L08",
+      "group": "live test",
+      "title": "An answer with \"I think\" that is still an answer",
+      "why": "Hedged but specific. Either is defensible; read by hand.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.95 ans 0.10 person 0.24 wants 0.92 human 0.32 sens 0.14 · step 2 none (@triage 0.49) · → silent (unfit)",
+            "110s turn [3] · step 1 no_need: #3 need 0.48 ans 0.08 person 0.13 wants 0.60 human 0.44 sens 0.13 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.96 ans 0.10 person 0.19 wants 0.91 human 0.26 sens 0.15 · step 2 none (@triage 0.52) · → silent (unfit)",
+            "110s turn [3] · step 1 no_need: #3 need 0.45 ans 0.08 person 0.13 wants 0.59 human 0.39 sens 0.14 · → silent (no_need)"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [],
+          "trail": [
+            "90s turn [2] · step 1 open: #2 need 0.95 ans 0.10 person 0.20 wants 0.90 human 0.29 sens 0.13 · step 2 none (@triage 0.50) · → silent (unfit)",
+            "110s turn [3] · step 1 no_need: #3 need 0.46 ans 0.08 person 0.13 wants 0.64 human 0.34 sens 0.15 · → silent (no_need)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "L09",
+      "group": "live test",
+      "title": "A recent incident, asked of an on-call room",
+      "why": "Nothing here says. An offer where incidents are kept, or quiet — never a guess. Read by hand; 5e is about this one.",
+      "expect": null,
+      "quiet": false,
+      "runs": 3,
+      "right": 3,
+      "spoke": 0,
+      "failures": [],
+      "notes": ["any outcome is acceptable — read by hand"],
+      "samples": [
+        {
+          "rep": 0,
+          "ok": true,
+          "acts": [
+            {
+              "act": "offer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.2,
+              "via": "turn",
+              "text": "I can look up recent login incidents and related tickets in Jira for you. Mention me if you want me to."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.08 person 0.15 wants 0.84 human 0.09 sens 0.13 · step 2 @triage (@triage 0.75) · draft offer (offer_fits 0.84, offer_asks_info 0.95, offer_kept_there 0.77) · → offer"
+          ]
+        },
+        {
+          "rep": 1,
+          "ok": true,
+          "acts": [
+            {
+              "act": "offer",
+              "agent": "triage",
+              "to": [0],
+              "at": 93.1,
+              "via": "turn",
+              "text": "I can look up recent login incident reports and status in Jira for you. Mention me if you want me to."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.09 person 0.15 wants 0.84 human 0.10 sens 0.15 · step 2 @triage (@triage 0.75) · draft offer (offer_fits 0.84, offer_asks_info 0.95, offer_kept_there 0.76) · → offer"
+          ]
+        },
+        {
+          "rep": 2,
+          "ok": true,
+          "acts": [
+            {
+              "act": "offer",
+              "agent": "triage",
+              "to": [0],
+              "at": 92.6,
+              "via": "turn",
+              "text": "I can look up recent login-related incidents and reports in Jira for you. Mention me if you want me to."
+            }
+          ],
+          "trail": [
+            "90s turn [0] · step 1 open: #0 need 0.98 ans 0.09 person 0.12 wants 0.85 human 0.09 sens 0.14 · step 2 @triage (@triage 0.76) · draft offer (offer_fits 0.80, offer_asks_info 0.95, offer_kept_there 0.75) · → offer"
+          ]
+        }
+      ]
+    }
+  ]
+}

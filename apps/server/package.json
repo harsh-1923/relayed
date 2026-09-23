@@ -19,14 +19,16 @@
     "memory-forget": "node --env-file-if-exists=../../.env scripts/memory-forget.ts",
     "memory-person": "node --env-file-if-exists=../../.env scripts/memory-person.ts",
     "memory-watch": "node --env-file-if-exists=../../.env scripts/memory-watch.ts",
-    "memory-backfill-timeline": "node --env-file-if-exists=../../.env scripts/memory-backfill-timeline.ts"
+    "memory-backfill-timeline": "node --env-file-if-exists=../../.env scripts/memory-backfill-timeline.ts",
+    "ambient-gate": "node --env-file-if-exists=../../.env scripts/ambient-gate.ts"
   },
   "dependencies": {
+    "@composio/core": "0.18.1",
     "@relayed/authz": "workspace:*",
     "@relayed/genui": "workspace:*",
     "@relayed/protocol": "workspace:*",
     "@relayed/telemetry": "workspace:*",
-    "@composio/core": "0.18.1",
+    "@typesafe-ai/sdk": "0.6.0",
     "@vectorize-io/hindsight-client": "0.10.0",
     "fastify": "^5.2.0",
     "jose": "^6.0.0",

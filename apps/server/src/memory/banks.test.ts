@@ -73,6 +73,19 @@ test('a run never reads another space’s bank, however public that space is', (
   assert.ok(!ids.includes(spaceBank(elsewhere.id)));
 });
 
+test('a job — an ambient answer with no invoker — reads no person bank at all, even when notes exist', () => {
+  // AMBIENT-RESPONSES.md, whose authority §5; invariant 92. Presence here says
+  // the person bank holds notes, so only the NULL invoker keeps it out.
+  const closed = space('private');
+  for (const banks of [banksForRun(closed, null, [], holds(closed.id)), banksForRun(space('public'), null, [], holds())]) {
+    assert.ok(banks.every((bank) => !bank.id.startsWith(personBank(''))),
+      `no person bank, got ${banks.map((bank) => bank.id).join(', ')}`);
+  }
+  // Exactly what a run there reads, less the person bank.
+  assert.deepEqual(banksForRun(closed, null, [], holds(closed.id)).map((bank) => bank.id),
+                   [workspaceBank(workspace), spaceBank(closed.id)]);
+});
+
 test('a run never reads another person’s bank', () => {
   const bob = ulid('act');
   const privateSpace = space('private');

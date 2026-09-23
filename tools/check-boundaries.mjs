@@ -220,6 +220,18 @@ const RULES = [
     where: [/apps\/server\/src\/sync\/socket\.ts$/],
     allow: [],
   },
+  {
+    id: 'ambient/never-in-the-send-path',
+    doc: 'AMBIENT-RESPONSES.md §4.1 — invariant 91, no TypeSafe call inside the send transaction',
+    why: 'A mention\u2019s run is decided inside the send transaction, because a missed '
+       + 'mention is a bug. An ambient answer is best-effort and is found by polling '
+       + 'after commit. The send path reaching agents/ambient/ would put a third '
+       + 'party\u2019s latency inside a Postgres transaction and into every send, and '
+       + 'make a TypeSafe outage an outage of sending messages.',
+    pattern: /from\s+['"][^'"]*\/ambient\//,
+    where: [/apps\/server\/src\/sync\//, /apps\/server\/src\/agents\/(?:checkpoints|dispatcher|reply)\.ts$/],
+    allow: [],
+  },
 ];
 
 function walk(dir) {

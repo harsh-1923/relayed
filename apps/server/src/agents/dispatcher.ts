@@ -17,7 +17,7 @@ import { env } from '../env.ts';
 import { admitRun, onRunEnd, type ClaimedRun } from './checkpoints.ts';
 import { enabledToolkits } from './sessions.ts';
 import { runTools, toolsPrompt, FIND_TOOLS, CALL_TOOL } from './tools/index.ts';
-import { buildTranscript } from './transcript.ts';
+import { buildTranscript, replyParentOf } from './transcript.ts';
 import { recallForRun, memoryBlock, personPrompt, citationPrompt, queryFrom } from '../memory/recall.ts';
 import { signGrant } from './grant.ts';
 import { callRuntime, RuntimeInterruptedError } from './runtime-client.ts';
@@ -169,7 +169,7 @@ async function sweepExpiredLeases(db: Kysely<DB>, registry: Registry): Promise<v
     const run: FinishedRun = {
       id: row.id, chatId: row.chat_id, agentActorId: row.agent_actor_id,
       invokerActorId: row.invoker_actor_id, replyMessageId: row.reply_message_id,
-      replyParentId: trigger?.parentId ?? trigger?.id ?? row.trigger_message_id,
+      replyParentId: replyParentOf(trigger, row.trigger_message_id),
     };
     try {
       await postFinishedNotice(db, registry, run, { state: 'interrupted' });
@@ -286,7 +286,7 @@ async function processRun(
   }
 
   const trigger = await triggerRef(db, run.triggerMessageId, run.chatId);
-  const replyParentId = trigger?.parentId ?? trigger?.id ?? run.triggerMessageId;
+  const replyParentId = replyParentOf(trigger, run.triggerMessageId);
   const chatRow = await db.selectFrom('chats').select('workspace_id')
     .where('id', '=', run.chatId).executeTakeFirst();
   const workspaceId = chatRow?.workspace_id ?? '';

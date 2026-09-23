@@ -67,7 +67,8 @@ export interface RunPlace {
   workspaceId: string;
   spaceId: string;
   visibility: 'public' | 'private' | null;
-  invokerActorId: string;
+  /** NULL for a job (an ambient answer): no person bank is opened (`banksForRun`). */
+  invokerActorId: string | null;
   /** The triggering message, as asked. Recall is a question, not a keyword list. */
   query: string;
 }
@@ -203,7 +204,7 @@ export async function recallForRun(db: Kysely<DB>, place: RunPlace): Promise<Rec
     }
   }));
 
-  const mine = personBank(place.invokerActorId);
+  const mine = place.invokerActorId === null ? null : personBank(place.invokerActorId);
   const aboutPerson = perBank.find((entry) => entry.bankId === mine)?.facts
     .map((fact) => cleanFactText(fact.text)) ?? [];
   const fromPlaces = perBank.filter((entry) => entry.bankId !== mine).flatMap((entry) => entry.facts);
