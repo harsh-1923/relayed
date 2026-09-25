@@ -127,14 +127,15 @@ export interface Due {
 }
 
 /**
- * An agent that may answer unprompted: active, not one of the system's own
- * (Roomkeeping writes summaries, not answers — `provisioned_by` is NULL for
- * most actors, hence IS DISTINCT FROM rather than <>), and in the allowlist
- * when there is one.
+ * An agent that may answer unprompted: active, and in the allowlist when there
+ * is one. The system's own agents too, since 2026-09-25: excluding them kept
+ * Relay — the workspace's own assistant, and the best fit for "what did I
+ * miss?" — from ever answering, and a question it was made for went to a
+ * production-triage agent that did not fit, or to nobody. Roomkeeping is
+ * eligible like Relay; step 2 decides who fits.
  */
 const eligible = (alias: string, handles: readonly string[] | null) => sql`
   ${sql.ref(`${alias}.type`)} = 'agent' AND ${sql.ref(`${alias}.state`)} = 'active'
-  AND ${sql.ref(`${alias}.provisioned_by`)} IS DISTINCT FROM 'system'
   AND (${handles === null ? null : [...handles]}::text[] IS NULL OR ${sql.ref(`${alias}.handle`)} = ANY(${handles === null ? null : [...handles]}::text[]))`;
 
 /** An eligible agent is a member of the chat's space. */

@@ -331,6 +331,23 @@ test('a question from long ago is not due when its room wakes up, and neither is
   assert.equal(await followUpIn(chatId), undefined);
 });
 
+test('the system\'s own agents may answer unprompted too — Relay among them', opts, async () => {
+  const relay = ulid('act');
+  const handle = `relay-${suffix}`;
+  await db.insertInto('actors').values({
+    id: relay, org_id: org, workspace_id: wsp, type: 'agent', handle, display_name: 'Relay', avatar_url: null,
+    identity_kind: 'system', identity_id: null, owner_actor_id: null, provisioned_by: 'system', state: 'active',
+  }).execute();
+  await db.insertInto('memberships').values({ scope_type: 'workspace', scope_id: wsp, actor_id: relay, role: 'member' }).execute();
+  await db.insertInto('agents').values({ actor_id: relay, workspace_id: wsp, description: 'The workspace assistant.', instructions: 'You are Relay.' }).execute();
+  const { chatId } = await channel(relay);
+  await speak(chatId, alice, 'what did I miss here?');
+  const due = (await dueTurns(db, [handle], 0, 50)).find(d => d.chatId === chatId);
+  assert.ok(due, 'a room whose only agent is a system agent is looked at');
+  assert.equal(await look(deps(stubJev(passAll(handle)), drafting('The team fixed the SSO stall.'), { handles: [handle] }), due), 'posted');
+  assert.equal((await db.selectFrom('messages').select('author_id').where('chat_id', '=', chatId).where('author_id', '=', relay).execute()).length, 1);
+});
+
 test('a chat with no agent in the allowlist is never due', opts, async () => {
   const { chatId } = await channel(triage);
   await speak(chatId, alice, 'anyone?');

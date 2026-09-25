@@ -711,9 +711,14 @@ path: the newest message is a person's, an eligible agent wrote one of the
 three messages before it within five minutes, nothing has judged it yet, it is
 newer than `STALE_AFTER`, and no run or look is in flight. There is no clock.
 
-**Eligible agents** are active, not provisioned by the system (Roomkeeping
-writes summaries, not answers), in `AMBIENT_AGENTS` when it is set (§10.3), and
+**Eligible agents** are active, in `AMBIENT_AGENTS` when it is set (§10.3), and
 able to read and post in the chat by their own grants — the ordinary `can()`.
+The system's own agents are eligible too, since 2026-09-25. They were excluded
+at first, on the reasoning that Roomkeeping writes summaries, not answers; that
+also shut out Relay, the workspace's own assistant. In production, "what did I
+miss here?" and "what is Anirudh up to?" then went to the only other agent in
+the room — one set up for production triage, which did not fit (0.30) — and
+nobody answered. Step 2 decides who fits, Relay and Roomkeeping included.
 
 A claim past its lease is a server that died mid-look. The next pass sweeps it
 to `stale`, and that turn is not looked at again: ambient answers are
