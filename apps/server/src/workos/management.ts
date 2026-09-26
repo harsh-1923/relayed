@@ -71,7 +71,20 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return json as T;
 }
 
-export interface WorkOSOrganization { id: string; name: string }
+export interface WorkOSOrganization {
+  id: string;
+  name: string;
+  /** Domains attached to the org. `verified` ones make WorkOS add matching sign-ins by itself. */
+  domains?: { domain: string; state?: string }[];
+}
+
+/** Organizations with this domain attached, verified or not (ORG-DOMAINS.md §11). */
+export const listOrganizationsByDomain = (domain: string): Promise<{ data: WorkOSOrganization[] }> =>
+  call('GET', `/organizations?domains=${encodeURIComponent(domain)}`);
+
+/** One organization, with its domains (ORG-DOMAINS.md §11). */
+export const getOrganization = (id: string): Promise<WorkOSOrganization> =>
+  call<WorkOSOrganization>('GET', `/organizations/${encodeURIComponent(id)}`);
 
 /**
  * Create the organization SSO, Directory Sync and invitations all attach to.
@@ -108,6 +121,8 @@ export interface WorkOSInvitation {
   email: string;
   state: 'pending' | 'accepted' | 'expired' | 'revoked';
   organization_id: string | null;
+  /** Who accepted it, once accepted — how an invitation is tied back to its workspace (ORG-DOMAINS.md §5.2). */
+  accepted_user_id?: string | null;
   accept_invitation_url: string;
   expires_at: string;
 }

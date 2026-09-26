@@ -161,6 +161,7 @@ what stops authorization becoming a policy language by accretion.
 | workspace | `create_space` | any member |
 | workspace | `transfer_ownership` | owner |
 | workspace | `create_agent` | any member — the risk an agent poses is closed by each invoker's permission, not by who typed its instructions (`WORKSPACE-AGENTS.md` §4.4) |
+| workspace | `edit` — its name and logo (`FILES.md`) | admin, owner |
 | space | `read` | any member (of the space) |
 | space | `join` | anyone in the workspace, where the space's policy is `open` |
 | space | `add_member` | any member — §7.3, deliberate |

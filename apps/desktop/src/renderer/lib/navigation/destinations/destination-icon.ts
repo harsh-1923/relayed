@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import {
-  Bot, ChatDefault, Hashtag, LockClose, PluginAddonPuzzle, UserTwo,
+  Bot, BuildingApartmentOne, ChatDefault, Hashtag, LockClose, PluginAddonPuzzle, UserTwo,
 } from '@relayed/icons';
 import type { NavigationDestination, NavigationIcon } from './destinations.ts';
 
@@ -11,6 +11,7 @@ const ICONS = {
   group: UserTwo,
   hashtag: Hashtag,
   lock: LockClose,
+  organization: BuildingApartmentOne,
   people: UserTwo,
 } satisfies Record<NavigationIcon, ComponentType<{ className?: string }>>;
 

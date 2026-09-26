@@ -46,6 +46,57 @@ export interface PendingJoin {
   orgId: string;
   name: string;
   handleSuggestions: string[];
+  /** Invited here; in the org by a domain verified in WorkOS; or in the org some other way. */
+  reason: "invited" | "company" | "member";
+  /** Its logo as an inline image, or null for initials. */
+  logo: string | null;
+  /** The org's default workspace — where colleagues land. */
+  isDefault: boolean;
+  /** Its organization's name. */
+  orgName: string;
+  /** Active people in this workspace. */
+  memberCount: number;
+  /** Invite-only — offered because they were invited. */
+  inviteOnly: boolean;
+}
+
+/**
+ * A company org this person could join by their verified email domain, with no
+ * invitation (ORG-DOMAINS.md §4). Joined with `auth.join` and `workspaceId` —
+ * the org's default workspace — exactly like a pending join.
+ */
+export interface OrgMatch {
+  orgId: string;
+  name: string;
+  memberCount: number;
+  workspaceId: string;
+  workspaceName: string;
+  handleSuggestions: string[];
+  /** Its logo as an inline image, or null for initials. */
+  logo: string | null;
+  /** The org's default workspace — where colleagues land. */
+  isDefault: boolean;
+  /** Active people in this workspace (`memberCount` is the org's). */
+  workspaceMemberCount: number;
+}
+
+/** One workspace of an org, as *Browse workspaces* and org settings list them. */
+export interface OrgWorkspace {
+  workspaceId: string;
+  name: string;
+  slug: string;
+  joinPolicy: "org_open" | "invite_only";
+  isDefault: boolean;
+  memberCount: number;
+  joined: boolean;
+}
+
+export interface OrgDomain {
+  domain: string;
+  approvedAt: string;
+  verified: boolean;
+  /** `workos`: verified on the org in WorkOS, and only removable there. */
+  source: "app" | "workos";
 }
 
 export interface Invitation {
@@ -231,6 +282,7 @@ export type AuthState =
       identity: { email: string; displayName: string };
       handleSuggestions: string[];
       pendingJoins: PendingJoin[];
+      orgMatches: OrgMatch[];
     }
   /** `pendingJoins`: invitations accepted at WorkOS with no actor here yet.
       Present when authenticated too, not only on first run — see session.ts. */
@@ -261,6 +313,12 @@ export interface WorkspaceRow {
   actorAvatarUrl: string | null;
   actorAvatarBlob: string | null;
   actorRole: "owner" | "admin" | "member";
+  /** The organization this workspace is in; the switcher groups by it. */
+  orgName: string;
+  /** Am I an admin of that org? Hides controls only — the server decides. */
+  orgIsAdmin: boolean;
+  /** The org's default workspace: where a colleague joining by domain lands. */
+  isDefault: boolean;
   lastOpenedAt: number | null;
   unreadHint: number;
   mentionHint: number;
@@ -521,7 +579,8 @@ export interface RelayedApi {
   }>;
   query(
     op: "auth.createWorkspace",
-    params: { workspaceName: string; handle: string },
+    /** `orgId`: another workspace in that org, for its admins. Absent: a new org. */
+    params: { workspaceName: string; handle: string; orgId?: string },
   ): Promise<AppState>;
   query(
     op: "workspace.switch",
@@ -563,10 +622,41 @@ export interface RelayedApi {
     op: "invite.revoke",
     params: { id: string },
   ): Promise<{ invitation: Invitation }>;
+  /** Onboarding: ask the server again what this person can join. */
+  query(op: "auth.recheckOnboarding"): Promise<AppState>;
   query(
     op: "auth.join",
     params: { workspaceId: string; handle: string },
   ): Promise<AppState>;
+  /**
+   * Set an org's or a workspace's logo from already re-encoded bytes, or clear
+   * it with `bytes: null`. Online-only (FILES.md §8).
+   */
+  query(
+    op: "logo.set",
+    params: { target: "org" | "workspace"; id: string; bytes: Uint8Array | null; mediaType?: string },
+  ): Promise<CommandAnswer<{ logo_url: string | null }>>;
+  /** What this person could join and has not. Asked when the switcher opens. */
+  query(
+    op: "org.matches",
+  ): Promise<{ pendingJoins: PendingJoin[]; orgMatches: OrgMatch[]; offline: boolean }>;
+  query(
+    op: "org.workspaces",
+    params: { orgId: string },
+  ): Promise<CommandAnswer<{ org: { id: string; name: string; isAdmin: boolean }; workspaces: OrgWorkspace[] }>>;
+  query(op: "org.domains.list", params: { orgId: string }): Promise<CommandAnswer<{ domains: OrgDomain[] }>>;
+  query(
+    op: "org.domains.add",
+    params: { orgId: string; domain: string },
+  ): Promise<CommandAnswer<{ domains: OrgDomain[] }>>;
+  query(
+    op: "org.domains.remove",
+    params: { orgId: string; domain: string },
+  ): Promise<CommandAnswer<{ domains: OrgDomain[] }>>;
+  query(
+    op: "org.workspace.update",
+    params: { workspaceId: string; joinPolicy?: "org_open" | "invite_only"; makeDefault?: boolean },
+  ): Promise<CommandAnswer<{ ok: true }>>;
   query(
     op: "spaces.create",
     params: { workspaceId: string; kind: 'channel' | 'room'; name: string; visibility: 'public' | 'private' },

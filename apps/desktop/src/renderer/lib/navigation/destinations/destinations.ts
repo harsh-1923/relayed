@@ -25,7 +25,7 @@ export const NAVIGATION_GROUPS = [
 ] as const;
 
 export type NavigationGroupId = (typeof NAVIGATION_GROUPS)[number]['id'];
-export type NavigationIcon = 'agents' | 'apps' | 'chat' | 'group' | 'hashtag' | 'lock' | 'people';
+export type NavigationIcon = 'agents' | 'apps' | 'chat' | 'group' | 'hashtag' | 'lock' | 'organization' | 'people';
 
 export interface NavigationDestination {
   /** Stable and unique. Labels are not unique. */
@@ -37,8 +37,17 @@ export interface NavigationDestination {
   disabled: boolean;
 }
 
-/** Workspace-tier destinations pinned above the space directory. */
-export function primaryDestinationsFor(workspaceId: string | null): NavigationDestination[] {
+/** The organization the open workspace belongs to, as account.db knows it (ORG-DOMAINS.md). */
+export interface OrgSummary { name: string; isAdmin: boolean }
+
+/**
+ * Workspace-tier destinations pinned above the space directory.
+ *
+ * With `org`, a last row for the organization: managing it for its admins,
+ * browsing its other workspaces for everyone else. Under the WORKSPACE's route,
+ * so the workspace stays open while its org is looked at.
+ */
+export function primaryDestinationsFor(workspaceId: string | null, org?: OrgSummary): NavigationDestination[] {
   if (workspaceId === null) return [];
   return [
     {
@@ -68,6 +77,14 @@ export function primaryDestinationsFor(workspaceId: string | null): NavigationDe
       to: `/w/${workspaceId}/apps`,
       disabled: false,
     },
+    ...(org ? [{
+      id: `p:${workspaceId}:organization`,
+      label: org.isAdmin ? `Manage ${org.name}` : `Browse ${org.name}`,
+      group: 'go-to' as const,
+      icon: 'organization' as const,
+      to: `/w/${workspaceId}/organization`,
+      disabled: false,
+    }] : []),
   ];
 }
 

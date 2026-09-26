@@ -24,7 +24,8 @@ export const results = () => ({ pass, fail, fails });
 // ─── the closed vocabularies (AUTHZ §6) ──────────────────────────────────────
 export const ROLES = ['owner', 'admin', 'member'];
 export const ACTIONS = {
-  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership', 'create_agent'],
+  // `edit`: the workspace's own name and logo (FILES.md §11) — its admins'.
+  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership', 'create_agent', 'edit'],
   space:     ['read', 'join', 'add_member', 'remove_member', 'create_chat',
               'make_public', 'promote'],
   chat:      ['read', 'post', 'edit_own', 'delete_own', 'delete_any'],
@@ -87,7 +88,8 @@ export class World {
       if (!m) return false;
       switch (action) {
         case 'invite':
-        case 'manage_members':      return m.role === 'admin' || m.role === 'owner';
+        case 'manage_members':
+        case 'edit':                return m.role === 'admin' || m.role === 'owner';
         case 'transfer_ownership':  return m.role === 'owner';
         case 'create_space':
         case 'create_agent':        return true;
@@ -191,7 +193,7 @@ export class World {
     if (objectType === 'workspace') {
       const obj = `workspace:${objectId}`;
       if (!has(obj, anyRole)) return false;
-      if (action === 'invite' || action === 'manage_members') return has(obj, ['admin', 'owner']);
+      if (action === 'invite' || action === 'manage_members' || action === 'edit') return has(obj, ['admin', 'owner']);
       if (action === 'transfer_ownership') return has(obj, ['owner']);
       if (action === 'create_space' || action === 'create_agent') return true;
       return false;

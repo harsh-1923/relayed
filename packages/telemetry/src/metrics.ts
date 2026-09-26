@@ -31,7 +31,7 @@ export interface LabelValues {
   /** Which database. The two migrate on independent version lines. */
   tier: 'account' | 'workspace';
   /** How an actor came to exist. */
-  via: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api' | 'workos_event';
+  via: 'self_signup' | 'invite' | 'domain' | 'sso_jit' | 'scim' | 'api' | 'workos_event';
   /** How a workspace obtained credentials: a stored token, or a first-ever switch. */
   path: 'refresh' | 'switch';
   outcome: 'authenticated' | 'needs_workspace' | 'failed' | 'cancelled';
@@ -240,7 +240,7 @@ export const labelValues = {
   op: ['send', 'edit', 'react', 'delete', 'read'],
   phase: ['local', 'authorized'],
   tier: ['account', 'workspace'],
-  via: ['self_signup', 'invite', 'sso_jit', 'scim', 'api', 'workos_event'],
+  via: ['self_signup', 'invite', 'domain', 'sso_jit', 'scim', 'api', 'workos_event'],
   path: ['refresh', 'switch'],
   outcome: ['authenticated', 'needs_workspace', 'failed', 'cancelled'],
   kind: ['avatar', 'attachment'],
@@ -398,6 +398,12 @@ export const metrics = {
        + 'distribution multi-workspace was built for, and unrecoverable later: '
        + 'logs holding this are gone in 14 days.',
   },
+  'auth.onboarding_renewed': {
+    kind: 'counter', labels: ['result'],
+    doc: 'The WorkOS token held during onboarding was renewed before a join or a '
+       + 'create, because it was about to expire. A high error share means people '
+       + 'are being sent back to sign in mid-onboarding.',
+  },
   'auth.signin': {
     kind: 'counter', labels: ['outcome'],
     doc: 'The onboarding funnel. `needs_workspace` is someone who authenticated '
@@ -434,6 +440,13 @@ export const metrics = {
     kind: 'counter', labels: [],
     doc: 'Sessions that degraded to read-only. Local data still works, so users '
        + 'may not report it — which is exactly why it needs a counter.',
+  },
+  'files.upload': {
+    kind: 'counter', labels: ['result'],
+    doc: 'A file upload finished its handshake (FILES.md §4): `ok` when the bytes '
+       + 'were verified or the org already held them, `error` when verification '
+       + 'refused them. A rising error share means clients are sending what they '
+       + 'did not declare — a bug, or someone probing.',
   },
   'handle.collision': {
     kind: 'counter', labels: [], reserved: true,

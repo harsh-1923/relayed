@@ -15,6 +15,7 @@ import { sql } from 'kysely';
 import { db } from '../db/client.ts';
 import { recordActor } from '../sync/directory.ts';
 import { listEvents, type WorkOSEvent } from './management.ts';
+import { recordWorkosMembership } from './mirror.ts';
 
 /** One page at a time; a backlog drains over several ticks rather than one. */
 const PAGE = 100;
@@ -79,14 +80,7 @@ async function applyEvent(event: WorkOSEvent): Promise<void> {
     case 'organization_membership.created':
     case 'organization_membership.updated': {
       if (!d.user_id || !d.organization_id) return;
-      // Upsert, not insert: replays and updates land on the same row, which is
-      // what makes at-least-once delivery harmless.
-      await db.insertInto('workos_memberships').values({
-        workos_user_id: d.user_id, workos_org_id: d.organization_id,
-        role_slug: d.role?.slug ?? null, status: d.status ?? 'active',
-      }).onConflict((oc) => oc.columns(['workos_user_id', 'workos_org_id']).doUpdateSet({
-        role_slug: d.role?.slug ?? null, status: d.status ?? 'active', seen_at: sql`now()`,
-      })).execute();
+      await recordWorkosMembership(db, d.user_id, d.organization_id, d.status ?? 'active', d.role?.slug ?? null);
       return;
     }
 

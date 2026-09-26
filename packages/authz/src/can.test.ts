@@ -12,7 +12,7 @@ const g = (...pairs: [Scope, string, Role][]): Grants =>
   new Map(pairs.map(([s, i, r]) => [grantKey(s, i), r]));
 
 const everyTarget: [Scope, string][] = [
-  ['workspace', 'W'], ['space', 'S_pub'], ['space', 'S_priv'],
+  ['organization', 'O'], ['workspace', 'W'], ['space', 'S_pub'], ['space', 'S_priv'],
   ['chat', 'C_pub'], ['chat', 'C_priv'], ['chat', 'C_open'], ['agent', 'A'],
 ];
 
@@ -30,7 +30,8 @@ const answers = (grants: Grants) =>
  * a stale client would grant permissions the server denies.
  */
 test('a client with FEWER grants can never permit more than the server', () => {
-  const full = g(['workspace', 'W', 'owner'],
+  const full = g(['organization', 'O', 'admin'],
+                 ['workspace', 'W', 'owner'],
                  ['space', 'S_pub', 'admin'],
                  ['space', 'S_priv', 'admin'],
                  ['chat', 'C_priv', 'member'],
@@ -138,4 +139,21 @@ test('any member may create an agent; invoke is not an action anywhere', () => {
   for (const scope of Object.keys(ACTIONS) as Scope[]) {
     assert.ok(!(ACTIONS[scope] as readonly string[]).includes('invoke'), `no stored invoke on ${scope}`);
   }
+});
+
+test('organization actions need the derived org admin grant, and it reaches nothing below', () => {
+  const orgAdmin = g(['organization', 'O', 'admin']);
+  for (const a of ACTIONS.organization) {
+    assert.equal(can(orgAdmin, a, { scope: 'organization', id: 'O' }), true, a);
+    assert.equal(can(g(['organization', 'O', 'member']), a, { scope: 'organization', id: 'O' }), false, a);
+    assert.equal(can(orgAdmin, a, { scope: 'organization', id: 'O2' }), false, `${a} on another org`);
+  }
+  // Org admin is not workspace admin — not even of a workspace in that org.
+  for (const a of ACTIONS.workspace) {
+    assert.equal(can(orgAdmin, a, { scope: 'workspace', id: 'W' }), false, a);
+  }
+  // And the converse: owning a workspace grants nothing at the org. The
+  // derivation from the DEFAULT workspace happens where grants are loaded,
+  // never inside can().
+  assert.equal(can(g(['workspace', 'W', 'owner']), 'create_workspace', { scope: 'organization', id: 'O' }), false);
 });

@@ -10,6 +10,10 @@ export interface OrganizationsTable {
   workos_org_id: string;
   name: string;
   avatar_url: string | null;
+  /** Where a domain join lands; its owner and admins are the org's admins (ORG-DOMAINS.md §6). */
+  default_workspace_id: string | null;
+  /** Its logo (FILES.md §5). Wins over `avatar_url` wherever a workspace inherits it. */
+  logo_file_id: Generated<string | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 }
@@ -25,8 +29,48 @@ export interface WorkspacesTable {
    * directory and nothing else (DESIGN.md §9.9, the `welcome` ceiling).
    */
   next_rev: Generated<number>;
+  /** Who may join without an invitation to THIS workspace (ORG-DOMAINS.md §5). */
+  join_policy: Generated<'org_open' | 'invite_only'>;
+  /** Its own logo, over its org's (FILES.md §5). */
+  logo_file_id: Generated<string | null>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
+}
+
+/** Bytes we hold, whatever for (FILES.md §3). No permission of its own — its references decide. */
+export interface FilesTable {
+  id: string;
+  sha256: string;
+  size: number;
+  media_type: string;
+  width: number | null;
+  height: number | null;
+  purpose: 'logo' | 'attachment';
+  org_id: string;
+  uploaded_by: string | null;
+  state: Generated<'pending' | 'ready'>;
+  created_at: Generated<Timestamp>;
+}
+
+/** Company mail domains an org has approved (ORG-DOMAINS.md §4). Never exclusive until verified. */
+export interface OrganizationDomainsTable {
+  org_id: string;
+  domain: string;
+  approved_by: string;
+  approved_at: Generated<Timestamp>;
+  verified_at: Timestamp | null;
+  locks_creation: Generated<boolean>;
+  /** `app`: approved in Relayed. `workos`: verified on the org in WorkOS — our copy, WorkOS's to remove. */
+  source: Generated<'app' | 'workos'>;
+}
+
+/** Which workspace a WorkOS invitation — addressed to an org — was sent from (ORG-DOMAINS.md §5.2). */
+export interface WorkspaceInvitationsTable {
+  workos_invitation_id: string;
+  workspace_id: string;
+  invited_by_actor_id: string | null;
+  accepted_user_id: string | null;
+  created_at: Generated<Timestamp>;
 }
 
 export interface ActorsTable {
@@ -41,7 +85,7 @@ export interface ActorsTable {
   identity_id: string | null;
   owner_actor_id: string | null;
   /** `system` is an agent the app provisions, and the only kind allowed no owner (022). */
-  provisioned_by: 'self_signup' | 'invite' | 'sso_jit' | 'scim' | 'api' | 'system';
+  provisioned_by: 'self_signup' | 'invite' | 'domain' | 'sso_jit' | 'scim' | 'api' | 'system';
   state: Generated<'invited' | 'active' | 'suspended' | 'deactivated'>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
@@ -626,7 +670,10 @@ export interface AgentFeedbackTable {
 
 export interface DB {
   organizations: OrganizationsTable;
+  organization_domains: OrganizationDomainsTable;
   workspaces: WorkspacesTable;
+  workspace_invitations: WorkspaceInvitationsTable;
+  files: FilesTable;
   actors: ActorsTable;
   memberships: MembershipsTable;
   workos_cursor: WorkosCursorTable;

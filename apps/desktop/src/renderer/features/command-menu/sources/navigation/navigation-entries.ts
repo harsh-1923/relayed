@@ -4,7 +4,7 @@ import type { LocalRoom } from '../../../../../shared/local-rooms.ts';
 import type { Space } from '../../../../../shared/spaces.ts';
 import {
   installedAppsDestination, localRoomDestination, primaryDestinationsFor, WORKSPACE_SPACE_GROUPS,
-  workspaceSpaceDestination, type NavigationDestination,
+  workspaceSpaceDestination, type NavigationDestination, type OrgSummary,
 } from '../../../../lib/navigation/destinations/destinations.ts';
 
 export interface NavigationEntry {
@@ -20,6 +20,8 @@ const PRIMARY_KEYWORDS: Readonly<Record<string, readonly string[]>> = {
   'Installed apps': ['connected apps', 'connections', 'manage apps'],
 };
 
+const ORG_KEYWORDS: readonly string[] = ['organization', 'org', 'workspaces', 'logo', 'domain', 'settings'];
+
 const SPACE_ALIASES: Readonly<Record<string, readonly string[]>> = {
   channel: ['channel'],
   room: ['room', 'shared room'],
@@ -31,15 +33,19 @@ export function navigationEntriesFor(
   workspaceId: string | null,
   spaces: readonly Space[],
   localRooms: readonly LocalRoom[],
+  org?: OrgSummary,
 ): NavigationEntry[] {
   // The sidebar itself needs an active workspace, even though its first
   // section holds account-tier local rooms; the menu follows it.
   if (workspaceId === null) return [];
 
   const entries: NavigationEntry[] = [
-    ...[...primaryDestinationsFor(workspaceId), installedAppsDestination(workspaceId)].map(destination => ({
+    ...[...primaryDestinationsFor(workspaceId, org), installedAppsDestination(workspaceId)].map(destination => ({
       destination,
-      keywords: [destination.label, ...(PRIMARY_KEYWORDS[destination.label] ?? [])],
+      // The org row's label carries the org's name, so its words are keyed by
+      // what it IS rather than what it says.
+      keywords: [destination.label, ...(destination.icon === 'organization'
+        ? ORG_KEYWORDS : PRIMARY_KEYWORDS[destination.label] ?? [])],
       detail: null,
     })),
     ...localRooms.map(room => {

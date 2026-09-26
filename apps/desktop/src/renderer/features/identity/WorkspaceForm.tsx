@@ -1,5 +1,6 @@
 // PHASE-1-IDENTITY §9 decision 1: an org is created here, on demand — never at
-// signup.
+// signup. With `orgId`, a workspace inside an org that exists instead — which
+// only its admins may make (ORG-DOMAINS.md §7.1).
 import { useCallback, useState } from 'react';
 import type { AppState } from '../../../preload/api';
 import { call } from '@/lib/ipc';
@@ -11,6 +12,7 @@ export function WorkspaceForm(props: {
   defaultName: string;
   suggestions: string[];
   submitLabel: string;
+  orgId?: string;
   onError: (m: string | null) => void;
   onDone: (s: AppState) => void;
 }) {
@@ -18,17 +20,17 @@ export function WorkspaceForm(props: {
   // Pre-filled and editable — never auto-suffixed (PHASE-1-IDENTITY §10).
   const [handle, setHandle] = useState(props.suggestions[0] ?? '');
   const [busy, setBusy] = useState(false);
-  const { onError, onDone } = props;
+  const { onError, onDone, orgId } = props;
 
   const create = useCallback(async () => {
     setBusy(true); onError(null);
     try {
       const s = await call(api =>
-        api.query('auth.createWorkspace', { workspaceName: name, handle }));
+        api.query('auth.createWorkspace', { workspaceName: name, handle, ...(orgId ? { orgId } : {}) }));
       if (s) onDone(s);
     } catch (e) { onError((e as Error).message); }
     finally { setBusy(false); }
-  }, [name, handle, onError, onDone]);
+  }, [name, handle, orgId, onError, onDone]);
 
   return (
     <div className="space-y-4">

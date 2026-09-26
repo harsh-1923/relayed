@@ -11,6 +11,52 @@ import { createHash } from 'node:crypto';
 import { emit, count } from '@relayed/telemetry';
 import type { ToolkitSummary } from './auth/relayed.ts';
 import type { CachedImageMediaType, Storage } from './storage.ts';
+import { serverUrl } from './config.ts';
+
+/**
+ * An image URL as the server sent it, made absolute. Uploaded logos arrive
+ * RELATIVE — `/files/fil_…` — because only the client knows which origin it
+ * reached the server at (FILES.md §6.3).
+ */
+export const absoluteImageUrl = (url: string): string =>
+  url.startsWith('/') ? `${serverUrl().replace(/\/+$/, '')}${url}` : url;
+
+/**
+ * A logo as an inline `data:` image, for surfaces that show workspaces the
+ * person is NOT in yet — the join list during onboarding, before any account
+ * exists to hold blobs (FILES.md §6.3). Never stored; cached for the life of
+ * the process, since a logo's URL names immutable bytes. Null when it cannot be
+ * fetched, which the renderer draws as initials.
+ */
+const inlineLogos = new Map<string, string>();
+export async function logoDataUrl(url: string | null): Promise<string | null> {
+  if (!url) return null;
+  const abs = absoluteImageUrl(url);
+  const held = inlineLogos.get(abs);
+  if (held) return held;
+  try {
+    if (!fetchable(new URL(abs))) return null;
+    const res = await fetch(abs, { redirect: 'follow', signal: AbortSignal.timeout(10_000) });
+    if (!res.ok || (res.url && !fetchable(new URL(res.url)))) return null;
+    const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+    if (!ALLOWED.has(type)) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return null;
+    const data = `data:${type};base64,${buf.toString('base64')}`;
+    inlineLogos.set(abs, data);
+    return data;
+  } catch { return null; }
+}
+
+/**
+ * https, or plain http to THIS machine. Plaintext elsewhere would tell anyone on
+ * the path which workspaces this device holds; to loopback it tells no one, and
+ * it is how a development server and its MinIO are reached.
+ */
+function fetchable(url: URL): boolean {
+  return url.protocol === 'https:'
+    || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname));
+}
 
 /** An avatar that will not fit in a cache line is not an avatar. */
 const MAX_BYTES = 2 * 1024 * 1024;
@@ -75,7 +121,7 @@ export async function prefetchAvatars(storage: Storage): Promise<number> {
       // Already held. A blob is cleared only when its source URL changes (see
       // syncMemberships), so this is the steady state after the first run.
       if (!url || (held && storage.hasBlob(held))) continue;
-      await resolve(url, id => storage.setAvatarBlob(w.workspaceId, which, id));
+      await resolve(absoluteImageUrl(url), id => storage.setAvatarBlob(w.workspaceId, which, id));
     }
   }
 
@@ -102,10 +148,13 @@ async function fetchBlob(storage: Storage, url: string): Promise<string | null> 
   // would leak which workspaces this device holds to anyone on the path.
   let parsed: URL;
   try { parsed = new URL(url); } catch { return null; }
-  if (parsed.protocol !== 'https:') return null;
+  if (!fetchable(parsed)) return null;
 
   const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(10_000) });
   if (!res.ok) return null;
+  // The same rule for wherever a redirect landed — a logo is served by
+  // redirecting to the object store (FILES.md §6).
+  if (res.url && !fetchable(new URL(res.url))) return null;
 
   const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   if (!ALLOWED.has(type)) return null;

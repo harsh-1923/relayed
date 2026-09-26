@@ -246,6 +246,10 @@ Set on the `relayed-server` service.
 | `SESSION_PUBLIC_KEY` | from §3b | |
 | `RELAYED_PUBLIC_URL` | `https://api.relayed.imharsh.in` | |
 | `RELAYED_DOWNLOAD_URL` | the R2 `.dmg` url | Read by `/version` (the update nag) **and** by `/welcome`. Unset, both fall back to the GitHub releases page — so an invitee is sent somewhere there is no build. Must match `apps/web/src/lib/download.ts`, which holds the same url by hand |
+| `S3_ENDPOINT` | `https://<account id>.r2.cloudflarestorage.com` | Files and logos (`FILES.md` §10). The five `S3_*` are all or nothing: some but not all refuses to boot; none answers uploads with `503 storage_unconfigured` |
+| `S3_REGION` | `auto` | |
+| `S3_BUCKET` | `relayed-files` | Private. Not `relayed-download`, which is public and holds the dmg |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | an R2 API token | Secret. Object Read & Write on `relayed-files` only. `node --env-file=.env --env-file=.env.r2 scripts/r2-check.mts` proves a set before it goes here |
 
 `PORT` is injected by Railway and already read by
 [`env.ts`](../apps/server/src/env.ts). Do not set it.
@@ -371,10 +375,12 @@ worth **not** breaking:
   counter rows ([`allocate.ts`](../apps/server/src/sync/allocate.ts)), not by
   `SERIAL`. A restored sequence left behind its data is the classic way a
   dump/restore silently corrupts an ordered log, and we cannot hit it.
-- **No object storage.** MinIO is in `compose.yaml` but no server code touches
-  it; avatars are fetched client-side from WorkOS URLs.
-- **Postgres is the only durable state.** The socket registry is memory, and
-  says so.
+- **Object storage is plain S3.** Files (`FILES.md`) live in R2 under
+  `bytes/<sha256>` and are reached only through presigned URLs, so any
+  S3-compatible store takes them: copy the bucket, change the five `S3_*`
+  variables. `files` rows name bytes by hash, never by location.
+- **Postgres and the bucket are the only durable state.** The socket registry
+  is memory, and says so.
 
 Downtime during a move is unusually forgiving: clients stay fully readable
 offline (R3), then reconnect and catch up.

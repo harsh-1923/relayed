@@ -33,7 +33,7 @@ import { storePanel, storeDocument, type PanelRow, type DocumentRow } from './ef
 
 /**
  * Two subjects in one row — the workspace, and me in it — so every field says
- * whose it is. See account migration v4 for what unqualified names cost.
+ * whose it is. See account migration v1 for what unqualified names cost.
  */
 export interface WorkspaceRow {
   workspaceId: string;
@@ -51,6 +51,12 @@ export interface WorkspaceRow {
   actorAvatarBlob: string | null;
   /** My role here — the grant the client's can() reads (AUTHZ.md §3). */
   actorRole: Role;
+  /** The organization this workspace is in (ORG-DOMAINS.md); the switcher groups by it. */
+  orgName: string;
+  /** Am I an admin of that org? Hides controls only — the server decides (invariant 49). */
+  orgIsAdmin: boolean;
+  /** The org's default workspace. */
+  isDefault: boolean;
   lastOpenedAt: number | null;
   unreadHint: number;
   mentionHint: number;
@@ -187,6 +193,9 @@ export interface Membership {
   actorDisplayName: string;
   actorAvatarUrl: string | null;
   actorRole: Role;
+  orgName: string;
+  orgIsAdmin: boolean;
+  isDefault: boolean;
 }
 
 const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
@@ -202,6 +211,11 @@ const toRow = (r: Record<string, unknown>): WorkspaceRow => ({
   actorAvatarUrl: (r['actor_avatar_url'] as string | null) ?? null,
   actorAvatarBlob: (r['actor_avatar_blob'] as string | null) ?? null,
   actorRole: ((r['actor_role'] as string | null) ?? 'member') as Role,
+  // A row written before migration v4 has an empty org name; its own is the
+  // honest stand-in until the next refresh fills it.
+  orgName: (r['org_name'] as string | null) || String(r['name']),
+  orgIsAdmin: Number(r['org_is_admin'] ?? 0) === 1,
+  isDefault: Number(r['is_default'] ?? 0) === 1,
   lastOpenedAt: (r['last_opened_at'] as number | null) ?? null,
   unreadHint: Number(r['unread_hint'] ?? 0),
   mentionHint: Number(r['mention_hint'] ?? 0),
@@ -522,8 +536,9 @@ export class Storage {
         INSERT INTO workspaces (workspace_id, org_id, name, slug,
                                 workspace_avatar_url,
                                 actor_id, actor_handle, actor_display_name,
-                                actor_avatar_url, actor_role, state)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                                actor_avatar_url, actor_role,
+                                org_name, org_is_admin, is_default, state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
         ON CONFLICT(workspace_id) DO UPDATE SET
           org_id = excluded.org_id, name = excluded.name, slug = excluded.slug,
           workspace_avatar_url = excluded.workspace_avatar_url,
@@ -531,6 +546,8 @@ export class Storage {
           actor_display_name = excluded.actor_display_name,
           actor_avatar_url = excluded.actor_avatar_url,
           actor_role = excluded.actor_role,
+          org_name = excluded.org_name, org_is_admin = excluded.org_is_admin,
+          is_default = excluded.is_default,
           -- Drop a local blob only when its source URL actually changed;
           -- otherwise every membership refresh re-downloads every image.
           actor_avatar_blob = CASE
@@ -544,7 +561,7 @@ export class Storage {
       for (const m of memberships) {
         upsert.run(m.workspaceId, m.orgId, m.name, m.slug, m.workspaceAvatarUrl,
                    m.actorId, m.actorHandle, m.actorDisplayName, m.actorAvatarUrl,
-                   m.actorRole);
+                   m.actorRole, m.orgName, m.orgIsAdmin ? 1 : 0, m.isDefault ? 1 : 0);
       }
       if (memberships.length > 0) {
         const keep = memberships.map(() => '?').join(',');

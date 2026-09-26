@@ -250,7 +250,7 @@ section('§6  the action vocabulary is closed');
   // an action is added, which is the opposite of a closed vocabulary's purpose.
   check('the vocabulary is exactly what §6 declares',
         Object.fromEntries(Object.entries(ACTIONS).map(([k, v]) => [k, v.length])),
-        { workspace: 5, space: 7, chat: 5, agent: 4 });
+        { workspace: 6, space: 7, chat: 5, agent: 4 });
 }
 
 // ─── summary ─────────────────────────────────────────────────────────────────

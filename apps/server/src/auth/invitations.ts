@@ -26,6 +26,25 @@ async function workosOrgFor(workspaceId: string): Promise<string | null> {
   return row?.id ?? null;
 }
 
+/**
+ * Keep only the invitations sent from THIS workspace.
+ *
+ * WorkOS lists invitations per org, and an org now holds several workspaces —
+ * an admin of one must not see, or revoke, another's. An invitation with no
+ * `workspace_invitations` row predates them; its org held one workspace, now
+ * its default, so it belongs there.
+ */
+async function ofWorkspace<T extends { id: string }>(workspaceId: string, list: T[]): Promise<T[]> {
+  if (list.length === 0) return list;
+  const rows = await db.selectFrom('workspace_invitations')
+    .select(['workos_invitation_id', 'workspace_id'])
+    .where('workos_invitation_id', 'in', list.map(i => i.id)).execute();
+  const from = new Map(rows.map(r => [r.workos_invitation_id, r.workspace_id]));
+  const isDefault = !!await db.selectFrom('organizations').select('id')
+    .where('default_workspace_id', '=', workspaceId).executeTakeFirst();
+  return list.filter(i => from.has(i.id) ? from.get(i.id) === workspaceId : isDefault);
+}
+
 const wire = (i: { id: string; email: string; state: string; expires_at: string }) => ({
   id: i.id, email: i.email, state: i.state, expires_at: i.expires_at,
 });
@@ -59,6 +78,16 @@ export async function invitationRoutes(app: FastifyInstance): Promise<void> {
 
     try {
       const inv = await createInvitation(orgId, email, me.workosUserId ?? undefined);
+      // WorkOS addresses the invitation to the ORG. This row is the only record
+      // of which workspace it came from — without it, accepting would admit to
+      // none of an org's invite-only workspaces, or to all of them
+      // (ORG-DOMAINS.md §5.2). Upsert: WorkOS may return an existing pending
+      // invitation for the same address.
+      await db.insertInto('workspace_invitations').values({
+        workos_invitation_id: inv.id, workspace_id: me.workspaceId, invited_by_actor_id: me.actorId,
+      }).onConflict((oc) => oc.column('workos_invitation_id').doUpdateSet({
+        workspace_id: me.workspaceId, invited_by_actor_id: me.actorId,
+      })).execute();
       return reply.send({ invitation: wire(inv) });
     } catch (e) {
       const err = e as WorkOSError;
@@ -81,7 +110,8 @@ export async function invitationRoutes(app: FastifyInstance): Promise<void> {
     if (!orgId) return reply.send({ invitations: [] });
     try {
       const list = await listInvitations(orgId);
-      return reply.send({ invitations: list.data.filter(i => i.state === 'pending').map(wire) });
+      const mine = await ofWorkspace(me.workspaceId, list.data.filter(i => i.state === 'pending'));
+      return reply.send({ invitations: mine.map(wire) });
     } catch (e) {
       return reply.code(502).send({ error: 'workos_unavailable', detail: (e as Error).message });
     }
@@ -103,7 +133,7 @@ export async function invitationRoutes(app: FastifyInstance): Promise<void> {
     // workspace it belongs to, so it is only revocable if it is one of ours.
     try {
       const list = await listInvitations(orgId);
-      if (!list.data.some(i => i.id === req.params.id)) {
+      if (!(await ofWorkspace(me.workspaceId, list.data)).some(i => i.id === req.params.id)) {
         return reply.code(404).send({ error: 'not_found' });
       }
       const revoked = await revokeInvitation(req.params.id);

@@ -169,4 +169,24 @@ export const accountMigrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 4,
+    name: 'organizations',
+    up: `
+      -- A workspace now sits in an organization that may hold several
+      -- (ORG-DOMAINS.md). The switcher groups by org and shows "create a
+      -- workspace here" to its admins only. All three are projections of the
+      -- server's answer on every refresh, never the authority (invariant 49):
+      -- a claim can move a workspace to another org, and the next refresh
+      -- overwrites these as it overwrites org_id (§11.7).
+      --
+      -- Defaults are the least a stale row can claim: its own name as the
+      -- org's, no admin, not the default.
+      ALTER TABLE workspaces ADD COLUMN org_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE workspaces ADD COLUMN org_is_admin INTEGER NOT NULL DEFAULT 0
+        CHECK (org_is_admin IN (0, 1));
+      ALTER TABLE workspaces ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0
+        CHECK (is_default IN (0, 1));
+    `,
+  },
 ];

@@ -41,8 +41,13 @@ function PlaygroundIcon({ className }: { className?: string }) {
 export function AppSidebar({ inline = false }: { inline?: boolean }) {
   const { open } = useSidebar();
   // From state, not the URL: a local room's route has no workspace in its path.
-  const wsId = useSession().state.workspaceId;
-  const destinations = primaryDestinationsFor(wsId);
+  const { state } = useSession();
+  const wsId = state.workspaceId;
+  // The org row reads account.db, like the switcher: correct offline and before
+  // any network (ORG-DOMAINS.md).
+  const active = state.workspaces.find(w => w.workspaceId === wsId);
+  const destinations = primaryDestinationsFor(wsId,
+    active ? { name: active.orgName, isAdmin: active.orgIsAdmin } : undefined);
   const search = useCommand('app.search.open');
   // Compared whole — path AND query. People and Agents are the same route on
   // different tabs, so matching on the path alone would light up both rows.
@@ -78,7 +83,7 @@ export function AppSidebar({ inline = false }: { inline?: boolean }) {
             title={search.shortcutLabel ? `Search (${search.shortcutLabel})` : 'Search'}
             disabled={!search.enabled}
             onClick={() => search.execute()}
-            className="size-6 text-muted-foreground hover:text-foreground"
+            className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
           >
             <SearchDefault className="size-4" />
           </Button>

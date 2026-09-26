@@ -54,6 +54,9 @@ export function can(
   if (needed === undefined) return false;
 
   if (scope === 'workspace') return holds(grants, 'workspace', id, needed);
+  // Nothing reaches DOWN from here: an org admin is not thereby an admin of any
+  // workspace but the default, which is where the grant came from.
+  if (scope === 'organization') return holds(grants, 'organization', id, needed);
 
   if (scope === 'agent') {
     const ws = placement.workspaceOf?.[id];

@@ -19,11 +19,11 @@ import { emit, count, histogram } from '@relayed/telemetry';
 import { assertEdge } from './transitions.ts';
 import { createPkce } from './pkce.ts';
 import { listenForCallback } from './loopback.ts';
-import { buildAuthorizeUrl, exchangeCode, type WorkOSConfig } from './workos.ts';
+import { buildAuthorizeUrl, exchangeCode, refreshTokens, type Tokens, type WorkOSConfig } from './workos.ts';
 import {
   exchangeForSession, createWorkspace, createWorkspaceAuthed, refreshSession,
   switchSession, signOutSession, fetchMe, joinWorkspace,
-  ServerError, type Actor, type OurSession, type PendingJoin,
+  ServerError, type Actor, type OurSession, type PendingJoin, type OrgMatch,
 } from './relayed.ts';
 
 export type AuthState =
@@ -41,7 +41,9 @@ export type AuthState =
   | { status: 'awaiting_browser' }
   /** Signed in with WorkOS but no org yet — onboarding must run (§9). */
   | { status: 'needs_workspace'; identity: { email: string; displayName: string };
-      handleSuggestions: string[]; pendingJoins: PendingJoin[] }
+      handleSuggestions: string[]; pendingJoins: PendingJoin[];
+      /** Company orgs their verified email domain admits them to (ORG-DOMAINS.md §4). */
+      orgMatches: OrgMatch[] }
   /**
    * `pendingJoins` IS CARRIED HERE TOO, not only on `needs_workspace`.
    *
@@ -102,6 +104,19 @@ export class Session {
   #workspaceId: string | null = null;
   /** Held only between the WorkOS exchange and onboarding completing. */
   #pendingWorkosToken: string | null = null;
+  /**
+   * What renews it, and when it expires — held for exactly as long as the
+   * token itself, and never persisted.
+   *
+   * WorkOS access tokens last minutes. Onboarding can take longer than that —
+   * someone reading the join screen, or waiting for their company's domain to
+   * be set up — and the token is the proof `/auth/join` and `/auth/workspace`
+   * ask for. Without its refresh token, the only way past an expired one was
+   * signing in again, which nothing on the screen offered. Once onboarding
+   * ends both are dropped, and steady state depends on our server alone.
+   */
+  #pendingWorkosRefresh: string | null = null;
+  #pendingWorkosExpiresAt: number | null = null;
   /**
    * The sign-in currently waiting on a browser.
    *
@@ -195,10 +210,10 @@ export class Session {
       if ('needsWorkspace' in result) {
         // Onboarding needs the WorkOS token again to prove identity to
         // /auth/workspace. Held in memory only, and dropped either way.
-        this.#pendingWorkosToken = workos.accessToken;
+        this.#holdPendingWorkos(workos);
         this.#set({ status: 'needs_workspace', identity: result.identity,
                     handleSuggestions: result.handleSuggestions,
-                    pendingJoins: result.pendingJoins });
+                    pendingJoins: result.pendingJoins, orgMatches: result.orgMatches });
         this.#signedIn('needs_workspace', this.#now() - t0);
         return this.#state;
       }
@@ -309,10 +324,10 @@ export class Session {
         this.#adding = null;
         this.#session = null;
         this.#workspaceId = null;
-        this.#pendingWorkosToken = workos.accessToken;
+        this.#holdPendingWorkos(workos);
         this.#set({ status: 'needs_workspace', identity: result.identity,
                     handleSuggestions: result.handleSuggestions,
-                    pendingJoins: result.pendingJoins });
+                    pendingJoins: result.pendingJoins, orgMatches: result.orgMatches });
         count('auth.add_account', { outcome: 'needs_workspace' });
         return this.#state;
       }
@@ -347,7 +362,7 @@ export class Session {
     const resume = this.#resume;
     if (!resume) return this.#state;
     this.#resume = null;
-    this.#pendingWorkosToken = null;
+    this.#dropPendingWorkos();
     this.#email = null;
     this.#session = resume.session;
     this.#workspaceId = resume.workspaceId;
@@ -374,10 +389,11 @@ export class Session {
    * multi-workspace account (STORAGE.md §10.4).
    */
   async createWorkspace(workspaceName: string, handle: string): Promise<AuthState> {
-    if (!this.#pendingWorkosToken) throw new Error('no pending sign-in — start again');
+    const workosToken = await this.#freshWorkosToken();
+    if (!workosToken) throw new Error('no pending sign-in — start again');
     const session = await createWorkspace(
-      this.#pendingWorkosToken, this.#deps.deviceId(), workspaceName, handle);
-    this.#pendingWorkosToken = null;
+      workosToken, this.#deps.deviceId(), workspaceName, handle);
+    this.#dropPendingWorkos();
     await this.#adopt(session);
     return this.#state;
   }
@@ -398,6 +414,67 @@ export class Session {
     });
   }
 
+  #holdPendingWorkos(workos: Tokens): void {
+    this.#pendingWorkosToken = workos.accessToken;
+    this.#pendingWorkosRefresh = workos.refreshToken || null;
+    this.#pendingWorkosExpiresAt = workos.expiresAt;
+  }
+
+  #dropPendingWorkos(): void {
+    this.#pendingWorkosToken = null;
+    this.#pendingWorkosRefresh = null;
+    this.#pendingWorkosExpiresAt = null;
+  }
+
+  /**
+   * The onboarding WorkOS token, renewed first if it expires within a minute.
+   *
+   * A failed renewal hands back the old token rather than throwing: the server
+   * then refuses it as `invalid_token`, which the screen turns into "sign in
+   * again" — one path for every way this can end.
+   */
+  async #freshWorkosToken(): Promise<string | null> {
+    const token = this.#pendingWorkosToken;
+    if (!token) return null;
+    const exp = this.#pendingWorkosExpiresAt;
+    if (exp !== null && exp - this.#now() > 60_000) return token;
+    if (!this.#pendingWorkosRefresh) return token;
+    try {
+      const renewed = await refreshTokens(this.#deps.config, this.#pendingWorkosRefresh);
+      if (this.#pendingWorkosToken !== token) return this.#pendingWorkosToken;   // onboarding ended meanwhile
+      this.#holdPendingWorkos(renewed);
+      count('auth.onboarding_renewed', { result: 'ok' });
+    } catch {
+      count('auth.onboarding_renewed', { result: 'error' });
+    }
+    return this.#pendingWorkosToken;
+  }
+
+  /**
+   * Ask the server again what this person can join (ORG-DOMAINS.md).
+   *
+   * Onboarding's lists were computed at sign-in. A company whose domain was
+   * set up afterwards, or an invitation accepted since, would otherwise stay
+   * invisible until a full restart. Should the answer be that they now HAVE a
+   * workspace — joined from another device, say — that session is adopted.
+   */
+  async recheckOnboarding(): Promise<AuthState> {
+    if (this.#state.status !== 'needs_workspace') return this.#state;
+    const token = await this.#freshWorkosToken();
+    if (!token) return this.#state;
+    const result = await exchangeForSession(token, this.#deps.deviceId());
+    // Onboarding may have ended while we asked — a join landed, or sign-out.
+    if (this.#state.status !== 'needs_workspace' || this.#pendingWorkosToken !== token) return this.#state;
+    if ('needsWorkspace' in result) {
+      this.#set({ ...this.#state, handleSuggestions: result.handleSuggestions,
+                  pendingJoins: result.pendingJoins, orgMatches: result.orgMatches });
+    } else {
+      this.#dropPendingWorkos();
+      await this.#adopt(result);
+    }
+    return this.#state;
+  }
+
   /** True once a WorkOS token is held and onboarding can proceed. */
   get canCreateWorkspace(): boolean { return this.#pendingWorkosToken !== null; }
 
@@ -405,11 +482,11 @@ export class Session {
    * An additional workspace, for someone already signed in. Authenticated with
    * our own token — no browser round trip for an identity we already hold.
    */
-  async createAnotherWorkspace(workspaceName: string, handle: string): Promise<AuthState> {
+  async createAnotherWorkspace(workspaceName: string, handle: string, orgId?: string): Promise<AuthState> {
     const token = await this.ensureFresh();
     if (!token) throw new Error('not authenticated');
     await this.#adopt(await createWorkspaceAuthed(
-      token, this.#deps.deviceId(), workspaceName, handle));
+      token, this.#deps.deviceId(), workspaceName, handle, orgId));
     return this.#state;
   }
 
@@ -427,12 +504,13 @@ export class Session {
     // hold one of our access tokens, for a different workspace. Either proves
     // the same identity, and demanding the first is what made an invitation
     // unacceptable to anyone who had already created a workspace.
-    const proof = this.#pendingWorkosToken
-      ? { workosAccessToken: this.#pendingWorkosToken }
+    const workosToken = await this.#freshWorkosToken();
+    const proof = workosToken
+      ? { workosAccessToken: workosToken }
       : this.accessToken ? { bearer: this.accessToken } : null;
     if (!proof) throw new Error('no pending sign-in — start again');
     const session = await joinWorkspace(proof, this.#deps.deviceId(), workspaceId, handle);
-    this.#pendingWorkosToken = null;
+    this.#dropPendingWorkos();
     await this.#adopt(session);
     return this.#state;
   }
@@ -514,6 +592,17 @@ export class Session {
     return this.#refreshing;
   }
 
+  /**
+   * Refresh even though the token is still good, because something we just
+   * changed on the server rides on the membership wire — which workspace is the
+   * org's default, who its admins are (ORG-DOMAINS.md). Shares the one
+   * in-flight refresh, for the same reason `ensureFresh` does.
+   */
+  async refreshNow(): Promise<string | null> {
+    this.#refreshing ??= this.#refresh().finally(() => { this.#refreshing = null; });
+    return this.#refreshing;
+  }
+
   async #refresh(): Promise<string | null> {
     const workspaceId = this.#workspaceId;
     if (!workspaceId) return null;
@@ -558,7 +647,7 @@ export class Session {
     this.#email = null;
     this.#session = null;
     this.#workspaceId = null;
-    this.#pendingWorkosToken = null;
+    this.#dropPendingWorkos();
     this.#set({ status: 'signed_out' });
   }
 

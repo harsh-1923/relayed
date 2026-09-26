@@ -18,12 +18,17 @@ export const atLeast = (held: Role, needed: Role): boolean => RANK[held] >= RANK
  * admin rows are its maintainers (WORKSPACE-AGENTS.md §4.4). Invoking one is not
  * an action here at all — it is derived from `post` in a chat whose space the
  * agent belongs to, and never stored.
+ *
+ * `organization` sits ABOVE workspace, and like `agent` it has no membership
+ * rows of its own: its one grant is DERIVED, by whoever loads grants, from the
+ * owner and admin rows of the org's default workspace (ORG-DOMAINS.md §6).
  */
-export const SCOPES = ['workspace', 'space', 'chat', 'agent'] as const;
+export const SCOPES = ['organization', 'workspace', 'space', 'chat', 'agent'] as const;
 export type Scope = (typeof SCOPES)[number];
 
 export const ACTIONS = {
-  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership', 'create_agent'],
+  organization: ['create_workspace', 'manage_domains', 'manage_workspaces', 'edit'],
+  workspace: ['invite', 'manage_members', 'create_space', 'transfer_ownership', 'create_agent', 'edit'],
   space:     ['read', 'join', 'add_member', 'remove_member', 'create_chat',
               'make_public', 'promote'],
   chat:      ['read', 'post', 'edit_own', 'delete_own', 'delete_any'],
@@ -38,6 +43,7 @@ export interface Target<S extends Scope = Scope> {
   id: string;
 }
 
+export const organization = (id: string): Target<'organization'> => ({ scope: 'organization', id });
 export const workspace = (id: string): Target<'workspace'> => ({ scope: 'workspace', id });
 export const space     = (id: string): Target<'space'>     => ({ scope: 'space', id });
 export const chat      = (id: string): Target<'chat'>      => ({ scope: 'chat', id });
@@ -51,9 +57,21 @@ export const agent     = (id: string): Target<'agent'>     => ({ scope: 'agent',
  * conjunct, authorship — live in `can()` and are named there.
  */
 export const REQUIRES: Record<string, Role | null> = {
+  // All three are the org's admins' alone. There is no `manage_admins`: making
+  // someone an org admin IS making them an admin of the default workspace,
+  // which `workspace:manage_members` already governs (ORG-DOMAINS.md §6.1).
+  'organization:create_workspace':  'admin',
+  'organization:manage_domains':    'admin',
+  'organization:manage_workspaces': 'admin',
+  // The org's name and logo (FILES.md §11).
+  'organization:edit':              'admin',
+
   'workspace:invite':              'admin',
   'workspace:manage_members':      'admin',
   'workspace:transfer_ownership':  'owner',
+  // The workspace's own name and logo (FILES.md §11). A workspace without a
+  // logo shows its org's, which is the org admins' to set.
+  'workspace:edit':                'admin',
   'workspace:create_space':        null,
   // Any member, deliberately. The risk a creator poses is an agent misusing
   // its INVOKERS' accounts, and that is closed by each invoker's permission —

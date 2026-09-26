@@ -16,6 +16,7 @@ import { SignIn } from '@/routes/SignIn';
 import { Onboarding } from '@/routes/Onboarding';
 import { CreateWorkspace } from '@/routes/CreateWorkspace';
 import { JoinWorkspace } from '@/routes/JoinWorkspace';
+import { Org } from '@/routes/Org';
 import { WorkspaceHome } from '@/routes/WorkspaceHome';
 import { People } from '@/routes/People';
 import { Space } from '@/routes/Space';
@@ -93,6 +94,9 @@ export function Router() {
           <Route index element={<Page><WorkspaceHome /></Page>} />
           <Route path="s/:spaceId" element={<Space />} />
           <Route path="people" element={<Page><People /></Page>} />
+          {/* The organization this workspace belongs to (ORG-DOMAINS.md), from
+              inside the workspace so it stays open while its org is managed. */}
+          <Route path="organization" element={<Page><Org /></Page>} />
           <Route path="apps" element={<Page className="pt-0 [scrollbar-gutter:stable]"><Apps /></Page>}>
             <Route index element={<AppsCatalogue />} />
             <Route path="installed" element={<InstalledApps />} />

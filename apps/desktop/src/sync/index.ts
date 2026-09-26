@@ -24,6 +24,8 @@ import { cacheToolkitLogos, heldToolkitLogos, prefetchAvatars } from './blobs.ts
 import { Storage, type AccountSummary, type WorkspaceRow } from './storage.ts';
 import {
   listInvitations, createInvite, revokeInvite,
+  orgMatches, orgWorkspaces, orgDomains, addOrgDomain, removeOrgDomain, updateOrgWorkspace,
+  uploadFile, setOrgLogo, setWorkspaceLogo,
   agentHandle, createAgent, updateAgent, deactivateAgent, setAgentMaintainers, addSpaceMember, createSideChat, createSpace, openDm, type SpaceInput,
   stopAgentRun, dismissAmbient, refreshRoomSummary, type AgentInput,
   listToolkits, disconnectConnection,
@@ -1121,6 +1123,16 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
   },
   /** Abandon a sign-in waiting on a browser that is not coming back. */
   'auth.cancelSignIn': () => { session.cancelSignIn(); push(); return view(); },
+  /**
+   * Onboarding asks again what this person can join — on showing, on focus,
+   * and from "Check again" (ORG-DOMAINS.md). Offline or refused, the screen
+   * simply keeps what it had.
+   */
+  'auth.recheckOnboarding': async () => {
+    try { await session.recheckOnboarding(); } catch { /* keep what we had */ }
+    push();
+    return view();
+  },
   /** Re-open the same authorize URL — the browser may never have appeared. */
   'auth.reopenBrowser': async () => ({ reopened: await session.reopenBrowser() }),
   'auth.signOut': async () => {
@@ -1155,11 +1167,12 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     return view();
   },
   'auth.createWorkspace': async (params) => {
-    const p = params as { workspaceName: string; handle: string };
+    const p = params as { workspaceName: string; handle: string; orgId?: string };
     // Onboarding holds a WorkOS token; a signed-in user creating an additional
-    // workspace does not, and does not need one (§10.4).
+    // workspace does not, and does not need one (§10.4). Only a signed-in
+    // person can be an org's admin, so `orgId` travels on the second path only.
     if (session.canCreateWorkspace) await session.createWorkspace(p.workspaceName, p.handle);
-    else await session.createAnotherWorkspace(p.workspaceName, p.handle);
+    else await session.createAnotherWorkspace(p.workspaceName, p.handle, p.orgId);
     push();
     return view();
   },
@@ -1200,6 +1213,75 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('offline');
     return revokeInvite(token, (params as { id: string }).id);
+  },
+  // ── organizations (ORG-DOMAINS.md) ─────────────────────────────────────
+  // Proxied like invitations. Reads answer `offline` rather than throwing: the
+  // switcher and settings open without a network and simply show less.
+  'org.matches': async () => {
+    const token = await session.ensureFresh();
+    if (!token) return { pendingJoins: [], orgMatches: [], offline: true };
+    try { return { ...(await orgMatches(token)), offline: false }; }
+    catch { return { pendingJoins: [], orgMatches: [], offline: true }; }
+  },
+  'org.workspaces': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    return orgWorkspaces(token, (params as { orgId: string }).orgId);
+  },
+  'org.domains.list': async (params) => {
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    return orgDomains(token, (params as { orgId: string }).orgId);
+  },
+  'org.domains.add': async (params) => {
+    const p = params as { orgId: string; domain: string };
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    return addOrgDomain(token, p.orgId, p.domain);
+  },
+  'org.domains.remove': async (params) => {
+    const p = params as { orgId: string; domain: string };
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    return removeOrgDomain(token, p.orgId, p.domain);
+  },
+  'org.workspace.update': async (params) => {
+    const p = params as { workspaceId: string; joinPolicy?: 'org_open' | 'invite_only'; makeDefault?: boolean };
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    const answer = await updateOrgWorkspace(token, p.workspaceId, p);
+    // A new default moves who the org's admins are, and both ride on the
+    // membership wire — refresh now rather than leave the switcher wrong
+    // until the token next expires.
+    if (answer.ok && p.makeDefault) { await session.refreshNow(); push(); }
+    return answer;
+  },
+  /**
+   * Set or clear a logo (FILES.md). Online-only, and says so: an admin setting
+   * is not worth an outbox entry, and the previous logo keeps showing offline
+   * because it is already a local blob (§8).
+   *
+   * The renderer hands over bytes it has already re-encoded (a PNG, EXIF gone);
+   * this process owns the network and the token, so it uploads and points the
+   * org or workspace at the file. Then a refresh, because the image rides on
+   * the membership wire and the fill after it fetches the new one.
+   */
+  'logo.set': async (params) => {
+    const p = params as { target: 'org' | 'workspace'; id: string; bytes: Uint8Array | null; mediaType?: string };
+    const token = await session.ensureFresh();
+    if (!token) return { ok: false, status: 0, error: 'offline' };
+    let fileId: string | null = null;
+    if (p.bytes) {
+      const up = await uploadFile(token, p.bytes, p.mediaType ?? 'image/png', 'logo',
+        p.target === 'org' ? { org_id: p.id } : { workspace_id: p.id });
+      if (!up.ok) return up;
+      fileId = up.file_id;
+    }
+    const set = p.target === 'org'
+      ? await setOrgLogo(token, p.id, fileId)
+      : await setWorkspaceLogo(token, p.id, fileId);
+    if (set.ok) { await session.refreshNow(); push(); }
+    return set;
   },
   // A live command, not an outbox item: membership changes who may receive the
   // next event, so the server must decide it now. Its event updates replicas.

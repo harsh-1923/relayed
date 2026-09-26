@@ -55,10 +55,12 @@ test('an EXISTING version 1 account upgrades, keeping its workspaces', () => {
 
   const second = openDatabase(file);
   assert.deepEqual(migrate(second, accountMigrations),
-                   { from: 1, to: 3, applied: ['2:preferences', '3:cached-assets'] });
-  const kept = (second.prepare('SELECT name FROM workspaces').all() as { name: string }[])
-    .map(r => ({ ...r }));
-  assert.deepEqual(kept, [{ name: 'Acme' }]);
+                   { from: 1, to: 4, applied: ['2:preferences', '3:cached-assets', '4:organizations'] });
+  const kept = (second.prepare('SELECT name, org_name, org_is_admin, is_default FROM workspaces').all() as
+    { name: string; org_name: string; org_is_admin: number; is_default: number }[]).map(r => ({ ...r }));
+  // An upgraded row claims the least it can until the next refresh fills it:
+  // no org name, not an admin, not the default (ORG-DOMAINS.md).
+  assert.deepEqual(kept, [{ name: 'Acme', org_name: '', org_is_admin: 0, is_default: 0 }]);
   // And the new table is usable on an upgraded file, not only a fresh one.
   writePreference(second, 'appearance.theme', 'dark');
   assert.equal(readPreferences(second).length, 1);

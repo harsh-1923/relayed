@@ -1,5 +1,5 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "types": ["node"], "lib": ["ES2023"] },
-  "include": ["mock/**/*.ts"]
+  "include": ["mock/**/*.ts", "r2-check.mts"]
 }

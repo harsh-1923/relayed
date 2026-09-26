@@ -33,6 +33,28 @@ function seconds(value: string | undefined, fallback: number): number {
   return value !== undefined && value.trim() !== '' && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/**
+ * The object store (FILES.md), or null. OPTIONAL like memory and the agent
+ * runtime: a server without it boots and serves everything else, and the
+ * upload routes answer `storage_unconfigured`. All four credentials or none — a
+ * half-set store is a misconfiguration to report, not a store to half-use.
+ */
+function objectStore() {
+  const endpoint = process.env['S3_ENDPOINT'];
+  const bucket = process.env['S3_BUCKET'];
+  const accessKeyId = process.env['S3_ACCESS_KEY_ID'];
+  const secretAccessKey = process.env['S3_SECRET_ACCESS_KEY'];
+  const set = [endpoint, bucket, accessKeyId, secretAccessKey].filter(Boolean).length;
+  if (set === 0) return null;
+  if (set < 4) throw new Error('S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are all or nothing');
+  return {
+    endpoint: endpoint!.replace(/\/+$/, ''), bucket: bucket!, accessKeyId: accessKeyId!,
+    secretAccessKey: secretAccessKey!, region: process.env['S3_REGION'] || 'auto',
+    // MinIO needs path-style; R2 and S3 accept it too, so it is the safe default.
+    forcePathStyle: process.env['S3_FORCE_PATH_STYLE'] !== 'false',
+  };
+}
+
 const required = (name: string): string => {
   const v = process.env[name];
   if (!v) throw new Error(`missing required env var: ${name}`);
@@ -176,4 +198,8 @@ export const env = {
   ambientAgents: handleList(process.env['AMBIENT_AGENTS']),
   /** Seconds after a person's last message before their turn is looked at — first refusal (§3). A guess to be tuned. */
   ambientLullSec: seconds(process.env['AMBIENT_LULL_SEC'], 90),
+
+  // ── files (FILES.md) ─────────────────────────────────────────────────────
+  /** S3-compatible: MinIO locally, R2 in production. Null when unset. */
+  objectStore: objectStore(),
 } as const;

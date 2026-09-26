@@ -4,9 +4,7 @@ import { useSession } from '@/app/state';
 import { call } from '@/lib/ipc';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import {
-  Card, CardContent, CardDescription, CardHeader, CardTitle,
-} from '@/components/ui/card';
+import { AppIconMark } from '@/components/AppIconMark';
 
 export function SignIn() {
   const { state, apply } = useSession();
@@ -47,22 +45,22 @@ export function SignIn() {
     catch (e) { setError((e as Error).message); }
   }, []);
 
+  // Linear's structure, our look: the mark, one line, one button, centred. What
+  // the person picks — Google, email — happens on WorkOS's page, so there is
+  // only ever one thing to press here.
   return (
     <main className="grid min-h-0 flex-1 place-items-center overflow-y-auto bg-background p-10 text-foreground">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>Relayed</CardTitle>
-          <CardDescription>
-            WorkOS AuthKit → our session · system browser · PKCE · loopback
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div className="flex w-full max-w-sm flex-col items-center gap-8 text-center">
+        <AppIconMark className="size-16" />
+        <h1 className="text-2xl font-medium">Log in to Relayed</h1>
+
+        <div className="w-full space-y-3">
           {/* Sign-in is the one thing here that genuinely needs the network, so
               simulated offline makes it fail with an opaque "fetch failed".
               Saying which switch caused it is the difference between a puzzle
               and a one-click fix. */}
           {state.offline && (
-            <Alert>
+            <Alert className="text-left">
               <AlertTitle>Simulated offline is on</AlertTitle>
               <AlertDescription>
                 Signing in needs the network and will fail until you turn it off
@@ -72,34 +70,29 @@ export function SignIn() {
           )}
 
           {error && (
-            <Alert variant="destructive">
+            <Alert variant="destructive" className="text-left">
               <AlertTitle>Something went wrong</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription className="[overflow-wrap:anywhere]">{error}</AlertDescription>
             </Alert>
           )}
 
           {state.auth.status === 'awaiting_browser' ? (
-            // Three ways out, because three things go wrong: the browser opened
-            // and was dismissed, the browser never appeared, or the person
-            // changed their mind. All three used to lead to a disabled button
-            // and a five-minute wait.
-            <div className="space-y-3">
+            <>
               <p className="text-sm text-muted-foreground">
-                Waiting for your browser. Finish signing in there, and this window
-                will catch up on its own.
+                Finish signing in in your browser — this window will catch up on its own.
               </p>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={() => void reopen()}>
-                  Open the link again
-                </Button>
-                <Button variant="ghost" onClick={() => void cancel()}>Cancel</Button>
-              </div>
-            </div>
+              <Button size="lg" variant="secondary" className="w-full rounded-full" onClick={() => void reopen()}>
+                Open the link again
+              </Button>
+              <Button size="lg" variant="ghost" className="w-full rounded-full" onClick={() => void cancel()}>
+                Cancel
+              </Button>
+            </>
           ) : (
-            <Button onClick={signIn}>Sign in</Button>
+            <Button size="lg" className="w-full rounded-full" onClick={signIn}>Sign in</Button>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </main>
   );
 }

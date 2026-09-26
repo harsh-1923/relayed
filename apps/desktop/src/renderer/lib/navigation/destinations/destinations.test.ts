@@ -84,3 +84,10 @@ test('a local room routes at the account tier', () => {
 test('omits a future space kind until the sidebar has a section for it', () => {
   assert.equal(workspaceSpaceDestination('workspace', space('future', 'broadcast')), null);
 });
+
+test('the org row: last, inside the workspace, and worded by who you are in the org', () => {
+  const admin = primaryDestinationsFor('workspace', { name: 'Juspay', isAdmin: true }).at(-1);
+  assert.deepEqual([admin?.label, admin?.to, admin?.icon], ['Manage Juspay', '/w/workspace/organization', 'organization']);
+  assert.equal(primaryDestinationsFor('workspace', { name: 'Juspay', isAdmin: false }).at(-1)?.label, 'Browse Juspay');
+  assert.equal(primaryDestinationsFor('workspace').at(-1)?.label, 'Apps', 'no org known: no row');
+});

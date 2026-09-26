@@ -5,7 +5,7 @@
 // one would make multi-org the default state and, worse, drop invited users
 // into an empty workspace of their own — which reads as a broken invite.
 import { emit, count } from "@relayed/telemetry";
-import type { Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import {
   createOrganization,
   addMember,
@@ -16,10 +16,17 @@ import type { DB } from "../db/schema.ts";
 import { recordActor } from "../sync/directory.ts";
 import { handleCandidates } from "./handle.ts";
 import type { Role } from "@relayed/authz";
+import { recordWorkosMembership } from "../workos/mirror.ts";
+import { adminOrgs } from "../authz/org.ts";
 
 export interface Identity {
   workosUserId: string;
   email: string;
+  /**
+   * WorkOS has confirmed the mailbox. Only a domain join reads it
+   * (ORG-DOMAINS.md §4.1); absent is read as false.
+   */
+  emailVerified?: boolean;
   displayName: string;
   avatarUrl: string | null;
 }
@@ -62,6 +69,16 @@ export interface Membership {
    * the server re-checks every write regardless (invariant 49).
    */
   actorRole: Role;
+  /** The organization this workspace belongs to — the switcher groups by it. */
+  orgName: string;
+  /**
+   * Am I an admin of that ORG — owner or admin of its default workspace
+   * (ORG-DOMAINS.md §6)? Lets the client hide what it would be refused; the
+   * server decides again on every request (invariant 49).
+   */
+  orgIsAdmin: boolean;
+  /** Is this the org's default workspace — where a domain join lands? */
+  isDefault: boolean;
 }
 
 /**
@@ -95,7 +112,7 @@ export async function resolveMemberships(
         .onRef("memberships.actor_id", "=", "actors.id")
         .on("memberships.left_at", "is", null),
     )
-    .select((eb) => [
+    .select([
       "actors.id as actor_id",
       "actors.org_id",
       "actors.workspace_id",
@@ -104,10 +121,16 @@ export async function resolveMemberships(
       "actors.avatar_url",
       "workspaces.name",
       "workspaces.slug",
+      "organizations.name as org_name",
+      "organizations.default_workspace_id",
       // A workspace with no image of its own shows its organization's. Resolved
       // HERE so the client never needs an organizations table of its own.
-      eb.fn
-        .coalesce("workspaces.avatar_url", "organizations.avatar_url")
+      // Uploaded logos win over the URL columns (FILES.md §5), and their URL is
+      // RELATIVE — the client resolves it against the server it talks to.
+      sql<string | null>`coalesce(
+        '/files/' || ${sql.ref("workspaces.logo_file_id")},
+        '/files/' || ${sql.ref("organizations.logo_file_id")},
+        ${sql.ref("workspaces.avatar_url")}, ${sql.ref("organizations.avatar_url")})`
         .as("workspace_avatar_url"),
       "memberships.role as actor_role",
     ])
@@ -119,6 +142,7 @@ export async function resolveMemberships(
     .orderBy("actors.id", "asc")
     .execute();
 
+  const admin = rows.length > 0 ? await adminOrgs(db, workosUserId) : new Set<string>();
   return rows.map((r) => ({
     workspaceId: r.workspace_id,
     orgId: r.org_id,
@@ -130,6 +154,9 @@ export async function resolveMemberships(
     actorDisplayName: r.display_name,
     actorAvatarUrl: r.avatar_url,
     actorRole: (r.actor_role ?? "member") as Role,
+    orgName: r.org_name,
+    orgIsAdmin: admin.has(r.org_id),
+    isDefault: r.default_workspace_id === r.workspace_id,
   }));
 }
 
@@ -175,7 +202,7 @@ const slugify = (s: string) =>
     .slice(0, 40) || "workspace";
 
 /**
- * Creates an organization, its single workspace, and the founding actor.
+ * Creates an organization, its default workspace, and the founding actor.
  * One transaction: a half-created tenant is worse than a failed sign-in.
  */
 export async function createWorkspace(
@@ -203,6 +230,7 @@ export async function createWorkspace(
   // membership can be repaired — so it must not abort a sign-up.
   try {
     await addMember(workosOrgId, id.workosUserId);
+    await recordWorkosMembership(db, id.workosUserId, workosOrgId);
   } catch (e) {
     console.warn(
       "[provision] organization created but membership failed:",
@@ -214,7 +242,6 @@ export async function createWorkspace(
   return db.transaction().execute(async (tx) => {
     const orgId = ulid("org");
     const workspaceId = ulid("wsp");
-    const actorId = ulid("act");
 
     await tx
       .insertInto("organizations")
@@ -222,85 +249,151 @@ export async function createWorkspace(
         id: orgId,
         workos_org_id: workosOrgId,
         name: opts.workspaceName,
+        default_workspace_id: null,
       })
       .execute();
 
-    await tx
-      .insertInto("workspaces")
-      .values({
-        id: workspaceId,
-        org_id: orgId,
-        name: opts.workspaceName,
-        slug: slugify(opts.workspaceName),
-      })
-      .execute();
-
-    await tx
-      .insertInto("actors")
-      .values({
-        id: actorId,
-        org_id: orgId,
-        workspace_id: workspaceId,
-        type: "human",
-        handle: opts.handle,
-        display_name: id.displayName,
-        avatar_url: id.avatarUrl,
-        identity_kind: "workos_user",
-        identity_id: id.workosUserId,
-        owner_actor_id: null,
-        provisioned_by: "self_signup",
-        state: "active",
-      })
-      .execute();
-
-    // The founding row of this workspace's directory, at revision 1 of its
-    // stream. There is nobody to deliver it to yet — the audience is the
-    // workspace's members and this actor is the only one — but the event has to
-    // exist so that a later member's catch-up over the directory returns the
-    // founder rather than starting from whoever joined second.
-    await recordActor(tx, "actor.created", {
-      id: actorId,
-      workspaceId,
-      type: "human",
-      handle: opts.handle,
-      displayName: id.displayName,
-      avatarUrl: id.avatarUrl,
-      ownerActorId: null,
-      state: "active",
+    // The org's first workspace is its DEFAULT — where a domain join lands, and
+    // whose owner is therefore the org's admin (ORG-DOMAINS.md §6). Open to the
+    // org, which admits nobody until someone is in it: org membership comes
+    // from an invitation or an approved domain, never from this.
+    const resolved = await found(tx, id, {
+      orgId, workspaceId, name: opts.workspaceName, slug: slugify(opts.workspaceName),
+      handle: opts.handle, joinPolicy: "org_open",
     });
-
-    // The founder owns the workspace. A permission is a row (AUTHZ.md §4), so
-    // this is what makes them able to invite — not a column, and not the fact
-    // that they happen to be first.
     await tx
-      .insertInto("memberships")
-      .values({
-        scope_type: "workspace",
-        scope_id: workspaceId,
-        actor_id: actorId,
-        role: "owner",
-        left_at: null,
-      })
+      .updateTable("organizations")
+      .set({ default_workspace_id: workspaceId })
+      .where("id", "=", orgId)
       .execute();
-
-    // `via` separates people who signed themselves up from people who were
-    // invited — two very different growth stories, and the distinction is
-    // unrecoverable once the row exists.
-    count("identity.provisioned", { via: "self_signup" });
-    emit("identity.provisioned", {
-      actor: actorId,
-      org: orgId,
-      workspace: workspaceId,
-      via: "self_signup",
-    });
-    return {
-      actorId,
-      orgId,
-      workspaceId,
-      needsWorkspace: false,
-      handleSuggestions: [],
-    };
+    return resolved;
   });
+}
+
+/**
+ * Another workspace in an EXISTING org (ORG-DOMAINS.md §7.1). No WorkOS call:
+ * the org exists, and its members are already WorkOS members of it. Whether
+ * the caller may do this is the route's question (`organization:create_workspace`).
+ */
+export async function createWorkspaceInOrg(
+  db: Kysely<DB>,
+  id: Identity,
+  orgId: string,
+  opts: { workspaceName: string; handle: string; joinPolicy?: "org_open" | "invite_only" },
+): Promise<Resolved> {
+  return db.transaction().execute(async (tx) => {
+    // Slugs are unique per org, and a second "Design" is an ordinary thing to
+    // want. Suffixed rather than refused: the slug is an address, the name is
+    // what people read.
+    const base = slugify(opts.workspaceName);
+    const taken = new Set(
+      (
+        await tx
+          .selectFrom("workspaces")
+          .select("slug")
+          .where("org_id", "=", orgId)
+          .execute()
+      ).map((r) => r.slug),
+    );
+    let slug = base;
+    for (let n = 2; taken.has(slug); n += 1) slug = `${base}-${n}`;
+
+    return found(tx, id, {
+      orgId, workspaceId: ulid("wsp"), name: opts.workspaceName, slug,
+      handle: opts.handle, joinPolicy: opts.joinPolicy ?? "org_open",
+    });
+  });
+}
+
+/**
+ * A workspace, its founding actor, and the founder's ownership — the rows
+ * every way of making a workspace shares. Inside the caller's transaction: a
+ * half-created tenant is worse than a failed request.
+ */
+async function found(
+  tx: Transaction<DB>,
+  id: Identity,
+  w: { orgId: string; workspaceId: string; name: string; slug: string; handle: string;
+       joinPolicy: "org_open" | "invite_only" },
+): Promise<Resolved> {
+  const actorId = ulid("act");
+
+  await tx
+    .insertInto("workspaces")
+    .values({
+      id: w.workspaceId,
+      org_id: w.orgId,
+      name: w.name,
+      slug: w.slug,
+      join_policy: w.joinPolicy,
+    })
+    .execute();
+
+  await tx
+    .insertInto("actors")
+    .values({
+      id: actorId,
+      org_id: w.orgId,
+      workspace_id: w.workspaceId,
+      type: "human",
+      handle: w.handle,
+      display_name: id.displayName,
+      avatar_url: id.avatarUrl,
+      identity_kind: "workos_user",
+      identity_id: id.workosUserId,
+      owner_actor_id: null,
+      provisioned_by: "self_signup",
+      state: "active",
+    })
+    .execute();
+
+  // The founding row of this workspace's directory, at revision 1 of its
+  // stream. There is nobody to deliver it to yet — the audience is the
+  // workspace's members and this actor is the only one — but the event has to
+  // exist so that a later member's catch-up over the directory returns the
+  // founder rather than starting from whoever joined second.
+  await recordActor(tx, "actor.created", {
+    id: actorId,
+    workspaceId: w.workspaceId,
+    type: "human",
+    handle: w.handle,
+    displayName: id.displayName,
+    avatarUrl: id.avatarUrl,
+    ownerActorId: null,
+    state: "active",
+  });
+
+  // The founder owns the workspace. A permission is a row (AUTHZ.md §4), so
+  // this is what makes them able to invite — not a column, and not the fact
+  // that they happen to be first.
+  await tx
+    .insertInto("memberships")
+    .values({
+      scope_type: "workspace",
+      scope_id: w.workspaceId,
+      actor_id: actorId,
+      role: "owner",
+      left_at: null,
+    })
+    .execute();
+
+  // `via` separates people who signed themselves up from people who were
+  // invited — two very different growth stories, and the distinction is
+  // unrecoverable once the row exists.
+  count("identity.provisioned", { via: "self_signup" });
+  emit("identity.provisioned", {
+    actor: actorId,
+    org: w.orgId,
+    workspace: w.workspaceId,
+    via: "self_signup",
+  });
+  return {
+    actorId,
+    orgId: w.orgId,
+    workspaceId: w.workspaceId,
+    needsWorkspace: false,
+    handleSuggestions: [],
+  };
 }
 
 /** Suggestions for the onboarding form, filtered to what is actually free. */

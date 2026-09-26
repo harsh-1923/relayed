@@ -27,7 +27,10 @@ before(async () => {
     id: ids.org, workos_org_id: workosOrg, name: 'Poller Test', avatar_url: null }).execute();
   await db.insertInto('workspaces').values({
     id: ids.wsp, org_id: ids.org, name: 'Poller Test',
-    slug: `p-${ids.wsp.slice(-6).toLowerCase()}`, avatar_url: null }).execute();
+    slug: `p-${ids.wsp.slice(-6).toLowerCase()}`, avatar_url: null, join_policy: 'org_open' }).execute();
+  // An org member is offered its DEFAULT workspace (ORG-DOMAINS.md §5.1).
+  await db.updateTable('organizations').set({ default_workspace_id: ids.wsp })
+    .where('id', '=', ids.org).execute();
 });
 
 after(async () => {

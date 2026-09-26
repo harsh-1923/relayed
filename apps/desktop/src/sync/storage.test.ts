@@ -13,6 +13,7 @@ const root = () => mkdtempSync(join(tmpdir(), 'relayed-storage-'));
 
 const member = (over: Partial<Membership> & { workspaceId: string; actorId: string }): Membership => ({
   orgId: 'org_1', name: 'Workspace', slug: 'workspace', workspaceAvatarUrl: null,
+  orgName: 'Org', orgIsAdmin: false, isDefault: false,
   actorHandle: 'harsh', actorDisplayName: 'Harsh Sharma', actorAvatarUrl: null,
   actorRole: 'owner',
   ...over,

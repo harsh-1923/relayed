@@ -7,6 +7,11 @@ import { can, ACTIONS, type Grants, type Placement, type Role, type Scope } from
 // that never meets the implementation only validates a document.
 import { World } from '../../../../spikes/authz-model.mjs';
 
+// The spike's model has no `organization` scope: that grant is derived from
+// the default workspace where grants are loaded (ORG-DOMAINS.md §6), never
+// stored as a tuple, so there is nothing of it for the model to evaluate.
+type ModelScope = Exclude<Scope, 'organization'>;
+
 interface Fixture {
   workspaces: string[];
   spaces: Record<string, string>;                    // space -> workspace
@@ -14,8 +19,8 @@ interface Fixture {
   openSpaces?: string[];
   chats: Record<string, { space: string; private: boolean }>;
   agents?: Record<string, string>;                   // agent -> workspace
-  members: [Scope, string, string, Role][];          // scope, id, actor, role
-  left?: [Scope, string, string][];
+  members: [ModelScope, string, string, Role][];     // scope, id, actor, role
+  left?: [ModelScope, string, string][];
 }
 
 function build(f: Fixture) {

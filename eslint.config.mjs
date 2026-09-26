@@ -52,6 +52,8 @@ export default tseslint.config(
       'spikes/hotkeys/**',
       'spikes/web-panels/**',
       'spikes/text-fragments/**',
+      // Run by hand against a throwaway database; imports server source directly.
+      'spikes/org-domains/**',
       // Declaration files describe types; there is no code in them to lint, and
       // type-aware rules on one report nothing but the cost of loading it.
       '**/*.d.ts',

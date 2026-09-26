@@ -4,6 +4,8 @@ import { env } from './env.ts';
 import { migrate } from './db/migrate.ts';
 import { authRoutes } from './auth/routes.ts';
 import { invitationRoutes } from './auth/invitations.ts';
+import { orgRoutes } from './org/routes.ts';
+import { fileRoutes } from './files/routes.ts';
 import { landingRoutes } from './web/landing.ts';
 import { versionRoutes } from './web/version.ts';
 import { telemetryRoutes } from './web/telemetry.ts';
@@ -60,6 +62,8 @@ app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body,
 app.get('/health', async () => ({ ok: true, service: 'relayed-server' }));
 await app.register(authRoutes);
 await app.register(invitationRoutes);
+await app.register(orgRoutes);
+await app.register(fileRoutes);
 await app.register(landingRoutes);
 // Public, and registered beside /health for the same reason: it must answer a
 // client that cannot yet authenticate.

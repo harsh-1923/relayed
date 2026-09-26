@@ -529,3 +529,74 @@ test('an added account that onboards first still records its email when it is cr
     assert.equal(h.emails.at(-1), null);
   } finally { await h.close(); }
 });
+
+test('onboarding outlives its WorkOS token: renewed before use, and "check again" finds a new match', async () => {
+  const { createServer } = await import('node:http');
+  const seen: { path: string; body: Record<string, unknown> }[] = [];
+  let companyExists = false;
+  const soon = () => jwt(Math.floor(Date.now() / 1000) + 10);   // inside the one-minute margin
+  const later = jwt(Math.floor(Date.now() / 1000) + 3600);
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c: Buffer) => { raw += c.toString(); });
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      seen.push({ path: req.url ?? '', body });
+      res.setHeader('content-type', 'application/json');
+      switch (req.url) {
+        case '/user_management/authenticate':
+          return res.end(JSON.stringify(body['grant_type'] === 'refresh_token'
+            ? { access_token: later, refresh_token: 'wrt_2', user: { id: 'user_m', email: 'm@acme.test' } }
+            : { access_token: soon(), refresh_token: 'wrt_1', user: { id: 'user_m', email: 'm@acme.test' } }));
+        case '/auth/session':
+          return res.end(JSON.stringify({
+            needs_workspace: true, identity: { email: 'm@acme.test', displayName: 'M' }, handle_suggestions: ['m'],
+            pending_joins: [],
+            org_matches: companyExists ? [{ org_id: 'org_1', name: 'Acme', member_count: 3, workspace_id: 'wsp_1',
+              workspace_name: 'Acme', handle_suggestions: ['m'], is_default: true }] : [],
+          }));
+        case '/auth/join':
+          return res.end(JSON.stringify({ access_token: 'access_m', refresh_token: 'rt_m', expires_in: 900,
+            actor: { actorId: 'act_m', orgId: 'org_1', workspaceId: 'wsp_1' } }));
+        case '/auth/me':
+          return res.end(JSON.stringify({ actor: { id: 'act_m', handle: 'm', display_name: 'M',
+            avatar_url: null, org_id: 'org_1', workspace_id: 'wsp_1' } }));
+        default:
+          res.writeHead(404);
+          return res.end('{}');
+      }
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  process.env['RELAYED_SERVER_URL'] = url;
+  try {
+    const s = new Session(deps({
+      vault: fakeVault(), config: { clientId: 'client_test', apiBase: url },
+      openBrowser: (u) => {
+        const q = new URL(u).searchParams;
+        void fetch(`${q.get('redirect_uri')}?code=code_1&state=${q.get('state')}`).catch(() => {});
+      },
+    }));
+    await s.signIn();
+    assert.equal(s.state.status, 'needs_workspace');
+    assert.equal(s.state.status === 'needs_workspace' && s.state.orgMatches.length, 0, 'no company yet');
+
+    // The company's domain is set up while the screen is open.
+    companyExists = true;
+    await s.recheckOnboarding();
+    assert.equal(s.state.status === 'needs_workspace' && s.state.orgMatches[0]?.name, 'Acme');
+    const renewals = seen.filter(r => r.path === '/user_management/authenticate' && r.body['grant_type'] === 'refresh_token');
+    assert.equal(renewals.length, 1, 'the nearly-expired token was renewed before asking');
+    assert.equal(seen.filter(r => r.path === '/auth/session').at(-1)?.body['workos_access_token'], later,
+      'and the renewed one was the proof');
+
+    await s.joinWorkspace('wsp_1', 'm');
+    assert.equal(s.state.status, 'authenticated');
+    assert.equal(seen.find(r => r.path === '/auth/join')?.body['workos_access_token'], later);
+    assert.equal(s.canCreateWorkspace, false, 'onboarding over: the WorkOS tokens are dropped');
+  } finally {
+    delete process.env['RELAYED_SERVER_URL'];
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});

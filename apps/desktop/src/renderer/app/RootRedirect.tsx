@@ -12,10 +12,11 @@ export function RootRedirect() {
 
   if (state.auth.status === 'needs_workspace') {
     // An invited person has no workspace of their own, and pushing them into
-    // creating one reads as a broken invite (PHASE-1-IDENTITY §9).
-    return <Navigate replace to={
-      state.auth.pendingJoins.length > 0 ? '/onboarding/join' : '/onboarding/create'
-    } />;
+    // creating one reads as a broken invite (PHASE-1-IDENTITY §9). The same for
+    // someone whose company is already here: their team comes first, creating
+    // a separate org second (ORG-DOMAINS.md §7.2).
+    const joinable = state.auth.pendingJoins.length + state.auth.orgMatches.length;
+    return <Navigate replace to={joinable > 0 ? '/onboarding/join' : '/onboarding/create'} />;
   }
 
   // `stale` still has replicas on disk and still renders — that is the whole

@@ -10,9 +10,12 @@ import { verifyWorkOSToken } from './workos-verify.ts';
 import { fetchProfile } from './workos-profile.ts';
 import { signAccessToken, newRefreshToken, hashRefreshToken, verifyAccessToken } from './tokens.ts';
 import {
-  resolveMemberships, selectMembership, createWorkspace, suggestHandles,
+  resolveMemberships, selectMembership, createWorkspace, createWorkspaceInOrg, suggestHandles,
   type Identity, type Membership,
 } from '../provisioning/provision.ts';
+import { orgMatches, syncWorkosDomainsFor, type OrgMatch } from '../provisioning/domains.ts';
+import { canOrg } from '../authz/org.ts';
+import { WorkOSError } from '../workos/management.ts';
 import { validateHandle } from '../provisioning/handle.ts';
 import { pendingJoins, joinWorkspace } from '../provisioning/join.ts';
 import { seedWorkspace, joinPublicSpaces } from '../provisioning/onboard.ts';
@@ -40,7 +43,26 @@ const wire = (m: Membership) => ({
   actor_id: m.actorId, actor_handle: m.actorHandle,
   actor_display_name: m.actorDisplayName, actor_avatar_url: m.actorAvatarUrl,
   actor_role: m.actorRole,
+  org_name: m.orgName, org_is_admin: m.orgIsAdmin, workspace_is_default: m.isDefault,
 });
+
+/**
+ * Orgs this person could join by their company email and is not already in
+ * (ORG-DOMAINS.md §4.4). Every match, largest first — approval is never
+ * exclusive, so the person chooses.
+ */
+async function matchesFor(
+  identity: Identity, memberships: readonly Membership[], joins: readonly { orgId: string }[],
+) {
+  const exclude = new Set([...memberships.map(m => m.orgId), ...joins.map(j => j.orgId)]);
+  if (identity.emailVerified) await syncWorkosDomainsFor(db, identity.email);
+  const found = await orgMatches(db, identity.email, identity.emailVerified === true, exclude);
+  return Promise.all(found.map(async (m: OrgMatch) => ({
+    org_id: m.orgId, name: m.name, member_count: m.memberCount,
+    workspace_id: m.workspaceId, workspace_name: m.workspaceName, logo_url: m.logoUrl, is_default: m.isDefault, workspace_member_count: m.workspaceMemberCount,
+    handle_suggestions: (await suggestHandles(db, m.workspaceId, identity)).slice(0, 5),
+  })));
+}
 
 async function issue(actorId: string, orgId: string, workspaceId: string, deviceId: string) {
   const sessionId = ulid('ses');
@@ -102,23 +124,28 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         identity: { email: identity.email, displayName: identity.displayName },
         pending_joins: joins.map(j => ({
           org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
-          handle_suggestions: j.handleSuggestions,
+          handle_suggestions: j.handleSuggestions, reason: j.reason, logo_url: j.logoUrl, is_default: j.isDefault, org_name: j.orgName, member_count: j.memberCount, invite_only: j.inviteOnly,
         })),
+        // Company orgs they could walk into. Offered BESIDE creating one, never
+        // instead of it — approval is not exclusive (ORG-DOMAINS.md §7.2).
+        org_matches: await matchesFor(identity, [], joins),
       });
     }
     if (chosen === 'not_a_member') {
       return reply.code(403).send({ error: 'not_a_member', detail: 'no actor in that workspace' });
     }
 
+    const joins = await pendingJoins(db, identity);
     return reply.send({
       needs_workspace: false,
       // Workspaces WorkOS says they belong to and we have no actor for — an
       // accepted invitation, seen for the first time. Not auto-joined: a handle
       // is required and this is where one can already be taken (AUTHZ.md §9).
-      pending_joins: (await pendingJoins(db, identity)).map(j => ({
+      pending_joins: joins.map(j => ({
         org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
-        handle_suggestions: j.handleSuggestions,
+        handle_suggestions: j.handleSuggestions, reason: j.reason, logo_url: j.logoUrl, is_default: j.isDefault, org_name: j.orgName, member_count: j.memberCount, invite_only: j.inviteOnly,
       })),
+      org_matches: await matchesFor(identity, memberships, joins),
       actor: { actorId: chosen.actorId, orgId: chosen.orgId, workspaceId: chosen.workspaceId },
       // ALL of them, so the client can populate account.db and draw the
       // switcher without a second call (STORAGE.md §6).
@@ -135,9 +162,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    * invitations exist it is the only way to reach a multi-workspace account at
    * all (STORAGE.md §10.4).
    */
-  app.post<{ Body: Partial<ExchangeBody> & { workspace_name: string; handle: string } }>(
+  app.post<{ Body: Partial<ExchangeBody> & { workspace_name: string; handle: string; org_id?: string } }>(
     '/auth/workspace', async (req, reply) => {
-      const { workos_access_token, device_id, workspace_name, handle } = req.body ?? {};
+      const { workos_access_token, device_id, workspace_name, handle, org_id } = req.body ?? {};
       if (!workspace_name || !handle) {
         return reply.code(400).send({ error: 'missing required fields' });
       }
@@ -189,7 +216,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       if (!deviceId) return reply.code(400).send({ error: 'device_id required' });
 
-      const created = await createWorkspace(db, identity, { workspaceName: workspace_name, handle });
+      // With `org_id`, another workspace in an org that exists — the org's
+      // admins' to create (ORG-DOMAINS.md §7.1). Without, a new org of their own.
+      if (org_id && !await canOrg(db, identity.workosUserId, 'create_workspace', org_id)) {
+        return reply.code(403).send({ error: 'forbidden', action: 'create_workspace' });
+      }
+      const created = org_id
+        ? await createWorkspaceInOrg(db, identity, org_id, { workspaceName: workspace_name, handle })
+        : await createWorkspace(db, identity, { workspaceName: workspace_name, handle });
       // A workspace with nowhere to talk is not a workspace. Fire-and-forget
       // relative to the response: a channel that failed to appear is repaired
       // by the next sign-in, and is not a reason to fail a sign-up that has
@@ -310,10 +344,15 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         if (!actor?.identity_id || actor.identity_kind !== 'workos_user') {
           return reply.code(403).send({ error: 'not_a_human_actor' });
         }
-        // Email is absent by design (§6.2 — never a join key). `joinWorkspace`
-        // authorises against the WorkOS MEMBERSHIP, not the address.
+        // Email is never STORED (§6.2), so it is fetched: a signed-in person
+        // joining their company's org by domain needs their verified address
+        // checked now (ORG-DOMAINS.md §4.1). Read, compared, dropped. If WorkOS
+        // cannot say, the domain path simply does not open — an invited
+        // member is admitted on their WorkOS membership, not the address.
+        const profile = await fetchProfile(actor.identity_id).catch(() => null);
         identity = {
-          workosUserId: actor.identity_id, email: '',
+          workosUserId: actor.identity_id, email: profile?.email ?? '',
+          emailVerified: profile?.emailVerified ?? false,
           displayName: actor.display_name, avatarUrl: actor.avatar_url,
         };
         deviceId ??= claims.deviceId;
@@ -323,7 +362,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
       if (!deviceId) return reply.code(400).send({ error: 'device_id required' });
 
-      const joined = await joinWorkspace(db, identity, workspace_id, handle);
+      let joined: Awaited<ReturnType<typeof joinWorkspace>>;
+      try { joined = await joinWorkspace(db, identity, workspace_id, handle); }
+      catch (e) {
+        // Adding a domain joiner to the WorkOS org failed. Nothing of ours was
+        // written; they retry.
+        if (e instanceof WorkOSError) return reply.code(502).send({ error: 'workos_unavailable', detail: e.message });
+        throw e;
+      }
       if (typeof joined === 'object') {
         // Public means everyone in the workspace, and this is where that becomes
         // true rather than documented: `welcome` joins spaces on MEMBERSHIP, so
@@ -411,7 +457,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       memberships: memberships.map(wire),
       pending_joins: joins.map(j => ({
         org_id: j.orgId, workspace_id: j.workspaceId, name: j.name,
-        handle_suggestions: j.handleSuggestions,
+        handle_suggestions: j.handleSuggestions, reason: j.reason, logo_url: j.logoUrl, is_default: j.isDefault, org_name: j.orgName, member_count: j.memberCount, invite_only: j.inviteOnly,
       })),
       ...(await issue(row.actor_id, row.org_id, row.workspace_id, row.device_id)),
     });

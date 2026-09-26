@@ -23,7 +23,10 @@ export const NAVIGATION_SECTIONS: readonly CommandMenuSection[] = NAVIGATION_GRO
 
 export function NavigationSource() {
   // From state, not the URL: a local room's route has no workspace in its path.
-  const workspaceId = useSession().state.workspaceId;
+  const { state } = useSession();
+  const workspaceId = state.workspaceId;
+  const active = state.workspaces.find(w => w.workspaceId === workspaceId);
+  const orgName = active?.orgName, orgIsAdmin = active?.orgIsAdmin ?? false;
   const navigate = useNavigate();
   // Sources mount only while the menu is open. The reads are local and shared
   // with a mounted sidebar through the registry, and nothing stays subscribed
@@ -32,7 +35,8 @@ export function NavigationSource() {
   const localRooms = useQuery('local.rooms.list');
 
   const groups = useMemo(() => {
-    const entries = navigationEntriesFor(workspaceId, spaces.rows ?? [], localRooms.rows ?? []);
+    const entries = navigationEntriesFor(workspaceId, spaces.rows ?? [], localRooms.rows ?? [],
+      orgName ? { name: orgName, isAdmin: orgIsAdmin } : undefined);
     return NAVIGATION_GROUPS.map(group => ({
       ...group,
       items: entries
@@ -47,7 +51,7 @@ export function NavigationSource() {
           perform: () => void navigate(destination.to),
         })),
     }));
-  }, [workspaceId, spaces.rows, localRooms.rows, navigate]);
+  }, [workspaceId, spaces.rows, localRooms.rows, orgName, orgIsAdmin, navigate]);
 
   const loading = (spaces.status === 'loading' && spaces.error === null)
     || (localRooms.status === 'loading' && localRooms.error === null);
