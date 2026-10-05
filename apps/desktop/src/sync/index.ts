@@ -53,6 +53,7 @@ import type { OurSession } from './auth/relayed.ts';
 import type { ClaudeStatus } from '../shared/claude.ts';
 import { AGENT_STREAM_CHANNEL } from '../shared/local-rooms.ts';
 import { AGENT_ACTIVITY_CHANNEL } from '../shared/agent-activity.ts';
+import { ACTIVITY_CHANNEL, type Activity, type ActivityPush } from '../shared/activity.ts';
 
 interface Request { id: number; op: string; params?: unknown }
 type Reply =
@@ -215,6 +216,11 @@ const provisionalDeviceId = (): string => (provisional ??= newId('dev'));
 
 /** Live renderer ports. Multiple windows are normal; dead ones must be reaped. */
 const ports = new Set<Electron.MessagePortMain>();
+
+/** Activity to every window, as it arrives (ACTIVITY.md §6.1). */
+const pushActivity = (data: ActivityPush): void => {
+  for (const p of ports) p.postMessage({ push: ACTIVITY_CHANNEL, data });
+};
 
 const session: Session = new Session({
   config: { clientId: workosClientId() },
@@ -416,7 +422,11 @@ const link = createLink({
   // under a live socket — a server restart, say — presented it anyway, was
   // refused, and parked in `unauthorised` for good.
   token: () => session.ensureFresh(),
-  onState: (state) => { reauth.onState(state); },
+  onState: (state) => {
+    reauth.onState(state);
+    // Off the socket, nobody's activity is known any more (ACTIVITY.md §6.1).
+    if (state !== 'live') pushActivity({ reset: true });
+  },
   invalidate: (topics) => {
     invalidate(topics);
     // NEW ACTORS MEAN NEW PICTURES, and this is the only place that can know.
@@ -436,6 +446,8 @@ const link = createLink({
     }
   },
   onWelcome: (body) => {
+    // A new connection: whatever was held came from the last one (ACTIVITY.md §6.1).
+    pushActivity({ reset: true });
     // ABSENT MEANS NO NEWS, never "you are current". A server from before this
     // field, or one whose versions were never configured, must not be able to
     // clear a wall a previous answer raised.
@@ -477,6 +489,8 @@ const link = createLink({
   onActivity: (activity) => {
     for (const p of ports) p.postMessage({ push: AGENT_ACTIVITY_CHANNEL, data: activity });
   },
+  // The frame verbatim, as `agent_activity` is: absent optionals stay absent on the wire.
+  onPresence: (activity) => { pushActivity({ activity: activity as Activity }); },
   // Both pushes are always the signed-in actor's own rows (§6.3, §6.4) — the
   // same lookup `actorId` above uses, repeated rather than shared: the four
   // other call sites in this file already do the same.
@@ -1375,6 +1389,12 @@ const handlers: Record<string, (params?: unknown) => unknown | Promise<unknown>>
     const token = await session.ensureFresh();
     if (!token) throw new Error('offline');
     return refreshRoomSummary(token, (params as { spaceId: string }).spaceId);
+  },
+
+  /** Typing, or stopping (ACTIVITY.md §6.2). False when the socket is not live: dropped, not queued. */
+  'activity.send': async (params) => {
+    const p = params as { chatId: string; threadId: string | null; state: 'active' | 'ended' };
+    return link.sendActivity({ chat_id: p.chatId, thread_id: p.threadId, kind: 'typing', state: p.state });
   },
 
   /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */

@@ -20,7 +20,7 @@ import {
   readFrame, frame, INBOUND, PROTOCOL, MIN_PROTOCOL, CLOSE,
   type Hello, type CatchupRequest, type BackfillRequest, type RepairRequest,
   type ThreadRequest, type DirectoryRequest, type AgentDefinitionRequest, type RosterRequest,
-  type OpFrame, type Ping,
+  type OpFrame, type Ping, type ActivityRequest,
 } from '@relayed/protocol';
 import { can, chat as chatTarget, space as spaceTarget } from '@relayed/authz';
 import { loadGrants } from '../authz/can.ts';
@@ -36,6 +36,9 @@ import {
 } from './feed.ts';
 import { send, deleteMessage, MessageNotFoundError, PartsRefusedError } from './ops.ts';
 import { agentDefinition } from '../agents/definitions.ts';
+import {
+  publishActivity, endActivityWhere, chatAudience, cachedAudience,
+} from './activity.ts';
 import { Forbidden } from '../authz/can.ts';
 import {
   startSpan, openSpan, annotate, traceparent, parseTraceparent,
@@ -154,6 +157,8 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
   // socket has no actor to key it by.
   const connections = new Set<ConnectionState>();
   const registry = new Registry();
+  // Typing asks for a chat's audience every few seconds per typist (ACTIVITY.md §5.3).
+  const typingAudience = cachedAudience(chatAudience(deps.db), 5_000);
 
   server.on('upgrade', (request, socket, head) => {
     // `request.url` is a path, not an absolute URL, so it needs a base to be
@@ -191,6 +196,14 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
       // close would keep writing to sockets that errored — and that leak's
       // symptom is memory on the busiest server, months later.
       if (state.claims) registry.remove(state);
+      // Whatever this connection was typing ends with it, rather than lingering
+      // for its TTL on everyone else's screen (ACTIVITY.md §5.2).
+      if (state.claims) {
+        // After any activity frame still in flight, or it would land after this.
+        void state.activity
+          .then(() => endActivityWhere(registry, typingAudience, 'typing', typingKeyPrefix(state)))
+          .catch((e: unknown) => { failure(e); });
+      }
       // AFTER the removal, so the gauge is the count that remains rather than
       // the one that included this socket.
       if (wasAuthenticated) {
@@ -314,6 +327,18 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
     if (read.t === 'agent_definition') {
       await startSpan('sync.agent_definition',
         () => onAgentDefinition(state, read.body as AgentDefinitionRequest), { parent });
+      return;
+    }
+
+    // Not traced either, for `ping`'s reason: one frame per typist every few
+    // seconds is volume, not a logical operation anybody asks about.
+    // IN ORDER per connection. Frames are otherwise handled concurrently, and
+    // an `ended` needs no authorisation, so it would overtake the `active` sent
+    // just before it and leave the typist showing for a whole TTL after Enter.
+    if (read.t === 'activity') {
+      const request = read.body as ActivityRequest;
+      state.activity = state.activity.then(() => onActivity(state, request));
+      await state.activity;
       return;
     }
 
@@ -586,6 +611,51 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
    * otherwise have already told every client about something that never
    * happened, and nothing afterwards looks wrong.
    */
+  /**
+   * Someone typing (ACTIVITY.md §5.2). Dropped silently and counted, never
+   * answered: the sender has nothing to do with a refusal, and telling them a
+   * chat or thread exists is a disclosure.
+   */
+  async function onActivity(state: ConnectionState, request: ActivityRequest): Promise<void> {
+    // Caught here rather than by the frame boundary: the chain in `onMessage`
+    // must never hold a rejection, or every later frame would rethrow it.
+    try { await acceptActivity(state, request); } catch (e: unknown) { failure(e); }
+  }
+
+  async function acceptActivity(state: ConnectionState, request: ActivityRequest): Promise<void> {
+    const claims = state.claims;
+    if (!claims) return;
+    // Only typing may come from a client; a run is the dispatcher's.
+    if (request.kind !== 'typing') { note('sync.frame.unknown', { t: `activity:${request.kind}` }); return; }
+
+    // Ending needs no check: it can only end this connection's own entry,
+    // and ending one that does not exist sends nothing.
+    if (request.state === 'active') {
+      const [grants, placement] = await Promise.all([
+        loadGrants(deps.db, claims.actorId), chatPlacement(deps.db, request.chat_id),
+      ]);
+      if (!can(grants, 'post', chatTarget(request.chat_id), placement)) {
+        note('sync.activity.dropped', { reason: 'unauthorised' });
+        return;
+      }
+      if (request.thread_id !== null) {
+        // A thread root in this chat that anybody who reads the chat can see —
+        // nothing replies to a restricted message (§8.8), so nobody types there.
+        const root = await deps.db.selectFrom('messages').select('id')
+          .where('id', '=', request.thread_id).where('chat_id', '=', request.chat_id)
+          .where('parent_id', 'is', null).where('visible_to', 'is', null)
+          .executeTakeFirst();
+        if (!root) { note('sync.activity.dropped', { reason: 'no_thread' }); return; }
+      }
+    }
+
+    await publishActivity(registry, typingAudience, {
+      kind: 'typing', key: `${typingKeyPrefix(state)}${request.chat_id}:${request.thread_id ?? ''}`,
+      chatId: request.chat_id, threadId: request.thread_id,
+      actorId: claims.actorId, workspaceId: claims.workspaceId, state: request.state,
+    });
+  }
+
   async function onOp(state: ConnectionState, frame: OpFrame): Promise<void> {
     const claims = state.claims;
     if (!claims) return;
@@ -805,8 +875,20 @@ export function attachSyncSocket(server: Server, deps: SocketDeps): SyncSocket {
  * said anything it was supposed to?" — so they share a handle, and there is no
  * way to clear one and leak the other.
  */
+/**
+ * The part of a typing key that names the connection (ACTIVITY.md §0): the
+ * server's own, never the client's, so nobody can type as somebody else's device.
+ */
+const typingKeyPrefix = (state: ConnectionState): string => `${state.actorId}:${state.id}:`;
+
+let nextConnectionId = 0;
+
 class ConnectionState implements Delivery {
   socket: WebSocket;
+  /** This process's own name for the connection. Only ever compared, never trusted from a frame. */
+  readonly id = (++nextConnectionId).toString(36);
+  /** The activity frame being handled, so the next waits for it (see `onMessage`). Never rejects. */
+  activity: Promise<void> = Promise.resolve();
   claims: SessionClaims | null = null;
   /** Set from `hello`. Text-only until a client says otherwise. */
   compress = false;

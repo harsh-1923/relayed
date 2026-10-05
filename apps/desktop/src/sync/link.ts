@@ -15,7 +15,8 @@
 // the frontier rule lives.
 import type { DatabaseSync } from 'node:sqlite';
 import type {
-  Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity, ConnectionRow, AgentPermissionRow, RosterOk,
+  Welcome, DirectoryOk, AgentDefinitionOk, AgentActivity, Activity, ConnectionRow, AgentPermissionRow, RosterOk,
+  ActivityRequest,
 } from '@relayed/protocol';
 import { Connection, type LinkState, type SocketLike } from './transport/connection.ts';
 import type { Gate } from './network.ts';
@@ -69,6 +70,8 @@ export interface LinkDeps {
    * with topics).
    */
   onActivity?(activity: AgentActivity): void;
+  /** Someone doing something in a chat (ACTIVITY.md §6.1). Forwarded as-is, like `onActivity`. */
+  onPresence?(activity: Activity): void;
   /** A `connections` push (WORKSPACE-AGENTS.md §6.3) — one or more rows, replaced by id. */
   onConnections?(rows: ConnectionRow[]): void;
   /** An `agent_permissions` push (WORKSPACE-AGENTS.md §6.4) — same shape. */
@@ -115,6 +118,12 @@ export interface Link {
    * nothing happens for a list already held or on its way.
    */
   wantRoster(spaceId: string): void;
+  /**
+   * "I am typing here", or "I stopped" (ACTIVITY.md §6.1). Sent only on a live
+   * socket and dropped otherwise — never the outbox: a typing frame replayed
+   * after a reconnect would say something that stopped being true long ago.
+   */
+  sendActivity(request: ActivityRequest): boolean;
   /** Reconnect now — waking from sleep, or a freshly refreshed token. */
   retryNow(): void;
   readonly state: LinkState;
@@ -495,6 +504,11 @@ export function createLink(deps: LinkDeps): Link {
       return;
     }
 
+    if (t === 'activity') {
+      deps.onPresence?.(body as Activity);
+      return;
+    }
+
     if (t === 'connections') {
       deps.onConnections?.((body as { rows: ConnectionRow[] }).rows);
       return;
@@ -805,6 +819,7 @@ export function createLink(deps: LinkDeps): Link {
     backfill,
     thread,
     definition,
+    sendActivity: (request) => connection.send('activity', request),
     wantRoster: (spaceId) => {
       const db = deps.db();
       if (!db) return;

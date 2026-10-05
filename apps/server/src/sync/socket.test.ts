@@ -1425,3 +1425,96 @@ test('a healthy connection is unaffected by another one failing', opts, async ()
   peer.socket.close();
   noisy.socket.close();
 });
+
+// ─── activity (ACTIVITY.md §5.2) ────────────────────────────────────────────
+
+/** Two authenticated peers, `me` and `outsider`, and a channel both are in. */
+async function typingPair(): Promise<{ chatId: string; mine: Peer; theirs: Peer }> {
+  const space = await createChannel(db, {
+    workspaceId: wsp, name: `type-${ulid('x')}`, createdBy: me,
+  });
+  await db.transaction().execute(trx => addMember(trx, space.spaceId, outsider, 'member', me));
+  const mine = await connect();
+  mine.send('hello', { protocol: PROTOCOL, access_token: `good:${me}` });
+  await mine.next('welcome');
+  const theirs = await connect();
+  theirs.send('hello', { protocol: PROTOCOL, access_token: `good:${outsider}` });
+  await theirs.next('welcome');
+  return { chatId: space.chatId, mine, theirs };
+}
+
+const typed = (peer: Peer) =>
+  peer.frames.filter(f => f.t === 'activity').map(f => f.body as Record<string, unknown>);
+
+test('typing reaches the other members of the chat and not the typist', opts, async () => {
+  const { chatId, mine, theirs } = await typingPair();
+  mine.send('activity', { chat_id: chatId, thread_id: null, kind: 'typing', state: 'active' });
+  const body = await theirs.next('activity') as Record<string, unknown>;
+  assert.equal(body['actor_id'], me, 'the actor comes from the connection');
+  assert.equal(body['kind'], 'typing');
+  assert.equal(body['state'], 'active');
+  assert.equal(body['thread_id'], null);
+  assert.equal(body['seq'], 0);
+  assert.equal(typeof body['ttl_ms'], 'number');
+  await sleep(50);
+  assert.equal(typed(mine).length, 0, 'nobody is told they are typing');
+  mine.socket.close(); theirs.socket.close();
+});
+
+test('an unchanged active inside a second is dropped; ended always goes', opts, async () => {
+  const { chatId, mine, theirs } = await typingPair();
+  const active = { chat_id: chatId, thread_id: null, kind: 'typing', state: 'active' };
+  mine.send('activity', active);
+  mine.send('activity', active);
+  mine.send('activity', { ...active, state: 'ended' });
+  await sleep(150);
+  assert.deepEqual(typed(theirs).map(b => [b['state'], b['seq']]), [['active', 0], ['ended', 1]]);
+  mine.socket.close(); theirs.socket.close();
+});
+
+test('typing in a chat the actor cannot post in reaches nobody', opts, async () => {
+  const theirsOnly = await createChannel(db, {
+    workspaceId: wsp, name: `nt-${ulid('x')}`, visibility: 'private', createdBy: outsider,
+  });
+  const { mine, theirs } = await typingPair();
+  mine.send('activity', { chat_id: theirsOnly.chatId, thread_id: null, kind: 'typing', state: 'active' });
+  await sleep(150);
+  assert.equal(typed(theirs).length, 0);
+  assert.equal(mine.socket.readyState, mine.socket.OPEN, 'dropped, not closed');
+  mine.socket.close(); theirs.socket.close();
+});
+
+test('typing in a thread that is not a root in this chat reaches nobody', opts, async () => {
+  const { chatId, mine, theirs } = await typingPair();
+  mine.send('activity', { chat_id: chatId, thread_id: ulid('msg'), kind: 'typing', state: 'active' });
+  await sleep(150);
+  assert.equal(typed(theirs).length, 0);
+
+  const root = ulid('msg');
+  await send(db, { opId: ulid('op'), chatId, actorId: outsider, messageId: root, body: 'root' });
+  mine.send('activity', { chat_id: chatId, thread_id: root, kind: 'typing', state: 'active' });
+  const body = await theirs.next('activity') as Record<string, unknown>;
+  assert.equal(body['thread_id'], root);
+  mine.socket.close(); theirs.socket.close();
+});
+
+test('a kind a client may not send is ignored', opts, async () => {
+  const { chatId, mine, theirs } = await typingPair();
+  mine.send('activity', { chat_id: chatId, thread_id: null, kind: 'run', state: 'active' });
+  await sleep(150);
+  assert.equal(typed(theirs).length, 0);
+  assert.equal(mine.socket.readyState, mine.socket.OPEN);
+  mine.socket.close(); theirs.socket.close();
+});
+
+test('closing the typist\'s socket ends their typing for everyone', opts, async () => {
+  const { chatId, mine, theirs } = await typingPair();
+  mine.send('activity', { chat_id: chatId, thread_id: null, kind: 'typing', state: 'active' });
+  await theirs.next('activity');
+  mine.socket.close();
+  await mine.closed;
+  const deadline = Date.now() + 2_000;
+  while (typed(theirs).length < 2 && Date.now() < deadline) await sleep(10);
+  assert.deepEqual(typed(theirs).map(b => b['state']), ['active', 'ended']);
+  theirs.socket.close();
+});

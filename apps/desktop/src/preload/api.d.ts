@@ -2,6 +2,7 @@ import type { StoredPart } from '@relayed/protocol';
 import type { ApprovalDecision, ClaudeCommand, ClaudeStatus, EffortLevel, PendingApproval, RoomMode } from '../shared/claude.ts';
 import type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 import type { AgentActivity } from '../shared/agent-activity.ts';
+import type { ActivityPush } from '../shared/activity.ts';
 import type { Space, SpaceRoster } from '../shared/spaces.ts';
 import type { NativeCommandId } from '../shared/shortcuts/catalogue.ts';
 import type { ContentPanelType, Panel, PanelMetaRow } from '../shared/panels.ts';
@@ -15,6 +16,7 @@ export type {
 } from '../shared/claude.ts';
 export type { AgentStream, LocalRoom, LocalRoomSettings } from '../shared/local-rooms.ts';
 export type { AgentActivity } from '../shared/agent-activity.ts';
+export type { Activity, ActivityPush } from '../shared/activity.ts';
 export type { Space, SpaceChat, SpaceMember, SpaceRoster, SpaceScope } from '../shared/spaces.ts';
 export type { ContentPanelType, Panel, PanelMeta, PanelMetaRow } from '../shared/panels.ts';
 export type { Document } from '../shared/documents.ts';
@@ -698,6 +700,8 @@ export interface RelayedApi {
   ): Promise<AgentAnswer<{ agent_id: string; maintainers: string[] }>>;
   /** Null when the socket is not live: unreachable, which is not "not found". */
   query(op: "agents.definition", params: { agentId: string }): Promise<AgentDefinition | null>;
+  /** Typing, or stopping. False when the socket is not live — dropped, never queued. */
+  query(op: "activity.send", params: { chatId: string; threadId: string | null; state: 'active' | 'ended' }): Promise<boolean>;
   /** Stop a run in flight, invoker-only (WORKSPACE-AGENTS.md §5.8). */
   query(op: "agents.stopRun", params: { runId: string }): Promise<AgentAnswer<{ run_id: string; state: string }>>;
   /** "Not helpful here" on an unprompted answer, kept as feedback (AMBIENT-RESPONSES.md §10.2). Anyone in the chat. */
@@ -742,6 +746,8 @@ export interface RelayedApi {
   subscribe(channel: "agent:stream", fn: (stream: AgentStream) => void): () => void;
   /** The working indicator for a workspace agent's run. Never stored. */
   subscribe(channel: "agent:activity", fn: (activity: AgentActivity) => void): () => void;
+  /** Someone doing something in a chat — typing, today. Never stored. */
+  subscribe(channel: "activity", fn: (push: ActivityPush) => void): () => void;
   /**
    * Something in the replica changed. Carries the topics affected and NOT
    * the rows — the renderer re-reads what it holds (DESIGN.md §11.2).

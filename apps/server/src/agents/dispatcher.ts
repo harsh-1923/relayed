@@ -254,7 +254,8 @@ export async function postFinishedNotice(
 
 /** After ANY terminal write (answer or notice): fan out the event, end the indicator. */
 async function finishDelivery(
-  db: Kysely<DB>, registry: Registry, run: { id: string; chatId: string; agentActorId: string },
+  db: Kysely<DB>, registry: Registry,
+  run: Pick<FinishedRun, 'id' | 'chatId' | 'agentActorId' | 'replyParentId'>,
   written: Awaited<ReturnType<typeof deliverReply>>,
 ): Promise<void> {
   if (written.posted) await fanout(db, registry, written.event);
@@ -263,7 +264,7 @@ async function finishDelivery(
     .where('id', '=', run.chatId).executeTakeFirst();
   if (!chat) return;
   await notifyActivity(registry, db, {
-    chatId: run.chatId, threadId: run.chatId, agentId: run.agentActorId, runId: run.id,
+    chatId: run.chatId, threadId: run.replyParentId, agentId: run.agentActorId, runId: run.id,
     workspaceId: chat.workspace_id, state: 'ended',
   });
 }

@@ -30,6 +30,7 @@ import { RelayedCommand, restoreCommandChip } from './relayed-command.ts';
 import { shouldShowComposerPlaceholder } from './placeholder.ts';
 import { isSendKey } from './send-key.ts';
 import { useCommandBindings, useCommandHandler } from '@/lib/commands/CommandProvider';
+import { useTypingSender } from '@/lib/activity/use-activity';
 import './composer.css';
 
 type Scope = 'workspace' | 'local';
@@ -135,6 +136,11 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
     () => (props.scope === 'local' ? [] : (workspaceSpaces ?? [])), [props.scope, workspaceSpaces]);
   const revisionRef = useRef(props.initialRevision);
   const suppressDraftWrite = useRef(false);
+  // Typing, for everyone else in the chat (docs/ACTIVITY.md §6.2). Through a
+  // ref because `onUpdate` below is bound once, when the editor is made.
+  const typing = useTypingSender(props.chatId, props.scope !== 'local');
+  const typingRef = useRef(typing);
+  typingRef.current = typing;
   const suggestionKeyHandlerRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
   const suggestionCommandRef = useRef<HTMLDivElement | null>(null);
   const [trigger, setTrigger] = useState<ComposerTrigger | null>(null);
@@ -167,6 +173,7 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
     },
     onUpdate: ({ editor: currentEditor }) => {
       if (suppressDraftWrite.current) return;
+      typingRef.current?.changed(!currentEditor.isEmpty);
       const revision = ++revisionRef.current;
       const body = currentEditor.getMarkdown();
       const saveOperation = props.scope === 'local' ? 'local.drafts.save' : 'drafts.save';
@@ -210,6 +217,9 @@ function ComposerSession(props: Omit<MessageComposerProps, 'chatId'> & {
     if (!editor || sending) return;
     const body = editor.getMarkdown();
     if (body.trim().length === 0) return;
+    // Before the message, so "stopped typing" reaches the room ahead of it and
+    // the bubble gives way to the message rather than sitting under it.
+    typingRef.current?.stop();
     setSending(true);
     setError(null);
     try {

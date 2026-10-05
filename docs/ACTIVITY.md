@@ -1,6 +1,9 @@
 # Activity
 
-> **Status: a proposal, nothing built.** One ephemeral primitive — *someone is
+> **Status: typing built** — steps 1–5 of §13, checked by hand with two
+> clients. Runs are on the generic register but still reach the renderer as
+> `agent_activity`; step 6 moves them. §14 records where the build differs from
+> the plan below. One ephemeral primitive — *someone is
 > doing something in this chat, right now* — that typing indicators use first
 > and the agent working indicator moves onto. It generalises `agent_activity`
 > (`WORKSPACE-AGENTS.md` §5.7, built in `apps/server/src/agents/activity.ts`)
@@ -11,7 +14,7 @@
 > keyed by `kind`, add a client → server `activity` frame, and ship typing as a
 > WhatsApp-style bubble at the foot of the chat.
 
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-02 (steps 1–5)
 
 ---
 
@@ -344,9 +347,22 @@ Not decided here. Whichever is chosen is a row in §3.2 and a component in §7.
 
 | Step | What | Done when |
 |---|---|---|
-| 1 | Lift the register into `sync/activity.ts`; runs become `kind:'run'`, still sent as `agent_activity`. Fix the `ended` thread id | Existing activity and dispatcher tests pass unchanged |
-| 2 | Frames both ways in `@relayed/protocol`; `onActivity` in `socket.ts` with `can()`, rate limit, cap, connection-close ending | A test per rule in §5.2 |
-| 3 | `sendActivity` and the `activity` channel through `link.ts` and the bridge; `reset` on disconnect and `welcome` | Tests on a mocked socket |
-| 4 | `useChatActivity` kind-aware with TTL timers; composer sending | Hook tests for `seq`, `ended`, TTL, `reset`, unknown kind |
-| 5 | The typing bubble (§7) | Two clients by hand (`MULTI-CLIENT-DEV.md`): one, two, four typists; laptop closed mid-sentence; scrolled up; thread; reduced motion; light and dark |
+| 1 ✅ | Lift the register into `sync/activity.ts`; runs become `kind:'run'`, still sent as `agent_activity`. Fix the `ended` thread id | Existing dispatcher tests pass unchanged; `sync/activity.test.ts` covers the shape older clients read, audience and workspace filtering, `seq` per key, final `ended`, the thread on `ended`, refresh and forgetting. The audience is passed in (`Audience`) so these need no database |
+| 2 ✅ | Frames both ways in `@relayed/protocol`; `onActivity` in `socket.ts` with `can()`, rate limit, cap, connection-close ending | `socket.test.ts` over a real socket: reaches the other member and not the typist; an unchanged `active` inside a second dropped, `ended` always sent; a chat the actor cannot post in, a thread that is not a root, and a kind a client may not send each reach nobody; closing the socket ends it. `activity.test.ts` adds the TTL, the cap, non-final `ended` and `endActivityWhere` |
+| 3 ✅ | `sendActivity` and the `activity` channel through `link.ts` and the bridge; `reset` on disconnect and `welcome` | Typecheck across the three desktop projects; exercised by step 5 rather than a mocked socket |
+| 4 ✅ | Kind-aware hold with TTL timers; composer sending | `renderer/lib/activity/held.test.ts` (`seq`, `ended`, TTL, `reset`, unknown kind, typists per chat and thread) and `typing-sender.test.ts` (interval, empty, pause, stop) |
+| 5 ✅ | The typing bubble (§7) | Two clients by hand, driven over DevTools: bubble with the typist's face in ~0.5 s; gone as the message lands on Enter; gone ~5 s into a pause; gone when the composer is emptied; gone within 0.5 s when the typist's app is killed; never shown to the typist; both directions; light and dark. **Not run:** three or more typists (two accounts only), a thread (no thread composer yet), scrolled-up history |
 | 6 | Dual send for runs; remove `agent_activity` a release later | Old client still shows the run indicator |
+
+---
+
+## 14. Where the build differs from the plan
+
+| Planned | Built | Why |
+|---|---|---|
+| Typing key is actor plus connection (§0) | Actor, connection, **chat and thread** | One connection typing in two places in quick succession — switching chats — is two activities; ending one must not end the other |
+| Frames handled as they arrive | **Activity frames handled in order per connection**, and the end-on-close waits for any still in flight | Found by the socket test: frames are otherwise concurrent, an `ended` needs no authorisation, so it overtook the `active` sent just before it and left the typist showing for a whole TTL after Enter |
+| New counters for dropped frames (§11) | **The existing `sync.frame.dropped{frame=denied}`** | Same question the other denied frames answer; no new series |
+| `useChatActivity` becomes kind-aware (§6.3) | A **separate window-wide store** in `renderer/lib/activity/`; `useChatActivity` keeps runs until step 6 | One subscription for the window, so typing that began before a chat was opened is already held when it opens |
+| Typing in threads (§7.3) | Carried end to end and checked on the server, **not drawn** | The renderer has no thread composer yet; `TypingBubble` takes a `threadId` for when it does |
+| Dots via `rounded-full` | `border-radius: 50%` plus **`corner-shape: round`** | The global squircle rule (`index.css`) turns a 6 px circle into a square — the reason avatars opt out too |

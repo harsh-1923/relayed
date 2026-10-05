@@ -71,10 +71,13 @@ function dispatch(name: string, detail: Record<string, unknown>): void {
     case 'sync.frame.malformed':
       count('sync.frame.dropped', { frame: 'malformed' });
       return;
+    // `sync.activity.dropped` is typing somewhere the actor may not post, or in
+    // a thread that is not one (ACTIVITY.md §5.2).
     case 'sync.catchup.denied':
     case 'sync.backfill.denied':
     case 'sync.repair.denied':
     case 'sync.thread.denied':
+    case 'sync.activity.dropped':
       count('sync.frame.dropped', { frame: 'denied' });
       return;
 

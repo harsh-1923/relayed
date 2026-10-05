@@ -1,0 +1,29 @@
+/* The typing bubble's dots (docs/ACTIVITY.md §7.3): each rises and brightens
+   in turn. Off under reduced motion, where the dots simply sit. */
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.typing-dot {
+  /* A circle, not the squircle every corner gets (index.css): at 6px a
+     superellipse reads as a square. Avatars opt out the same way. */
+  border-radius: 50%;
+  corner-shape: round;
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+}

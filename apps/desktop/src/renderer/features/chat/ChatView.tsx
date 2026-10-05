@@ -38,6 +38,7 @@ import { RoomModelPicker } from '@/features/local-rooms/RoomModelPicker';
 import { RoomModePicker } from '@/features/local-rooms/RoomModePicker';
 import { useRoomSlashCommands } from '@/features/local-rooms/useRoomSlashCommands';
 import { useChatActivity } from '@/lib/agent-activity';
+import { TypingBubble } from '@/features/chat/TypingBubble';
 import { RunIndicator } from '@/features/agents/RunIndicator';
 import type { SpaceScope } from '../../../shared/spaces.ts';
 
@@ -139,6 +140,9 @@ export function ChatView({ spaceId, chatId, scope }: { spaceId: string; chatId: 
 
               {/* What a paused reply is waiting on, where the reply is. */}
               {scope === 'local' && <Approvals chatId={chatId} />}
+
+              {/* Who is typing, where their message will land (docs/ACTIVITY.md §7). */}
+              {scope === 'workspace' && <TypingBubble chatId={chatId} />}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />

@@ -340,6 +340,23 @@ export const RosterRequest = z.object({
 });
 export type RosterRequest = z.infer<typeof RosterRequest>;
 
+/**
+ * "I am doing something in this chat, now" (ACTIVITY.md §4.1). Today only
+ * `typing` may be sent by a client.
+ *
+ * No actor, key or device: all three come from the connection, for the reason
+ * `Hello` carries none of them. `kind` is a string rather than an enum so a
+ * kind from a newer client is ignored by the server, not counted as malformed.
+ */
+export const ActivityRequest = z.object({
+  chat_id: z.string().min(1),
+  /** Null for the chat itself; otherwise the thread root. */
+  thread_id: z.string().min(1).nullable(),
+  kind: z.string(),
+  state: z.enum(['active', 'ended']),
+});
+export type ActivityRequest = z.infer<typeof ActivityRequest>;
+
 /** Every frame this server accepts. The table `readFrame` is given. */
 export const INBOUND: Bodies = {
   hello: Hello, ping: Ping,
@@ -347,6 +364,7 @@ export const INBOUND: Bodies = {
   repair: RepairRequest, thread: ThreadRequest,
   directory: DirectoryRequest, op: OpFrame,
   agent_definition: AgentDefinitionRequest, roster: RosterRequest,
+  activity: ActivityRequest,
 };
 
 // ─── Server → client ────────────────────────────────────────────────────────
@@ -943,6 +961,29 @@ export const AgentActivity = z.object({
 export type AgentActivity = z.infer<typeof AgentActivity>;
 
 /**
+ * Someone doing something in a chat, now (ACTIVITY.md §4.2). The general form
+ * of `AgentActivity`; today it carries `typing`.
+ *
+ * The receiver drops a lower `seq` than it holds for the same key, and an
+ * entry with `ttl_ms` is dropped that long after it ARRIVED — measured on the
+ * receiver's clock, so no timestamp crosses the wire. A `kind` the receiver
+ * does not know is ignored, which is what lets kinds be added without a
+ * version bump.
+ */
+export const Activity = z.object({
+  chat_id: z.string(),
+  thread_id: z.string().nullable(),
+  actor_id: z.string(),
+  kind: z.string(),
+  key: z.string(),
+  seq: z.number().int().nonnegative(),
+  state: z.enum(['active', 'ended']),
+  ttl_ms: z.number().int().positive().optional(),
+  label: z.string().optional(),
+});
+export type Activity = z.infer<typeof Activity>;
+
+/**
  * One page of rosters, for the spaces the request named that the caller may
  * read — `space_ids` echoes exactly those, so a space missing from it was
  * refused and its request should not be repeated.
@@ -970,7 +1011,7 @@ export const OUTBOUND: Bodies = {
   repair_ok: RepairOk, thread_ok: ThreadOk,
   directory_ok: DirectoryOk, ack: AckFrame, nack: NackFrame,
   agent_definition_ok: AgentDefinitionOk, agent_activity: AgentActivity,
-  connections: ConnectionsPush, agent_permissions: AgentPermissionsPush,
+  activity: Activity, connections: ConnectionsPush, agent_permissions: AgentPermissionsPush,
   roster_ok: RosterOk,
 };
 
